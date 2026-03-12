@@ -52,13 +52,23 @@ importers:
         specifier: ^7.0.0
         version: 7.3.1
 
-  packages/sdkwork-api-admin-sdk: {}
+  packages/sdkwork-api-admin-sdk:
+    dependencies:
+      sdkwork-api-types:
+        specifier: workspace:*
+        version: link:../sdkwork-api-types
 
   packages/sdkwork-api-channel:
     dependencies:
       react:
         specifier: ^19.0.0
         version: 19.2.4
+      sdkwork-api-admin-sdk:
+        specifier: workspace:*
+        version: link:../sdkwork-api-admin-sdk
+      sdkwork-api-types:
+        specifier: workspace:*
+        version: link:../sdkwork-api-types
 
   packages/sdkwork-api-core:
     dependencies:
@@ -71,6 +81,12 @@ importers:
       react:
         specifier: ^19.0.0
         version: 19.2.4
+      sdkwork-api-admin-sdk:
+        specifier: workspace:*
+        version: link:../sdkwork-api-admin-sdk
+      sdkwork-api-types:
+        specifier: workspace:*
+        version: link:../sdkwork-api-types
 
   packages/sdkwork-api-runtime:
     dependencies:
@@ -88,15 +104,27 @@ importers:
       react:
         specifier: ^19.0.0
         version: 19.2.4
+      sdkwork-api-admin-sdk:
+        specifier: workspace:*
+        version: link:../sdkwork-api-admin-sdk
+      sdkwork-api-types:
+        specifier: workspace:*
+        version: link:../sdkwork-api-types
 
   packages/sdkwork-api-workspace:
     dependencies:
       react:
         specifier: ^19.0.0
         version: 19.2.4
+      sdkwork-api-admin-sdk:
+        specifier: workspace:*
+        version: link:../sdkwork-api-admin-sdk
       sdkwork-api-core:
         specifier: workspace:*
         version: link:../sdkwork-api-core
+      sdkwork-api-types:
+        specifier: workspace:*
+        version: link:../sdkwork-api-types
 
 packages:
 

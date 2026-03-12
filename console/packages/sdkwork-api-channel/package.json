@@ -16,7 +16,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "react": "^19.0.0"
+    "react": "^19.0.0",
+    "sdkwork-api-admin-sdk": "workspace:*",
+    "sdkwork-api-types": "workspace:*"
   }
 }
-

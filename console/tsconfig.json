@@ -12,7 +12,17 @@
     "noEmit": true,
     "jsx": "react-jsx",
     "strict": true,
-    "baseUrl": "."
+    "baseUrl": ".",
+    "paths": {
+      "sdkwork-api-admin-sdk": ["packages/sdkwork-api-admin-sdk/src/index.ts"],
+      "sdkwork-api-channel": ["packages/sdkwork-api-channel/src/index.tsx"],
+      "sdkwork-api-core": ["packages/sdkwork-api-core/src/index.ts"],
+      "sdkwork-api-routing": ["packages/sdkwork-api-routing/src/index.tsx"],
+      "sdkwork-api-runtime": ["packages/sdkwork-api-runtime/src/index.tsx"],
+      "sdkwork-api-types": ["packages/sdkwork-api-types/src/index.ts"],
+      "sdkwork-api-usage": ["packages/sdkwork-api-usage/src/index.tsx"],
+      "sdkwork-api-workspace": ["packages/sdkwork-api-workspace/src/index.tsx"]
+    }
   },
   "include": ["src", "packages/*/src"]
 }

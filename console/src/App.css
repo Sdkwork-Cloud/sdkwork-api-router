@@ -1,0 +1,231 @@
+:root {
+  color-scheme: light;
+  font-family: Aptos, "IBM Plex Sans", "Segoe UI", sans-serif;
+  background:
+    radial-gradient(circle at top left, rgba(255, 194, 112, 0.28), transparent 28%),
+    radial-gradient(circle at top right, rgba(26, 149, 135, 0.18), transparent 32%),
+    linear-gradient(180deg, #f5efe5 0%, #f6f7f2 45%, #eef3ef 100%);
+  color: #1d2c2a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: transparent;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.app-shell {
+  width: min(1180px, calc(100vw - 32px));
+  margin: 0 auto;
+  padding: 32px 0 56px;
+  display: grid;
+  gap: 20px;
+}
+
+.hero {
+  display: grid;
+  gap: 20px;
+  grid-template-columns: minmax(0, 1.6fr) minmax(240px, 0.8fr);
+  padding: 28px;
+  border-radius: 28px;
+  background:
+    linear-gradient(135deg, rgba(20, 60, 57, 0.94), rgba(37, 96, 90, 0.88)),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent);
+  color: #f8f3eb;
+  box-shadow: 0 20px 60px rgba(21, 41, 39, 0.18);
+}
+
+.hero-copy h1 {
+  margin: 8px 0 12px;
+  font-size: clamp(2.2rem, 5vw, 4rem);
+  line-height: 0.95;
+  letter-spacing: -0.06em;
+}
+
+.hero-text {
+  margin: 0;
+  max-width: 58ch;
+  color: rgba(248, 243, 235, 0.82);
+  line-height: 1.6;
+}
+
+.hero-aside {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-content: start;
+  justify-content: flex-end;
+}
+
+.hero-aside span {
+  padding: 10px 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  font-size: 0.9rem;
+}
+
+.eyebrow {
+  margin: 0;
+  font-size: 0.8rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(33, 62, 57, 0.62);
+}
+
+.hero .eyebrow {
+  color: rgba(248, 243, 235, 0.7);
+}
+
+.panel {
+  display: grid;
+  gap: 16px;
+  padding: 22px;
+  border-radius: 24px;
+  background: rgba(255, 252, 247, 0.86);
+  border: 1px solid rgba(32, 58, 54, 0.08);
+  box-shadow: 0 14px 34px rgba(41, 57, 54, 0.08);
+  backdrop-filter: blur(12px);
+}
+
+.panel-accent {
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(246, 247, 242, 0.9)),
+    linear-gradient(90deg, rgba(255, 170, 102, 0.1), transparent);
+}
+
+.panel-highlight {
+  background:
+    linear-gradient(135deg, rgba(231, 246, 244, 0.94), rgba(255, 255, 255, 0.94)),
+    linear-gradient(90deg, rgba(26, 149, 135, 0.08), transparent);
+}
+
+.panel-heading {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.panel h2 {
+  margin: 6px 0 0;
+  font-size: clamp(1.3rem, 3vw, 1.8rem);
+  letter-spacing: -0.04em;
+}
+
+.status {
+  margin: 0;
+  max-width: 340px;
+  text-align: right;
+  font-size: 0.95rem;
+  color: #56706c;
+  line-height: 1.5;
+}
+
+.metric-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.metric-card,
+.detail-card {
+  padding: 16px 18px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.75);
+  border: 1px solid rgba(32, 58, 54, 0.08);
+}
+
+.metric-card strong {
+  display: block;
+  margin-top: 8px;
+  font-size: clamp(1.6rem, 3vw, 2.2rem);
+  letter-spacing: -0.06em;
+}
+
+.metric-label {
+  color: #5f7672;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.detail-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.detail-card h3 {
+  margin: 0 0 12px;
+  font-size: 1rem;
+  letter-spacing: -0.02em;
+}
+
+.compact-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.compact-list li {
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  align-items: baseline;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(32, 58, 54, 0.08);
+}
+
+.compact-list li:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.compact-list strong {
+  font-size: 0.97rem;
+}
+
+.compact-list span {
+  color: #5d7370;
+  font-size: 0.88rem;
+  text-align: right;
+}
+
+.empty {
+  justify-content: flex-start;
+  color: #7b8d89;
+}
+
+@media (max-width: 860px) {
+  .hero {
+    grid-template-columns: 1fr;
+  }
+
+  .hero-aside {
+    justify-content: flex-start;
+  }
+
+  .panel-heading {
+    flex-direction: column;
+  }
+
+  .status {
+    max-width: none;
+    text-align: left;
+  }
+
+  .metric-grid {
+    grid-template-columns: 1fr;
+  }
+}
