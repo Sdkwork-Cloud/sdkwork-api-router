@@ -6,8 +6,10 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+sdkwork-api-domain-billing = { path = "../sdkwork-api-domain-billing" }
 sdkwork-api-domain-catalog = { path = "../sdkwork-api-domain-catalog" }
 sdkwork-api-domain-credential = { path = "../sdkwork-api-domain-credential" }
+sdkwork-api-domain-usage = { path = "../sdkwork-api-domain-usage" }
 sqlx.workspace = true
 
 [dev-dependencies]

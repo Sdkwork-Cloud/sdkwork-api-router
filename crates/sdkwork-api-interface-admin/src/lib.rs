@@ -4,14 +4,19 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use sdkwork_api_app_billing::list_ledger_entries;
 use sdkwork_api_app_catalog::{
     list_channels, list_model_entries, list_providers, persist_channel, persist_model,
     persist_provider,
 };
 use sdkwork_api_app_credential::{list_credentials, persist_credential};
 use sdkwork_api_app_identity::{issue_jwt, verify_jwt, Claims};
+use sdkwork_api_app_routing::simulate_route_with_store;
+use sdkwork_api_app_usage::list_usage_records;
+use sdkwork_api_domain_billing::LedgerEntry;
 use sdkwork_api_domain_catalog::{Channel, ModelCatalogEntry, ProxyProvider};
 use sdkwork_api_domain_credential::UpstreamCredential;
+use sdkwork_api_domain_usage::UsageRecord;
 use sdkwork_api_storage_sqlite::SqliteAdminStore;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
@@ -66,6 +71,18 @@ struct CreateModelRequest {
     provider_id: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct RoutingSimulationRequest {
+    capability: String,
+    model: String,
+}
+
+#[derive(Debug, Serialize)]
+struct RoutingSimulationResponse {
+    selected_provider_id: String,
+    candidate_ids: Vec<String>,
+}
+
 pub fn admin_router() -> Router {
     Router::new()
         .route("/admin/health", get(|| async { "ok" }))
@@ -78,6 +95,8 @@ pub fn admin_router() -> Router {
         .route("/admin/providers", get(|| async { "providers" }))
         .route("/admin/credentials", get(|| async { "credentials" }))
         .route("/admin/models", get(|| async { "models" }))
+        .route("/admin/usage/records", get(|| async { "usage-records" }))
+        .route("/admin/billing/ledger", get(|| async { "billing-ledger" }))
         .route("/admin/routing/policies", get(|| async { "policies" }))
         .route(
             "/admin/routing/simulations",
@@ -109,11 +128,10 @@ pub fn admin_router_with_pool(pool: SqlitePool) -> Router {
             "/admin/models",
             get(list_models_handler).post(create_model_handler),
         )
+        .route("/admin/usage/records", get(list_usage_records_handler))
+        .route("/admin/billing/ledger", get(list_ledger_entries_handler))
         .route("/admin/routing/policies", get(|| async { "policies" }))
-        .route(
-            "/admin/routing/simulations",
-            post(|| async { "simulations" }),
-        )
+        .route("/admin/routing/simulations", post(simulate_routing_handler))
         .with_state(AdminApiState::new(pool))
 }
 
@@ -209,4 +227,35 @@ async fn create_model_handler(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok((StatusCode::CREATED, Json(model)))
+}
+
+async fn simulate_routing_handler(
+    State(state): State<AdminApiState>,
+    Json(request): Json<RoutingSimulationRequest>,
+) -> Result<Json<RoutingSimulationResponse>, StatusCode> {
+    let decision = simulate_route_with_store(&state.store, &request.capability, &request.model)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(RoutingSimulationResponse {
+        selected_provider_id: decision.selected_provider_id,
+        candidate_ids: decision.candidate_ids,
+    }))
+}
+
+async fn list_usage_records_handler(
+    State(state): State<AdminApiState>,
+) -> Result<Json<Vec<UsageRecord>>, StatusCode> {
+    list_usage_records(&state.store)
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn list_ledger_entries_handler(
+    State(state): State<AdminApiState>,
+) -> Result<Json<Vec<LedgerEntry>>, StatusCode> {
+    list_ledger_entries(&state.store)
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }

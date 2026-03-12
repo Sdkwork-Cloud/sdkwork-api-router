@@ -196,3 +196,68 @@ async fn create_and_list_models() {
     let models_json = read_json(list).await;
     assert_eq!(models_json[0]["external_name"], "gpt-4.1");
 }
+
+#[tokio::test]
+async fn routing_simulation_uses_catalog_models() {
+    let pool = memory_pool().await;
+    let app = sdkwork_api_interface_admin::admin_router_with_pool(pool);
+
+    let create_openrouter = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/models")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"external_name\":\"gpt-4.1\",\"provider_id\":\"provider-openrouter\"}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(create_openrouter.status(), StatusCode::CREATED);
+
+    let create_openai = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/models")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"external_name\":\"gpt-4.1\",\"provider_id\":\"provider-openai-official\"}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(create_openai.status(), StatusCode::CREATED);
+
+    let simulate = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/routing/simulations")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"capability\":\"chat_completion\",\"model\":\"gpt-4.1\"}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(simulate.status(), StatusCode::OK);
+    let simulation_json = read_json(simulate).await;
+    assert_eq!(
+        simulation_json["selected_provider_id"],
+        "provider-openai-official"
+    );
+    assert_eq!(
+        simulation_json["candidate_ids"].as_array().unwrap().len(),
+        2
+    );
+}

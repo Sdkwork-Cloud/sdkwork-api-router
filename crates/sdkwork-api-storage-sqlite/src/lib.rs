@@ -1,6 +1,8 @@
 use anyhow::Result;
+use sdkwork_api_domain_billing::LedgerEntry;
 use sdkwork_api_domain_catalog::{Channel, ModelCatalogEntry, ProxyProvider};
 use sdkwork_api_domain_credential::UpstreamCredential;
+use sdkwork_api_domain_usage::UsageRecord;
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 
 pub async fn run_migrations(url: &str) -> Result<SqlitePool> {
@@ -57,6 +59,24 @@ pub async fn run_migrations(url: &str) -> Result<SqlitePool> {
             external_name TEXT NOT NULL,
             provider_id TEXT NOT NULL,
             PRIMARY KEY (external_name, provider_id)
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS usage_records (
+            project_id TEXT NOT NULL,
+            model TEXT NOT NULL,
+            provider_id TEXT NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS billing_ledger_entries (
+            project_id TEXT NOT NULL,
+            units INTEGER NOT NULL,
+            amount REAL NOT NULL
         )",
     )
     .execute(&pool)
@@ -186,5 +206,62 @@ impl SqliteAdminStore {
                 provider_id,
             })
             .collect())
+    }
+
+    pub async fn insert_usage_record(&self, record: &UsageRecord) -> Result<UsageRecord> {
+        sqlx::query("INSERT INTO usage_records (project_id, model, provider_id) VALUES (?, ?, ?)")
+            .bind(&record.project_id)
+            .bind(&record.model)
+            .bind(&record.provider)
+            .execute(&self.pool)
+            .await?;
+        Ok(record.clone())
+    }
+
+    pub async fn list_usage_records(&self) -> Result<Vec<UsageRecord>> {
+        let rows = sqlx::query_as::<_, (String, String, String)>(
+            "SELECT project_id, model, provider_id FROM usage_records ORDER BY rowid",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(project_id, model, provider)| UsageRecord {
+                project_id,
+                model,
+                provider,
+            })
+            .collect())
+    }
+
+    pub async fn insert_ledger_entry(&self, entry: &LedgerEntry) -> Result<LedgerEntry> {
+        sqlx::query(
+            "INSERT INTO billing_ledger_entries (project_id, units, amount) VALUES (?, ?, ?)",
+        )
+        .bind(&entry.project_id)
+        .bind(i64::try_from(entry.units)?)
+        .bind(entry.amount)
+        .execute(&self.pool)
+        .await?;
+        Ok(entry.clone())
+    }
+
+    pub async fn list_ledger_entries(&self) -> Result<Vec<LedgerEntry>> {
+        let rows = sqlx::query_as::<_, (String, i64, f64)>(
+            "SELECT project_id, units, amount FROM billing_ledger_entries ORDER BY rowid",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let entries = rows
+            .into_iter()
+            .map(|(project_id, units, amount)| {
+                Ok(LedgerEntry {
+                    project_id,
+                    units: u64::try_from(units)?,
+                    amount,
+                })
+            })
+            .collect::<std::result::Result<Vec<_>, std::num::TryFromIntError>>()?;
+        Ok(entries)
     }
 }
