@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/sdkwork-api-config",
+    "crates/sdkwork-api-contract-gateway",
     "crates/sdkwork-api-contract-openai",
     "crates/sdkwork-api-kernel",
     "crates/sdkwork-api-observability",
