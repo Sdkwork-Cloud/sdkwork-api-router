@@ -10,12 +10,18 @@ use sdkwork_api_app_catalog::{
     persist_provider,
 };
 use sdkwork_api_app_credential::{list_credentials, persist_credential};
-use sdkwork_api_app_identity::{issue_jwt, verify_jwt, Claims};
+use sdkwork_api_app_identity::{
+    issue_jwt, list_gateway_api_keys, persist_gateway_api_key, verify_jwt, Claims,
+    CreatedGatewayApiKey,
+};
 use sdkwork_api_app_routing::simulate_route_with_store;
+use sdkwork_api_app_tenant::{list_projects, list_tenants, persist_project, persist_tenant};
 use sdkwork_api_app_usage::list_usage_records;
 use sdkwork_api_domain_billing::LedgerEntry;
 use sdkwork_api_domain_catalog::{Channel, ModelCatalogEntry, ProxyProvider};
 use sdkwork_api_domain_credential::UpstreamCredential;
+use sdkwork_api_domain_identity::GatewayApiKeyRecord;
+use sdkwork_api_domain_tenant::{Project, Tenant};
 use sdkwork_api_domain_usage::UsageRecord;
 use sdkwork_api_storage_sqlite::SqliteAdminStore;
 use serde::{Deserialize, Serialize};
@@ -72,6 +78,26 @@ struct CreateModelRequest {
 }
 
 #[derive(Debug, Deserialize)]
+struct CreateTenantRequest {
+    id: String,
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateProjectRequest {
+    tenant_id: String,
+    id: String,
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateApiKeyRequest {
+    tenant_id: String,
+    project_id: String,
+    environment: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct RoutingSimulationRequest {
     capability: String,
     model: String,
@@ -109,9 +135,18 @@ pub fn admin_router_with_pool(pool: SqlitePool) -> Router {
         .route("/admin/health", get(|| async { "ok" }))
         .route("/admin/auth/login", post(login_handler))
         .route("/admin/auth/me", get(|| async { "me" }))
-        .route("/admin/tenants", get(|| async { "tenants" }))
-        .route("/admin/projects", get(|| async { "projects" }))
-        .route("/admin/api-keys", get(|| async { "api-keys" }))
+        .route(
+            "/admin/tenants",
+            get(list_tenants_handler).post(create_tenant_handler),
+        )
+        .route(
+            "/admin/projects",
+            get(list_projects_handler).post(create_project_handler),
+        )
+        .route(
+            "/admin/api-keys",
+            get(list_api_keys_handler).post(create_api_key_handler),
+        )
         .route(
             "/admin/channels",
             get(list_channels_handler).post(create_channel_handler),
@@ -227,6 +262,68 @@ async fn create_model_handler(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok((StatusCode::CREATED, Json(model)))
+}
+
+async fn list_tenants_handler(
+    State(state): State<AdminApiState>,
+) -> Result<Json<Vec<Tenant>>, StatusCode> {
+    list_tenants(&state.store)
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn create_tenant_handler(
+    State(state): State<AdminApiState>,
+    Json(request): Json<CreateTenantRequest>,
+) -> Result<(StatusCode, Json<Tenant>), StatusCode> {
+    let tenant = persist_tenant(&state.store, &request.id, &request.name)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok((StatusCode::CREATED, Json(tenant)))
+}
+
+async fn list_projects_handler(
+    State(state): State<AdminApiState>,
+) -> Result<Json<Vec<Project>>, StatusCode> {
+    list_projects(&state.store)
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn create_project_handler(
+    State(state): State<AdminApiState>,
+    Json(request): Json<CreateProjectRequest>,
+) -> Result<(StatusCode, Json<Project>), StatusCode> {
+    let project = persist_project(&state.store, &request.tenant_id, &request.id, &request.name)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok((StatusCode::CREATED, Json(project)))
+}
+
+async fn list_api_keys_handler(
+    State(state): State<AdminApiState>,
+) -> Result<Json<Vec<GatewayApiKeyRecord>>, StatusCode> {
+    list_gateway_api_keys(&state.store)
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn create_api_key_handler(
+    State(state): State<AdminApiState>,
+    Json(request): Json<CreateApiKeyRequest>,
+) -> Result<(StatusCode, Json<CreatedGatewayApiKey>), StatusCode> {
+    let created = persist_gateway_api_key(
+        &state.store,
+        &request.tenant_id,
+        &request.project_id,
+        &request.environment,
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok((StatusCode::CREATED, Json(created)))
 }
 
 async fn simulate_routing_handler(

@@ -2,6 +2,8 @@ use anyhow::Result;
 use sdkwork_api_domain_billing::LedgerEntry;
 use sdkwork_api_domain_catalog::{Channel, ModelCatalogEntry, ProxyProvider};
 use sdkwork_api_domain_credential::UpstreamCredential;
+use sdkwork_api_domain_identity::GatewayApiKeyRecord;
+use sdkwork_api_domain_tenant::{Project, Tenant};
 use sdkwork_api_domain_usage::UsageRecord;
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 
@@ -14,6 +16,14 @@ pub async fn run_migrations(url: &str) -> Result<SqlitePool> {
         "CREATE TABLE IF NOT EXISTS identity_users (
             id TEXT PRIMARY KEY NOT NULL,
             email TEXT NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS tenant_records (
+            id TEXT PRIMARY KEY NOT NULL,
+            name TEXT NOT NULL
         )",
     )
     .execute(&pool)
@@ -77,6 +87,17 @@ pub async fn run_migrations(url: &str) -> Result<SqlitePool> {
             project_id TEXT NOT NULL,
             units INTEGER NOT NULL,
             amount REAL NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS identity_gateway_api_keys (
+            hashed_key TEXT PRIMARY KEY NOT NULL,
+            tenant_id TEXT NOT NULL,
+            project_id TEXT NOT NULL,
+            environment TEXT NOT NULL,
+            active INTEGER NOT NULL
         )",
     )
     .execute(&pool)
@@ -263,5 +284,96 @@ impl SqliteAdminStore {
             })
             .collect::<std::result::Result<Vec<_>, std::num::TryFromIntError>>()?;
         Ok(entries)
+    }
+
+    pub async fn insert_tenant(&self, tenant: &Tenant) -> Result<Tenant> {
+        sqlx::query(
+            "INSERT INTO tenant_records (id, name) VALUES (?, ?)
+             ON CONFLICT(id) DO UPDATE SET name = excluded.name",
+        )
+        .bind(&tenant.id)
+        .bind(&tenant.name)
+        .execute(&self.pool)
+        .await?;
+        Ok(tenant.clone())
+    }
+
+    pub async fn list_tenants(&self) -> Result<Vec<Tenant>> {
+        let rows = sqlx::query_as::<_, (String, String)>(
+            "SELECT id, name FROM tenant_records ORDER BY id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, name)| Tenant { id, name })
+            .collect())
+    }
+
+    pub async fn insert_project(&self, project: &Project) -> Result<Project> {
+        sqlx::query(
+            "INSERT INTO tenant_projects (id, tenant_id, name) VALUES (?, ?, ?)
+             ON CONFLICT(id) DO UPDATE SET tenant_id = excluded.tenant_id, name = excluded.name",
+        )
+        .bind(&project.id)
+        .bind(&project.tenant_id)
+        .bind(&project.name)
+        .execute(&self.pool)
+        .await?;
+        Ok(project.clone())
+    }
+
+    pub async fn list_projects(&self) -> Result<Vec<Project>> {
+        let rows = sqlx::query_as::<_, (String, String, String)>(
+            "SELECT tenant_id, id, name FROM tenant_projects ORDER BY tenant_id, id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(tenant_id, id, name)| Project {
+                tenant_id,
+                id,
+                name,
+            })
+            .collect())
+    }
+
+    pub async fn insert_gateway_api_key(
+        &self,
+        record: &GatewayApiKeyRecord,
+    ) -> Result<GatewayApiKeyRecord> {
+        sqlx::query(
+            "INSERT INTO identity_gateway_api_keys (hashed_key, tenant_id, project_id, environment, active) VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT(hashed_key) DO UPDATE SET tenant_id = excluded.tenant_id, project_id = excluded.project_id, environment = excluded.environment, active = excluded.active",
+        )
+        .bind(&record.hashed_key)
+        .bind(&record.tenant_id)
+        .bind(&record.project_id)
+        .bind(&record.environment)
+        .bind(if record.active { 1_i64 } else { 0_i64 })
+        .execute(&self.pool)
+        .await?;
+        Ok(record.clone())
+    }
+
+    pub async fn list_gateway_api_keys(&self) -> Result<Vec<GatewayApiKeyRecord>> {
+        let rows = sqlx::query_as::<_, (String, String, String, String, i64)>(
+            "SELECT tenant_id, project_id, environment, hashed_key, active FROM identity_gateway_api_keys ORDER BY rowid",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(tenant_id, project_id, environment, hashed_key, active)| GatewayApiKeyRecord {
+                    tenant_id,
+                    project_id,
+                    environment,
+                    hashed_key,
+                    active: active != 0,
+                },
+            )
+            .collect())
     }
 }

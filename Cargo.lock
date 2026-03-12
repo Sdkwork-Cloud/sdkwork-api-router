@@ -902,9 +902,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64",
+ "sdkwork-api-domain-identity",
+ "sdkwork-api-storage-sqlite",
  "serde",
  "serde_json",
  "sha2",
+ "tokio",
 ]
 
 [[package]]
@@ -914,6 +917,16 @@ dependencies = [
  "anyhow",
  "sdkwork-api-domain-catalog",
  "sdkwork-api-domain-routing",
+ "sdkwork-api-storage-sqlite",
+ "tokio",
+]
+
+[[package]]
+name = "sdkwork-api-app-tenant"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "sdkwork-api-domain-tenant",
  "sdkwork-api-storage-sqlite",
  "tokio",
 ]
@@ -968,6 +981,9 @@ dependencies = [
 [[package]]
 name = "sdkwork-api-domain-identity"
 version = "0.1.0"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "sdkwork-api-domain-routing"
@@ -976,6 +992,9 @@ version = "0.1.0"
 [[package]]
 name = "sdkwork-api-domain-tenant"
 version = "0.1.0"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "sdkwork-api-domain-usage"
@@ -995,10 +1014,13 @@ dependencies = [
  "sdkwork-api-app-credential",
  "sdkwork-api-app-identity",
  "sdkwork-api-app-routing",
+ "sdkwork-api-app-tenant",
  "sdkwork-api-app-usage",
  "sdkwork-api-domain-billing",
  "sdkwork-api-domain-catalog",
  "sdkwork-api-domain-credential",
+ "sdkwork-api-domain-identity",
+ "sdkwork-api-domain-tenant",
  "sdkwork-api-domain-usage",
  "sdkwork-api-storage-sqlite",
  "serde",
@@ -1103,6 +1125,8 @@ dependencies = [
  "sdkwork-api-domain-billing",
  "sdkwork-api-domain-catalog",
  "sdkwork-api-domain-credential",
+ "sdkwork-api-domain-identity",
+ "sdkwork-api-domain-tenant",
  "sdkwork-api-domain-usage",
  "sqlx",
  "tokio",
