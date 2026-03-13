@@ -22,7 +22,8 @@ use sdkwork_api_contract_openai::uploads::{
     AddUploadPartRequest, CompleteUploadRequest, CreateUploadRequest,
 };
 use sdkwork_api_contract_openai::vector_stores::{
-    CreateVectorStoreFileRequest, CreateVectorStoreRequest, UpdateVectorStoreRequest,
+    CreateVectorStoreFileBatchRequest, CreateVectorStoreFileRequest, CreateVectorStoreRequest,
+    UpdateVectorStoreRequest,
 };
 use serde_json::Value;
 
@@ -76,6 +77,10 @@ pub enum ProviderRequest<'a> {
     VectorStoreFilesList(&'a str),
     VectorStoreFilesRetrieve(&'a str, &'a str),
     VectorStoreFilesDelete(&'a str, &'a str),
+    VectorStoreFileBatches(&'a str, &'a CreateVectorStoreFileBatchRequest),
+    VectorStoreFileBatchesRetrieve(&'a str, &'a str),
+    VectorStoreFileBatchesCancel(&'a str, &'a str),
+    VectorStoreFileBatchesListFiles(&'a str, &'a str),
 }
 
 pub enum ProviderOutput {

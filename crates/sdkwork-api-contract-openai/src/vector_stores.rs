@@ -38,6 +38,19 @@ impl CreateVectorStoreFileRequest {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateVectorStoreFileBatchRequest {
+    pub file_ids: Vec<String>,
+}
+
+impl CreateVectorStoreFileBatchRequest {
+    pub fn new(file_ids: Vec<impl Into<String>>) -> Self {
+        Self {
+            file_ids: file_ids.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct VectorStoreObject {
     pub id: String,
@@ -135,5 +148,28 @@ impl DeleteVectorStoreFileResponse {
             object: "vector_store.file.deleted",
             deleted: true,
         }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct VectorStoreFileBatchObject {
+    pub id: String,
+    pub object: &'static str,
+    pub status: &'static str,
+}
+
+impl VectorStoreFileBatchObject {
+    pub fn new(id: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            object: "vector_store.file_batch",
+            status: "in_progress",
+        }
+    }
+
+    pub fn cancelled(id: impl Into<String>) -> Self {
+        let mut batch = Self::new(id);
+        batch.status = "cancelled";
+        batch
     }
 }

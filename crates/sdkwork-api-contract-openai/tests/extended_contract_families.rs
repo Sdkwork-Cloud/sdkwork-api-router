@@ -16,9 +16,10 @@ use sdkwork_api_contract_openai::uploads::{
     UploadPartObject,
 };
 use sdkwork_api_contract_openai::vector_stores::{
-    CreateVectorStoreFileRequest, CreateVectorStoreRequest, DeleteVectorStoreFileResponse,
-    DeleteVectorStoreResponse, ListVectorStoreFilesResponse, ListVectorStoresResponse,
-    UpdateVectorStoreRequest, VectorStoreFileObject, VectorStoreObject,
+    CreateVectorStoreFileBatchRequest, CreateVectorStoreFileRequest, CreateVectorStoreRequest,
+    DeleteVectorStoreFileResponse, DeleteVectorStoreResponse, ListVectorStoreFilesResponse,
+    ListVectorStoresResponse, UpdateVectorStoreRequest, VectorStoreFileBatchObject,
+    VectorStoreFileObject, VectorStoreObject,
 };
 use sdkwork_api_contract_openai::webhooks::{CreateWebhookRequest, WebhookObject};
 
@@ -208,6 +209,18 @@ fn serializes_vector_store_contracts() {
     let deleted_file_json = serde_json::to_value(deleted_file).unwrap();
     assert_eq!(deleted_file_json["object"], "vector_store.file.deleted");
     assert_eq!(deleted_file_json["deleted"], true);
+
+    let file_batch_request = CreateVectorStoreFileBatchRequest::new(vec!["file_1", "file_2"]);
+    let file_batch_request_json = serde_json::to_value(file_batch_request).unwrap();
+    assert_eq!(file_batch_request_json["file_ids"][0], "file_1");
+
+    let file_batch = VectorStoreFileBatchObject::new("vsfb_1");
+    let file_batch_json = serde_json::to_value(file_batch).unwrap();
+    assert_eq!(file_batch_json["object"], "vector_store.file_batch");
+
+    let cancelled_file_batch = VectorStoreFileBatchObject::cancelled("vsfb_1");
+    let cancelled_file_batch_json = serde_json::to_value(cancelled_file_batch).unwrap();
+    assert_eq!(cancelled_file_batch_json["status"], "cancelled");
 }
 
 #[test]

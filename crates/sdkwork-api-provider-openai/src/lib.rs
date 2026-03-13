@@ -20,7 +20,8 @@ use sdkwork_api_contract_openai::uploads::{
     AddUploadPartRequest, CompleteUploadRequest, CreateUploadRequest,
 };
 use sdkwork_api_contract_openai::vector_stores::{
-    CreateVectorStoreFileRequest, CreateVectorStoreRequest, UpdateVectorStoreRequest,
+    CreateVectorStoreFileBatchRequest, CreateVectorStoreFileRequest, CreateVectorStoreRequest,
+    UpdateVectorStoreRequest,
 };
 use sdkwork_api_domain_catalog::ModelCatalogEntry;
 use sdkwork_api_provider_core::{
@@ -377,6 +378,66 @@ impl OpenAiProviderAdapter {
         .await
     }
 
+    pub async fn create_vector_store_file_batch(
+        &self,
+        api_key: &str,
+        vector_store_id: &str,
+        request: &CreateVectorStoreFileBatchRequest,
+    ) -> Result<Value> {
+        self.post_json(
+            &format!("/v1/vector_stores/{vector_store_id}/file_batches"),
+            api_key,
+            request,
+        )
+        .await
+    }
+
+    pub async fn retrieve_vector_store_file_batch(
+        &self,
+        api_key: &str,
+        vector_store_id: &str,
+        batch_id: &str,
+    ) -> Result<Value> {
+        self.get_json(
+            &format!("/v1/vector_stores/{vector_store_id}/file_batches/{batch_id}"),
+            api_key,
+        )
+        .await
+    }
+
+    pub async fn cancel_vector_store_file_batch(
+        &self,
+        api_key: &str,
+        vector_store_id: &str,
+        batch_id: &str,
+    ) -> Result<Value> {
+        let response = self
+            .client
+            .post(format!(
+                "{}/v1/vector_stores/{vector_store_id}/file_batches/{batch_id}/cancel",
+                self.base_url
+            ))
+            .bearer_auth(api_key)
+            .send()
+            .await?
+            .error_for_status()?;
+
+        Ok(response.json::<Value>().await?)
+    }
+
+    pub async fn list_vector_store_file_batch_files(
+        &self,
+        api_key: &str,
+        vector_store_id: &str,
+        batch_id: &str,
+    ) -> Result<Value> {
+        self.get_json(
+            &format!("/v1/vector_stores/{vector_store_id}/file_batches/{batch_id}/files"),
+            api_key,
+        )
+        .await
+    }
+
     async fn post_json<T: serde::Serialize>(
         &self,
         path: &str,
@@ -603,6 +664,30 @@ impl ProviderExecutionAdapter for OpenAiProviderAdapter {
             ProviderRequest::VectorStoreFilesDelete(vector_store_id, file_id) => {
                 Ok(ProviderOutput::Json(
                     self.delete_vector_store_file(api_key, vector_store_id, file_id)
+                        .await?,
+                ))
+            }
+            ProviderRequest::VectorStoreFileBatches(vector_store_id, request) => {
+                Ok(ProviderOutput::Json(
+                    self.create_vector_store_file_batch(api_key, vector_store_id, request)
+                        .await?,
+                ))
+            }
+            ProviderRequest::VectorStoreFileBatchesRetrieve(vector_store_id, batch_id) => {
+                Ok(ProviderOutput::Json(
+                    self.retrieve_vector_store_file_batch(api_key, vector_store_id, batch_id)
+                        .await?,
+                ))
+            }
+            ProviderRequest::VectorStoreFileBatchesCancel(vector_store_id, batch_id) => {
+                Ok(ProviderOutput::Json(
+                    self.cancel_vector_store_file_batch(api_key, vector_store_id, batch_id)
+                        .await?,
+                ))
+            }
+            ProviderRequest::VectorStoreFileBatchesListFiles(vector_store_id, batch_id) => {
+                Ok(ProviderOutput::Json(
+                    self.list_vector_store_file_batch_files(api_key, vector_store_id, batch_id)
                         .await?,
                 ))
             }
