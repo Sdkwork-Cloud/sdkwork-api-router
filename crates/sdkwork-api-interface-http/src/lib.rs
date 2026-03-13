@@ -46,6 +46,8 @@ use sdkwork_api_app_gateway::get_assistant;
 use sdkwork_api_app_gateway::get_batch;
 use sdkwork_api_app_gateway::get_file;
 use sdkwork_api_app_gateway::get_fine_tuning_job;
+use sdkwork_api_app_gateway::get_model;
+use sdkwork_api_app_gateway::get_model_from_store;
 use sdkwork_api_app_gateway::get_vector_store;
 use sdkwork_api_app_gateway::get_vector_store_file;
 use sdkwork_api_app_gateway::get_vector_store_file_batch;
@@ -152,6 +154,7 @@ pub fn gateway_router() -> Router {
     Router::new()
         .route("/health", get(|| async { "ok" }))
         .route("/v1/models", get(list_models_handler))
+        .route("/v1/models/{model_id}", get(model_retrieve_handler))
         .route("/v1/chat/completions", post(chat_completions_handler))
         .route("/v1/completions", post(completions_handler))
         .route("/v1/responses", post(responses_handler))
@@ -285,6 +288,10 @@ pub fn gateway_router_with_store_and_secret_manager(
     Router::new()
         .route("/health", get(|| async { "ok" }))
         .route("/v1/models", get(list_models_from_store_handler))
+        .route(
+            "/v1/models/{model_id}",
+            get(model_retrieve_from_store_handler),
+        )
         .route(
             "/v1/chat/completions",
             post(chat_completions_with_state_handler),
@@ -420,6 +427,12 @@ async fn list_models_handler() -> Json<sdkwork_api_contract_openai::models::List
     Json(list_models("tenant-1", "project-1").expect("models response"))
 }
 
+async fn model_retrieve_handler(
+    Path(model_id): Path<String>,
+) -> Json<sdkwork_api_contract_openai::models::ModelObject> {
+    Json(get_model("tenant-1", "project-1", &model_id).expect("model response"))
+}
+
 async fn list_models_from_store_handler(
     State(state): State<GatewayApiState>,
 ) -> Result<Json<sdkwork_api_contract_openai::models::ListModelsResponse>, Response> {
@@ -433,6 +446,23 @@ async fn list_models_from_store_handler(
             )
                 .into_response()
         })
+}
+
+async fn model_retrieve_from_store_handler(
+    State(state): State<GatewayApiState>,
+    Path(model_id): Path<String>,
+) -> Result<Json<sdkwork_api_contract_openai::models::ModelObject>, Response> {
+    get_model_from_store(state.store.as_ref(), "tenant-1", "project-1", &model_id)
+        .await
+        .map_err(|_| {
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to load model",
+            )
+                .into_response()
+        })?
+        .map(Json)
+        .ok_or_else(|| (axum::http::StatusCode::NOT_FOUND, "model not found").into_response())
 }
 
 async fn chat_completions_handler(

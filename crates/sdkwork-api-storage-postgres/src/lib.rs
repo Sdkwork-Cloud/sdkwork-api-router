@@ -380,6 +380,23 @@ impl PostgresAdminStore {
             .collect())
     }
 
+    pub async fn find_model(&self, external_name: &str) -> Result<Option<ModelCatalogEntry>> {
+        let row = sqlx::query_as::<_, (String, String)>(
+            "SELECT external_name, provider_id FROM catalog_models
+             WHERE external_name = $1
+             ORDER BY provider_id
+             LIMIT 1",
+        )
+        .bind(external_name)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|(external_name, provider_id)| ModelCatalogEntry {
+            external_name,
+            provider_id,
+        }))
+    }
+
     pub async fn insert_usage_record(&self, record: &UsageRecord) -> Result<UsageRecord> {
         sqlx::query(
             "INSERT INTO usage_records (project_id, model, provider_id) VALUES ($1, $2, $3)",
@@ -609,6 +626,10 @@ impl AdminStore for PostgresAdminStore {
 
     async fn list_models(&self) -> Result<Vec<ModelCatalogEntry>> {
         PostgresAdminStore::list_models(self).await
+    }
+
+    async fn find_model(&self, external_name: &str) -> Result<Option<ModelCatalogEntry>> {
+        PostgresAdminStore::find_model(self, external_name).await
     }
 
     async fn insert_usage_record(&self, record: &UsageRecord) -> Result<UsageRecord> {

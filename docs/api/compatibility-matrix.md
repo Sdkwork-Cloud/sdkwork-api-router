@@ -5,6 +5,7 @@
 | Endpoint | Status | Notes |
 |---|---|---|
 | `/v1/models` | Implemented | Catalog-backed through SQLite when the stateful gateway is used |
+| `/v1/models/{model}` | Implemented | Catalog-backed model retrieval through SQLite when the stateful gateway is used |
 | `/v1/chat/completions` | Implemented | Stateful mode supports OpenAI-compatible upstream relay for non-stream and `text/event-stream`; falls back to stub output when provider execution is unavailable |
 | `/v1/completions` | Implemented | Stateful mode supports OpenAI-compatible upstream relay for legacy text completions; otherwise emits local completion fallback |
 | `/v1/responses` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local response object fallback |

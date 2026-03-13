@@ -58,6 +58,10 @@ pub fn list_models(_tenant_id: &str, _project_id: &str) -> Result<ListModelsResp
     )]))
 }
 
+pub fn get_model(_tenant_id: &str, _project_id: &str, model_id: &str) -> Result<ModelObject> {
+    Ok(ModelObject::new(model_id, "sdkwork"))
+}
+
 pub async fn list_models_from_store(
     store: &dyn AdminStore,
     _tenant_id: &str,
@@ -70,6 +74,18 @@ pub async fn list_models_from_store(
             .map(|entry| ModelObject::new(entry.external_name, entry.provider_id))
             .collect(),
     ))
+}
+
+pub async fn get_model_from_store(
+    store: &dyn AdminStore,
+    _tenant_id: &str,
+    _project_id: &str,
+    model_id: &str,
+) -> Result<Option<ModelObject>> {
+    Ok(store
+        .find_model(model_id)
+        .await?
+        .map(|entry| ModelObject::new(entry.external_name, entry.provider_id)))
 }
 
 pub async fn relay_chat_completion_from_store(
