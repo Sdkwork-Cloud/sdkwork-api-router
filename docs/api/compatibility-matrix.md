@@ -6,6 +6,7 @@
 |---|---|---|
 | `/v1/models` | Implemented | Catalog-backed through SQLite when the stateful gateway is used |
 | `/v1/chat/completions` | Implemented | Stateful mode supports OpenAI-compatible upstream relay for non-stream and `text/event-stream`; falls back to stub output when provider execution is unavailable |
+| `/v1/completions` | Implemented | Stateful mode supports OpenAI-compatible upstream relay for legacy text completions; otherwise emits local completion fallback |
 | `/v1/responses` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local response object fallback |
 | `/v1/embeddings` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local embeddings fallback |
 
@@ -31,7 +32,7 @@
 |---|---|---|
 | Models | Defined | Implemented |
 | Chat Completions | Defined | Implemented |
-| Completions | Defined | Contract only |
+| Completions | Defined | Implemented |
 | Responses | Defined | Implemented |
 | Embeddings | Defined | Implemented |
 | Streaming | Defined | Implemented |

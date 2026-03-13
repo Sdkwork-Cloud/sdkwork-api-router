@@ -12,14 +12,17 @@ use axum::{
 use sdkwork_api_app_billing::persist_ledger_entry;
 use sdkwork_api_app_credential::CredentialSecretManager;
 use sdkwork_api_app_gateway::create_chat_completion;
+use sdkwork_api_app_gateway::create_completion;
 use sdkwork_api_app_gateway::list_models;
 use sdkwork_api_app_gateway::{
     create_embedding, create_response, list_models_from_store, relay_chat_completion_from_store,
-    relay_chat_completion_stream_from_store, relay_embedding_from_store, relay_response_from_store,
+    relay_chat_completion_stream_from_store, relay_completion_from_store,
+    relay_embedding_from_store, relay_response_from_store,
 };
 use sdkwork_api_app_routing::simulate_route_with_store;
 use sdkwork_api_app_usage::persist_usage_record;
 use sdkwork_api_contract_openai::chat_completions::CreateChatCompletionRequest;
+use sdkwork_api_contract_openai::completions::CreateCompletionRequest;
 use sdkwork_api_contract_openai::embeddings::CreateEmbeddingRequest;
 use sdkwork_api_contract_openai::responses::CreateResponseRequest;
 use sdkwork_api_contract_openai::streaming::SseFrame;
@@ -68,6 +71,7 @@ pub fn gateway_router() -> Router {
         .route("/health", get(|| async { "ok" }))
         .route("/v1/models", get(list_models_handler))
         .route("/v1/chat/completions", post(chat_completions_handler))
+        .route("/v1/completions", post(completions_handler))
         .route("/v1/responses", post(responses_handler))
         .route("/v1/embeddings", post(embeddings_handler))
 }
@@ -114,6 +118,7 @@ pub fn gateway_router_with_store_and_secret_manager(
             "/v1/chat/completions",
             post(chat_completions_with_state_handler),
         )
+        .route("/v1/completions", post(completions_with_state_handler))
         .route("/v1/responses", post(responses_with_state_handler))
         .route("/v1/embeddings", post(embeddings_with_state_handler))
         .with_state(GatewayApiState::with_store_and_secret_manager(
@@ -164,6 +169,12 @@ async fn responses_handler(
     ExtractJson(request): ExtractJson<CreateResponseRequest>,
 ) -> Json<sdkwork_api_contract_openai::responses::ResponseObject> {
     Json(create_response("tenant-1", "project-1", &request.model).expect("response"))
+}
+
+async fn completions_handler(
+    ExtractJson(request): ExtractJson<CreateCompletionRequest>,
+) -> Json<sdkwork_api_contract_openai::completions::CompletionObject> {
+    Json(create_completion("tenant-1", "project-1", &request.model).expect("completion"))
 }
 
 async fn embeddings_handler(
@@ -350,6 +361,70 @@ async fn responses_with_state_handler(
     }
 
     Json(create_response("tenant-1", "project-1", &request.model).expect("response"))
+        .into_response()
+}
+
+async fn completions_with_state_handler(
+    State(state): State<GatewayApiState>,
+    ExtractJson(request): ExtractJson<CreateCompletionRequest>,
+) -> Response {
+    match relay_completion_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &request,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(
+                state.store.as_ref(),
+                "completions",
+                &request.model,
+                80,
+                0.08,
+            )
+            .await
+            .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream completion",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(
+        state.store.as_ref(),
+        "completions",
+        &request.model,
+        80,
+        0.08,
+    )
+    .await
+    .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(create_completion("tenant-1", "project-1", &request.model).expect("completion"))
         .into_response()
 }
 

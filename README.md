@@ -18,6 +18,7 @@ Backend:
 - OpenAI-compatible contracts for:
   - models
   - chat completions
+  - completions
   - responses
   - embeddings
   - SSE streaming
@@ -43,7 +44,7 @@ Backend:
   - usage records
   - billing ledger entries
 - Catalog-backed `/v1/models`
-- Real upstream relay for stateful `/v1/chat/completions`:
+- Real upstream relay for stateful `/v1/chat/completions` and `/v1/completions`:
   - non-stream JSON relay for `adapter_kind = openai`
   - SSE relay for `stream = true` against OpenAI-compatible upstreams
 - Real upstream relay for stateful `/v1/responses` and `/v1/embeddings` when provider, model, and credential records are present

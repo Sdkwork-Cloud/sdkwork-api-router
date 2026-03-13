@@ -2,6 +2,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use reqwest::Client;
 use sdkwork_api_contract_openai::chat_completions::CreateChatCompletionRequest;
+use sdkwork_api_contract_openai::completions::CreateCompletionRequest;
 use sdkwork_api_contract_openai::embeddings::CreateEmbeddingRequest;
 use sdkwork_api_contract_openai::responses::CreateResponseRequest;
 use sdkwork_api_domain_catalog::ModelCatalogEntry;
@@ -48,6 +49,14 @@ impl OpenAiProviderAdapter {
 
     pub async fn responses(&self, api_key: &str, request: &CreateResponseRequest) -> Result<Value> {
         self.post_json("/v1/responses", api_key, request).await
+    }
+
+    pub async fn completions(
+        &self,
+        api_key: &str,
+        request: &CreateCompletionRequest,
+    ) -> Result<Value> {
+        self.post_json("/v1/completions", api_key, request).await
     }
 
     pub async fn embeddings(
@@ -110,6 +119,9 @@ impl ProviderExecutionAdapter for OpenAiProviderAdapter {
             )),
             ProviderRequest::ChatCompletionsStream(request) => Ok(ProviderOutput::Stream(
                 self.chat_completions_stream(api_key, request).await?,
+            )),
+            ProviderRequest::Completions(request) => Ok(ProviderOutput::Json(
+                self.completions(api_key, request).await?,
             )),
             ProviderRequest::Responses(request) => Ok(ProviderOutput::Json(
                 self.responses(api_key, request).await?,

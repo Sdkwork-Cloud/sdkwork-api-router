@@ -3,6 +3,7 @@ use sdkwork_api_app_credential::{resolve_provider_secret_with_manager, Credentia
 use sdkwork_api_app_routing::simulate_route_with_store;
 use sdkwork_api_contract_openai::chat_completions::ChatCompletionResponse;
 use sdkwork_api_contract_openai::chat_completions::CreateChatCompletionRequest;
+use sdkwork_api_contract_openai::completions::{CompletionObject, CreateCompletionRequest};
 use sdkwork_api_contract_openai::embeddings::CreateEmbeddingRequest;
 use sdkwork_api_contract_openai::embeddings::CreateEmbeddingResponse;
 use sdkwork_api_contract_openai::models::{ListModelsResponse, ModelObject};
@@ -120,6 +121,33 @@ pub async fn relay_response_from_store(
     .await
 }
 
+pub async fn relay_completion_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    request: &CreateCompletionRequest,
+) -> Result<Option<Value>> {
+    let decision = simulate_route_with_store(store, "completions", &request.model).await?;
+    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
+        return Ok(None);
+    };
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &provider.adapter_kind,
+        provider.base_url,
+        &api_key,
+        ProviderRequest::Completions(request),
+    )
+    .await
+}
+
 pub async fn relay_embedding_from_store(
     store: &dyn AdminStore,
     secret_manager: &CredentialSecretManager,
@@ -157,6 +185,14 @@ pub fn create_chat_completion(
 
 pub fn create_response(_tenant_id: &str, _project_id: &str, model: &str) -> Result<ResponseObject> {
     Ok(ResponseObject::empty("resp_1", model))
+}
+
+pub fn create_completion(
+    _tenant_id: &str,
+    _project_id: &str,
+    _model: &str,
+) -> Result<CompletionObject> {
+    Ok(CompletionObject::new("cmpl_1", "SDKWork completion"))
 }
 
 pub fn create_embedding(

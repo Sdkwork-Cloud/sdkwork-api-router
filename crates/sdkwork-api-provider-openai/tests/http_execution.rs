@@ -58,6 +58,43 @@ async fn adapter_posts_authorized_json_to_openai_compatible_upstream() {
     );
 }
 
+#[tokio::test]
+async fn adapter_posts_legacy_completions_to_openai_compatible_upstream() {
+    let state = CaptureState::default();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+
+    let app = Router::new()
+        .route("/v1/completions", post(capture_completion_request))
+        .with_state(state.clone());
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let adapter =
+        sdkwork_api_provider_openai::OpenAiProviderAdapter::new(format!("http://{address}"));
+    let request = sdkwork_api_contract_openai::completions::CreateCompletionRequest::new(
+        "gpt-3.5-turbo-instruct",
+        "hello",
+    );
+
+    let response = adapter
+        .completions("sk-upstream-openai", &request)
+        .await
+        .unwrap();
+
+    assert_eq!(response["object"], "text_completion");
+    assert_eq!(
+        state.authorization.lock().unwrap().as_deref(),
+        Some("Bearer sk-upstream-openai")
+    );
+    assert_eq!(
+        state.body.lock().unwrap().as_ref().unwrap()["prompt"],
+        "hello"
+    );
+}
+
 async fn capture_chat_request(
     State(state): State<CaptureState>,
     headers: HeaderMap,
@@ -76,6 +113,27 @@ async fn capture_chat_request(
             "object":"chat.completion",
             "model":"gpt-4.1",
             "choices":[]
+        })),
+    )
+}
+
+async fn capture_completion_request(
+    State(state): State<CaptureState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> (StatusCode, Json<Value>) {
+    *state.authorization.lock().unwrap() = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+    *state.body.lock().unwrap() = Some(body);
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "id":"cmpl_upstream",
+            "object":"text_completion",
+            "choices":[{"index":0,"text":"hello from upstream","finish_reason":"stop"}]
         })),
     )
 }

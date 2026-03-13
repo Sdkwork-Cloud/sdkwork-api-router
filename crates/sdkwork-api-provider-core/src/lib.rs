@@ -4,6 +4,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
 use sdkwork_api_contract_openai::chat_completions::CreateChatCompletionRequest;
+use sdkwork_api_contract_openai::completions::CreateCompletionRequest;
 use sdkwork_api_contract_openai::embeddings::CreateEmbeddingRequest;
 use sdkwork_api_contract_openai::responses::CreateResponseRequest;
 use serde_json::Value;
@@ -21,6 +22,7 @@ pub trait ProviderAdapter {
 pub enum ProviderRequest<'a> {
     ChatCompletions(&'a CreateChatCompletionRequest),
     ChatCompletionsStream(&'a CreateChatCompletionRequest),
+    Completions(&'a CreateCompletionRequest),
     Responses(&'a CreateResponseRequest),
     Embeddings(&'a CreateEmbeddingRequest),
 }

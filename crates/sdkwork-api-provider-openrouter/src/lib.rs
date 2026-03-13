@@ -1,6 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use sdkwork_api_contract_openai::chat_completions::CreateChatCompletionRequest;
+use sdkwork_api_contract_openai::completions::CreateCompletionRequest;
 use sdkwork_api_contract_openai::embeddings::CreateEmbeddingRequest;
 use sdkwork_api_contract_openai::responses::CreateResponseRequest;
 use sdkwork_api_domain_catalog::ModelCatalogEntry;
@@ -52,6 +53,14 @@ impl OpenRouterProviderAdapter {
         self.delegate.responses(api_key, request).await
     }
 
+    pub async fn completions(
+        &self,
+        api_key: &str,
+        request: &CreateCompletionRequest,
+    ) -> Result<Value> {
+        self.delegate.completions(api_key, request).await
+    }
+
     pub async fn embeddings(
         &self,
         api_key: &str,
@@ -76,6 +85,9 @@ impl ProviderExecutionAdapter for OpenRouterProviderAdapter {
             )),
             ProviderRequest::ChatCompletionsStream(request) => Ok(ProviderOutput::Stream(
                 self.chat_completions_stream(api_key, request).await?,
+            )),
+            ProviderRequest::Completions(request) => Ok(ProviderOutput::Json(
+                self.completions(api_key, request).await?,
             )),
             ProviderRequest::Responses(request) => Ok(ProviderOutput::Json(
                 self.responses(api_key, request).await?,
