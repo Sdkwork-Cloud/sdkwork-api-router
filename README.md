@@ -27,8 +27,13 @@ Backend:
   - usage records
   - billing ledger entries
 - Catalog-backed `/v1/models`
-- Minimal `/v1/chat/completions`, `/v1/responses`, `/v1/embeddings`, and streaming responses
+- Real upstream relay for stateful `/v1/chat/completions`:
+  - non-stream JSON relay for `adapter_kind = openai`
+  - SSE relay for `stream = true` against OpenAI-compatible upstreams
+- Real upstream relay for stateful `/v1/responses` and `/v1/embeddings` when provider, model, and credential records are present
+- Stub fallback responses for unconfigured providers or unsupported adapter kinds
 - Routing simulation API backed by catalog model candidates
+- Encrypted upstream credential storage and runtime secret resolution through `credential_master_key`
 - Usage and billing telemetry recording from stateful gateway handlers
 
 Console:
@@ -48,10 +53,45 @@ The repository is now a working control-plane-first gateway skeleton, but it is 
 
 Known gaps:
 
-- `/v1/*` execution is still stubbed at the response generation layer instead of proxying real upstream responses
-- upstream secret storage backends exist as crate boundaries, but provider credential encryption and retrieval are not yet wired into runtime request execution
+- upstream relay currently supports only the OpenAI-compatible adapter path (`adapter_kind = openai`)
+- provider execution still uses a minimal direct adapter switch instead of a fully generic multi-adapter dispatch kernel
+- only stateful gateway execution paths relay upstream responses; the stateless demo router still emits local stub payloads
 - routing policies are still placeholder-only; current routing uses catalog candidates plus deterministic fallback
 - only SQLite is fully implemented as an active persistence driver; PostgreSQL, MySQL, and libsql remain extension boundaries
+
+## Minimal Upstream Relay Setup
+
+The current relay path expects:
+
+1. a channel
+2. a provider with `adapter_kind` and `base_url`
+3. an encrypted upstream credential
+4. a model catalog entry pointing at that provider
+
+Example provider payload:
+
+```json
+{
+  "id": "provider-openai-official",
+  "channel_id": "openai",
+  "adapter_kind": "openai",
+  "base_url": "https://api.openai.com",
+  "display_name": "OpenAI Official"
+}
+```
+
+Example credential payload:
+
+```json
+{
+  "tenant_id": "tenant-1",
+  "provider_id": "provider-openai-official",
+  "key_reference": "cred-openai",
+  "secret_value": "sk-upstream-openai"
+}
+```
+
+`secret_value` is encrypted before being stored in SQLite. The runtime resolves it with the configured `credential_master_key`.
 
 ## Development
 
@@ -78,6 +118,7 @@ pnpm --dir console exec vite build
 - `ProxyProvider` models a concrete access path under a channel, such as an official endpoint, OpenRouter-style broker, or self-hosted Ollama node.
 - The backend is split into domain, application, interface, storage, provider, secret, and runtime crates to preserve controller/service/repository layering without forcing separate deployable processes for every boundary.
 - Standalone and embedded runtime modes share the same Rust crates; Tauri integration consumes the same admin and gateway capabilities through the runtime host boundary.
+- Stateful gateway execution now uses the catalog, routing, credential, and provider layers together to relay OpenAI-compatible upstream requests while still preserving local stub fallbacks for incomplete configuration.
 
 ## Design Docs
 

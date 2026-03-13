@@ -34,5 +34,7 @@ The current repository includes:
 - a Tauri shell scaffold with an initial runtime command
 - a live React console that consumes admin APIs for workspace, channel mesh, routing simulation, and telemetry views
 - SQLite-backed control-plane persistence for identity, catalog, usage, and billing slices
+- encrypted upstream credential persistence and runtime secret resolution
+- stateful OpenAI-compatible upstream relay for chat completions, responses, embeddings, and chat SSE when provider configuration is present
 
-The runtime host is intentionally lightweight at this stage and will be expanded to assemble gateway, admin, routing, credential, and provider relay execution in-process.
+The runtime host is still intentionally lightweight, but the core gateway, admin, routing, credential, and provider relay slices now run against the same Rust workspace and can be assembled in-process for embedded mode.
