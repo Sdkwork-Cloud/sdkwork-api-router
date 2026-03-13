@@ -26,6 +26,8 @@ use sdkwork_api_app_gateway::create_assistant;
 use sdkwork_api_app_gateway::create_batch;
 use sdkwork_api_app_gateway::create_chat_completion;
 use sdkwork_api_app_gateway::create_completion;
+use sdkwork_api_app_gateway::create_conversation;
+use sdkwork_api_app_gateway::create_conversation_items;
 use sdkwork_api_app_gateway::create_eval;
 use sdkwork_api_app_gateway::create_file;
 use sdkwork_api_app_gateway::create_fine_tuning_job;
@@ -44,6 +46,8 @@ use sdkwork_api_app_gateway::create_video;
 use sdkwork_api_app_gateway::create_webhook;
 use sdkwork_api_app_gateway::delete_assistant;
 use sdkwork_api_app_gateway::delete_chat_completion;
+use sdkwork_api_app_gateway::delete_conversation;
+use sdkwork_api_app_gateway::delete_conversation_item;
 use sdkwork_api_app_gateway::delete_file;
 use sdkwork_api_app_gateway::delete_response;
 use sdkwork_api_app_gateway::delete_vector_store;
@@ -54,6 +58,8 @@ use sdkwork_api_app_gateway::file_content;
 use sdkwork_api_app_gateway::get_assistant;
 use sdkwork_api_app_gateway::get_batch;
 use sdkwork_api_app_gateway::get_chat_completion;
+use sdkwork_api_app_gateway::get_conversation;
+use sdkwork_api_app_gateway::get_conversation_item;
 use sdkwork_api_app_gateway::get_file;
 use sdkwork_api_app_gateway::get_fine_tuning_job;
 use sdkwork_api_app_gateway::get_model;
@@ -68,6 +74,8 @@ use sdkwork_api_app_gateway::list_assistants;
 use sdkwork_api_app_gateway::list_batches;
 use sdkwork_api_app_gateway::list_chat_completion_messages;
 use sdkwork_api_app_gateway::list_chat_completions;
+use sdkwork_api_app_gateway::list_conversation_items;
+use sdkwork_api_app_gateway::list_conversations;
 use sdkwork_api_app_gateway::list_files;
 use sdkwork_api_app_gateway::list_fine_tuning_jobs;
 use sdkwork_api_app_gateway::list_models;
@@ -81,6 +89,7 @@ use sdkwork_api_app_gateway::remix_video;
 use sdkwork_api_app_gateway::search_vector_store;
 use sdkwork_api_app_gateway::update_assistant;
 use sdkwork_api_app_gateway::update_chat_completion;
+use sdkwork_api_app_gateway::update_conversation;
 use sdkwork_api_app_gateway::update_vector_store;
 use sdkwork_api_app_gateway::update_webhook;
 use sdkwork_api_app_gateway::video_content;
@@ -90,21 +99,24 @@ use sdkwork_api_app_gateway::{
     relay_cancel_response_from_store, relay_cancel_upload_from_store,
     relay_cancel_vector_store_file_batch_from_store, relay_chat_completion_from_store,
     relay_chat_completion_stream_from_store, relay_compact_response_from_store,
-    relay_complete_upload_from_store, relay_completion_from_store,
-    relay_count_response_input_tokens_from_store, relay_delete_assistant_from_store,
-    relay_delete_chat_completion_from_store, relay_delete_file_from_store,
-    relay_delete_response_from_store, relay_delete_vector_store_file_from_store,
-    relay_delete_vector_store_from_store, relay_delete_video_from_store,
-    relay_delete_webhook_from_store, relay_embedding_from_store, relay_eval_from_store,
-    relay_file_content_from_store, relay_file_from_store, relay_fine_tuning_job_from_store,
-    relay_get_assistant_from_store, relay_get_batch_from_store,
-    relay_get_chat_completion_from_store, relay_get_file_from_store,
+    relay_complete_upload_from_store, relay_completion_from_store, relay_conversation_from_store,
+    relay_conversation_items_from_store, relay_count_response_input_tokens_from_store,
+    relay_delete_assistant_from_store, relay_delete_chat_completion_from_store,
+    relay_delete_conversation_from_store, relay_delete_conversation_item_from_store,
+    relay_delete_file_from_store, relay_delete_response_from_store,
+    relay_delete_vector_store_file_from_store, relay_delete_vector_store_from_store,
+    relay_delete_video_from_store, relay_delete_webhook_from_store, relay_embedding_from_store,
+    relay_eval_from_store, relay_file_content_from_store, relay_file_from_store,
+    relay_fine_tuning_job_from_store, relay_get_assistant_from_store, relay_get_batch_from_store,
+    relay_get_chat_completion_from_store, relay_get_conversation_from_store,
+    relay_get_conversation_item_from_store, relay_get_file_from_store,
     relay_get_fine_tuning_job_from_store, relay_get_response_from_store,
     relay_get_vector_store_file_batch_from_store, relay_get_vector_store_file_from_store,
     relay_get_vector_store_from_store, relay_get_video_from_store, relay_get_webhook_from_store,
     relay_image_generation_from_store, relay_list_assistants_from_store,
     relay_list_batches_from_store, relay_list_chat_completion_messages_from_store,
-    relay_list_chat_completions_from_store, relay_list_files_from_store,
+    relay_list_chat_completions_from_store, relay_list_conversation_items_from_store,
+    relay_list_conversations_from_store, relay_list_files_from_store,
     relay_list_fine_tuning_jobs_from_store, relay_list_response_input_items_from_store,
     relay_list_vector_store_file_batch_files_from_store, relay_list_vector_store_files_from_store,
     relay_list_vector_stores_from_store, relay_list_videos_from_store,
@@ -112,10 +124,11 @@ use sdkwork_api_app_gateway::{
     relay_remix_video_from_store, relay_response_from_store, relay_search_vector_store_from_store,
     relay_speech_from_store, relay_transcription_from_store, relay_translation_from_store,
     relay_update_assistant_from_store, relay_update_chat_completion_from_store,
-    relay_update_vector_store_from_store, relay_update_webhook_from_store, relay_upload_from_store,
-    relay_upload_part_from_store, relay_vector_store_file_batch_from_store,
-    relay_vector_store_file_from_store, relay_vector_store_from_store,
-    relay_video_content_from_store, relay_video_from_store, relay_webhook_from_store,
+    relay_update_conversation_from_store, relay_update_vector_store_from_store,
+    relay_update_webhook_from_store, relay_upload_from_store, relay_upload_part_from_store,
+    relay_vector_store_file_batch_from_store, relay_vector_store_file_from_store,
+    relay_vector_store_from_store, relay_video_content_from_store, relay_video_from_store,
+    relay_webhook_from_store,
 };
 use sdkwork_api_app_routing::simulate_route_with_store;
 use sdkwork_api_app_usage::persist_usage_record;
@@ -129,6 +142,11 @@ use sdkwork_api_contract_openai::chat_completions::{
     ListChatCompletionsResponse, UpdateChatCompletionRequest,
 };
 use sdkwork_api_contract_openai::completions::CreateCompletionRequest;
+use sdkwork_api_contract_openai::conversations::{
+    CreateConversationItemsRequest, CreateConversationRequest, DeleteConversationItemResponse,
+    DeleteConversationResponse, ListConversationItemsResponse, ListConversationsResponse,
+    UpdateConversationRequest,
+};
 use sdkwork_api_contract_openai::embeddings::CreateEmbeddingRequest;
 use sdkwork_api_contract_openai::evals::CreateEvalRequest;
 use sdkwork_api_contract_openai::files::CreateFileRequest;
@@ -211,6 +229,24 @@ pub fn gateway_router() -> Router {
             get(chat_completion_messages_list_handler),
         )
         .route("/v1/completions", post(completions_handler))
+        .route(
+            "/v1/conversations",
+            get(conversations_list_handler).post(conversations_handler),
+        )
+        .route(
+            "/v1/conversations/{conversation_id}",
+            get(conversation_retrieve_handler)
+                .post(conversation_update_handler)
+                .delete(conversation_delete_handler),
+        )
+        .route(
+            "/v1/conversations/{conversation_id}/items",
+            get(conversation_items_list_handler).post(conversation_items_handler),
+        )
+        .route(
+            "/v1/conversations/{conversation_id}/items/{item_id}",
+            get(conversation_item_retrieve_handler).delete(conversation_item_delete_handler),
+        )
         .route("/v1/responses", post(responses_handler))
         .route(
             "/v1/responses/input_tokens",
@@ -395,6 +431,26 @@ pub fn gateway_router_with_store_and_secret_manager(
             get(chat_completion_messages_list_with_state_handler),
         )
         .route("/v1/completions", post(completions_with_state_handler))
+        .route(
+            "/v1/conversations",
+            get(conversations_list_with_state_handler).post(conversations_with_state_handler),
+        )
+        .route(
+            "/v1/conversations/{conversation_id}",
+            get(conversation_retrieve_with_state_handler)
+                .post(conversation_update_with_state_handler)
+                .delete(conversation_delete_with_state_handler),
+        )
+        .route(
+            "/v1/conversations/{conversation_id}/items",
+            get(conversation_items_list_with_state_handler)
+                .post(conversation_items_with_state_handler),
+        )
+        .route(
+            "/v1/conversations/{conversation_id}/items/{item_id}",
+            get(conversation_item_retrieve_with_state_handler)
+                .delete(conversation_item_delete_with_state_handler),
+        )
         .route("/v1/responses", post(responses_with_state_handler))
         .route(
             "/v1/responses/input_tokens",
@@ -668,6 +724,83 @@ async fn chat_completion_messages_list_handler(
     Json(
         list_chat_completion_messages("tenant-1", "project-1", &completion_id)
             .expect("chat completion messages"),
+    )
+}
+
+async fn conversations_handler(
+    ExtractJson(_request): ExtractJson<CreateConversationRequest>,
+) -> Json<sdkwork_api_contract_openai::conversations::ConversationObject> {
+    Json(create_conversation("tenant-1", "project-1").expect("conversation"))
+}
+
+async fn conversations_list_handler() -> Json<ListConversationsResponse> {
+    Json(list_conversations("tenant-1", "project-1").expect("conversation list"))
+}
+
+async fn conversation_retrieve_handler(
+    Path(conversation_id): Path<String>,
+) -> Json<sdkwork_api_contract_openai::conversations::ConversationObject> {
+    Json(get_conversation("tenant-1", "project-1", &conversation_id).expect("conversation"))
+}
+
+async fn conversation_update_handler(
+    Path(conversation_id): Path<String>,
+    ExtractJson(request): ExtractJson<UpdateConversationRequest>,
+) -> Json<sdkwork_api_contract_openai::conversations::ConversationObject> {
+    Json(
+        update_conversation(
+            "tenant-1",
+            "project-1",
+            &conversation_id,
+            request.metadata.unwrap_or(serde_json::json!({})),
+        )
+        .expect("conversation update"),
+    )
+}
+
+async fn conversation_delete_handler(
+    Path(conversation_id): Path<String>,
+) -> Json<DeleteConversationResponse> {
+    Json(
+        delete_conversation("tenant-1", "project-1", &conversation_id)
+            .expect("conversation delete"),
+    )
+}
+
+async fn conversation_items_handler(
+    Path(conversation_id): Path<String>,
+    ExtractJson(_request): ExtractJson<CreateConversationItemsRequest>,
+) -> Json<ListConversationItemsResponse> {
+    Json(
+        create_conversation_items("tenant-1", "project-1", &conversation_id)
+            .expect("conversation items create"),
+    )
+}
+
+async fn conversation_items_list_handler(
+    Path(conversation_id): Path<String>,
+) -> Json<ListConversationItemsResponse> {
+    Json(
+        list_conversation_items("tenant-1", "project-1", &conversation_id)
+            .expect("conversation items list"),
+    )
+}
+
+async fn conversation_item_retrieve_handler(
+    Path((conversation_id, item_id)): Path<(String, String)>,
+) -> Json<sdkwork_api_contract_openai::conversations::ConversationItemObject> {
+    Json(
+        get_conversation_item("tenant-1", "project-1", &conversation_id, &item_id)
+            .expect("conversation item"),
+    )
+}
+
+async fn conversation_item_delete_handler(
+    Path((conversation_id, item_id)): Path<(String, String)>,
+) -> Json<DeleteConversationItemResponse> {
+    Json(
+        delete_conversation_item("tenant-1", "project-1", &conversation_id, &item_id)
+            .expect("conversation item delete"),
     )
 }
 
@@ -1577,6 +1710,557 @@ async fn chat_completion_messages_list_with_state_handler(
     Json(
         list_chat_completion_messages("tenant-1", "project-1", &completion_id)
             .expect("chat completion messages"),
+    )
+    .into_response()
+}
+
+async fn conversations_with_state_handler(
+    State(state): State<GatewayApiState>,
+    ExtractJson(request): ExtractJson<CreateConversationRequest>,
+) -> Response {
+    match relay_conversation_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &request,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(state.store.as_ref(), "responses", "conversations", 20, 0.02)
+                .await
+                .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream conversation",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(state.store.as_ref(), "responses", "conversations", 20, 0.02)
+        .await
+        .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(create_conversation("tenant-1", "project-1").expect("conversation")).into_response()
+}
+
+async fn conversations_list_with_state_handler(State(state): State<GatewayApiState>) -> Response {
+    match relay_list_conversations_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(state.store.as_ref(), "responses", "conversations", 20, 0.02)
+                .await
+                .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream conversation list",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(state.store.as_ref(), "responses", "conversations", 20, 0.02)
+        .await
+        .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(list_conversations("tenant-1", "project-1").expect("conversation list")).into_response()
+}
+
+async fn conversation_retrieve_with_state_handler(
+    State(state): State<GatewayApiState>,
+    Path(conversation_id): Path<String>,
+) -> Response {
+    match relay_get_conversation_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &conversation_id,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(
+                state.store.as_ref(),
+                "responses",
+                &conversation_id,
+                20,
+                0.02,
+            )
+            .await
+            .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream conversation retrieve",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(
+        state.store.as_ref(),
+        "responses",
+        &conversation_id,
+        20,
+        0.02,
+    )
+    .await
+    .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(get_conversation("tenant-1", "project-1", &conversation_id).expect("conversation"))
+        .into_response()
+}
+
+async fn conversation_update_with_state_handler(
+    State(state): State<GatewayApiState>,
+    Path(conversation_id): Path<String>,
+    ExtractJson(request): ExtractJson<UpdateConversationRequest>,
+) -> Response {
+    match relay_update_conversation_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &conversation_id,
+        &request,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(
+                state.store.as_ref(),
+                "responses",
+                &conversation_id,
+                20,
+                0.02,
+            )
+            .await
+            .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream conversation update",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(
+        state.store.as_ref(),
+        "responses",
+        &conversation_id,
+        20,
+        0.02,
+    )
+    .await
+    .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(
+        update_conversation(
+            "tenant-1",
+            "project-1",
+            &conversation_id,
+            request.metadata.unwrap_or(serde_json::json!({})),
+        )
+        .expect("conversation update"),
+    )
+    .into_response()
+}
+
+async fn conversation_delete_with_state_handler(
+    State(state): State<GatewayApiState>,
+    Path(conversation_id): Path<String>,
+) -> Response {
+    match relay_delete_conversation_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &conversation_id,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(
+                state.store.as_ref(),
+                "responses",
+                &conversation_id,
+                20,
+                0.02,
+            )
+            .await
+            .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream conversation delete",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(
+        state.store.as_ref(),
+        "responses",
+        &conversation_id,
+        20,
+        0.02,
+    )
+    .await
+    .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(
+        delete_conversation("tenant-1", "project-1", &conversation_id)
+            .expect("conversation delete"),
+    )
+    .into_response()
+}
+
+async fn conversation_items_with_state_handler(
+    State(state): State<GatewayApiState>,
+    Path(conversation_id): Path<String>,
+    ExtractJson(request): ExtractJson<CreateConversationItemsRequest>,
+) -> Response {
+    match relay_conversation_items_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &conversation_id,
+        &request,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(
+                state.store.as_ref(),
+                "responses",
+                &conversation_id,
+                20,
+                0.02,
+            )
+            .await
+            .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream conversation items",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(
+        state.store.as_ref(),
+        "responses",
+        &conversation_id,
+        20,
+        0.02,
+    )
+    .await
+    .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(
+        create_conversation_items("tenant-1", "project-1", &conversation_id)
+            .expect("conversation items"),
+    )
+    .into_response()
+}
+
+async fn conversation_items_list_with_state_handler(
+    State(state): State<GatewayApiState>,
+    Path(conversation_id): Path<String>,
+) -> Response {
+    match relay_list_conversation_items_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &conversation_id,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(
+                state.store.as_ref(),
+                "responses",
+                &conversation_id,
+                20,
+                0.02,
+            )
+            .await
+            .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream conversation items list",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(
+        state.store.as_ref(),
+        "responses",
+        &conversation_id,
+        20,
+        0.02,
+    )
+    .await
+    .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(
+        list_conversation_items("tenant-1", "project-1", &conversation_id)
+            .expect("conversation items list"),
+    )
+    .into_response()
+}
+
+async fn conversation_item_retrieve_with_state_handler(
+    State(state): State<GatewayApiState>,
+    Path((conversation_id, item_id)): Path<(String, String)>,
+) -> Response {
+    match relay_get_conversation_item_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &conversation_id,
+        &item_id,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(state.store.as_ref(), "responses", &item_id, 20, 0.02)
+                .await
+                .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream conversation item retrieve",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(state.store.as_ref(), "responses", &item_id, 20, 0.02)
+        .await
+        .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(
+        get_conversation_item("tenant-1", "project-1", &conversation_id, &item_id)
+            .expect("conversation item"),
+    )
+    .into_response()
+}
+
+async fn conversation_item_delete_with_state_handler(
+    State(state): State<GatewayApiState>,
+    Path((conversation_id, item_id)): Path<(String, String)>,
+) -> Response {
+    match relay_delete_conversation_item_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &conversation_id,
+        &item_id,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(state.store.as_ref(), "responses", &item_id, 20, 0.02)
+                .await
+                .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream conversation item delete",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(state.store.as_ref(), "responses", &item_id, 20, 0.02)
+        .await
+        .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(
+        delete_conversation_item("tenant-1", "project-1", &conversation_id, &item_id)
+            .expect("conversation item delete"),
     )
     .into_response()
 }

@@ -17,6 +17,11 @@ use sdkwork_api_contract_openai::chat_completions::{
     UpdateChatCompletionRequest,
 };
 use sdkwork_api_contract_openai::completions::{CompletionObject, CreateCompletionRequest};
+use sdkwork_api_contract_openai::conversations::{
+    ConversationItemObject, ConversationObject, CreateConversationItemsRequest,
+    CreateConversationRequest, DeleteConversationItemResponse, DeleteConversationResponse,
+    ListConversationItemsResponse, ListConversationsResponse, UpdateConversationRequest,
+};
 use sdkwork_api_contract_openai::embeddings::CreateEmbeddingRequest;
 use sdkwork_api_contract_openai::embeddings::CreateEmbeddingResponse;
 use sdkwork_api_contract_openai::evals::{CreateEvalRequest, EvalObject};
@@ -99,6 +104,36 @@ pub async fn get_model_from_store(
         .find_model(model_id)
         .await?
         .map(|entry| ModelObject::new(entry.external_name, entry.provider_id)))
+}
+
+async fn resolve_non_model_provider(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    capability: &str,
+    route_key: &str,
+) -> Result<Option<(String, String, String)>> {
+    let decision = simulate_route_with_store(store, capability, route_key).await?;
+    let provider =
+        if let Some(provider) = store.find_provider(&decision.selected_provider_id).await? {
+            Some(provider)
+        } else {
+            let mut providers = store.list_providers().await?;
+            providers.sort_by(|left, right| left.id.cmp(&right.id));
+            providers.into_iter().next()
+        };
+
+    let Some(provider) = provider else {
+        return Ok(None);
+    };
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    Ok(Some((provider.adapter_kind, provider.base_url, api_key)))
 }
 
 pub async fn relay_chat_completion_from_store(
@@ -286,6 +321,261 @@ pub async fn relay_chat_completion_stream_from_store(
         provider.base_url,
         &api_key,
         ProviderRequest::ChatCompletionsStream(request),
+    )
+    .await
+}
+
+pub async fn relay_conversation_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    request: &CreateConversationRequest,
+) -> Result<Option<Value>> {
+    let Some((adapter_kind, base_url, api_key)) = resolve_non_model_provider(
+        store,
+        secret_manager,
+        tenant_id,
+        "responses",
+        "conversations",
+    )
+    .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &adapter_kind,
+        base_url,
+        &api_key,
+        ProviderRequest::Conversations(request),
+    )
+    .await
+}
+
+pub async fn relay_list_conversations_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+) -> Result<Option<Value>> {
+    let Some((adapter_kind, base_url, api_key)) = resolve_non_model_provider(
+        store,
+        secret_manager,
+        tenant_id,
+        "responses",
+        "conversations",
+    )
+    .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &adapter_kind,
+        base_url,
+        &api_key,
+        ProviderRequest::ConversationsList,
+    )
+    .await
+}
+
+pub async fn relay_get_conversation_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    conversation_id: &str,
+) -> Result<Option<Value>> {
+    let Some((adapter_kind, base_url, api_key)) = resolve_non_model_provider(
+        store,
+        secret_manager,
+        tenant_id,
+        "responses",
+        conversation_id,
+    )
+    .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &adapter_kind,
+        base_url,
+        &api_key,
+        ProviderRequest::ConversationsRetrieve(conversation_id),
+    )
+    .await
+}
+
+pub async fn relay_update_conversation_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    conversation_id: &str,
+    request: &UpdateConversationRequest,
+) -> Result<Option<Value>> {
+    let Some((adapter_kind, base_url, api_key)) = resolve_non_model_provider(
+        store,
+        secret_manager,
+        tenant_id,
+        "responses",
+        conversation_id,
+    )
+    .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &adapter_kind,
+        base_url,
+        &api_key,
+        ProviderRequest::ConversationsUpdate(conversation_id, request),
+    )
+    .await
+}
+
+pub async fn relay_delete_conversation_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    conversation_id: &str,
+) -> Result<Option<Value>> {
+    let Some((adapter_kind, base_url, api_key)) = resolve_non_model_provider(
+        store,
+        secret_manager,
+        tenant_id,
+        "responses",
+        conversation_id,
+    )
+    .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &adapter_kind,
+        base_url,
+        &api_key,
+        ProviderRequest::ConversationsDelete(conversation_id),
+    )
+    .await
+}
+
+pub async fn relay_conversation_items_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    conversation_id: &str,
+    request: &CreateConversationItemsRequest,
+) -> Result<Option<Value>> {
+    let Some((adapter_kind, base_url, api_key)) = resolve_non_model_provider(
+        store,
+        secret_manager,
+        tenant_id,
+        "responses",
+        conversation_id,
+    )
+    .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &adapter_kind,
+        base_url,
+        &api_key,
+        ProviderRequest::ConversationItems(conversation_id, request),
+    )
+    .await
+}
+
+pub async fn relay_list_conversation_items_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    conversation_id: &str,
+) -> Result<Option<Value>> {
+    let Some((adapter_kind, base_url, api_key)) = resolve_non_model_provider(
+        store,
+        secret_manager,
+        tenant_id,
+        "responses",
+        conversation_id,
+    )
+    .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &adapter_kind,
+        base_url,
+        &api_key,
+        ProviderRequest::ConversationItemsList(conversation_id),
+    )
+    .await
+}
+
+pub async fn relay_get_conversation_item_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    conversation_id: &str,
+    item_id: &str,
+) -> Result<Option<Value>> {
+    let Some((adapter_kind, base_url, api_key)) = resolve_non_model_provider(
+        store,
+        secret_manager,
+        tenant_id,
+        "responses",
+        conversation_id,
+    )
+    .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &adapter_kind,
+        base_url,
+        &api_key,
+        ProviderRequest::ConversationItemsRetrieve(conversation_id, item_id),
+    )
+    .await
+}
+
+pub async fn relay_delete_conversation_item_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    conversation_id: &str,
+    item_id: &str,
+) -> Result<Option<Value>> {
+    let Some((adapter_kind, base_url, api_key)) = resolve_non_model_provider(
+        store,
+        secret_manager,
+        tenant_id,
+        "responses",
+        conversation_id,
+    )
+    .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &adapter_kind,
+        base_url,
+        &api_key,
+        ProviderRequest::ConversationItemsDelete(conversation_id, item_id),
     )
     .await
 }
@@ -2006,6 +2296,86 @@ pub fn create_chat_completion(
     model: &str,
 ) -> Result<ChatCompletionResponse> {
     Ok(ChatCompletionResponse::empty("chatcmpl_1", model))
+}
+
+pub fn create_conversation(_tenant_id: &str, _project_id: &str) -> Result<ConversationObject> {
+    Ok(ConversationObject::new("conv_1"))
+}
+
+pub fn list_conversations(
+    _tenant_id: &str,
+    _project_id: &str,
+) -> Result<ListConversationsResponse> {
+    Ok(ListConversationsResponse::new(vec![
+        ConversationObject::new("conv_1"),
+    ]))
+}
+
+pub fn get_conversation(
+    _tenant_id: &str,
+    _project_id: &str,
+    conversation_id: &str,
+) -> Result<ConversationObject> {
+    Ok(ConversationObject::new(conversation_id))
+}
+
+pub fn update_conversation(
+    _tenant_id: &str,
+    _project_id: &str,
+    conversation_id: &str,
+    metadata: Value,
+) -> Result<ConversationObject> {
+    Ok(ConversationObject::with_metadata(conversation_id, metadata))
+}
+
+pub fn delete_conversation(
+    _tenant_id: &str,
+    _project_id: &str,
+    conversation_id: &str,
+) -> Result<DeleteConversationResponse> {
+    Ok(DeleteConversationResponse::deleted(conversation_id))
+}
+
+pub fn create_conversation_items(
+    _tenant_id: &str,
+    _project_id: &str,
+    _conversation_id: &str,
+) -> Result<ListConversationItemsResponse> {
+    Ok(ListConversationItemsResponse::new(vec![
+        ConversationItemObject::message("item_1", "assistant", "hello"),
+    ]))
+}
+
+pub fn list_conversation_items(
+    _tenant_id: &str,
+    _project_id: &str,
+    _conversation_id: &str,
+) -> Result<ListConversationItemsResponse> {
+    Ok(ListConversationItemsResponse::new(vec![
+        ConversationItemObject::message("item_1", "assistant", "hello"),
+    ]))
+}
+
+pub fn get_conversation_item(
+    _tenant_id: &str,
+    _project_id: &str,
+    _conversation_id: &str,
+    item_id: &str,
+) -> Result<ConversationItemObject> {
+    Ok(ConversationItemObject::message(
+        item_id,
+        "assistant",
+        "hello",
+    ))
+}
+
+pub fn delete_conversation_item(
+    _tenant_id: &str,
+    _project_id: &str,
+    _conversation_id: &str,
+    item_id: &str,
+) -> Result<DeleteConversationItemResponse> {
+    Ok(DeleteConversationItemResponse::deleted(item_id))
 }
 
 pub fn list_chat_completions(

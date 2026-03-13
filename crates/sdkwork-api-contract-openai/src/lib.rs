@@ -4,6 +4,7 @@ pub mod batches;
 pub mod chat_completions;
 pub mod common;
 pub mod completions;
+pub mod conversations;
 pub mod embeddings;
 pub mod errors;
 pub mod evals;

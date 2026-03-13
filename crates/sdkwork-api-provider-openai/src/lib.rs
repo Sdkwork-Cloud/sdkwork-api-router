@@ -10,6 +10,9 @@ use sdkwork_api_contract_openai::chat_completions::{
     CreateChatCompletionRequest, UpdateChatCompletionRequest,
 };
 use sdkwork_api_contract_openai::completions::CreateCompletionRequest;
+use sdkwork_api_contract_openai::conversations::{
+    CreateConversationItemsRequest, CreateConversationRequest, UpdateConversationRequest,
+};
 use sdkwork_api_contract_openai::embeddings::CreateEmbeddingRequest;
 use sdkwork_api_contract_openai::evals::CreateEvalRequest;
 use sdkwork_api_contract_openai::files::CreateFileRequest;
@@ -105,6 +108,98 @@ impl OpenAiProviderAdapter {
     ) -> Result<Value> {
         self.get_json(
             &format!("/v1/chat/completions/{completion_id}/messages"),
+            api_key,
+        )
+        .await
+    }
+
+    pub async fn conversations(
+        &self,
+        api_key: &str,
+        request: &CreateConversationRequest,
+    ) -> Result<Value> {
+        self.post_json("/v1/conversations", api_key, request).await
+    }
+
+    pub async fn list_conversations(&self, api_key: &str) -> Result<Value> {
+        self.get_json("/v1/conversations", api_key).await
+    }
+
+    pub async fn retrieve_conversation(
+        &self,
+        api_key: &str,
+        conversation_id: &str,
+    ) -> Result<Value> {
+        self.get_json(&format!("/v1/conversations/{conversation_id}"), api_key)
+            .await
+    }
+
+    pub async fn update_conversation(
+        &self,
+        api_key: &str,
+        conversation_id: &str,
+        request: &UpdateConversationRequest,
+    ) -> Result<Value> {
+        self.post_json(
+            &format!("/v1/conversations/{conversation_id}"),
+            api_key,
+            request,
+        )
+        .await
+    }
+
+    pub async fn delete_conversation(&self, api_key: &str, conversation_id: &str) -> Result<Value> {
+        self.delete_json(&format!("/v1/conversations/{conversation_id}"), api_key)
+            .await
+    }
+
+    pub async fn create_conversation_items(
+        &self,
+        api_key: &str,
+        conversation_id: &str,
+        request: &CreateConversationItemsRequest,
+    ) -> Result<Value> {
+        self.post_json(
+            &format!("/v1/conversations/{conversation_id}/items"),
+            api_key,
+            request,
+        )
+        .await
+    }
+
+    pub async fn list_conversation_items(
+        &self,
+        api_key: &str,
+        conversation_id: &str,
+    ) -> Result<Value> {
+        self.get_json(
+            &format!("/v1/conversations/{conversation_id}/items"),
+            api_key,
+        )
+        .await
+    }
+
+    pub async fn retrieve_conversation_item(
+        &self,
+        api_key: &str,
+        conversation_id: &str,
+        item_id: &str,
+    ) -> Result<Value> {
+        self.get_json(
+            &format!("/v1/conversations/{conversation_id}/items/{item_id}"),
+            api_key,
+        )
+        .await
+    }
+
+    pub async fn delete_conversation_item(
+        &self,
+        api_key: &str,
+        conversation_id: &str,
+        item_id: &str,
+    ) -> Result<Value> {
+        self.delete_json(
+            &format!("/v1/conversations/{conversation_id}/items/{item_id}"),
             api_key,
         )
         .await
@@ -775,6 +870,46 @@ impl ProviderExecutionAdapter for OpenAiProviderAdapter {
             ProviderRequest::Completions(request) => Ok(ProviderOutput::Json(
                 self.completions(api_key, request).await?,
             )),
+            ProviderRequest::Conversations(request) => Ok(ProviderOutput::Json(
+                self.conversations(api_key, request).await?,
+            )),
+            ProviderRequest::ConversationsList => Ok(ProviderOutput::Json(
+                self.list_conversations(api_key).await?,
+            )),
+            ProviderRequest::ConversationsRetrieve(conversation_id) => Ok(ProviderOutput::Json(
+                self.retrieve_conversation(api_key, conversation_id).await?,
+            )),
+            ProviderRequest::ConversationsUpdate(conversation_id, request) => {
+                Ok(ProviderOutput::Json(
+                    self.update_conversation(api_key, conversation_id, request)
+                        .await?,
+                ))
+            }
+            ProviderRequest::ConversationsDelete(conversation_id) => Ok(ProviderOutput::Json(
+                self.delete_conversation(api_key, conversation_id).await?,
+            )),
+            ProviderRequest::ConversationItems(conversation_id, request) => {
+                Ok(ProviderOutput::Json(
+                    self.create_conversation_items(api_key, conversation_id, request)
+                        .await?,
+                ))
+            }
+            ProviderRequest::ConversationItemsList(conversation_id) => Ok(ProviderOutput::Json(
+                self.list_conversation_items(api_key, conversation_id)
+                    .await?,
+            )),
+            ProviderRequest::ConversationItemsRetrieve(conversation_id, item_id) => {
+                Ok(ProviderOutput::Json(
+                    self.retrieve_conversation_item(api_key, conversation_id, item_id)
+                        .await?,
+                ))
+            }
+            ProviderRequest::ConversationItemsDelete(conversation_id, item_id) => {
+                Ok(ProviderOutput::Json(
+                    self.delete_conversation_item(api_key, conversation_id, item_id)
+                        .await?,
+                ))
+            }
             ProviderRequest::Responses(request) => Ok(ProviderOutput::Json(
                 self.responses(api_key, request).await?,
             )),

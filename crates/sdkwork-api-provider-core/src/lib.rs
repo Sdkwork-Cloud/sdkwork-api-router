@@ -12,6 +12,9 @@ use sdkwork_api_contract_openai::chat_completions::{
     CreateChatCompletionRequest, UpdateChatCompletionRequest,
 };
 use sdkwork_api_contract_openai::completions::CreateCompletionRequest;
+use sdkwork_api_contract_openai::conversations::{
+    CreateConversationItemsRequest, CreateConversationRequest, UpdateConversationRequest,
+};
 use sdkwork_api_contract_openai::embeddings::CreateEmbeddingRequest;
 use sdkwork_api_contract_openai::evals::CreateEvalRequest;
 use sdkwork_api_contract_openai::files::CreateFileRequest;
@@ -52,6 +55,15 @@ pub enum ProviderRequest<'a> {
     ChatCompletionsDelete(&'a str),
     ChatCompletionsMessagesList(&'a str),
     Completions(&'a CreateCompletionRequest),
+    Conversations(&'a CreateConversationRequest),
+    ConversationsList,
+    ConversationsRetrieve(&'a str),
+    ConversationsUpdate(&'a str, &'a UpdateConversationRequest),
+    ConversationsDelete(&'a str),
+    ConversationItems(&'a str, &'a CreateConversationItemsRequest),
+    ConversationItemsList(&'a str),
+    ConversationItemsRetrieve(&'a str, &'a str),
+    ConversationItemsDelete(&'a str, &'a str),
     Responses(&'a CreateResponseRequest),
     ResponsesInputTokens(&'a CountResponseInputTokensRequest),
     ResponsesRetrieve(&'a str),
