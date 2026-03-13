@@ -27,6 +27,10 @@ use sdkwork_api_contract_openai::realtime::CreateRealtimeSessionRequest;
 use sdkwork_api_contract_openai::responses::{
     CompactResponseRequest, CountResponseInputTokensRequest, CreateResponseRequest,
 };
+use sdkwork_api_contract_openai::threads::{
+    CreateThreadMessageRequest, CreateThreadRequest, UpdateThreadMessageRequest,
+    UpdateThreadRequest,
+};
 use sdkwork_api_contract_openai::uploads::{
     AddUploadPartRequest, CompleteUploadRequest, CreateUploadRequest,
 };
@@ -58,6 +62,15 @@ pub enum ProviderRequest<'a> {
     ChatCompletionsMessagesList(&'a str),
     Completions(&'a CreateCompletionRequest),
     ModelsDelete(&'a str),
+    Threads(&'a CreateThreadRequest),
+    ThreadsRetrieve(&'a str),
+    ThreadsUpdate(&'a str, &'a UpdateThreadRequest),
+    ThreadsDelete(&'a str),
+    ThreadMessages(&'a str, &'a CreateThreadMessageRequest),
+    ThreadMessagesList(&'a str),
+    ThreadMessagesRetrieve(&'a str, &'a str),
+    ThreadMessagesUpdate(&'a str, &'a str, &'a UpdateThreadMessageRequest),
+    ThreadMessagesDelete(&'a str, &'a str),
     Conversations(&'a CreateConversationRequest),
     ConversationsList,
     ConversationsRetrieve(&'a str),

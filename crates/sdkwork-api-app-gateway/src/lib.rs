@@ -45,6 +45,11 @@ use sdkwork_api_contract_openai::responses::{
     DeleteResponseResponse, ListResponseInputItemsResponse, ResponseCompactionObject,
     ResponseInputItemObject, ResponseInputTokensObject, ResponseObject,
 };
+use sdkwork_api_contract_openai::threads::{
+    CreateThreadMessageRequest, CreateThreadRequest, DeleteThreadMessageResponse,
+    DeleteThreadResponse, ListThreadMessagesResponse, ThreadMessageObject, ThreadObject,
+    UpdateThreadMessageRequest, UpdateThreadRequest,
+};
 use sdkwork_api_contract_openai::uploads::{
     AddUploadPartRequest, CompleteUploadRequest, CreateUploadRequest, UploadObject,
     UploadPartObject,
@@ -541,6 +546,219 @@ pub async fn relay_conversation_items_from_store(
         base_url,
         &api_key,
         ProviderRequest::ConversationItems(conversation_id, request),
+    )
+    .await
+}
+
+pub async fn relay_thread_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    request: &CreateThreadRequest,
+) -> Result<Option<Value>> {
+    let Some((adapter_kind, base_url, api_key)) =
+        resolve_non_model_provider(store, secret_manager, tenant_id, "assistants", "threads")
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &adapter_kind,
+        base_url,
+        &api_key,
+        ProviderRequest::Threads(request),
+    )
+    .await
+}
+
+pub async fn relay_get_thread_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    thread_id: &str,
+) -> Result<Option<Value>> {
+    let Some((adapter_kind, base_url, api_key)) =
+        resolve_non_model_provider(store, secret_manager, tenant_id, "assistants", thread_id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &adapter_kind,
+        base_url,
+        &api_key,
+        ProviderRequest::ThreadsRetrieve(thread_id),
+    )
+    .await
+}
+
+pub async fn relay_update_thread_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    thread_id: &str,
+    request: &UpdateThreadRequest,
+) -> Result<Option<Value>> {
+    let Some((adapter_kind, base_url, api_key)) =
+        resolve_non_model_provider(store, secret_manager, tenant_id, "assistants", thread_id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &adapter_kind,
+        base_url,
+        &api_key,
+        ProviderRequest::ThreadsUpdate(thread_id, request),
+    )
+    .await
+}
+
+pub async fn relay_delete_thread_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    thread_id: &str,
+) -> Result<Option<Value>> {
+    let Some((adapter_kind, base_url, api_key)) =
+        resolve_non_model_provider(store, secret_manager, tenant_id, "assistants", thread_id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &adapter_kind,
+        base_url,
+        &api_key,
+        ProviderRequest::ThreadsDelete(thread_id),
+    )
+    .await
+}
+
+pub async fn relay_thread_messages_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    thread_id: &str,
+    request: &CreateThreadMessageRequest,
+) -> Result<Option<Value>> {
+    let Some((adapter_kind, base_url, api_key)) =
+        resolve_non_model_provider(store, secret_manager, tenant_id, "assistants", thread_id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &adapter_kind,
+        base_url,
+        &api_key,
+        ProviderRequest::ThreadMessages(thread_id, request),
+    )
+    .await
+}
+
+pub async fn relay_list_thread_messages_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    thread_id: &str,
+) -> Result<Option<Value>> {
+    let Some((adapter_kind, base_url, api_key)) =
+        resolve_non_model_provider(store, secret_manager, tenant_id, "assistants", thread_id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &adapter_kind,
+        base_url,
+        &api_key,
+        ProviderRequest::ThreadMessagesList(thread_id),
+    )
+    .await
+}
+
+pub async fn relay_get_thread_message_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    thread_id: &str,
+    message_id: &str,
+) -> Result<Option<Value>> {
+    let Some((adapter_kind, base_url, api_key)) =
+        resolve_non_model_provider(store, secret_manager, tenant_id, "assistants", thread_id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &adapter_kind,
+        base_url,
+        &api_key,
+        ProviderRequest::ThreadMessagesRetrieve(thread_id, message_id),
+    )
+    .await
+}
+
+pub async fn relay_update_thread_message_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    thread_id: &str,
+    message_id: &str,
+    request: &UpdateThreadMessageRequest,
+) -> Result<Option<Value>> {
+    let Some((adapter_kind, base_url, api_key)) =
+        resolve_non_model_provider(store, secret_manager, tenant_id, "assistants", thread_id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &adapter_kind,
+        base_url,
+        &api_key,
+        ProviderRequest::ThreadMessagesUpdate(thread_id, message_id, request),
+    )
+    .await
+}
+
+pub async fn relay_delete_thread_message_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    thread_id: &str,
+    message_id: &str,
+) -> Result<Option<Value>> {
+    let Some((adapter_kind, base_url, api_key)) =
+        resolve_non_model_provider(store, secret_manager, tenant_id, "assistants", thread_id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &adapter_kind,
+        base_url,
+        &api_key,
+        ProviderRequest::ThreadMessagesDelete(thread_id, message_id),
     )
     .await
 }
@@ -2885,6 +3103,83 @@ pub fn delete_assistant(
     assistant_id: &str,
 ) -> Result<DeleteAssistantResponse> {
     Ok(DeleteAssistantResponse::deleted(assistant_id))
+}
+
+pub fn create_thread(_tenant_id: &str, _project_id: &str) -> Result<ThreadObject> {
+    Ok(ThreadObject::new("thread_1"))
+}
+
+pub fn get_thread(_tenant_id: &str, _project_id: &str, thread_id: &str) -> Result<ThreadObject> {
+    Ok(ThreadObject::new(thread_id))
+}
+
+pub fn update_thread(_tenant_id: &str, _project_id: &str, thread_id: &str) -> Result<ThreadObject> {
+    Ok(ThreadObject::new(thread_id))
+}
+
+pub fn delete_thread(
+    _tenant_id: &str,
+    _project_id: &str,
+    thread_id: &str,
+) -> Result<DeleteThreadResponse> {
+    Ok(DeleteThreadResponse::deleted(thread_id))
+}
+
+pub fn create_thread_message(
+    _tenant_id: &str,
+    _project_id: &str,
+    thread_id: &str,
+    role: &str,
+    text: &str,
+) -> Result<ThreadMessageObject> {
+    Ok(ThreadMessageObject::text("msg_1", thread_id, role, text))
+}
+
+pub fn list_thread_messages(
+    _tenant_id: &str,
+    _project_id: &str,
+    thread_id: &str,
+) -> Result<ListThreadMessagesResponse> {
+    Ok(ListThreadMessagesResponse::new(vec![
+        ThreadMessageObject::text("msg_1", thread_id, "assistant", "hello"),
+    ]))
+}
+
+pub fn get_thread_message(
+    _tenant_id: &str,
+    _project_id: &str,
+    thread_id: &str,
+    message_id: &str,
+) -> Result<ThreadMessageObject> {
+    Ok(ThreadMessageObject::text(
+        message_id,
+        thread_id,
+        "assistant",
+        "hello",
+    ))
+}
+
+pub fn update_thread_message(
+    _tenant_id: &str,
+    _project_id: &str,
+    thread_id: &str,
+    message_id: &str,
+) -> Result<ThreadMessageObject> {
+    Ok(ThreadMessageObject::text(
+        message_id,
+        thread_id,
+        "assistant",
+        "hello",
+    ))
+}
+
+pub fn delete_thread_message(
+    _tenant_id: &str,
+    _project_id: &str,
+    _thread_id: &str,
+    message_id: &str,
+) -> Result<DeleteThreadMessageResponse> {
+    Ok(DeleteThreadMessageResponse::deleted(message_id))
 }
 
 pub fn create_webhook(

@@ -16,6 +16,7 @@ pub mod moderations;
 pub mod realtime;
 pub mod responses;
 pub mod streaming;
+pub mod threads;
 pub mod uploads;
 pub mod vector_stores;
 pub mod videos;

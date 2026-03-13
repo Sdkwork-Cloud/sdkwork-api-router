@@ -25,6 +25,10 @@ use sdkwork_api_contract_openai::realtime::CreateRealtimeSessionRequest;
 use sdkwork_api_contract_openai::responses::{
     CompactResponseRequest, CountResponseInputTokensRequest, CreateResponseRequest,
 };
+use sdkwork_api_contract_openai::threads::{
+    CreateThreadMessageRequest, CreateThreadRequest, UpdateThreadMessageRequest,
+    UpdateThreadRequest,
+};
 use sdkwork_api_contract_openai::uploads::{
     AddUploadPartRequest, CompleteUploadRequest, CreateUploadRequest,
 };
@@ -283,6 +287,90 @@ impl OpenAiProviderAdapter {
     pub async fn delete_model(&self, api_key: &str, model_id: &str) -> Result<Value> {
         self.delete_json(&format!("/v1/models/{model_id}"), api_key)
             .await
+    }
+
+    pub async fn threads(&self, api_key: &str, request: &CreateThreadRequest) -> Result<Value> {
+        self.post_json("/v1/threads", api_key, request).await
+    }
+
+    pub async fn retrieve_thread(&self, api_key: &str, thread_id: &str) -> Result<Value> {
+        self.get_json(&format!("/v1/threads/{thread_id}"), api_key)
+            .await
+    }
+
+    pub async fn update_thread(
+        &self,
+        api_key: &str,
+        thread_id: &str,
+        request: &UpdateThreadRequest,
+    ) -> Result<Value> {
+        self.post_json(&format!("/v1/threads/{thread_id}"), api_key, request)
+            .await
+    }
+
+    pub async fn delete_thread(&self, api_key: &str, thread_id: &str) -> Result<Value> {
+        self.delete_json(&format!("/v1/threads/{thread_id}"), api_key)
+            .await
+    }
+
+    pub async fn create_thread_message(
+        &self,
+        api_key: &str,
+        thread_id: &str,
+        request: &CreateThreadMessageRequest,
+    ) -> Result<Value> {
+        self.post_json(
+            &format!("/v1/threads/{thread_id}/messages"),
+            api_key,
+            request,
+        )
+        .await
+    }
+
+    pub async fn list_thread_messages(&self, api_key: &str, thread_id: &str) -> Result<Value> {
+        self.get_json(&format!("/v1/threads/{thread_id}/messages"), api_key)
+            .await
+    }
+
+    pub async fn retrieve_thread_message(
+        &self,
+        api_key: &str,
+        thread_id: &str,
+        message_id: &str,
+    ) -> Result<Value> {
+        self.get_json(
+            &format!("/v1/threads/{thread_id}/messages/{message_id}"),
+            api_key,
+        )
+        .await
+    }
+
+    pub async fn update_thread_message(
+        &self,
+        api_key: &str,
+        thread_id: &str,
+        message_id: &str,
+        request: &UpdateThreadMessageRequest,
+    ) -> Result<Value> {
+        self.post_json(
+            &format!("/v1/threads/{thread_id}/messages/{message_id}"),
+            api_key,
+            request,
+        )
+        .await
+    }
+
+    pub async fn delete_thread_message(
+        &self,
+        api_key: &str,
+        thread_id: &str,
+        message_id: &str,
+    ) -> Result<Value> {
+        self.delete_json(
+            &format!("/v1/threads/{thread_id}/messages/{message_id}"),
+            api_key,
+        )
+        .await
     }
 
     pub async fn embeddings(
@@ -937,6 +1025,43 @@ impl ProviderExecutionAdapter for OpenAiProviderAdapter {
             ProviderRequest::ModelsDelete(model_id) => Ok(ProviderOutput::Json(
                 self.delete_model(api_key, model_id).await?,
             )),
+            ProviderRequest::Threads(request) => {
+                Ok(ProviderOutput::Json(self.threads(api_key, request).await?))
+            }
+            ProviderRequest::ThreadsRetrieve(thread_id) => Ok(ProviderOutput::Json(
+                self.retrieve_thread(api_key, thread_id).await?,
+            )),
+            ProviderRequest::ThreadsUpdate(thread_id, request) => Ok(ProviderOutput::Json(
+                self.update_thread(api_key, thread_id, request).await?,
+            )),
+            ProviderRequest::ThreadsDelete(thread_id) => Ok(ProviderOutput::Json(
+                self.delete_thread(api_key, thread_id).await?,
+            )),
+            ProviderRequest::ThreadMessages(thread_id, request) => Ok(ProviderOutput::Json(
+                self.create_thread_message(api_key, thread_id, request)
+                    .await?,
+            )),
+            ProviderRequest::ThreadMessagesList(thread_id) => Ok(ProviderOutput::Json(
+                self.list_thread_messages(api_key, thread_id).await?,
+            )),
+            ProviderRequest::ThreadMessagesRetrieve(thread_id, message_id) => {
+                Ok(ProviderOutput::Json(
+                    self.retrieve_thread_message(api_key, thread_id, message_id)
+                        .await?,
+                ))
+            }
+            ProviderRequest::ThreadMessagesUpdate(thread_id, message_id, request) => {
+                Ok(ProviderOutput::Json(
+                    self.update_thread_message(api_key, thread_id, message_id, request)
+                        .await?,
+                ))
+            }
+            ProviderRequest::ThreadMessagesDelete(thread_id, message_id) => {
+                Ok(ProviderOutput::Json(
+                    self.delete_thread_message(api_key, thread_id, message_id)
+                        .await?,
+                ))
+            }
             ProviderRequest::Conversations(request) => Ok(ProviderOutput::Json(
                 self.conversations(api_key, request).await?,
             )),
