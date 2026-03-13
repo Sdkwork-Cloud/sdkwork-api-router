@@ -5,6 +5,9 @@ use sdkwork_api_contract_openai::evals::{CreateEvalRequest, EvalObject};
 use sdkwork_api_contract_openai::files::{
     CreateFileRequest, DeleteFileResponse, FileObject, ListFilesResponse,
 };
+use sdkwork_api_contract_openai::fine_tuning::{
+    CreateFineTuningJobRequest, FineTuningJobObject, ListFineTuningJobsResponse,
+};
 use sdkwork_api_contract_openai::images::{CreateImageRequest, ImageObject, ImagesResponse};
 use sdkwork_api_contract_openai::moderations::{CreateModerationRequest, ModerationResponse};
 use sdkwork_api_contract_openai::realtime::{CreateRealtimeSessionRequest, RealtimeSessionObject};
@@ -79,6 +82,26 @@ fn serializes_upload_contracts() {
         vec!["part_1".to_owned()],
     );
     let cancelled_json = serde_json::to_value(cancelled_upload).unwrap();
+    assert_eq!(cancelled_json["status"], "cancelled");
+}
+
+#[test]
+fn serializes_fine_tuning_contracts() {
+    let request = CreateFineTuningJobRequest::new("file_1", "gpt-4.1-mini");
+    let request_json = serde_json::to_value(request).unwrap();
+    assert_eq!(request_json["training_file"], "file_1");
+
+    let job = FineTuningJobObject::new("ftjob_1", "gpt-4.1-mini");
+    let job_json = serde_json::to_value(job).unwrap();
+    assert_eq!(job_json["object"], "fine_tuning.job");
+
+    let list =
+        ListFineTuningJobsResponse::new(vec![FineTuningJobObject::new("ftjob_1", "gpt-4.1-mini")]);
+    let list_json = serde_json::to_value(list).unwrap();
+    assert_eq!(list_json["object"], "list");
+
+    let cancelled = FineTuningJobObject::cancelled("ftjob_1", "gpt-4.1-mini");
+    let cancelled_json = serde_json::to_value(cancelled).unwrap();
     assert_eq!(cancelled_json["status"], "cancelled");
 }
 

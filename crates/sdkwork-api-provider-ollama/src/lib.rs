@@ -176,6 +176,20 @@ impl OllamaProviderAdapter {
         self.delegate.fine_tuning_jobs(api_key, request).await
     }
 
+    pub async fn list_fine_tuning_jobs(&self, api_key: &str) -> Result<Value> {
+        self.delegate.list_fine_tuning_jobs(api_key).await
+    }
+
+    pub async fn retrieve_fine_tuning_job(&self, api_key: &str, job_id: &str) -> Result<Value> {
+        self.delegate
+            .retrieve_fine_tuning_job(api_key, job_id)
+            .await
+    }
+
+    pub async fn cancel_fine_tuning_job(&self, api_key: &str, job_id: &str) -> Result<Value> {
+        self.delegate.cancel_fine_tuning_job(api_key, job_id).await
+    }
+
     pub async fn assistants(
         &self,
         api_key: &str,
@@ -276,6 +290,15 @@ impl ProviderExecutionAdapter for OllamaProviderAdapter {
             )),
             ProviderRequest::FineTuningJobs(request) => Ok(ProviderOutput::Json(
                 self.fine_tuning_jobs(api_key, request).await?,
+            )),
+            ProviderRequest::FineTuningJobsList => Ok(ProviderOutput::Json(
+                self.list_fine_tuning_jobs(api_key).await?,
+            )),
+            ProviderRequest::FineTuningJobsRetrieve(job_id) => Ok(ProviderOutput::Json(
+                self.retrieve_fine_tuning_job(api_key, job_id).await?,
+            )),
+            ProviderRequest::FineTuningJobsCancel(job_id) => Ok(ProviderOutput::Json(
+                self.cancel_fine_tuning_job(api_key, job_id).await?,
             )),
             ProviderRequest::Assistants(request) => Ok(ProviderOutput::Json(
                 self.assistants(api_key, request).await?,

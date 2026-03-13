@@ -32,4 +32,25 @@ impl FineTuningJobObject {
             status: "queued",
         }
     }
+
+    pub fn cancelled(id: impl Into<String>, model: impl Into<String>) -> Self {
+        let mut job = Self::new(id, model);
+        job.status = "cancelled";
+        job
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ListFineTuningJobsResponse {
+    pub object: &'static str,
+    pub data: Vec<FineTuningJobObject>,
+}
+
+impl ListFineTuningJobsResponse {
+    pub fn new(data: Vec<FineTuningJobObject>) -> Self {
+        Self {
+            object: "list",
+            data,
+        }
+    }
 }

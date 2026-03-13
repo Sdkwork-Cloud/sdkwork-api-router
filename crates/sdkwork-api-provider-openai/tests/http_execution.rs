@@ -284,6 +284,101 @@ async fn adapter_posts_fine_tuning_jobs_to_openai_compatible_upstream() {
 }
 
 #[tokio::test]
+async fn adapter_lists_fine_tuning_jobs_from_openai_compatible_upstream() {
+    let state = CaptureState::default();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+
+    let app = Router::new()
+        .route(
+            "/v1/fine_tuning/jobs",
+            get(capture_fine_tuning_list_request),
+        )
+        .with_state(state.clone());
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let adapter =
+        sdkwork_api_provider_openai::OpenAiProviderAdapter::new(format!("http://{address}"));
+    let response = adapter
+        .list_fine_tuning_jobs("sk-upstream-openai")
+        .await
+        .unwrap();
+
+    assert_eq!(response["object"], "list");
+    assert_eq!(response["data"][0]["id"], "ftjob_1");
+    assert_eq!(
+        state.authorization.lock().unwrap().as_deref(),
+        Some("Bearer sk-upstream-openai")
+    );
+}
+
+#[tokio::test]
+async fn adapter_retrieves_fine_tuning_job_from_openai_compatible_upstream() {
+    let state = CaptureState::default();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+
+    let app = Router::new()
+        .route(
+            "/v1/fine_tuning/jobs/ftjob_1",
+            get(capture_fine_tuning_retrieve_request),
+        )
+        .with_state(state.clone());
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let adapter =
+        sdkwork_api_provider_openai::OpenAiProviderAdapter::new(format!("http://{address}"));
+    let response = adapter
+        .retrieve_fine_tuning_job("sk-upstream-openai", "ftjob_1")
+        .await
+        .unwrap();
+
+    assert_eq!(response["id"], "ftjob_1");
+    assert_eq!(
+        state.authorization.lock().unwrap().as_deref(),
+        Some("Bearer sk-upstream-openai")
+    );
+}
+
+#[tokio::test]
+async fn adapter_cancels_fine_tuning_job_on_openai_compatible_upstream() {
+    let state = CaptureState::default();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+
+    let app = Router::new()
+        .route(
+            "/v1/fine_tuning/jobs/ftjob_1/cancel",
+            post(capture_fine_tuning_cancel_request),
+        )
+        .with_state(state.clone());
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let adapter =
+        sdkwork_api_provider_openai::OpenAiProviderAdapter::new(format!("http://{address}"));
+    let response = adapter
+        .cancel_fine_tuning_job("sk-upstream-openai", "ftjob_1")
+        .await
+        .unwrap();
+
+    assert_eq!(response["status"], "cancelled");
+    assert_eq!(
+        state.authorization.lock().unwrap().as_deref(),
+        Some("Bearer sk-upstream-openai")
+    );
+    assert_eq!(state.raw_body.lock().unwrap().as_deref(), Some(&[][..]));
+}
+
+#[tokio::test]
 async fn adapter_posts_assistants_to_openai_compatible_upstream() {
     let state = CaptureState::default();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -978,6 +1073,71 @@ async fn capture_fine_tuning_request(
             "object":"fine_tuning.job",
             "model":"gpt-4.1-mini",
             "status":"queued"
+        })),
+    )
+}
+
+async fn capture_fine_tuning_list_request(
+    State(state): State<CaptureState>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<Value>) {
+    *state.authorization.lock().unwrap() = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "object":"list",
+            "data":[{
+                "id":"ftjob_1",
+                "object":"fine_tuning.job",
+                "model":"gpt-4.1-mini",
+                "status":"queued"
+            }]
+        })),
+    )
+}
+
+async fn capture_fine_tuning_retrieve_request(
+    State(state): State<CaptureState>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<Value>) {
+    *state.authorization.lock().unwrap() = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "id":"ftjob_1",
+            "object":"fine_tuning.job",
+            "model":"gpt-4.1-mini",
+            "status":"running"
+        })),
+    )
+}
+
+async fn capture_fine_tuning_cancel_request(
+    State(state): State<CaptureState>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> (StatusCode, Json<Value>) {
+    *state.authorization.lock().unwrap() = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+    *state.raw_body.lock().unwrap() = Some(body.to_vec());
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "id":"ftjob_1",
+            "object":"fine_tuning.job",
+            "model":"gpt-4.1-mini",
+            "status":"cancelled"
         })),
     )
 }

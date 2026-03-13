@@ -14,6 +14,7 @@ use axum::{
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use sdkwork_api_app_billing::persist_ledger_entry;
 use sdkwork_api_app_credential::CredentialSecretManager;
+use sdkwork_api_app_gateway::cancel_fine_tuning_job;
 use sdkwork_api_app_gateway::cancel_upload;
 use sdkwork_api_app_gateway::complete_upload;
 use sdkwork_api_app_gateway::create_assistant;
@@ -35,19 +36,23 @@ use sdkwork_api_app_gateway::create_vector_store;
 use sdkwork_api_app_gateway::delete_file;
 use sdkwork_api_app_gateway::file_content;
 use sdkwork_api_app_gateway::get_file;
+use sdkwork_api_app_gateway::get_fine_tuning_job;
 use sdkwork_api_app_gateway::list_files;
+use sdkwork_api_app_gateway::list_fine_tuning_jobs;
 use sdkwork_api_app_gateway::list_models;
 use sdkwork_api_app_gateway::{
     create_embedding, create_response, list_models_from_store, relay_assistant_from_store,
-    relay_batch_from_store, relay_cancel_upload_from_store, relay_chat_completion_from_store,
+    relay_batch_from_store, relay_cancel_fine_tuning_job_from_store,
+    relay_cancel_upload_from_store, relay_chat_completion_from_store,
     relay_chat_completion_stream_from_store, relay_complete_upload_from_store,
     relay_completion_from_store, relay_delete_file_from_store, relay_embedding_from_store,
     relay_eval_from_store, relay_file_content_from_store, relay_file_from_store,
-    relay_fine_tuning_job_from_store, relay_get_file_from_store, relay_image_generation_from_store,
-    relay_list_files_from_store, relay_moderation_from_store, relay_realtime_session_from_store,
-    relay_response_from_store, relay_speech_from_store, relay_transcription_from_store,
-    relay_translation_from_store, relay_upload_from_store, relay_upload_part_from_store,
-    relay_vector_store_from_store,
+    relay_fine_tuning_job_from_store, relay_get_file_from_store,
+    relay_get_fine_tuning_job_from_store, relay_image_generation_from_store,
+    relay_list_files_from_store, relay_list_fine_tuning_jobs_from_store,
+    relay_moderation_from_store, relay_realtime_session_from_store, relay_response_from_store,
+    relay_speech_from_store, relay_transcription_from_store, relay_translation_from_store,
+    relay_upload_from_store, relay_upload_part_from_store, relay_vector_store_from_store,
 };
 use sdkwork_api_app_routing::simulate_route_with_store;
 use sdkwork_api_app_usage::persist_usage_record;
@@ -140,7 +145,18 @@ pub fn gateway_router() -> Router {
             "/v1/uploads/{upload_id}/cancel",
             post(upload_cancel_handler),
         )
-        .route("/v1/fine_tuning/jobs", post(fine_tuning_jobs_handler))
+        .route(
+            "/v1/fine_tuning/jobs",
+            get(fine_tuning_jobs_list_handler).post(fine_tuning_jobs_handler),
+        )
+        .route(
+            "/v1/fine_tuning/jobs/{fine_tuning_job_id}",
+            get(fine_tuning_job_retrieve_handler),
+        )
+        .route(
+            "/v1/fine_tuning/jobs/{fine_tuning_job_id}/cancel",
+            post(fine_tuning_job_cancel_handler),
+        )
         .route("/v1/assistants", post(assistants_handler))
         .route("/v1/realtime/sessions", post(realtime_sessions_handler))
         .route("/v1/evals", post(evals_handler))
@@ -234,7 +250,15 @@ pub fn gateway_router_with_store_and_secret_manager(
         )
         .route(
             "/v1/fine_tuning/jobs",
-            post(fine_tuning_jobs_with_state_handler),
+            get(fine_tuning_jobs_list_with_state_handler).post(fine_tuning_jobs_with_state_handler),
+        )
+        .route(
+            "/v1/fine_tuning/jobs/{fine_tuning_job_id}",
+            get(fine_tuning_job_retrieve_with_state_handler),
+        )
+        .route(
+            "/v1/fine_tuning/jobs/{fine_tuning_job_id}/cancel",
+            post(fine_tuning_job_cancel_with_state_handler),
         )
         .route("/v1/assistants", post(assistants_with_state_handler))
         .route(
@@ -399,6 +423,29 @@ async fn fine_tuning_jobs_handler(
     ExtractJson(request): ExtractJson<CreateFineTuningJobRequest>,
 ) -> Json<sdkwork_api_contract_openai::fine_tuning::FineTuningJobObject> {
     Json(create_fine_tuning_job("tenant-1", "project-1", &request.model).expect("fine tuning"))
+}
+
+async fn fine_tuning_jobs_list_handler(
+) -> Json<sdkwork_api_contract_openai::fine_tuning::ListFineTuningJobsResponse> {
+    Json(list_fine_tuning_jobs("tenant-1", "project-1").expect("fine tuning list"))
+}
+
+async fn fine_tuning_job_retrieve_handler(
+    Path(fine_tuning_job_id): Path<String>,
+) -> Json<sdkwork_api_contract_openai::fine_tuning::FineTuningJobObject> {
+    Json(
+        get_fine_tuning_job("tenant-1", "project-1", &fine_tuning_job_id)
+            .expect("fine tuning retrieve"),
+    )
+}
+
+async fn fine_tuning_job_cancel_handler(
+    Path(fine_tuning_job_id): Path<String>,
+) -> Json<sdkwork_api_contract_openai::fine_tuning::FineTuningJobObject> {
+    Json(
+        cancel_fine_tuning_job("tenant-1", "project-1", &fine_tuning_job_id)
+            .expect("fine tuning cancel"),
+    )
 }
 
 async fn assistants_handler(
@@ -1614,6 +1661,189 @@ async fn fine_tuning_jobs_with_state_handler(
 
     Json(create_fine_tuning_job("tenant-1", "project-1", &request.model).expect("fine tuning"))
         .into_response()
+}
+
+async fn fine_tuning_jobs_list_with_state_handler(
+    State(state): State<GatewayApiState>,
+) -> Response {
+    match relay_list_fine_tuning_jobs_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(state.store.as_ref(), "fine_tuning", "jobs", 20, 0.02)
+                .await
+                .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream fine tuning jobs list",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(state.store.as_ref(), "fine_tuning", "jobs", 20, 0.02)
+        .await
+        .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(list_fine_tuning_jobs("tenant-1", "project-1").expect("fine tuning list")).into_response()
+}
+
+async fn fine_tuning_job_retrieve_with_state_handler(
+    State(state): State<GatewayApiState>,
+    Path(fine_tuning_job_id): Path<String>,
+) -> Response {
+    match relay_get_fine_tuning_job_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &fine_tuning_job_id,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(
+                state.store.as_ref(),
+                "fine_tuning",
+                &fine_tuning_job_id,
+                20,
+                0.02,
+            )
+            .await
+            .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream fine tuning job retrieve",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(
+        state.store.as_ref(),
+        "fine_tuning",
+        &fine_tuning_job_id,
+        20,
+        0.02,
+    )
+    .await
+    .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(
+        get_fine_tuning_job("tenant-1", "project-1", &fine_tuning_job_id)
+            .expect("fine tuning retrieve"),
+    )
+    .into_response()
+}
+
+async fn fine_tuning_job_cancel_with_state_handler(
+    State(state): State<GatewayApiState>,
+    Path(fine_tuning_job_id): Path<String>,
+) -> Response {
+    match relay_cancel_fine_tuning_job_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &fine_tuning_job_id,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(
+                state.store.as_ref(),
+                "fine_tuning",
+                &fine_tuning_job_id,
+                20,
+                0.02,
+            )
+            .await
+            .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream fine tuning job cancel",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(
+        state.store.as_ref(),
+        "fine_tuning",
+        &fine_tuning_job_id,
+        20,
+        0.02,
+    )
+    .await
+    .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(
+        cancel_fine_tuning_job("tenant-1", "project-1", &fine_tuning_job_id)
+            .expect("fine tuning cancel"),
+    )
+    .into_response()
 }
 
 async fn assistants_with_state_handler(

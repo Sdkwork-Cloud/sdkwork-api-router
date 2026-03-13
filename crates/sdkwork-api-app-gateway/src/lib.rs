@@ -17,7 +17,9 @@ use sdkwork_api_contract_openai::evals::{CreateEvalRequest, EvalObject};
 use sdkwork_api_contract_openai::files::{
     CreateFileRequest, DeleteFileResponse, FileObject, ListFilesResponse,
 };
-use sdkwork_api_contract_openai::fine_tuning::{CreateFineTuningJobRequest, FineTuningJobObject};
+use sdkwork_api_contract_openai::fine_tuning::{
+    CreateFineTuningJobRequest, FineTuningJobObject, ListFineTuningJobsResponse,
+};
 use sdkwork_api_contract_openai::images::{CreateImageRequest, ImageObject, ImagesResponse};
 use sdkwork_api_contract_openai::models::{ListModelsResponse, ModelObject};
 use sdkwork_api_contract_openai::moderations::{
@@ -601,6 +603,86 @@ pub async fn relay_fine_tuning_job_from_store(
     .await
 }
 
+pub async fn relay_list_fine_tuning_jobs_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+) -> Result<Option<Value>> {
+    let decision = simulate_route_with_store(store, "fine_tuning", "jobs").await?;
+    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
+        return Ok(None);
+    };
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &provider.adapter_kind,
+        provider.base_url,
+        &api_key,
+        ProviderRequest::FineTuningJobsList,
+    )
+    .await
+}
+
+pub async fn relay_get_fine_tuning_job_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    job_id: &str,
+) -> Result<Option<Value>> {
+    let decision = simulate_route_with_store(store, "fine_tuning", job_id).await?;
+    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
+        return Ok(None);
+    };
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &provider.adapter_kind,
+        provider.base_url,
+        &api_key,
+        ProviderRequest::FineTuningJobsRetrieve(job_id),
+    )
+    .await
+}
+
+pub async fn relay_cancel_fine_tuning_job_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    job_id: &str,
+) -> Result<Option<Value>> {
+    let decision = simulate_route_with_store(store, "fine_tuning", job_id).await?;
+    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
+        return Ok(None);
+    };
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &provider.adapter_kind,
+        provider.base_url,
+        &api_key,
+        ProviderRequest::FineTuningJobsCancel(job_id),
+    )
+    .await
+}
+
 pub async fn relay_assistant_from_store(
     store: &dyn AdminStore,
     secret_manager: &CredentialSecretManager,
@@ -916,6 +998,31 @@ pub fn create_fine_tuning_job(
     model: &str,
 ) -> Result<FineTuningJobObject> {
     Ok(FineTuningJobObject::new("ftjob_1", model))
+}
+
+pub fn list_fine_tuning_jobs(
+    _tenant_id: &str,
+    _project_id: &str,
+) -> Result<ListFineTuningJobsResponse> {
+    Ok(ListFineTuningJobsResponse::new(vec![
+        FineTuningJobObject::new("ftjob_1", "gpt-4.1-mini"),
+    ]))
+}
+
+pub fn get_fine_tuning_job(
+    _tenant_id: &str,
+    _project_id: &str,
+    job_id: &str,
+) -> Result<FineTuningJobObject> {
+    Ok(FineTuningJobObject::new(job_id, "gpt-4.1-mini"))
+}
+
+pub fn cancel_fine_tuning_job(
+    _tenant_id: &str,
+    _project_id: &str,
+    job_id: &str,
+) -> Result<FineTuningJobObject> {
+    Ok(FineTuningJobObject::cancelled(job_id, "gpt-4.1-mini"))
 }
 
 pub fn create_assistant(

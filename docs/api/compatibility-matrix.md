@@ -21,7 +21,9 @@
 | `/v1/uploads/{upload_id}/parts` | Implemented | Stateful mode supports OpenAI-compatible upstream multipart relay for upload parts; otherwise emits local upload-part fallback |
 | `/v1/uploads/{upload_id}/complete` | Implemented | Stateful mode supports OpenAI-compatible upstream relay for upload completion; otherwise emits local completion fallback |
 | `/v1/uploads/{upload_id}/cancel` | Implemented | Stateful mode supports OpenAI-compatible upstream relay for upload cancellation; otherwise emits local cancelled-upload fallback |
-| `/v1/fine_tuning/jobs` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local fine-tuning job fallback |
+| `/v1/fine_tuning/jobs` | Implemented | Stateful mode supports OpenAI-compatible upstream create and list relay; otherwise emits local fine-tuning job fallback |
+| `/v1/fine_tuning/jobs/{fine_tuning_job_id}` | Implemented | Stateful mode supports OpenAI-compatible upstream retrieve relay; otherwise emits local fine-tuning job metadata fallback |
+| `/v1/fine_tuning/jobs/{fine_tuning_job_id}/cancel` | Implemented | Stateful mode supports OpenAI-compatible upstream cancel relay; otherwise emits local cancelled fine-tuning job fallback |
 | `/v1/assistants` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local assistant fallback |
 | `/v1/realtime/sessions` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local realtime session fallback |
 | `/v1/evals` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local eval fallback |
@@ -59,7 +61,7 @@
 | Files | Defined | Implemented (`create`, `list`, `retrieve`, `delete`, `content`) |
 | Uploads | Defined | Implemented |
 | Audio | Defined | Partially implemented (`/v1/audio/transcriptions`, `/v1/audio/translations`, `/v1/audio/speech`) |
-| Fine Tuning | Defined | Implemented |
+| Fine Tuning | Defined | Partially implemented (`jobs.create`, `jobs.list`, `jobs.retrieve`, `jobs.cancel`) |
 | Realtime | Defined | Implemented |
 | Assistants | Defined | Implemented |
 | Vector Stores | Defined | Implemented |
@@ -72,7 +74,7 @@
 
 | Capability | Current Behavior |
 |---|---|
-| Upstream proxying | Partially implemented; stateful gateway relays OpenAI-compatible chat, chat SSE, completions, responses, embeddings, files create/list/retrieve/delete/content, upload create/part/complete/cancel, moderations, image generations, audio transcriptions, audio translations, audio speech binary passthrough, fine-tuning jobs, assistants, realtime sessions, evals, batches, and vector stores when provider and credential records are configured |
+| Upstream proxying | Partially implemented; stateful gateway relays OpenAI-compatible chat, chat SSE, completions, responses, embeddings, files create/list/retrieve/delete/content, upload create/part/complete/cancel, moderations, image generations, audio transcriptions, audio translations, audio speech binary passthrough, fine-tuning jobs create/list/retrieve/cancel, assistants, realtime sessions, evals, batches, and vector stores when provider and credential records are configured |
 | Model discovery | Driven by the local catalog, not upstream auto-sync |
 | Routing | Deterministic candidate selection from catalog models |
 | Provider dispatch | Executed through `sdkwork-api-provider-core` registry abstractions with `adapter_kind` plus `base_url` resolution; `openai`, `openrouter`, and `ollama` are currently registered |

@@ -213,6 +213,30 @@ impl OpenAiProviderAdapter {
             .await
     }
 
+    pub async fn list_fine_tuning_jobs(&self, api_key: &str) -> Result<Value> {
+        self.get_json("/v1/fine_tuning/jobs", api_key).await
+    }
+
+    pub async fn retrieve_fine_tuning_job(&self, api_key: &str, job_id: &str) -> Result<Value> {
+        self.get_json(&format!("/v1/fine_tuning/jobs/{job_id}"), api_key)
+            .await
+    }
+
+    pub async fn cancel_fine_tuning_job(&self, api_key: &str, job_id: &str) -> Result<Value> {
+        let response = self
+            .client
+            .post(format!(
+                "{}/v1/fine_tuning/jobs/{job_id}/cancel",
+                self.base_url
+            ))
+            .bearer_auth(api_key)
+            .send()
+            .await?
+            .error_for_status()?;
+
+        Ok(response.json::<Value>().await?)
+    }
+
     pub async fn assistants(
         &self,
         api_key: &str,
@@ -404,6 +428,15 @@ impl ProviderExecutionAdapter for OpenAiProviderAdapter {
             )),
             ProviderRequest::FineTuningJobs(request) => Ok(ProviderOutput::Json(
                 self.fine_tuning_jobs(api_key, request).await?,
+            )),
+            ProviderRequest::FineTuningJobsList => Ok(ProviderOutput::Json(
+                self.list_fine_tuning_jobs(api_key).await?,
+            )),
+            ProviderRequest::FineTuningJobsRetrieve(job_id) => Ok(ProviderOutput::Json(
+                self.retrieve_fine_tuning_job(api_key, job_id).await?,
+            )),
+            ProviderRequest::FineTuningJobsCancel(job_id) => Ok(ProviderOutput::Json(
+                self.cancel_fine_tuning_job(api_key, job_id).await?,
             )),
             ProviderRequest::Assistants(request) => Ok(ProviderOutput::Json(
                 self.assistants(api_key, request).await?,
