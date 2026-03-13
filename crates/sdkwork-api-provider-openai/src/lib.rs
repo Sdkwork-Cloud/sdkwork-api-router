@@ -23,6 +23,7 @@ use sdkwork_api_contract_openai::vector_stores::{
     CreateVectorStoreFileBatchRequest, CreateVectorStoreFileRequest, CreateVectorStoreRequest,
     SearchVectorStoreRequest, UpdateVectorStoreRequest,
 };
+use sdkwork_api_contract_openai::videos::{CreateVideoRequest, RemixVideoRequest};
 use sdkwork_api_domain_catalog::ModelCatalogEntry;
 use sdkwork_api_provider_core::{
     ProviderAdapter, ProviderExecutionAdapter, ProviderOutput, ProviderRequest,
@@ -476,6 +477,39 @@ impl OpenAiProviderAdapter {
         .await
     }
 
+    pub async fn videos(&self, api_key: &str, request: &CreateVideoRequest) -> Result<Value> {
+        self.post_json("/v1/videos", api_key, request).await
+    }
+
+    pub async fn list_videos(&self, api_key: &str) -> Result<Value> {
+        self.get_json("/v1/videos", api_key).await
+    }
+
+    pub async fn retrieve_video(&self, api_key: &str, video_id: &str) -> Result<Value> {
+        self.get_json(&format!("/v1/videos/{video_id}"), api_key)
+            .await
+    }
+
+    pub async fn delete_video(&self, api_key: &str, video_id: &str) -> Result<Value> {
+        self.delete_json(&format!("/v1/videos/{video_id}"), api_key)
+            .await
+    }
+
+    pub async fn video_content(&self, api_key: &str, video_id: &str) -> Result<reqwest::Response> {
+        self.get_stream(&format!("/v1/videos/{video_id}/content"), api_key)
+            .await
+    }
+
+    pub async fn remix_video(
+        &self,
+        api_key: &str,
+        video_id: &str,
+        request: &RemixVideoRequest,
+    ) -> Result<Value> {
+        self.post_json(&format!("/v1/videos/{video_id}/remix"), api_key, request)
+            .await
+    }
+
     async fn post_json<T: serde::Serialize>(
         &self,
         path: &str,
@@ -748,6 +782,24 @@ impl ProviderExecutionAdapter for OpenAiProviderAdapter {
                         .await?,
                 ))
             }
+            ProviderRequest::Videos(request) => {
+                Ok(ProviderOutput::Json(self.videos(api_key, request).await?))
+            }
+            ProviderRequest::VideosList => {
+                Ok(ProviderOutput::Json(self.list_videos(api_key).await?))
+            }
+            ProviderRequest::VideosRetrieve(video_id) => Ok(ProviderOutput::Json(
+                self.retrieve_video(api_key, video_id).await?,
+            )),
+            ProviderRequest::VideosDelete(video_id) => Ok(ProviderOutput::Json(
+                self.delete_video(api_key, video_id).await?,
+            )),
+            ProviderRequest::VideosContent(video_id) => Ok(ProviderOutput::Stream(
+                self.video_content(api_key, video_id).await?,
+            )),
+            ProviderRequest::VideosRemix(video_id, request) => Ok(ProviderOutput::Json(
+                self.remix_video(api_key, video_id, request).await?,
+            )),
         }
     }
 }

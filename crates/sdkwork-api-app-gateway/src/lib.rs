@@ -41,6 +41,9 @@ use sdkwork_api_contract_openai::vector_stores::{
     ListVectorStoresResponse, SearchVectorStoreRequest, SearchVectorStoreResponse,
     UpdateVectorStoreRequest, VectorStoreFileBatchObject, VectorStoreFileObject, VectorStoreObject,
 };
+use sdkwork_api_contract_openai::videos::{
+    CreateVideoRequest, DeleteVideoResponse, RemixVideoRequest, VideoObject, VideosResponse,
+};
 use sdkwork_api_provider_core::{ProviderRegistry, ProviderRequest};
 use sdkwork_api_provider_ollama::OllamaProviderAdapter;
 use sdkwork_api_provider_openai::OpenAiProviderAdapter;
@@ -1393,6 +1396,168 @@ pub async fn relay_list_vector_store_file_batch_files_from_store(
     .await
 }
 
+pub async fn relay_video_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    request: &CreateVideoRequest,
+) -> Result<Option<Value>> {
+    let decision = simulate_route_with_store(store, "videos", &request.model).await?;
+    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
+        return Ok(None);
+    };
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &provider.adapter_kind,
+        provider.base_url,
+        &api_key,
+        ProviderRequest::Videos(request),
+    )
+    .await
+}
+
+pub async fn relay_list_videos_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+) -> Result<Option<Value>> {
+    let decision = simulate_route_with_store(store, "videos", "videos").await?;
+    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
+        return Ok(None);
+    };
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &provider.adapter_kind,
+        provider.base_url,
+        &api_key,
+        ProviderRequest::VideosList,
+    )
+    .await
+}
+
+pub async fn relay_get_video_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    video_id: &str,
+) -> Result<Option<Value>> {
+    let decision = simulate_route_with_store(store, "videos", video_id).await?;
+    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
+        return Ok(None);
+    };
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &provider.adapter_kind,
+        provider.base_url,
+        &api_key,
+        ProviderRequest::VideosRetrieve(video_id),
+    )
+    .await
+}
+
+pub async fn relay_delete_video_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    video_id: &str,
+) -> Result<Option<Value>> {
+    let decision = simulate_route_with_store(store, "videos", video_id).await?;
+    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
+        return Ok(None);
+    };
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &provider.adapter_kind,
+        provider.base_url,
+        &api_key,
+        ProviderRequest::VideosDelete(video_id),
+    )
+    .await
+}
+
+pub async fn relay_video_content_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    video_id: &str,
+) -> Result<Option<reqwest::Response>> {
+    let decision = simulate_route_with_store(store, "videos", video_id).await?;
+    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
+        return Ok(None);
+    };
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_stream_provider_request(
+        &provider.adapter_kind,
+        provider.base_url,
+        &api_key,
+        ProviderRequest::VideosContent(video_id),
+    )
+    .await
+}
+
+pub async fn relay_remix_video_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    video_id: &str,
+    request: &RemixVideoRequest,
+) -> Result<Option<Value>> {
+    let decision = simulate_route_with_store(store, "videos", video_id).await?;
+    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
+        return Ok(None);
+    };
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &provider.adapter_kind,
+        provider.base_url,
+        &api_key,
+        ProviderRequest::VideosRemix(video_id, request),
+    )
+    .await
+}
+
 pub fn create_chat_completion(
     _tenant_id: &str,
     _project_id: &str,
@@ -1531,6 +1696,53 @@ pub fn create_upload(
         request.bytes,
         vec![],
     ))
+}
+
+pub fn create_video(
+    _tenant_id: &str,
+    _project_id: &str,
+    _model: &str,
+    _prompt: &str,
+) -> Result<VideosResponse> {
+    Ok(VideosResponse::new(vec![VideoObject::new(
+        "video_1",
+        "https://example.com/video.mp4",
+    )]))
+}
+
+pub fn list_videos(_tenant_id: &str, _project_id: &str) -> Result<VideosResponse> {
+    Ok(VideosResponse::new(vec![VideoObject::new(
+        "video_1",
+        "https://example.com/video.mp4",
+    )]))
+}
+
+pub fn get_video(_tenant_id: &str, _project_id: &str, video_id: &str) -> Result<VideoObject> {
+    Ok(VideoObject::new(video_id, "https://example.com/video.mp4"))
+}
+
+pub fn delete_video(
+    _tenant_id: &str,
+    _project_id: &str,
+    video_id: &str,
+) -> Result<DeleteVideoResponse> {
+    Ok(DeleteVideoResponse::deleted(video_id))
+}
+
+pub fn video_content(_tenant_id: &str, _project_id: &str, _video_id: &str) -> Result<Vec<u8>> {
+    Ok(b"VIDEO".to_vec())
+}
+
+pub fn remix_video(
+    _tenant_id: &str,
+    _project_id: &str,
+    _video_id: &str,
+    _prompt: &str,
+) -> Result<VideosResponse> {
+    Ok(VideosResponse::new(vec![VideoObject::new(
+        "video_1_remix",
+        "https://example.com/video-remix.mp4",
+    )]))
 }
 
 pub fn create_upload_part(

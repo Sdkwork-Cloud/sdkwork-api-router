@@ -25,6 +25,7 @@ use sdkwork_api_contract_openai::vector_stores::{
     CreateVectorStoreFileBatchRequest, CreateVectorStoreFileRequest, CreateVectorStoreRequest,
     SearchVectorStoreRequest, UpdateVectorStoreRequest,
 };
+use sdkwork_api_contract_openai::videos::{CreateVideoRequest, RemixVideoRequest};
 use serde_json::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,6 +87,12 @@ pub enum ProviderRequest<'a> {
     VectorStoreFileBatchesRetrieve(&'a str, &'a str),
     VectorStoreFileBatchesCancel(&'a str, &'a str),
     VectorStoreFileBatchesListFiles(&'a str, &'a str),
+    Videos(&'a CreateVideoRequest),
+    VideosList,
+    VideosRetrieve(&'a str),
+    VideosDelete(&'a str),
+    VideosContent(&'a str),
+    VideosRemix(&'a str, &'a RemixVideoRequest),
 }
 
 pub enum ProviderOutput {

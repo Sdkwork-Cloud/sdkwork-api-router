@@ -15,6 +15,19 @@ impl CreateVideoRequest {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemixVideoRequest {
+    pub prompt: String,
+}
+
+impl RemixVideoRequest {
+    pub fn new(prompt: impl Into<String>) -> Self {
+        Self {
+            prompt: prompt.into(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct VideoObject {
     pub id: String,
@@ -34,11 +47,32 @@ impl VideoObject {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct VideosResponse {
+    pub object: &'static str,
     pub data: Vec<VideoObject>,
 }
 
 impl VideosResponse {
     pub fn new(data: Vec<VideoObject>) -> Self {
-        Self { data }
+        Self {
+            object: "list",
+            data,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DeleteVideoResponse {
+    pub id: String,
+    pub object: &'static str,
+    pub deleted: bool,
+}
+
+impl DeleteVideoResponse {
+    pub fn deleted(id: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            object: "video.deleted",
+            deleted: true,
+        }
     }
 }

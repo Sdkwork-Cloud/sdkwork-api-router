@@ -170,6 +170,168 @@ async fn adapter_posts_image_generations_to_openai_compatible_upstream() {
 }
 
 #[tokio::test]
+async fn adapter_posts_videos_to_openai_compatible_upstream() {
+    let state = CaptureState::default();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+
+    let app = Router::new()
+        .route("/v1/videos", post(capture_video_request))
+        .with_state(state.clone());
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let adapter =
+        sdkwork_api_provider_openai::OpenAiProviderAdapter::new(format!("http://{address}"));
+    let request = sdkwork_api_contract_openai::videos::CreateVideoRequest::new(
+        "sora-1",
+        "A short cinematic flyover",
+    );
+
+    let response = adapter
+        .videos("sk-upstream-openai", &request)
+        .await
+        .unwrap();
+
+    assert_eq!(response["data"][0]["id"], "video_upstream");
+    assert_eq!(
+        state.authorization.lock().unwrap().as_deref(),
+        Some("Bearer sk-upstream-openai")
+    );
+}
+
+#[tokio::test]
+async fn adapter_lists_videos_from_openai_compatible_upstream() {
+    let state = CaptureState::default();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+
+    let app = Router::new()
+        .route("/v1/videos", get(capture_videos_list_request))
+        .with_state(state.clone());
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let adapter =
+        sdkwork_api_provider_openai::OpenAiProviderAdapter::new(format!("http://{address}"));
+    let response = adapter.list_videos("sk-upstream-openai").await.unwrap();
+
+    assert_eq!(response["data"][0]["id"], "video_1");
+    assert_eq!(
+        state.authorization.lock().unwrap().as_deref(),
+        Some("Bearer sk-upstream-openai")
+    );
+}
+
+#[tokio::test]
+async fn adapter_retrieves_video_from_openai_compatible_upstream() {
+    let state = CaptureState::default();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+
+    let app = Router::new()
+        .route("/v1/videos/video_1", get(capture_video_retrieve_request))
+        .with_state(state.clone());
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let adapter =
+        sdkwork_api_provider_openai::OpenAiProviderAdapter::new(format!("http://{address}"));
+    let response = adapter
+        .retrieve_video("sk-upstream-openai", "video_1")
+        .await
+        .unwrap();
+
+    assert_eq!(response["id"], "video_1");
+}
+
+#[tokio::test]
+async fn adapter_deletes_video_on_openai_compatible_upstream() {
+    let state = CaptureState::default();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+
+    let app = Router::new()
+        .route("/v1/videos/video_1", delete(capture_video_delete_request))
+        .with_state(state.clone());
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let adapter =
+        sdkwork_api_provider_openai::OpenAiProviderAdapter::new(format!("http://{address}"));
+    let response = adapter
+        .delete_video("sk-upstream-openai", "video_1")
+        .await
+        .unwrap();
+
+    assert_eq!(response["deleted"], true);
+}
+
+#[tokio::test]
+async fn adapter_reads_video_content_from_openai_compatible_upstream() {
+    let state = CaptureState::default();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+
+    let app = Router::new()
+        .route(
+            "/v1/videos/video_1/content",
+            get(capture_video_content_request),
+        )
+        .with_state(state.clone());
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let adapter =
+        sdkwork_api_provider_openai::OpenAiProviderAdapter::new(format!("http://{address}"));
+    let response = adapter
+        .video_content("sk-upstream-openai", "video_1")
+        .await
+        .unwrap();
+    let bytes = response.bytes().await.unwrap();
+
+    assert_eq!(bytes.as_ref(), b"UPSTREAM-VIDEO");
+}
+
+#[tokio::test]
+async fn adapter_remixes_video_on_openai_compatible_upstream() {
+    let state = CaptureState::default();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+
+    let app = Router::new()
+        .route(
+            "/v1/videos/video_1/remix",
+            post(capture_video_remix_request),
+        )
+        .with_state(state.clone());
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let adapter =
+        sdkwork_api_provider_openai::OpenAiProviderAdapter::new(format!("http://{address}"));
+    let request = sdkwork_api_contract_openai::videos::RemixVideoRequest::new("Make it sunset");
+    let response = adapter
+        .remix_video("sk-upstream-openai", "video_1", &request)
+        .await
+        .unwrap();
+
+    assert_eq!(response["data"][0]["id"], "video_1_remix");
+}
+
+#[tokio::test]
 async fn adapter_posts_audio_transcriptions_to_openai_compatible_upstream() {
     let state = CaptureState::default();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1659,6 +1821,132 @@ async fn capture_image_request(
         StatusCode::OK,
         Json(json!({
             "data":[{"b64_json":"upstream-image"}]
+        })),
+    )
+}
+
+async fn capture_video_request(
+    State(state): State<CaptureState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> (StatusCode, Json<Value>) {
+    *state.authorization.lock().unwrap() = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+    *state.body.lock().unwrap() = Some(body);
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "object":"list",
+            "data":[{
+                "id":"video_upstream",
+                "object":"video",
+                "url":"https://example.com/video.mp4"
+            }]
+        })),
+    )
+}
+
+async fn capture_videos_list_request(
+    State(state): State<CaptureState>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<Value>) {
+    *state.authorization.lock().unwrap() = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "object":"list",
+            "data":[{
+                "id":"video_1",
+                "object":"video",
+                "url":"https://example.com/video.mp4"
+            }]
+        })),
+    )
+}
+
+async fn capture_video_retrieve_request(
+    State(state): State<CaptureState>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<Value>) {
+    *state.authorization.lock().unwrap() = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "id":"video_1",
+            "object":"video",
+            "url":"https://example.com/video.mp4"
+        })),
+    )
+}
+
+async fn capture_video_delete_request(
+    State(state): State<CaptureState>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<Value>) {
+    *state.authorization.lock().unwrap() = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "id":"video_1",
+            "object":"video.deleted",
+            "deleted":true
+        })),
+    )
+}
+
+async fn capture_video_content_request(
+    State(state): State<CaptureState>,
+    headers: HeaderMap,
+) -> (
+    [(axum::http::header::HeaderName, &'static str); 1],
+    &'static [u8],
+) {
+    *state.authorization.lock().unwrap() = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+
+    (
+        [(axum::http::header::CONTENT_TYPE, "video/mp4")],
+        b"UPSTREAM-VIDEO",
+    )
+}
+
+async fn capture_video_remix_request(
+    State(state): State<CaptureState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> (StatusCode, Json<Value>) {
+    *state.authorization.lock().unwrap() = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+    *state.body.lock().unwrap() = Some(body);
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "object":"list",
+            "data":[{
+                "id":"video_1_remix",
+                "object":"video",
+                "url":"https://example.com/video-remix.mp4"
+            }]
         })),
     )
 }

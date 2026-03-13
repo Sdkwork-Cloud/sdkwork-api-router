@@ -37,10 +37,12 @@ use sdkwork_api_app_gateway::create_upload_part;
 use sdkwork_api_app_gateway::create_vector_store;
 use sdkwork_api_app_gateway::create_vector_store_file;
 use sdkwork_api_app_gateway::create_vector_store_file_batch;
+use sdkwork_api_app_gateway::create_video;
 use sdkwork_api_app_gateway::delete_assistant;
 use sdkwork_api_app_gateway::delete_file;
 use sdkwork_api_app_gateway::delete_vector_store;
 use sdkwork_api_app_gateway::delete_vector_store_file;
+use sdkwork_api_app_gateway::delete_video;
 use sdkwork_api_app_gateway::file_content;
 use sdkwork_api_app_gateway::get_assistant;
 use sdkwork_api_app_gateway::get_batch;
@@ -51,6 +53,7 @@ use sdkwork_api_app_gateway::get_model_from_store;
 use sdkwork_api_app_gateway::get_vector_store;
 use sdkwork_api_app_gateway::get_vector_store_file;
 use sdkwork_api_app_gateway::get_vector_store_file_batch;
+use sdkwork_api_app_gateway::get_video;
 use sdkwork_api_app_gateway::list_assistants;
 use sdkwork_api_app_gateway::list_batches;
 use sdkwork_api_app_gateway::list_files;
@@ -59,9 +62,12 @@ use sdkwork_api_app_gateway::list_models;
 use sdkwork_api_app_gateway::list_vector_store_file_batch_files;
 use sdkwork_api_app_gateway::list_vector_store_files;
 use sdkwork_api_app_gateway::list_vector_stores;
+use sdkwork_api_app_gateway::list_videos;
+use sdkwork_api_app_gateway::remix_video;
 use sdkwork_api_app_gateway::search_vector_store;
 use sdkwork_api_app_gateway::update_assistant;
 use sdkwork_api_app_gateway::update_vector_store;
+use sdkwork_api_app_gateway::video_content;
 use sdkwork_api_app_gateway::{
     create_embedding, create_response, list_models_from_store, relay_assistant_from_store,
     relay_batch_from_store, relay_cancel_batch_from_store, relay_cancel_fine_tuning_job_from_store,
@@ -70,20 +76,22 @@ use sdkwork_api_app_gateway::{
     relay_complete_upload_from_store, relay_completion_from_store,
     relay_delete_assistant_from_store, relay_delete_file_from_store,
     relay_delete_vector_store_file_from_store, relay_delete_vector_store_from_store,
-    relay_embedding_from_store, relay_eval_from_store, relay_file_content_from_store,
-    relay_file_from_store, relay_fine_tuning_job_from_store, relay_get_assistant_from_store,
-    relay_get_batch_from_store, relay_get_file_from_store, relay_get_fine_tuning_job_from_store,
-    relay_get_vector_store_file_batch_from_store, relay_get_vector_store_file_from_store,
-    relay_get_vector_store_from_store, relay_image_generation_from_store,
+    relay_delete_video_from_store, relay_embedding_from_store, relay_eval_from_store,
+    relay_file_content_from_store, relay_file_from_store, relay_fine_tuning_job_from_store,
+    relay_get_assistant_from_store, relay_get_batch_from_store, relay_get_file_from_store,
+    relay_get_fine_tuning_job_from_store, relay_get_vector_store_file_batch_from_store,
+    relay_get_vector_store_file_from_store, relay_get_vector_store_from_store,
+    relay_get_video_from_store, relay_image_generation_from_store,
     relay_list_assistants_from_store, relay_list_batches_from_store, relay_list_files_from_store,
     relay_list_fine_tuning_jobs_from_store, relay_list_vector_store_file_batch_files_from_store,
     relay_list_vector_store_files_from_store, relay_list_vector_stores_from_store,
-    relay_moderation_from_store, relay_realtime_session_from_store, relay_response_from_store,
-    relay_search_vector_store_from_store, relay_speech_from_store, relay_transcription_from_store,
-    relay_translation_from_store, relay_update_assistant_from_store,
-    relay_update_vector_store_from_store, relay_upload_from_store, relay_upload_part_from_store,
+    relay_list_videos_from_store, relay_moderation_from_store, relay_realtime_session_from_store,
+    relay_remix_video_from_store, relay_response_from_store, relay_search_vector_store_from_store,
+    relay_speech_from_store, relay_transcription_from_store, relay_translation_from_store,
+    relay_update_assistant_from_store, relay_update_vector_store_from_store,
+    relay_upload_from_store, relay_upload_part_from_store,
     relay_vector_store_file_batch_from_store, relay_vector_store_file_from_store,
-    relay_vector_store_from_store,
+    relay_vector_store_from_store, relay_video_content_from_store, relay_video_from_store,
 };
 use sdkwork_api_app_routing::simulate_route_with_store;
 use sdkwork_api_app_usage::persist_usage_record;
@@ -110,6 +118,7 @@ use sdkwork_api_contract_openai::vector_stores::{
     CreateVectorStoreFileBatchRequest, CreateVectorStoreFileRequest, CreateVectorStoreRequest,
     SearchVectorStoreRequest, UpdateVectorStoreRequest,
 };
+use sdkwork_api_contract_openai::videos::{CreateVideoRequest, RemixVideoRequest};
 use sdkwork_api_storage_core::AdminStore;
 use sdkwork_api_storage_sqlite::SqliteAdminStore;
 use sqlx::SqlitePool;
@@ -170,6 +179,13 @@ pub fn gateway_router() -> Router {
             get(file_retrieve_handler).delete(file_delete_handler),
         )
         .route("/v1/files/{file_id}/content", get(file_content_handler))
+        .route("/v1/videos", get(videos_list_handler).post(videos_handler))
+        .route(
+            "/v1/videos/{video_id}",
+            get(video_retrieve_handler).delete(video_delete_handler),
+        )
+        .route("/v1/videos/{video_id}/content", get(video_content_handler))
+        .route("/v1/videos/{video_id}/remix", post(video_remix_handler))
         .route("/v1/uploads", post(uploads_handler))
         .route("/v1/uploads/{upload_id}/parts", post(upload_parts_handler))
         .route(
@@ -324,6 +340,22 @@ pub fn gateway_router_with_store_and_secret_manager(
         .route(
             "/v1/files/{file_id}/content",
             get(file_content_with_state_handler),
+        )
+        .route(
+            "/v1/videos",
+            get(videos_list_with_state_handler).post(videos_with_state_handler),
+        )
+        .route(
+            "/v1/videos/{video_id}",
+            get(video_retrieve_with_state_handler).delete(video_delete_with_state_handler),
+        )
+        .route(
+            "/v1/videos/{video_id}/content",
+            get(video_content_with_state_handler),
+        )
+        .route(
+            "/v1/videos/{video_id}/remix",
+            post(video_remix_with_state_handler),
         )
         .route("/v1/uploads", post(uploads_with_state_handler))
         .route(
@@ -559,6 +591,39 @@ async fn file_delete_handler(
 
 async fn file_content_handler(Path(file_id): Path<String>) -> Response {
     local_file_content_response(&file_id)
+}
+
+async fn videos_handler(
+    ExtractJson(request): ExtractJson<CreateVideoRequest>,
+) -> Json<sdkwork_api_contract_openai::videos::VideosResponse> {
+    Json(create_video("tenant-1", "project-1", &request.model, &request.prompt).expect("video"))
+}
+
+async fn videos_list_handler() -> Json<sdkwork_api_contract_openai::videos::VideosResponse> {
+    Json(list_videos("tenant-1", "project-1").expect("videos list"))
+}
+
+async fn video_retrieve_handler(
+    Path(video_id): Path<String>,
+) -> Json<sdkwork_api_contract_openai::videos::VideoObject> {
+    Json(get_video("tenant-1", "project-1", &video_id).expect("video retrieve"))
+}
+
+async fn video_delete_handler(
+    Path(video_id): Path<String>,
+) -> Json<sdkwork_api_contract_openai::videos::DeleteVideoResponse> {
+    Json(delete_video("tenant-1", "project-1", &video_id).expect("video delete"))
+}
+
+async fn video_content_handler(Path(video_id): Path<String>) -> Response {
+    local_video_content_response(&video_id)
+}
+
+async fn video_remix_handler(
+    Path(video_id): Path<String>,
+    ExtractJson(request): ExtractJson<RemixVideoRequest>,
+) -> Json<sdkwork_api_contract_openai::videos::VideosResponse> {
+    Json(remix_video("tenant-1", "project-1", &video_id, &request.prompt).expect("video remix"))
 }
 
 async fn uploads_handler(
@@ -973,6 +1038,15 @@ fn local_file_content_response(file_id: &str) -> Response {
         .header(header::CONTENT_TYPE, "application/jsonl")
         .body(Body::from(bytes))
         .expect("valid local file content response")
+}
+
+fn local_video_content_response(video_id: &str) -> Response {
+    let bytes = video_content("tenant-1", "project-1", video_id).expect("video content");
+    Response::builder()
+        .status(axum::http::StatusCode::OK)
+        .header(header::CONTENT_TYPE, "video/mp4")
+        .body(Body::from(bytes))
+        .expect("valid local video content response")
 }
 
 async fn responses_with_state_handler(
@@ -1704,6 +1778,312 @@ async fn file_content_with_state_handler(
     }
 
     local_file_content_response(&file_id)
+}
+
+async fn videos_with_state_handler(
+    State(state): State<GatewayApiState>,
+    ExtractJson(request): ExtractJson<CreateVideoRequest>,
+) -> Response {
+    match relay_video_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &request,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(state.store.as_ref(), "videos", &request.model, 90, 0.09)
+                .await
+                .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream video create",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(state.store.as_ref(), "videos", &request.model, 90, 0.09)
+        .await
+        .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(create_video("tenant-1", "project-1", &request.model, &request.prompt).expect("video"))
+        .into_response()
+}
+
+async fn videos_list_with_state_handler(State(state): State<GatewayApiState>) -> Response {
+    match relay_list_videos_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(state.store.as_ref(), "videos", "videos", 20, 0.02)
+                .await
+                .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream videos list",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(state.store.as_ref(), "videos", "videos", 20, 0.02)
+        .await
+        .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(list_videos("tenant-1", "project-1").expect("videos list")).into_response()
+}
+
+async fn video_retrieve_with_state_handler(
+    State(state): State<GatewayApiState>,
+    Path(video_id): Path<String>,
+) -> Response {
+    match relay_get_video_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &video_id,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(state.store.as_ref(), "videos", &video_id, 20, 0.02)
+                .await
+                .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream video retrieve",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(state.store.as_ref(), "videos", &video_id, 20, 0.02)
+        .await
+        .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(get_video("tenant-1", "project-1", &video_id).expect("video retrieve")).into_response()
+}
+
+async fn video_delete_with_state_handler(
+    State(state): State<GatewayApiState>,
+    Path(video_id): Path<String>,
+) -> Response {
+    match relay_delete_video_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &video_id,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(state.store.as_ref(), "videos", &video_id, 20, 0.02)
+                .await
+                .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream video delete",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(state.store.as_ref(), "videos", &video_id, 20, 0.02)
+        .await
+        .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(delete_video("tenant-1", "project-1", &video_id).expect("video delete")).into_response()
+}
+
+async fn video_content_with_state_handler(
+    State(state): State<GatewayApiState>,
+    Path(video_id): Path<String>,
+) -> Response {
+    match relay_video_content_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &video_id,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(state.store.as_ref(), "videos", &video_id, 20, 0.02)
+                .await
+                .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return upstream_passthrough_response(response);
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream video content",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(state.store.as_ref(), "videos", &video_id, 20, 0.02)
+        .await
+        .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    local_video_content_response(&video_id)
+}
+
+async fn video_remix_with_state_handler(
+    State(state): State<GatewayApiState>,
+    Path(video_id): Path<String>,
+    ExtractJson(request): ExtractJson<RemixVideoRequest>,
+) -> Response {
+    match relay_remix_video_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &video_id,
+        &request,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(state.store.as_ref(), "videos", &video_id, 60, 0.06)
+                .await
+                .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream video remix",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(state.store.as_ref(), "videos", &video_id, 60, 0.06)
+        .await
+        .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(remix_video("tenant-1", "project-1", &video_id, &request.prompt).expect("video remix"))
+        .into_response()
 }
 
 async fn uploads_with_state_handler(
