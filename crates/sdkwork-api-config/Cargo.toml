@@ -4,6 +4,8 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[dependencies]
+sdkwork-api-storage-core = { path = "../sdkwork-api-storage-core" }
+
 [lib]
 path = "src/lib.rs"
-

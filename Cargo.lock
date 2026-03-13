@@ -1214,6 +1214,9 @@ dependencies = [
 [[package]]
 name = "sdkwork-api-config"
 version = "0.1.0"
+dependencies = [
+ "sdkwork-api-storage-core",
+]
 
 [[package]]
 name = "sdkwork-api-contract-gateway"

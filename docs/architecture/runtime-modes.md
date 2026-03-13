@@ -36,5 +36,6 @@ The current repository includes:
 - SQLite-backed control-plane persistence for identity, catalog, usage, and billing slices
 - encrypted upstream credential persistence and runtime secret resolution
 - stateful OpenAI-compatible upstream relay for chat completions, responses, embeddings, and chat SSE when provider configuration is present
+- runtime config modeling for storage dialect inference and secret backend strategy selection
 
 The runtime host is still intentionally lightweight, but the core gateway, admin, routing, credential, and provider relay slices now run against the same Rust workspace and can be assembled in-process for embedded mode.

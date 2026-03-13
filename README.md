@@ -110,6 +110,21 @@ Example credential payload:
 
 `secret_value` is encrypted before being stored in SQLite. The runtime resolves it with the configured `credential_master_key`.
 
+## Runtime Configuration
+
+`StandaloneConfig` now models:
+
+- `database_url`
+- inferred storage dialect via `storage_dialect()`
+- `secret_backend`
+- `credential_master_key`
+
+Supported secret backend strategy identifiers are:
+
+- `database_encrypted`
+- `local_encrypted_file`
+- `os_keyring`
+
 ## Development
 
 Backend verification:
