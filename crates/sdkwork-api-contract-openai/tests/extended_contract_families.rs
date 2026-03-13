@@ -2,7 +2,9 @@ use sdkwork_api_contract_openai::assistants::{AssistantObject, CreateAssistantRe
 use sdkwork_api_contract_openai::audio::{CreateTranscriptionRequest, TranscriptionObject};
 use sdkwork_api_contract_openai::batches::{BatchObject, CreateBatchRequest};
 use sdkwork_api_contract_openai::evals::{CreateEvalRequest, EvalObject};
-use sdkwork_api_contract_openai::files::{CreateFileRequest, FileObject};
+use sdkwork_api_contract_openai::files::{
+    CreateFileRequest, DeleteFileResponse, FileObject, ListFilesResponse,
+};
 use sdkwork_api_contract_openai::images::{CreateImageRequest, ImageObject, ImagesResponse};
 use sdkwork_api_contract_openai::moderations::{CreateModerationRequest, ModerationResponse};
 use sdkwork_api_contract_openai::realtime::{CreateRealtimeSessionRequest, RealtimeSessionObject};
@@ -27,6 +29,20 @@ fn serializes_file_contracts() {
     let json = serde_json::to_value(file).unwrap();
     assert_eq!(json["object"], "file");
     assert_eq!(json["purpose"], "fine-tune");
+
+    let list = ListFilesResponse::new(vec![FileObject::with_bytes(
+        "file_1",
+        "train.jsonl",
+        "fine-tune",
+        2,
+    )]);
+    let list_json = serde_json::to_value(list).unwrap();
+    assert_eq!(list_json["object"], "list");
+    assert_eq!(list_json["data"][0]["id"], "file_1");
+
+    let deleted = DeleteFileResponse::deleted("file_1");
+    let deleted_json = serde_json::to_value(deleted).unwrap();
+    assert_eq!(deleted_json["deleted"], true);
 }
 
 #[test]

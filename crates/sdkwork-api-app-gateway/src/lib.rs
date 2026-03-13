@@ -14,7 +14,9 @@ use sdkwork_api_contract_openai::completions::{CompletionObject, CreateCompletio
 use sdkwork_api_contract_openai::embeddings::CreateEmbeddingRequest;
 use sdkwork_api_contract_openai::embeddings::CreateEmbeddingResponse;
 use sdkwork_api_contract_openai::evals::{CreateEvalRequest, EvalObject};
-use sdkwork_api_contract_openai::files::{CreateFileRequest, FileObject};
+use sdkwork_api_contract_openai::files::{
+    CreateFileRequest, DeleteFileResponse, FileObject, ListFilesResponse,
+};
 use sdkwork_api_contract_openai::fine_tuning::{CreateFineTuningJobRequest, FineTuningJobObject};
 use sdkwork_api_contract_openai::images::{CreateImageRequest, ImageObject, ImagesResponse};
 use sdkwork_api_contract_openai::models::{ListModelsResponse, ModelObject};
@@ -353,6 +355,113 @@ pub async fn relay_file_from_store(
         provider.base_url,
         &api_key,
         ProviderRequest::Files(request),
+    )
+    .await
+}
+
+pub async fn relay_list_files_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+) -> Result<Option<Value>> {
+    let decision = simulate_route_with_store(store, "files", "files").await?;
+    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
+        return Ok(None);
+    };
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &provider.adapter_kind,
+        provider.base_url,
+        &api_key,
+        ProviderRequest::FilesList,
+    )
+    .await
+}
+
+pub async fn relay_get_file_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    file_id: &str,
+) -> Result<Option<Value>> {
+    let decision = simulate_route_with_store(store, "files", file_id).await?;
+    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
+        return Ok(None);
+    };
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &provider.adapter_kind,
+        provider.base_url,
+        &api_key,
+        ProviderRequest::FilesRetrieve(file_id),
+    )
+    .await
+}
+
+pub async fn relay_delete_file_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    file_id: &str,
+) -> Result<Option<Value>> {
+    let decision = simulate_route_with_store(store, "files", file_id).await?;
+    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
+        return Ok(None);
+    };
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &provider.adapter_kind,
+        provider.base_url,
+        &api_key,
+        ProviderRequest::FilesDelete(file_id),
+    )
+    .await
+}
+
+pub async fn relay_file_content_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    file_id: &str,
+) -> Result<Option<reqwest::Response>> {
+    let decision = simulate_route_with_store(store, "files", file_id).await?;
+    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
+        return Ok(None);
+    };
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_stream_provider_request(
+        &provider.adapter_kind,
+        provider.base_url,
+        &api_key,
+        ProviderRequest::FilesContent(file_id),
     )
     .await
 }
@@ -707,6 +816,36 @@ pub fn create_file(
         &request.purpose,
         request.bytes.len() as u64,
     ))
+}
+
+pub fn list_files(_tenant_id: &str, _project_id: &str) -> Result<ListFilesResponse> {
+    Ok(ListFilesResponse::new(vec![FileObject::with_bytes(
+        "file_1",
+        "train.jsonl",
+        "fine-tune",
+        2,
+    )]))
+}
+
+pub fn get_file(_tenant_id: &str, _project_id: &str, file_id: &str) -> Result<FileObject> {
+    Ok(FileObject::with_bytes(
+        file_id,
+        "train.jsonl",
+        "fine-tune",
+        2,
+    ))
+}
+
+pub fn delete_file(
+    _tenant_id: &str,
+    _project_id: &str,
+    file_id: &str,
+) -> Result<DeleteFileResponse> {
+    Ok(DeleteFileResponse::deleted(file_id))
+}
+
+pub fn file_content(_tenant_id: &str, _project_id: &str, _file_id: &str) -> Result<Vec<u8>> {
+    Ok(b"{}".to_vec())
 }
 
 pub fn create_speech_response(

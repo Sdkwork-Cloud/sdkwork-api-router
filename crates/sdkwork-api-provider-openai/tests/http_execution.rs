@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
-    routing::post,
+    routing::{get, post},
     Json, Router,
 };
 use serde_json::{json, Value};
@@ -552,6 +552,131 @@ async fn adapter_posts_files_multipart_to_openai_compatible_upstream() {
 }
 
 #[tokio::test]
+async fn adapter_lists_files_from_openai_compatible_upstream() {
+    let state = CaptureState::default();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+
+    let app = Router::new()
+        .route("/v1/files", get(capture_files_list_request))
+        .with_state(state.clone());
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let adapter =
+        sdkwork_api_provider_openai::OpenAiProviderAdapter::new(format!("http://{address}"));
+    let response = adapter.list_files("sk-upstream-openai").await.unwrap();
+
+    assert_eq!(response["object"], "list");
+    assert_eq!(response["data"][0]["id"], "file_1");
+    assert_eq!(
+        state.authorization.lock().unwrap().as_deref(),
+        Some("Bearer sk-upstream-openai")
+    );
+}
+
+#[tokio::test]
+async fn adapter_retrieves_file_from_openai_compatible_upstream() {
+    let state = CaptureState::default();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+
+    let app = Router::new()
+        .route("/v1/files/file_1", get(capture_file_retrieve_request))
+        .with_state(state.clone());
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let adapter =
+        sdkwork_api_provider_openai::OpenAiProviderAdapter::new(format!("http://{address}"));
+    let response = adapter
+        .retrieve_file("sk-upstream-openai", "file_1")
+        .await
+        .unwrap();
+
+    assert_eq!(response["id"], "file_1");
+    assert_eq!(
+        state.authorization.lock().unwrap().as_deref(),
+        Some("Bearer sk-upstream-openai")
+    );
+}
+
+#[tokio::test]
+async fn adapter_deletes_file_from_openai_compatible_upstream() {
+    let state = CaptureState::default();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+
+    let app = Router::new()
+        .route(
+            "/v1/files/file_1",
+            axum::routing::delete(capture_file_delete_request),
+        )
+        .with_state(state.clone());
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let adapter =
+        sdkwork_api_provider_openai::OpenAiProviderAdapter::new(format!("http://{address}"));
+    let response = adapter
+        .delete_file("sk-upstream-openai", "file_1")
+        .await
+        .unwrap();
+
+    assert_eq!(response["deleted"], true);
+    assert_eq!(
+        state.authorization.lock().unwrap().as_deref(),
+        Some("Bearer sk-upstream-openai")
+    );
+    assert_eq!(state.raw_body.lock().unwrap().as_deref(), Some(&[][..]));
+}
+
+#[tokio::test]
+async fn adapter_streams_file_content_from_openai_compatible_upstream() {
+    let state = CaptureState::default();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+
+    let app = Router::new()
+        .route(
+            "/v1/files/file_1/content",
+            get(capture_file_content_request),
+        )
+        .with_state(state.clone());
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let adapter =
+        sdkwork_api_provider_openai::OpenAiProviderAdapter::new(format!("http://{address}"));
+    let response = adapter
+        .file_content("sk-upstream-openai", "file_1")
+        .await
+        .unwrap();
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_owned();
+    let bytes = response.bytes().await.unwrap();
+
+    assert_eq!(content_type, "application/jsonl");
+    assert_eq!(&bytes[..], b"{}");
+    assert_eq!(
+        state.authorization.lock().unwrap().as_deref(),
+        Some("Bearer sk-upstream-openai")
+    );
+}
+
+#[tokio::test]
 async fn adapter_posts_uploads_create_to_openai_compatible_upstream() {
     let state = CaptureState::default();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1009,6 +1134,92 @@ async fn capture_file_request(
             "bytes":13,
             "status":"processed"
         })),
+    )
+}
+
+async fn capture_files_list_request(
+    State(state): State<CaptureState>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<Value>) {
+    *state.authorization.lock().unwrap() = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "object":"list",
+            "data":[{
+                "id":"file_1",
+                "object":"file",
+                "purpose":"fine-tune",
+                "filename":"train.jsonl",
+                "bytes":13,
+                "status":"processed"
+            }]
+        })),
+    )
+}
+
+async fn capture_file_retrieve_request(
+    State(state): State<CaptureState>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<Value>) {
+    *state.authorization.lock().unwrap() = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "id":"file_1",
+            "object":"file",
+            "purpose":"fine-tune",
+            "filename":"train.jsonl",
+            "bytes":13,
+            "status":"processed"
+        })),
+    )
+}
+
+async fn capture_file_delete_request(
+    State(state): State<CaptureState>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> (StatusCode, Json<Value>) {
+    *state.authorization.lock().unwrap() = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+    *state.raw_body.lock().unwrap() = Some(body.to_vec());
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "id":"file_1",
+            "object":"file",
+            "deleted":true
+        })),
+    )
+}
+
+async fn capture_file_content_request(
+    State(state): State<CaptureState>,
+    headers: HeaderMap,
+) -> (
+    [(axum::http::header::HeaderName, &'static str); 1],
+    &'static [u8],
+) {
+    *state.authorization.lock().unwrap() = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+
+    (
+        [(axum::http::header::CONTENT_TYPE, "application/jsonl")],
+        b"{}",
     )
 }
 

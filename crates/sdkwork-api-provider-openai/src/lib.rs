@@ -137,6 +137,25 @@ impl OpenAiProviderAdapter {
         self.post_multipart_json("/v1/files", api_key, form).await
     }
 
+    pub async fn list_files(&self, api_key: &str) -> Result<Value> {
+        self.get_json("/v1/files", api_key).await
+    }
+
+    pub async fn retrieve_file(&self, api_key: &str, file_id: &str) -> Result<Value> {
+        self.get_json(&format!("/v1/files/{file_id}"), api_key)
+            .await
+    }
+
+    pub async fn delete_file(&self, api_key: &str, file_id: &str) -> Result<Value> {
+        self.delete_json(&format!("/v1/files/{file_id}"), api_key)
+            .await
+    }
+
+    pub async fn file_content(&self, api_key: &str, file_id: &str) -> Result<reqwest::Response> {
+        self.get_stream(&format!("/v1/files/{file_id}/content"), api_key)
+            .await
+    }
+
     pub async fn uploads(&self, api_key: &str, request: &CreateUploadRequest) -> Result<Value> {
         self.post_json("/v1/uploads", api_key, request).await
     }
@@ -263,6 +282,42 @@ impl OpenAiProviderAdapter {
         Ok(response)
     }
 
+    async fn get_json(&self, path: &str, api_key: &str) -> Result<Value> {
+        let response = self
+            .client
+            .get(format!("{}{}", self.base_url, path))
+            .bearer_auth(api_key)
+            .send()
+            .await?
+            .error_for_status()?;
+
+        Ok(response.json::<Value>().await?)
+    }
+
+    async fn get_stream(&self, path: &str, api_key: &str) -> Result<reqwest::Response> {
+        let response = self
+            .client
+            .get(format!("{}{}", self.base_url, path))
+            .bearer_auth(api_key)
+            .send()
+            .await?
+            .error_for_status()?;
+
+        Ok(response)
+    }
+
+    async fn delete_json(&self, path: &str, api_key: &str) -> Result<Value> {
+        let response = self
+            .client
+            .delete(format!("{}{}", self.base_url, path))
+            .bearer_auth(api_key)
+            .send()
+            .await?
+            .error_for_status()?;
+
+        Ok(response.json::<Value>().await?)
+    }
+
     async fn post_multipart_json(
         &self,
         path: &str,
@@ -325,6 +380,16 @@ impl ProviderExecutionAdapter for OpenAiProviderAdapter {
             ProviderRequest::Files(request) => {
                 Ok(ProviderOutput::Json(self.files(api_key, request).await?))
             }
+            ProviderRequest::FilesList => Ok(ProviderOutput::Json(self.list_files(api_key).await?)),
+            ProviderRequest::FilesRetrieve(file_id) => Ok(ProviderOutput::Json(
+                self.retrieve_file(api_key, file_id).await?,
+            )),
+            ProviderRequest::FilesDelete(file_id) => Ok(ProviderOutput::Json(
+                self.delete_file(api_key, file_id).await?,
+            )),
+            ProviderRequest::FilesContent(file_id) => Ok(ProviderOutput::Stream(
+                self.file_content(api_key, file_id).await?,
+            )),
             ProviderRequest::Uploads(request) => {
                 Ok(ProviderOutput::Json(self.uploads(api_key, request).await?))
             }

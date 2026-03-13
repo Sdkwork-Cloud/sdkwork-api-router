@@ -59,3 +59,35 @@ impl FileObject {
         }
     }
 }
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ListFilesResponse {
+    pub object: &'static str,
+    pub data: Vec<FileObject>,
+}
+
+impl ListFilesResponse {
+    pub fn new(data: Vec<FileObject>) -> Self {
+        Self {
+            object: "list",
+            data,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DeleteFileResponse {
+    pub id: String,
+    pub object: &'static str,
+    pub deleted: bool,
+}
+
+impl DeleteFileResponse {
+    pub fn deleted(id: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            object: "file",
+            deleted: true,
+        }
+    }
+}

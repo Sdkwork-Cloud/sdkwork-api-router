@@ -128,6 +128,22 @@ impl OllamaProviderAdapter {
         self.delegate.files(api_key, request).await
     }
 
+    pub async fn list_files(&self, api_key: &str) -> Result<Value> {
+        self.delegate.list_files(api_key).await
+    }
+
+    pub async fn retrieve_file(&self, api_key: &str, file_id: &str) -> Result<Value> {
+        self.delegate.retrieve_file(api_key, file_id).await
+    }
+
+    pub async fn delete_file(&self, api_key: &str, file_id: &str) -> Result<Value> {
+        self.delegate.delete_file(api_key, file_id).await
+    }
+
+    pub async fn file_content(&self, api_key: &str, file_id: &str) -> Result<reqwest::Response> {
+        self.delegate.file_content(api_key, file_id).await
+    }
+
     pub async fn uploads(&self, api_key: &str, request: &CreateUploadRequest) -> Result<Value> {
         self.delegate.uploads(api_key, request).await
     }
@@ -236,6 +252,16 @@ impl ProviderExecutionAdapter for OllamaProviderAdapter {
             ProviderRequest::Files(request) => {
                 Ok(ProviderOutput::Json(self.files(api_key, request).await?))
             }
+            ProviderRequest::FilesList => Ok(ProviderOutput::Json(self.list_files(api_key).await?)),
+            ProviderRequest::FilesRetrieve(file_id) => Ok(ProviderOutput::Json(
+                self.retrieve_file(api_key, file_id).await?,
+            )),
+            ProviderRequest::FilesDelete(file_id) => Ok(ProviderOutput::Json(
+                self.delete_file(api_key, file_id).await?,
+            )),
+            ProviderRequest::FilesContent(file_id) => Ok(ProviderOutput::Stream(
+                self.file_content(api_key, file_id).await?,
+            )),
             ProviderRequest::Uploads(request) => {
                 Ok(ProviderOutput::Json(self.uploads(api_key, request).await?))
             }

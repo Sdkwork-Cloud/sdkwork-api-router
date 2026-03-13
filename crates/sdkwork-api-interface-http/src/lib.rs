@@ -32,16 +32,22 @@ use sdkwork_api_app_gateway::create_translation;
 use sdkwork_api_app_gateway::create_upload;
 use sdkwork_api_app_gateway::create_upload_part;
 use sdkwork_api_app_gateway::create_vector_store;
+use sdkwork_api_app_gateway::delete_file;
+use sdkwork_api_app_gateway::file_content;
+use sdkwork_api_app_gateway::get_file;
+use sdkwork_api_app_gateway::list_files;
 use sdkwork_api_app_gateway::list_models;
 use sdkwork_api_app_gateway::{
     create_embedding, create_response, list_models_from_store, relay_assistant_from_store,
     relay_batch_from_store, relay_cancel_upload_from_store, relay_chat_completion_from_store,
     relay_chat_completion_stream_from_store, relay_complete_upload_from_store,
-    relay_completion_from_store, relay_embedding_from_store, relay_eval_from_store,
-    relay_file_from_store, relay_fine_tuning_job_from_store, relay_image_generation_from_store,
-    relay_moderation_from_store, relay_realtime_session_from_store, relay_response_from_store,
-    relay_speech_from_store, relay_transcription_from_store, relay_translation_from_store,
-    relay_upload_from_store, relay_upload_part_from_store, relay_vector_store_from_store,
+    relay_completion_from_store, relay_delete_file_from_store, relay_embedding_from_store,
+    relay_eval_from_store, relay_file_content_from_store, relay_file_from_store,
+    relay_fine_tuning_job_from_store, relay_get_file_from_store, relay_image_generation_from_store,
+    relay_list_files_from_store, relay_moderation_from_store, relay_realtime_session_from_store,
+    relay_response_from_store, relay_speech_from_store, relay_transcription_from_store,
+    relay_translation_from_store, relay_upload_from_store, relay_upload_part_from_store,
+    relay_vector_store_from_store,
 };
 use sdkwork_api_app_routing::simulate_route_with_store;
 use sdkwork_api_app_usage::persist_usage_record;
@@ -118,7 +124,12 @@ pub fn gateway_router() -> Router {
         .route("/v1/audio/transcriptions", post(transcriptions_handler))
         .route("/v1/audio/translations", post(translations_handler))
         .route("/v1/audio/speech", post(audio_speech_handler))
-        .route("/v1/files", post(files_handler))
+        .route("/v1/files", get(files_list_handler).post(files_handler))
+        .route(
+            "/v1/files/{file_id}",
+            get(file_retrieve_handler).delete(file_delete_handler),
+        )
+        .route("/v1/files/{file_id}/content", get(file_content_handler))
         .route("/v1/uploads", post(uploads_handler))
         .route("/v1/uploads/{upload_id}/parts", post(upload_parts_handler))
         .route(
@@ -196,7 +207,18 @@ pub fn gateway_router_with_store_and_secret_manager(
             post(translations_with_state_handler),
         )
         .route("/v1/audio/speech", post(audio_speech_with_state_handler))
-        .route("/v1/files", post(files_with_state_handler))
+        .route(
+            "/v1/files",
+            get(files_list_with_state_handler).post(files_with_state_handler),
+        )
+        .route(
+            "/v1/files/{file_id}",
+            get(file_retrieve_with_state_handler).delete(file_delete_with_state_handler),
+        )
+        .route(
+            "/v1/files/{file_id}/content",
+            get(file_content_with_state_handler),
+        )
         .route("/v1/uploads", post(uploads_with_state_handler))
         .route(
             "/v1/uploads/{upload_id}/parts",
@@ -321,6 +343,26 @@ async fn files_handler(multipart: Multipart) -> Response {
         }
         Err(response) => response,
     }
+}
+
+async fn files_list_handler() -> Json<sdkwork_api_contract_openai::files::ListFilesResponse> {
+    Json(list_files("tenant-1", "project-1").expect("files list"))
+}
+
+async fn file_retrieve_handler(
+    Path(file_id): Path<String>,
+) -> Json<sdkwork_api_contract_openai::files::FileObject> {
+    Json(get_file("tenant-1", "project-1", &file_id).expect("file retrieve"))
+}
+
+async fn file_delete_handler(
+    Path(file_id): Path<String>,
+) -> Json<sdkwork_api_contract_openai::files::DeleteFileResponse> {
+    Json(delete_file("tenant-1", "project-1", &file_id).expect("file delete"))
+}
+
+async fn file_content_handler(Path(file_id): Path<String>) -> Response {
+    local_file_content_response(&file_id)
 }
 
 async fn uploads_handler(
@@ -529,6 +571,15 @@ fn upstream_passthrough_response(response: reqwest::Response) -> Response {
         .header(header::CONTENT_TYPE, content_type)
         .body(Body::from_stream(response.bytes_stream()))
         .expect("valid upstream stream response")
+}
+
+fn local_file_content_response(file_id: &str) -> Response {
+    let bytes = file_content("tenant-1", "project-1", file_id).expect("file content");
+    Response::builder()
+        .status(axum::http::StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/jsonl")
+        .body(Body::from(bytes))
+        .expect("valid local file content response")
 }
 
 async fn responses_with_state_handler(
@@ -1060,6 +1111,206 @@ async fn files_with_state_handler(
     }
 
     Json(create_file("tenant-1", "project-1", &request).expect("file")).into_response()
+}
+
+async fn files_list_with_state_handler(State(state): State<GatewayApiState>) -> Response {
+    match relay_list_files_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(state.store.as_ref(), "files", "list", 1, 0.001)
+                .await
+                .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream files list",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(state.store.as_ref(), "files", "list", 1, 0.001)
+        .await
+        .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(list_files("tenant-1", "project-1").expect("files list")).into_response()
+}
+
+async fn file_retrieve_with_state_handler(
+    State(state): State<GatewayApiState>,
+    Path(file_id): Path<String>,
+) -> Response {
+    match relay_get_file_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &file_id,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(state.store.as_ref(), "files", &file_id, 1, 0.001)
+                .await
+                .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream file retrieve",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(state.store.as_ref(), "files", &file_id, 1, 0.001)
+        .await
+        .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(get_file("tenant-1", "project-1", &file_id).expect("file retrieve")).into_response()
+}
+
+async fn file_delete_with_state_handler(
+    State(state): State<GatewayApiState>,
+    Path(file_id): Path<String>,
+) -> Response {
+    match relay_delete_file_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &file_id,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(state.store.as_ref(), "files", &file_id, 1, 0.001)
+                .await
+                .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream file delete",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(state.store.as_ref(), "files", &file_id, 1, 0.001)
+        .await
+        .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(delete_file("tenant-1", "project-1", &file_id).expect("file delete")).into_response()
+}
+
+async fn file_content_with_state_handler(
+    State(state): State<GatewayApiState>,
+    Path(file_id): Path<String>,
+) -> Response {
+    match relay_file_content_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &file_id,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(state.store.as_ref(), "files", &file_id, 1, 0.001)
+                .await
+                .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return upstream_passthrough_response(response);
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream file content",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(state.store.as_ref(), "files", &file_id, 1, 0.001)
+        .await
+        .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    local_file_content_response(&file_id)
 }
 
 async fn uploads_with_state_handler(

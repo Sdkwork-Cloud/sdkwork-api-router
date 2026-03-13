@@ -9,7 +9,9 @@
 | `/v1/completions` | Implemented | Stateful mode supports OpenAI-compatible upstream relay for legacy text completions; otherwise emits local completion fallback |
 | `/v1/responses` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local response object fallback |
 | `/v1/embeddings` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local embeddings fallback |
-| `/v1/files` | Implemented | Stateful mode supports OpenAI-compatible upstream multipart relay; otherwise emits local file fallback |
+| `/v1/files` | Implemented | Stateful mode supports OpenAI-compatible upstream multipart create and JSON list relay; otherwise emits local file fallback |
+| `/v1/files/{file_id}` | Implemented | Stateful mode supports OpenAI-compatible upstream retrieve and delete relay; otherwise emits local file metadata or deleted response fallback |
+| `/v1/files/{file_id}/content` | Implemented | Stateful mode supports OpenAI-compatible upstream binary passthrough; otherwise emits local file-content fallback |
 | `/v1/moderations` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local unflagged moderation fallback |
 | `/v1/images/generations` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local base64 image fallback |
 | `/v1/audio/transcriptions` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local transcription fallback |
@@ -54,7 +56,7 @@
 | Moderations | Defined | Implemented |
 | Images | Defined | Implemented |
 | Streaming | Defined | Implemented |
-| Files | Defined | Implemented |
+| Files | Defined | Implemented (`create`, `list`, `retrieve`, `delete`, `content`) |
 | Uploads | Defined | Implemented |
 | Audio | Defined | Partially implemented (`/v1/audio/transcriptions`, `/v1/audio/translations`, `/v1/audio/speech`) |
 | Fine Tuning | Defined | Implemented |
@@ -70,7 +72,7 @@
 
 | Capability | Current Behavior |
 |---|---|
-| Upstream proxying | Partially implemented; stateful gateway relays OpenAI-compatible chat, chat SSE, completions, responses, embeddings, files multipart uploads, upload create/part/complete/cancel, moderations, image generations, audio transcriptions, audio translations, audio speech binary passthrough, fine-tuning jobs, assistants, realtime sessions, evals, batches, and vector stores when provider and credential records are configured |
+| Upstream proxying | Partially implemented; stateful gateway relays OpenAI-compatible chat, chat SSE, completions, responses, embeddings, files create/list/retrieve/delete/content, upload create/part/complete/cancel, moderations, image generations, audio transcriptions, audio translations, audio speech binary passthrough, fine-tuning jobs, assistants, realtime sessions, evals, batches, and vector stores when provider and credential records are configured |
 | Model discovery | Driven by the local catalog, not upstream auto-sync |
 | Routing | Deterministic candidate selection from catalog models |
 | Provider dispatch | Executed through `sdkwork-api-provider-core` registry abstractions with `adapter_kind` plus `base_url` resolution; `openai`, `openrouter`, and `ollama` are currently registered |
