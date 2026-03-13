@@ -14,6 +14,7 @@ use axum::{
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use sdkwork_api_app_billing::persist_ledger_entry;
 use sdkwork_api_app_credential::CredentialSecretManager;
+use sdkwork_api_app_gateway::cancel_batch;
 use sdkwork_api_app_gateway::cancel_fine_tuning_job;
 use sdkwork_api_app_gateway::cancel_upload;
 use sdkwork_api_app_gateway::complete_upload;
@@ -35,24 +36,27 @@ use sdkwork_api_app_gateway::create_upload_part;
 use sdkwork_api_app_gateway::create_vector_store;
 use sdkwork_api_app_gateway::delete_file;
 use sdkwork_api_app_gateway::file_content;
+use sdkwork_api_app_gateway::get_batch;
 use sdkwork_api_app_gateway::get_file;
 use sdkwork_api_app_gateway::get_fine_tuning_job;
+use sdkwork_api_app_gateway::list_batches;
 use sdkwork_api_app_gateway::list_files;
 use sdkwork_api_app_gateway::list_fine_tuning_jobs;
 use sdkwork_api_app_gateway::list_models;
 use sdkwork_api_app_gateway::{
     create_embedding, create_response, list_models_from_store, relay_assistant_from_store,
-    relay_batch_from_store, relay_cancel_fine_tuning_job_from_store,
+    relay_batch_from_store, relay_cancel_batch_from_store, relay_cancel_fine_tuning_job_from_store,
     relay_cancel_upload_from_store, relay_chat_completion_from_store,
     relay_chat_completion_stream_from_store, relay_complete_upload_from_store,
     relay_completion_from_store, relay_delete_file_from_store, relay_embedding_from_store,
     relay_eval_from_store, relay_file_content_from_store, relay_file_from_store,
-    relay_fine_tuning_job_from_store, relay_get_file_from_store,
+    relay_fine_tuning_job_from_store, relay_get_batch_from_store, relay_get_file_from_store,
     relay_get_fine_tuning_job_from_store, relay_image_generation_from_store,
-    relay_list_files_from_store, relay_list_fine_tuning_jobs_from_store,
-    relay_moderation_from_store, relay_realtime_session_from_store, relay_response_from_store,
-    relay_speech_from_store, relay_transcription_from_store, relay_translation_from_store,
-    relay_upload_from_store, relay_upload_part_from_store, relay_vector_store_from_store,
+    relay_list_batches_from_store, relay_list_files_from_store,
+    relay_list_fine_tuning_jobs_from_store, relay_moderation_from_store,
+    relay_realtime_session_from_store, relay_response_from_store, relay_speech_from_store,
+    relay_transcription_from_store, relay_translation_from_store, relay_upload_from_store,
+    relay_upload_part_from_store, relay_vector_store_from_store,
 };
 use sdkwork_api_app_routing::simulate_route_with_store;
 use sdkwork_api_app_usage::persist_usage_record;
@@ -160,7 +164,12 @@ pub fn gateway_router() -> Router {
         .route("/v1/assistants", post(assistants_handler))
         .route("/v1/realtime/sessions", post(realtime_sessions_handler))
         .route("/v1/evals", post(evals_handler))
-        .route("/v1/batches", post(batches_handler))
+        .route(
+            "/v1/batches",
+            get(batches_list_handler).post(batches_handler),
+        )
+        .route("/v1/batches/{batch_id}", get(batch_retrieve_handler))
+        .route("/v1/batches/{batch_id}/cancel", post(batch_cancel_handler))
         .route("/v1/vector_stores", post(vector_stores_handler))
 }
 
@@ -266,7 +275,18 @@ pub fn gateway_router_with_store_and_secret_manager(
             post(realtime_sessions_with_state_handler),
         )
         .route("/v1/evals", post(evals_with_state_handler))
-        .route("/v1/batches", post(batches_with_state_handler))
+        .route(
+            "/v1/batches",
+            get(batches_list_with_state_handler).post(batches_with_state_handler),
+        )
+        .route(
+            "/v1/batches/{batch_id}",
+            get(batch_retrieve_with_state_handler),
+        )
+        .route(
+            "/v1/batches/{batch_id}/cancel",
+            post(batch_cancel_with_state_handler),
+        )
         .route("/v1/vector_stores", post(vector_stores_with_state_handler))
         .with_state(GatewayApiState::with_store_and_secret_manager(
             store,
@@ -483,6 +503,22 @@ async fn batches_handler(
         )
         .expect("batch"),
     )
+}
+
+async fn batches_list_handler() -> Json<sdkwork_api_contract_openai::batches::ListBatchesResponse> {
+    Json(list_batches("tenant-1", "project-1").expect("batches list"))
+}
+
+async fn batch_retrieve_handler(
+    Path(batch_id): Path<String>,
+) -> Json<sdkwork_api_contract_openai::batches::BatchObject> {
+    Json(get_batch("tenant-1", "project-1", &batch_id).expect("batch retrieve"))
+}
+
+async fn batch_cancel_handler(
+    Path(batch_id): Path<String>,
+) -> Json<sdkwork_api_contract_openai::batches::BatchObject> {
+    Json(cancel_batch("tenant-1", "project-1", &batch_id).expect("batch cancel"))
 }
 
 async fn vector_stores_handler(
@@ -2074,6 +2110,155 @@ async fn batches_with_state_handler(
         .expect("batch"),
     )
     .into_response()
+}
+
+async fn batches_list_with_state_handler(State(state): State<GatewayApiState>) -> Response {
+    match relay_list_batches_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(state.store.as_ref(), "batches", "batches", 20, 0.02)
+                .await
+                .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream batches list",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(state.store.as_ref(), "batches", "batches", 20, 0.02)
+        .await
+        .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(list_batches("tenant-1", "project-1").expect("batches list")).into_response()
+}
+
+async fn batch_retrieve_with_state_handler(
+    State(state): State<GatewayApiState>,
+    Path(batch_id): Path<String>,
+) -> Response {
+    match relay_get_batch_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &batch_id,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(state.store.as_ref(), "batches", &batch_id, 20, 0.02)
+                .await
+                .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream batch retrieve",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(state.store.as_ref(), "batches", &batch_id, 20, 0.02)
+        .await
+        .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(get_batch("tenant-1", "project-1", &batch_id).expect("batch retrieve")).into_response()
+}
+
+async fn batch_cancel_with_state_handler(
+    State(state): State<GatewayApiState>,
+    Path(batch_id): Path<String>,
+) -> Response {
+    match relay_cancel_batch_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &batch_id,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(state.store.as_ref(), "batches", &batch_id, 20, 0.02)
+                .await
+                .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream batch cancel",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(state.store.as_ref(), "batches", &batch_id, 20, 0.02)
+        .await
+        .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(cancel_batch("tenant-1", "project-1", &batch_id).expect("batch cancel")).into_response()
 }
 
 async fn vector_stores_with_state_handler(

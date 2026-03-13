@@ -1,6 +1,6 @@
 use sdkwork_api_contract_openai::assistants::{AssistantObject, CreateAssistantRequest};
 use sdkwork_api_contract_openai::audio::{CreateTranscriptionRequest, TranscriptionObject};
-use sdkwork_api_contract_openai::batches::{BatchObject, CreateBatchRequest};
+use sdkwork_api_contract_openai::batches::{BatchObject, CreateBatchRequest, ListBatchesResponse};
 use sdkwork_api_contract_openai::evals::{CreateEvalRequest, EvalObject};
 use sdkwork_api_contract_openai::files::{
     CreateFileRequest, DeleteFileResponse, FileObject, ListFilesResponse,
@@ -189,6 +189,15 @@ fn serializes_batch_contracts() {
     let batch = BatchObject::new("batch_1", "/v1/responses", "file_1");
     let json = serde_json::to_value(batch).unwrap();
     assert_eq!(json["object"], "batch");
+
+    let list =
+        ListBatchesResponse::new(vec![BatchObject::new("batch_1", "/v1/responses", "file_1")]);
+    let list_json = serde_json::to_value(list).unwrap();
+    assert_eq!(list_json["object"], "list");
+
+    let cancelled = BatchObject::cancelled("batch_1", "/v1/responses", "file_1");
+    let cancelled_json = serde_json::to_value(cancelled).unwrap();
+    assert_eq!(cancelled_json["status"], "cancelled");
 }
 
 #[test]

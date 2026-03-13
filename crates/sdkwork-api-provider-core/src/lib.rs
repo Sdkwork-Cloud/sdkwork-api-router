@@ -62,6 +62,9 @@ pub enum ProviderRequest<'a> {
     RealtimeSessions(&'a CreateRealtimeSessionRequest),
     Evals(&'a CreateEvalRequest),
     Batches(&'a CreateBatchRequest),
+    BatchesList,
+    BatchesRetrieve(&'a str),
+    BatchesCancel(&'a str),
     VectorStores(&'a CreateVectorStoreRequest),
 }
 

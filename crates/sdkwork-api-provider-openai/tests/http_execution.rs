@@ -523,6 +523,92 @@ async fn adapter_posts_batches_to_openai_compatible_upstream() {
 }
 
 #[tokio::test]
+async fn adapter_lists_batches_from_openai_compatible_upstream() {
+    let state = CaptureState::default();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+
+    let app = Router::new()
+        .route("/v1/batches", get(capture_batches_list_request))
+        .with_state(state.clone());
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let adapter =
+        sdkwork_api_provider_openai::OpenAiProviderAdapter::new(format!("http://{address}"));
+    let response = adapter.list_batches("sk-upstream-openai").await.unwrap();
+
+    assert_eq!(response["object"], "list");
+    assert_eq!(response["data"][0]["id"], "batch_1");
+    assert_eq!(
+        state.authorization.lock().unwrap().as_deref(),
+        Some("Bearer sk-upstream-openai")
+    );
+}
+
+#[tokio::test]
+async fn adapter_retrieves_batch_from_openai_compatible_upstream() {
+    let state = CaptureState::default();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+
+    let app = Router::new()
+        .route("/v1/batches/batch_1", get(capture_batch_retrieve_request))
+        .with_state(state.clone());
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let adapter =
+        sdkwork_api_provider_openai::OpenAiProviderAdapter::new(format!("http://{address}"));
+    let response = adapter
+        .retrieve_batch("sk-upstream-openai", "batch_1")
+        .await
+        .unwrap();
+
+    assert_eq!(response["id"], "batch_1");
+    assert_eq!(
+        state.authorization.lock().unwrap().as_deref(),
+        Some("Bearer sk-upstream-openai")
+    );
+}
+
+#[tokio::test]
+async fn adapter_cancels_batch_on_openai_compatible_upstream() {
+    let state = CaptureState::default();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+
+    let app = Router::new()
+        .route(
+            "/v1/batches/batch_1/cancel",
+            post(capture_batch_cancel_request),
+        )
+        .with_state(state.clone());
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let adapter =
+        sdkwork_api_provider_openai::OpenAiProviderAdapter::new(format!("http://{address}"));
+    let response = adapter
+        .cancel_batch("sk-upstream-openai", "batch_1")
+        .await
+        .unwrap();
+
+    assert_eq!(response["status"], "cancelled");
+    assert_eq!(
+        state.authorization.lock().unwrap().as_deref(),
+        Some("Bearer sk-upstream-openai")
+    );
+    assert_eq!(state.raw_body.lock().unwrap().as_deref(), Some(&[][..]));
+}
+
+#[tokio::test]
 async fn adapter_posts_vector_stores_to_openai_compatible_upstream() {
     let state = CaptureState::default();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1226,6 +1312,74 @@ async fn capture_batch_request(
             "endpoint":"/v1/responses",
             "input_file_id":"file_1",
             "status":"validating"
+        })),
+    )
+}
+
+async fn capture_batches_list_request(
+    State(state): State<CaptureState>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<Value>) {
+    *state.authorization.lock().unwrap() = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "object":"list",
+            "data":[{
+                "id":"batch_1",
+                "object":"batch",
+                "endpoint":"/v1/responses",
+                "input_file_id":"file_1",
+                "status":"validating"
+            }]
+        })),
+    )
+}
+
+async fn capture_batch_retrieve_request(
+    State(state): State<CaptureState>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<Value>) {
+    *state.authorization.lock().unwrap() = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "id":"batch_1",
+            "object":"batch",
+            "endpoint":"/v1/responses",
+            "input_file_id":"file_1",
+            "status":"in_progress"
+        })),
+    )
+}
+
+async fn capture_batch_cancel_request(
+    State(state): State<CaptureState>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> (StatusCode, Json<Value>) {
+    *state.authorization.lock().unwrap() = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+    *state.raw_body.lock().unwrap() = Some(body.to_vec());
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "id":"batch_1",
+            "object":"batch",
+            "endpoint":"/v1/responses",
+            "input_file_id":"file_1",
+            "status":"cancelled"
         })),
     )
 }

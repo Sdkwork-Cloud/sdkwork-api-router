@@ -44,4 +44,29 @@ impl BatchObject {
             status: "validating",
         }
     }
+
+    pub fn cancelled(
+        id: impl Into<String>,
+        endpoint: impl Into<String>,
+        input_file_id: impl Into<String>,
+    ) -> Self {
+        let mut batch = Self::new(id, endpoint, input_file_id);
+        batch.status = "cancelled";
+        batch
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ListBatchesResponse {
+    pub object: &'static str,
+    pub data: Vec<BatchObject>,
+}
+
+impl ListBatchesResponse {
+    pub fn new(data: Vec<BatchObject>) -> Self {
+        Self {
+            object: "list",
+            data,
+        }
+    }
 }

@@ -7,7 +7,7 @@ use sdkwork_api_contract_openai::audio::{
     CreateSpeechRequest, CreateTranscriptionRequest, CreateTranslationRequest, SpeechResponse,
     TranscriptionObject, TranslationObject,
 };
-use sdkwork_api_contract_openai::batches::{BatchObject, CreateBatchRequest};
+use sdkwork_api_contract_openai::batches::{BatchObject, CreateBatchRequest, ListBatchesResponse};
 use sdkwork_api_contract_openai::chat_completions::ChatCompletionResponse;
 use sdkwork_api_contract_openai::chat_completions::CreateChatCompletionRequest;
 use sdkwork_api_contract_openai::completions::{CompletionObject, CreateCompletionRequest};
@@ -791,6 +791,86 @@ pub async fn relay_batch_from_store(
     .await
 }
 
+pub async fn relay_list_batches_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+) -> Result<Option<Value>> {
+    let decision = simulate_route_with_store(store, "batches", "batches").await?;
+    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
+        return Ok(None);
+    };
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &provider.adapter_kind,
+        provider.base_url,
+        &api_key,
+        ProviderRequest::BatchesList,
+    )
+    .await
+}
+
+pub async fn relay_get_batch_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    batch_id: &str,
+) -> Result<Option<Value>> {
+    let decision = simulate_route_with_store(store, "batches", batch_id).await?;
+    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
+        return Ok(None);
+    };
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &provider.adapter_kind,
+        provider.base_url,
+        &api_key,
+        ProviderRequest::BatchesRetrieve(batch_id),
+    )
+    .await
+}
+
+pub async fn relay_cancel_batch_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    batch_id: &str,
+) -> Result<Option<Value>> {
+    let decision = simulate_route_with_store(store, "batches", batch_id).await?;
+    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
+        return Ok(None);
+    };
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &provider.adapter_kind,
+        provider.base_url,
+        &api_key,
+        ProviderRequest::BatchesCancel(batch_id),
+    )
+    .await
+}
+
 pub async fn relay_vector_store_from_store(
     store: &dyn AdminStore,
     secret_manager: &CredentialSecretManager,
@@ -1053,6 +1133,22 @@ pub fn create_batch(
     input_file_id: &str,
 ) -> Result<BatchObject> {
     Ok(BatchObject::new("batch_1", endpoint, input_file_id))
+}
+
+pub fn list_batches(_tenant_id: &str, _project_id: &str) -> Result<ListBatchesResponse> {
+    Ok(ListBatchesResponse::new(vec![BatchObject::new(
+        "batch_1",
+        "/v1/responses",
+        "file_1",
+    )]))
+}
+
+pub fn get_batch(_tenant_id: &str, _project_id: &str, batch_id: &str) -> Result<BatchObject> {
+    Ok(BatchObject::new(batch_id, "/v1/responses", "file_1"))
+}
+
+pub fn cancel_batch(_tenant_id: &str, _project_id: &str, batch_id: &str) -> Result<BatchObject> {
+    Ok(BatchObject::cancelled(batch_id, "/v1/responses", "file_1"))
 }
 
 pub fn create_vector_store(

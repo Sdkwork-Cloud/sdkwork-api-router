@@ -27,7 +27,9 @@
 | `/v1/assistants` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local assistant fallback |
 | `/v1/realtime/sessions` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local realtime session fallback |
 | `/v1/evals` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local eval fallback |
-| `/v1/batches` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local batch fallback |
+| `/v1/batches` | Implemented | Stateful mode supports OpenAI-compatible upstream create and list relay; otherwise emits local batch fallback |
+| `/v1/batches/{batch_id}` | Implemented | Stateful mode supports OpenAI-compatible upstream retrieve relay; otherwise emits local batch metadata fallback |
+| `/v1/batches/{batch_id}/cancel` | Implemented | Stateful mode supports OpenAI-compatible upstream cancel relay; otherwise emits local cancelled batch fallback |
 | `/v1/vector_stores` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local vector store fallback |
 
 ## Current Implemented Admin APIs
@@ -65,7 +67,7 @@
 | Realtime | Defined | Implemented |
 | Assistants | Defined | Implemented |
 | Vector Stores | Defined | Implemented |
-| Batches | Defined | Implemented |
+| Batches | Defined | Partially implemented (`create`, `list`, `retrieve`, `cancel`) |
 | Videos | Defined | Contract only |
 | Webhooks | Defined | Contract only |
 | Evals | Defined | Implemented |
@@ -74,7 +76,7 @@
 
 | Capability | Current Behavior |
 |---|---|
-| Upstream proxying | Partially implemented; stateful gateway relays OpenAI-compatible chat, chat SSE, completions, responses, embeddings, files create/list/retrieve/delete/content, upload create/part/complete/cancel, moderations, image generations, audio transcriptions, audio translations, audio speech binary passthrough, fine-tuning jobs create/list/retrieve/cancel, assistants, realtime sessions, evals, batches, and vector stores when provider and credential records are configured |
+| Upstream proxying | Partially implemented; stateful gateway relays OpenAI-compatible chat, chat SSE, completions, responses, embeddings, files create/list/retrieve/delete/content, upload create/part/complete/cancel, moderations, image generations, audio transcriptions, audio translations, audio speech binary passthrough, fine-tuning jobs create/list/retrieve/cancel, assistants, realtime sessions, evals, batches create/list/retrieve/cancel, and vector stores when provider and credential records are configured |
 | Model discovery | Driven by the local catalog, not upstream auto-sync |
 | Routing | Deterministic candidate selection from catalog models |
 | Provider dispatch | Executed through `sdkwork-api-provider-core` registry abstractions with `adapter_kind` plus `base_url` resolution; `openai`, `openrouter`, and `ollama` are currently registered |

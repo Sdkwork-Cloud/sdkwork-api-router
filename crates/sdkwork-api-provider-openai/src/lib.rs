@@ -262,6 +262,27 @@ impl OpenAiProviderAdapter {
         self.post_json("/v1/batches", api_key, request).await
     }
 
+    pub async fn list_batches(&self, api_key: &str) -> Result<Value> {
+        self.get_json("/v1/batches", api_key).await
+    }
+
+    pub async fn retrieve_batch(&self, api_key: &str, batch_id: &str) -> Result<Value> {
+        self.get_json(&format!("/v1/batches/{batch_id}"), api_key)
+            .await
+    }
+
+    pub async fn cancel_batch(&self, api_key: &str, batch_id: &str) -> Result<Value> {
+        let response = self
+            .client
+            .post(format!("{}/v1/batches/{batch_id}/cancel", self.base_url))
+            .bearer_auth(api_key)
+            .send()
+            .await?
+            .error_for_status()?;
+
+        Ok(response.json::<Value>().await?)
+    }
+
     pub async fn vector_stores(
         &self,
         api_key: &str,
@@ -450,6 +471,15 @@ impl ProviderExecutionAdapter for OpenAiProviderAdapter {
             ProviderRequest::Batches(request) => {
                 Ok(ProviderOutput::Json(self.batches(api_key, request).await?))
             }
+            ProviderRequest::BatchesList => {
+                Ok(ProviderOutput::Json(self.list_batches(api_key).await?))
+            }
+            ProviderRequest::BatchesRetrieve(batch_id) => Ok(ProviderOutput::Json(
+                self.retrieve_batch(api_key, batch_id).await?,
+            )),
+            ProviderRequest::BatchesCancel(batch_id) => Ok(ProviderOutput::Json(
+                self.cancel_batch(api_key, batch_id).await?,
+            )),
             ProviderRequest::VectorStores(request) => Ok(ProviderOutput::Json(
                 self.vector_stores(api_key, request).await?,
             )),

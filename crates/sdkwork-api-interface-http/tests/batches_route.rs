@@ -1,7 +1,7 @@
 use axum::body::Body;
 use axum::extract::State;
 use axum::http::{Request, StatusCode};
-use axum::routing::post;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde_json::Value;
 use sqlx::SqlitePool;
@@ -20,6 +20,59 @@ async fn batches_route_returns_ok() {
                 .body(Body::from(
                     "{\"input_file_id\":\"file_1\",\"endpoint\":\"/v1/responses\",\"completion_window\":\"24h\"}",
                 ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn batches_list_route_returns_ok() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/batches")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn batch_retrieve_route_returns_ok() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/batches/batch_1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn batch_cancel_route_returns_ok() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/batches/batch_1/cancel")
+                .body(Body::empty())
                 .unwrap(),
         )
         .await
@@ -52,7 +105,15 @@ async fn stateful_batches_route_relays_to_openai_compatible_provider() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let upstream = Router::new()
-        .route("/v1/batches", post(upstream_batches_handler))
+        .route(
+            "/v1/batches",
+            get(upstream_batches_list_handler).post(upstream_batches_handler),
+        )
+        .route("/v1/batches/batch_1", get(upstream_batch_retrieve_handler))
+        .route(
+            "/v1/batches/batch_1/cancel",
+            post(upstream_batch_cancel_handler),
+        )
         .with_state(upstream_state.clone());
 
     tokio::spawn(async move {
@@ -111,6 +172,7 @@ async fn stateful_batches_route_relays_to_openai_compatible_provider() {
     assert_eq!(credential.status(), StatusCode::CREATED);
 
     let response = gateway_app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -131,6 +193,50 @@ async fn stateful_batches_route_relays_to_openai_compatible_provider() {
         upstream_state.authorization.lock().unwrap().as_deref(),
         Some("Bearer sk-upstream-openai")
     );
+
+    let list_response = gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/batches")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(list_response.status(), StatusCode::OK);
+    let list_json = read_json(list_response).await;
+    assert_eq!(list_json["object"], "list");
+
+    let retrieve_response = gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/batches/batch_1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(retrieve_response.status(), StatusCode::OK);
+    let retrieve_json = read_json(retrieve_response).await;
+    assert_eq!(retrieve_json["id"], "batch_1");
+
+    let cancel_response = gateway_app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/batches/batch_1/cancel")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(cancel_response.status(), StatusCode::OK);
+    let cancel_json = read_json(cancel_response).await;
+    assert_eq!(cancel_json["status"], "cancelled");
 }
 
 async fn upstream_batches_handler(
@@ -150,6 +256,72 @@ async fn upstream_batches_handler(
             "endpoint":"/v1/responses",
             "input_file_id":"file_1",
             "status":"validating"
+        })),
+    )
+}
+
+async fn upstream_batches_list_handler(
+    State(state): State<UpstreamCaptureState>,
+    headers: axum::http::HeaderMap,
+) -> (StatusCode, Json<Value>) {
+    *state.authorization.lock().unwrap() = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "object":"list",
+            "data":[{
+                "id":"batch_1",
+                "object":"batch",
+                "endpoint":"/v1/responses",
+                "input_file_id":"file_1",
+                "status":"validating"
+            }]
+        })),
+    )
+}
+
+async fn upstream_batch_retrieve_handler(
+    State(state): State<UpstreamCaptureState>,
+    headers: axum::http::HeaderMap,
+) -> (StatusCode, Json<Value>) {
+    *state.authorization.lock().unwrap() = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "id":"batch_1",
+            "object":"batch",
+            "endpoint":"/v1/responses",
+            "input_file_id":"file_1",
+            "status":"in_progress"
+        })),
+    )
+}
+
+async fn upstream_batch_cancel_handler(
+    State(state): State<UpstreamCaptureState>,
+    headers: axum::http::HeaderMap,
+) -> (StatusCode, Json<Value>) {
+    *state.authorization.lock().unwrap() = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "id":"batch_1",
+            "object":"batch",
+            "endpoint":"/v1/responses",
+            "input_file_id":"file_1",
+            "status":"cancelled"
         })),
     )
 }

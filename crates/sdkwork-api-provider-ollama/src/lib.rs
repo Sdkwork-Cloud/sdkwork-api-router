@@ -214,6 +214,18 @@ impl OllamaProviderAdapter {
         self.delegate.batches(api_key, request).await
     }
 
+    pub async fn list_batches(&self, api_key: &str) -> Result<Value> {
+        self.delegate.list_batches(api_key).await
+    }
+
+    pub async fn retrieve_batch(&self, api_key: &str, batch_id: &str) -> Result<Value> {
+        self.delegate.retrieve_batch(api_key, batch_id).await
+    }
+
+    pub async fn cancel_batch(&self, api_key: &str, batch_id: &str) -> Result<Value> {
+        self.delegate.cancel_batch(api_key, batch_id).await
+    }
+
     pub async fn vector_stores(
         &self,
         api_key: &str,
@@ -312,6 +324,15 @@ impl ProviderExecutionAdapter for OllamaProviderAdapter {
             ProviderRequest::Batches(request) => {
                 Ok(ProviderOutput::Json(self.batches(api_key, request).await?))
             }
+            ProviderRequest::BatchesList => {
+                Ok(ProviderOutput::Json(self.list_batches(api_key).await?))
+            }
+            ProviderRequest::BatchesRetrieve(batch_id) => Ok(ProviderOutput::Json(
+                self.retrieve_batch(api_key, batch_id).await?,
+            )),
+            ProviderRequest::BatchesCancel(batch_id) => Ok(ProviderOutput::Json(
+                self.cancel_batch(api_key, batch_id).await?,
+            )),
             ProviderRequest::VectorStores(request) => Ok(ProviderOutput::Json(
                 self.vector_stores(api_key, request).await?,
             )),
