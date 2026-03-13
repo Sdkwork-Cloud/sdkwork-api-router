@@ -397,6 +397,14 @@ impl PostgresAdminStore {
         }))
     }
 
+    pub async fn delete_model(&self, external_name: &str) -> Result<bool> {
+        let result = sqlx::query("DELETE FROM catalog_models WHERE external_name = $1")
+            .bind(external_name)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
     pub async fn insert_usage_record(&self, record: &UsageRecord) -> Result<UsageRecord> {
         sqlx::query(
             "INSERT INTO usage_records (project_id, model, provider_id) VALUES ($1, $2, $3)",
@@ -630,6 +638,10 @@ impl AdminStore for PostgresAdminStore {
 
     async fn find_model(&self, external_name: &str) -> Result<Option<ModelCatalogEntry>> {
         PostgresAdminStore::find_model(self, external_name).await
+    }
+
+    async fn delete_model(&self, external_name: &str) -> Result<bool> {
+        PostgresAdminStore::delete_model(self, external_name).await
     }
 
     async fn insert_usage_record(&self, record: &UsageRecord) -> Result<UsageRecord> {

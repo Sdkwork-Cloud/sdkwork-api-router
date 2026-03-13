@@ -31,3 +31,20 @@ impl ListModelsResponse {
         }
     }
 }
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DeleteModelResponse {
+    pub id: String,
+    pub object: &'static str,
+    pub deleted: bool,
+}
+
+impl DeleteModelResponse {
+    pub fn deleted(id: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            object: "model",
+            deleted: true,
+        }
+    }
+}

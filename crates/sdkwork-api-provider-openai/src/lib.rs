@@ -280,6 +280,11 @@ impl OpenAiProviderAdapter {
         self.post_json("/v1/completions", api_key, request).await
     }
 
+    pub async fn delete_model(&self, api_key: &str, model_id: &str) -> Result<Value> {
+        self.delete_json(&format!("/v1/models/{model_id}"), api_key)
+            .await
+    }
+
     pub async fn embeddings(
         &self,
         api_key: &str,
@@ -928,6 +933,9 @@ impl ProviderExecutionAdapter for OpenAiProviderAdapter {
             }
             ProviderRequest::Completions(request) => Ok(ProviderOutput::Json(
                 self.completions(api_key, request).await?,
+            )),
+            ProviderRequest::ModelsDelete(model_id) => Ok(ProviderOutput::Json(
+                self.delete_model(api_key, model_id).await?,
             )),
             ProviderRequest::Conversations(request) => Ok(ProviderOutput::Json(
                 self.conversations(api_key, request).await?,

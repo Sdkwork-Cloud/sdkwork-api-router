@@ -51,6 +51,7 @@ use sdkwork_api_app_gateway::delete_chat_completion;
 use sdkwork_api_app_gateway::delete_conversation;
 use sdkwork_api_app_gateway::delete_conversation_item;
 use sdkwork_api_app_gateway::delete_file;
+use sdkwork_api_app_gateway::delete_model;
 use sdkwork_api_app_gateway::delete_response;
 use sdkwork_api_app_gateway::delete_vector_store;
 use sdkwork_api_app_gateway::delete_vector_store_file;
@@ -96,12 +97,13 @@ use sdkwork_api_app_gateway::update_vector_store;
 use sdkwork_api_app_gateway::update_webhook;
 use sdkwork_api_app_gateway::video_content;
 use sdkwork_api_app_gateway::{
-    create_embedding, create_response, list_models_from_store, relay_assistant_from_store,
-    relay_batch_from_store, relay_cancel_batch_from_store, relay_cancel_fine_tuning_job_from_store,
-    relay_cancel_response_from_store, relay_cancel_upload_from_store,
-    relay_cancel_vector_store_file_batch_from_store, relay_chat_completion_from_store,
-    relay_chat_completion_stream_from_store, relay_compact_response_from_store,
-    relay_complete_upload_from_store, relay_completion_from_store, relay_conversation_from_store,
+    create_embedding, create_response, delete_model_from_store, list_models_from_store,
+    relay_assistant_from_store, relay_batch_from_store, relay_cancel_batch_from_store,
+    relay_cancel_fine_tuning_job_from_store, relay_cancel_response_from_store,
+    relay_cancel_upload_from_store, relay_cancel_vector_store_file_batch_from_store,
+    relay_chat_completion_from_store, relay_chat_completion_stream_from_store,
+    relay_compact_response_from_store, relay_complete_upload_from_store,
+    relay_completion_from_store, relay_conversation_from_store,
     relay_conversation_items_from_store, relay_count_response_input_tokens_from_store,
     relay_delete_assistant_from_store, relay_delete_chat_completion_from_store,
     relay_delete_conversation_from_store, relay_delete_conversation_item_from_store,
@@ -176,6 +178,7 @@ use sdkwork_api_contract_openai::videos::{CreateVideoRequest, RemixVideoRequest}
 use sdkwork_api_contract_openai::webhooks::{CreateWebhookRequest, UpdateWebhookRequest};
 use sdkwork_api_storage_core::AdminStore;
 use sdkwork_api_storage_sqlite::SqliteAdminStore;
+use serde_json::Value;
 use sqlx::SqlitePool;
 
 #[derive(Clone)]
@@ -218,7 +221,10 @@ pub fn gateway_router() -> Router {
     Router::new()
         .route("/health", get(|| async { "ok" }))
         .route("/v1/models", get(list_models_handler))
-        .route("/v1/models/{model_id}", get(model_retrieve_handler))
+        .route(
+            "/v1/models/{model_id}",
+            get(model_retrieve_handler).delete(model_delete_handler),
+        )
         .route(
             "/v1/chat/completions",
             get(chat_completions_list_handler).post(chat_completions_handler),
@@ -421,7 +427,7 @@ pub fn gateway_router_with_store_and_secret_manager(
         .route("/v1/models", get(list_models_from_store_handler))
         .route(
             "/v1/models/{model_id}",
-            get(model_retrieve_from_store_handler),
+            get(model_retrieve_from_store_handler).delete(model_delete_from_store_handler),
         )
         .route(
             "/v1/chat/completions",
@@ -645,6 +651,12 @@ async fn model_retrieve_handler(
     Json(get_model("tenant-1", "project-1", &model_id).expect("model response"))
 }
 
+async fn model_delete_handler(
+    Path(model_id): Path<String>,
+) -> Json<sdkwork_api_contract_openai::models::DeleteModelResponse> {
+    Json(delete_model("tenant-1", "project-1", &model_id).expect("model delete response"))
+}
+
 async fn list_models_from_store_handler(
     State(state): State<GatewayApiState>,
 ) -> Result<Json<sdkwork_api_contract_openai::models::ListModelsResponse>, Response> {
@@ -675,6 +687,29 @@ async fn model_retrieve_from_store_handler(
         })?
         .map(Json)
         .ok_or_else(|| (axum::http::StatusCode::NOT_FOUND, "model not found").into_response())
+}
+
+async fn model_delete_from_store_handler(
+    State(state): State<GatewayApiState>,
+    Path(model_id): Path<String>,
+) -> Result<Json<Value>, Response> {
+    delete_model_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &model_id,
+    )
+    .await
+    .map_err(|_| {
+        (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to delete model",
+        )
+            .into_response()
+    })?
+    .map(Json)
+    .ok_or_else(|| (axum::http::StatusCode::NOT_FOUND, "model not found").into_response())
 }
 
 async fn chat_completions_handler(

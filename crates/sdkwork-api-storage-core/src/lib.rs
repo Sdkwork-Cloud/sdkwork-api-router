@@ -69,6 +69,7 @@ pub trait AdminStore: Send + Sync {
     async fn insert_model(&self, model: &ModelCatalogEntry) -> Result<ModelCatalogEntry>;
     async fn list_models(&self) -> Result<Vec<ModelCatalogEntry>>;
     async fn find_model(&self, external_name: &str) -> Result<Option<ModelCatalogEntry>>;
+    async fn delete_model(&self, external_name: &str) -> Result<bool>;
 
     async fn insert_usage_record(&self, record: &UsageRecord) -> Result<UsageRecord>;
     async fn list_usage_records(&self) -> Result<Vec<UsageRecord>>;

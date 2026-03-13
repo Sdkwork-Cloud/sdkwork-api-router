@@ -57,6 +57,7 @@ pub enum ProviderRequest<'a> {
     ChatCompletionsDelete(&'a str),
     ChatCompletionsMessagesList(&'a str),
     Completions(&'a CreateCompletionRequest),
+    ModelsDelete(&'a str),
     Conversations(&'a CreateConversationRequest),
     ConversationsList,
     ConversationsRetrieve(&'a str),

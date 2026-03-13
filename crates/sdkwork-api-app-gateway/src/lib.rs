@@ -35,7 +35,7 @@ use sdkwork_api_contract_openai::images::{
     CreateImageEditRequest, CreateImageRequest, CreateImageVariationRequest, ImageObject,
     ImagesResponse,
 };
-use sdkwork_api_contract_openai::models::{ListModelsResponse, ModelObject};
+use sdkwork_api_contract_openai::models::{DeleteModelResponse, ListModelsResponse, ModelObject};
 use sdkwork_api_contract_openai::moderations::{
     CreateModerationRequest, ModerationCategoryScores, ModerationResponse, ModerationResult,
 };
@@ -83,6 +83,14 @@ pub fn get_model(_tenant_id: &str, _project_id: &str, model_id: &str) -> Result<
     Ok(ModelObject::new(model_id, "sdkwork"))
 }
 
+pub fn delete_model(
+    _tenant_id: &str,
+    _project_id: &str,
+    model_id: &str,
+) -> Result<DeleteModelResponse> {
+    Ok(DeleteModelResponse::deleted(model_id))
+}
+
 pub async fn list_models_from_store(
     store: &dyn AdminStore,
     _tenant_id: &str,
@@ -107,6 +115,46 @@ pub async fn get_model_from_store(
         .find_model(model_id)
         .await?
         .map(|entry| ModelObject::new(entry.external_name, entry.provider_id)))
+}
+
+pub async fn delete_model_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    model_id: &str,
+) -> Result<Option<Value>> {
+    let Some(model_entry) = store.find_model(model_id).await? else {
+        return Ok(None);
+    };
+
+    if let Some(provider) = store.find_provider(&model_entry.provider_id).await? {
+        if let Some(api_key) =
+            resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+                .await?
+        {
+            let response = execute_json_provider_request(
+                &provider.adapter_kind,
+                provider.base_url,
+                &api_key,
+                ProviderRequest::ModelsDelete(model_id),
+            )
+            .await?;
+
+            if let Some(response) = response {
+                let _ = store.delete_model(model_id).await?;
+                return Ok(Some(response));
+            }
+        }
+    }
+
+    if store.delete_model(model_id).await? {
+        return Ok(Some(serde_json::to_value(DeleteModelResponse::deleted(
+            model_id,
+        ))?));
+    }
+
+    Ok(None)
 }
 
 async fn resolve_non_model_provider(

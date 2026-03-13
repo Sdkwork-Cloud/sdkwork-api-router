@@ -113,6 +113,38 @@ async fn adapter_retrieves_chat_completion_from_openai_compatible_upstream() {
 }
 
 #[tokio::test]
+async fn adapter_deletes_model_on_openai_compatible_upstream() {
+    let state = CaptureState::default();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+
+    let app = Router::new()
+        .route(
+            "/v1/models/ft:gpt-4.1:sdkwork",
+            delete(capture_model_delete_request),
+        )
+        .with_state(state.clone());
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let adapter =
+        sdkwork_api_provider_openai::OpenAiProviderAdapter::new(format!("http://{address}"));
+    let response = adapter
+        .delete_model("sk-upstream-openai", "ft:gpt-4.1:sdkwork")
+        .await
+        .unwrap();
+
+    assert_eq!(response["id"], "ft:gpt-4.1:sdkwork");
+    assert_eq!(response["deleted"], true);
+    assert_eq!(
+        state.authorization.lock().unwrap().as_deref(),
+        Some("Bearer sk-upstream-openai")
+    );
+}
+
+#[tokio::test]
 async fn adapter_updates_chat_completion_on_openai_compatible_upstream() {
     let state = CaptureState::default();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -2534,6 +2566,27 @@ async fn capture_chat_delete_request(
         Json(json!({
             "id":"chatcmpl_1",
             "object":"chat.completion.deleted",
+            "deleted":true
+        })),
+    )
+}
+
+async fn capture_model_delete_request(
+    State(state): State<CaptureState>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> (StatusCode, Json<Value>) {
+    *state.authorization.lock().unwrap() = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+    *state.raw_body.lock().unwrap() = Some(body.to_vec());
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "id":"ft:gpt-4.1:sdkwork",
+            "object":"model",
             "deleted":true
         })),
     )
