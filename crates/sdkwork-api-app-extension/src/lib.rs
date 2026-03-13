@@ -2,8 +2,9 @@ use anyhow::Result;
 use sdkwork_api_extension_core::{ExtensionInstallation, ExtensionInstance, ExtensionRuntime};
 use sdkwork_api_extension_host::{
     discover_extension_packages,
-    list_connector_runtime_statuses as host_connector_runtime_statuses, ConnectorRuntimeStatus,
-    DiscoveredExtensionPackage,
+    list_connector_runtime_statuses as host_connector_runtime_statuses,
+    validate_discovered_extension_package, ConnectorRuntimeStatus, DiscoveredExtensionPackage,
+    ManifestValidationReport,
 };
 use sdkwork_api_storage_core::AdminStore;
 use serde::Serialize;
@@ -25,7 +26,10 @@ pub struct PersistExtensionInstanceInput<'a> {
 pub struct DiscoveredExtensionPackageRecord {
     pub root_dir: std::path::PathBuf,
     pub manifest_path: std::path::PathBuf,
+    pub distribution_name: String,
+    pub crate_name: String,
     pub manifest: sdkwork_api_extension_core::ExtensionManifest,
+    pub validation: ManifestValidationReport,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -117,10 +121,14 @@ pub fn configured_extension_discovery_policy_from_env() -> ExtensionDiscoveryPol
 
 impl From<DiscoveredExtensionPackage> for DiscoveredExtensionPackageRecord {
     fn from(value: DiscoveredExtensionPackage) -> Self {
+        let validation = validate_discovered_extension_package(&value);
         Self {
             root_dir: value.root_dir,
             manifest_path: value.manifest_path,
+            distribution_name: value.manifest.distribution_name(),
+            crate_name: value.manifest.crate_name(),
             manifest: value.manifest,
+            validation,
         }
     }
 }

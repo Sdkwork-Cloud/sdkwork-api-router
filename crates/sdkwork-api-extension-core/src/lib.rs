@@ -39,6 +39,16 @@ pub enum CompatibilityLevel {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtensionPermission {
+    NetworkOutbound,
+    FilesystemRead,
+    FilesystemWrite,
+    SpawnProcess,
+    LoopbackBind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CapabilityDescriptor {
     pub operation: String,
     pub compatibility: CompatibilityLevel,
@@ -49,6 +59,21 @@ impl CapabilityDescriptor {
         Self {
             operation: operation.into(),
             compatibility,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExtensionHealthContract {
+    pub path: String,
+    pub interval_secs: u64,
+}
+
+impl ExtensionHealthContract {
+    pub fn new(path: impl Into<String>, interval_secs: u64) -> Self {
+        Self {
+            path: path.into(),
+            interval_secs,
         }
     }
 }
@@ -141,6 +166,10 @@ pub struct ExtensionManifest {
     pub config_schema: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credential_schema: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub permissions: Vec<ExtensionPermission>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub health: Option<ExtensionHealthContract>,
     pub channel_bindings: Vec<String>,
     pub capabilities: Vec<CapabilityDescriptor>,
 }
@@ -164,6 +193,8 @@ impl ExtensionManifest {
             entrypoint: None,
             config_schema: None,
             credential_schema: None,
+            permissions: Vec::new(),
+            health: None,
             channel_bindings: Vec::new(),
             capabilities: Vec::new(),
         }
@@ -200,6 +231,16 @@ impl ExtensionManifest {
 
     pub fn with_credential_schema(mut self, credential_schema: impl Into<String>) -> Self {
         self.credential_schema = Some(credential_schema.into());
+        self
+    }
+
+    pub fn with_permission(mut self, permission: ExtensionPermission) -> Self {
+        self.permissions.push(permission);
+        self
+    }
+
+    pub fn with_health_contract(mut self, health: ExtensionHealthContract) -> Self {
+        self.health = Some(health);
         self
     }
 

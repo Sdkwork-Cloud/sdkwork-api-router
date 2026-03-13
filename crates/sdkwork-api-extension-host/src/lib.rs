@@ -12,6 +12,7 @@ use sdkwork_api_extension_core::{
     ExtensionInstallation, ExtensionInstance, ExtensionManifest, ExtensionRuntime,
 };
 use sdkwork_api_provider_core::ProviderExecutionAdapter;
+use serde::Serialize;
 use serde_json::Value;
 
 #[derive(Debug, Clone)]
@@ -118,6 +119,26 @@ pub struct DiscoveredExtensionPackage {
     pub manifest: ExtensionManifest,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ManifestValidationSeverity {
+    Error,
+    Warning,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ManifestValidationIssue {
+    pub severity: ManifestValidationSeverity,
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ManifestValidationReport {
+    pub valid: bool,
+    pub issues: Vec<ManifestValidationIssue>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectorRuntimeStatus {
     pub instance_id: String,
@@ -158,6 +179,12 @@ pub fn discover_extension_packages(
     }
     packages.sort_by(|left, right| left.manifest_path.cmp(&right.manifest_path));
     Ok(packages)
+}
+
+pub fn validate_discovered_extension_package(
+    package: &DiscoveredExtensionPackage,
+) -> ManifestValidationReport {
+    validate_extension_manifest(&package.manifest)
 }
 
 pub fn ensure_connector_runtime_started(
@@ -331,6 +358,59 @@ pub fn list_connector_runtime_statuses() -> Result<Vec<ConnectorRuntimeStatus>, 
         .collect::<Result<Vec<_>, ExtensionHostError>>()?;
     statuses.sort_by(|left, right| left.instance_id.cmp(&right.instance_id));
     Ok(statuses)
+}
+
+pub fn validate_extension_manifest(manifest: &ExtensionManifest) -> ManifestValidationReport {
+    let mut issues = Vec::new();
+
+    if manifest.permissions.is_empty() {
+        issues.push(ManifestValidationIssue {
+            severity: ManifestValidationSeverity::Error,
+            code: "missing_permissions".to_owned(),
+            message: "extension manifest must declare explicit permissions".to_owned(),
+        });
+    }
+
+    if manifest.channel_bindings.is_empty() {
+        issues.push(ManifestValidationIssue {
+            severity: ManifestValidationSeverity::Error,
+            code: "missing_channel_bindings".to_owned(),
+            message: "extension manifest must declare at least one channel binding".to_owned(),
+        });
+    }
+
+    if manifest.capabilities.is_empty() {
+        issues.push(ManifestValidationIssue {
+            severity: ManifestValidationSeverity::Error,
+            code: "missing_capabilities".to_owned(),
+            message: "extension manifest must declare at least one capability".to_owned(),
+        });
+    }
+
+    if matches!(
+        manifest.runtime,
+        ExtensionRuntime::Connector | ExtensionRuntime::NativeDynamic
+    ) && manifest.entrypoint.is_none()
+    {
+        issues.push(ManifestValidationIssue {
+            severity: ManifestValidationSeverity::Error,
+            code: "missing_entrypoint".to_owned(),
+            message: "runtime-backed extension manifest must declare an entrypoint".to_owned(),
+        });
+    }
+
+    if manifest.runtime == ExtensionRuntime::Connector && manifest.health.is_none() {
+        issues.push(ManifestValidationIssue {
+            severity: ManifestValidationSeverity::Warning,
+            code: "missing_health_contract".to_owned(),
+            message: "connector extensions should declare an explicit health contract".to_owned(),
+        });
+    }
+
+    let valid = !issues
+        .iter()
+        .any(|issue| issue.severity == ManifestValidationSeverity::Error);
+    ManifestValidationReport { valid, issues }
 }
 
 impl ExtensionHost {

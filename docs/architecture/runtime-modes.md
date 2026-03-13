@@ -52,6 +52,7 @@ The current repository includes:
 - filesystem extension discovery through `sdkwork-extension.toml` package manifests loaded from configured search paths
 - persisted extension installation and instance records for configuration-driven mounting
 - authenticated admin visibility for discovered extension packages and active connector runtime statuses
+- discovery-time validation of manifest permissions, bindings, capabilities, entrypoints, and connector health contracts
 - provider runtime dispatch keyed by `ProxyProvider.extension_id`, with `adapter_kind` kept as a compatibility alias for older records and protocol classification
 - real provider dispatch now consumes persisted extension load state so instance-level `base_url` overrides are honored and disabled installations or instances short-circuit to local fallback
 - discovered provider manifests can now bind to the current protocol adapters so connector-style extensions participate in real relay execution when they declare a supported protocol
@@ -108,6 +109,11 @@ The runtime now also supports two manifest sources:
 
 1. built-in manifests registered in process
 2. external package manifests discovered from configured extension search paths
+
+Discovered package observability now includes:
+
+1. normalized distribution and crate naming
+2. manifest validation results for explicit permissions, channel bindings, capabilities, and runtime contract completeness
 
 Discovered provider manifests become executable only when:
 

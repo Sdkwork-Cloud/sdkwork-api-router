@@ -53,7 +53,7 @@ Admin APIs are SDKWork-owned control-plane surfaces and therefore classify as `n
 | `/admin/providers` | `native` | Supports multi-channel bindings plus adapter and base URL config |
 | `/admin/models` | `native` | Stores model capability metadata and streaming flags |
 | `/admin/credentials` | `native` | Secret references with encrypted persistence backends |
-| `/admin/extensions/packages` | `native` | Lists discovered extension package manifests from configured search paths |
+| `/admin/extensions/packages` | `native` | Lists discovered extension package manifests from configured search paths with normalized package naming and validation details |
 | `/admin/extensions/installations` | `native` | Stores extension installation state and config payload |
 | `/admin/extensions/instances` | `native` | Stores mounted extension instances with runtime config |
 | `/admin/extensions/runtime-statuses` | `native` | Lists active supervised connector runtimes currently tracked by the host |

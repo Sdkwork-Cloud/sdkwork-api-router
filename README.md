@@ -62,8 +62,11 @@ Backend:
   - runtime ID: `sdkwork.provider.*` / `sdkwork.channel.*`
   - distribution name: `sdkwork-provider-*` / `sdkwork-channel-*`
   - Rust crate name: `sdkwork-api-ext-provider-*` / `sdkwork-api-ext-channel-*`
+  - explicit manifest permissions such as `network_outbound` and `spawn_process`
+  - connector health contracts such as `/health` plus polling interval metadata
 - Configuration-driven extension load planning that merges manifest defaults, installation config, and instance overrides into one runtime plan
 - Filesystem discovery for external extension packages through `sdkwork-extension.toml` manifests loaded from configured extension search paths
+- Discovery-time validation of extension manifest standards is now surfaced through the admin package listing
 - Protocol-aware relay for discovered provider extensions when the manifest declares a supported protocol:
   - `openai`
   - `openrouter`

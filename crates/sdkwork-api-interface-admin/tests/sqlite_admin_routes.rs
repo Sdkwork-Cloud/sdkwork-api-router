@@ -580,6 +580,11 @@ runtime = "connector"
 protocol = "openai"
 entrypoint = "powershell.exe"
 channel_bindings = ["sdkwork.channel.openai"]
+permissions = ["network_outbound", "spawn_process"]
+
+[health]
+path = "/health"
+interval_secs = 30
 
 [[capabilities]]
 operation = "chat.completions.create"
@@ -613,6 +618,16 @@ compatibility = "relay"
         json[0]["root_dir"],
         package_dir.to_string_lossy().to_string()
     );
+    assert_eq!(
+        json[0]["distribution_name"],
+        "sdkwork-provider-custom-openai"
+    );
+    assert_eq!(
+        json[0]["crate_name"],
+        "sdkwork-api-ext-provider-custom-openai"
+    );
+    assert_eq!(json[0]["validation"]["valid"], true);
+    assert_eq!(json[0]["validation"]["issues"].as_array().unwrap().len(), 0);
 
     cleanup_dir(&root);
 }

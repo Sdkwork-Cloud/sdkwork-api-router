@@ -1,4 +1,7 @@
-use sdkwork_api_extension_core::{ExtensionKind, ExtensionManifest, ExtensionRuntime};
+use sdkwork_api_extension_core::{
+    ExtensionHealthContract, ExtensionKind, ExtensionManifest, ExtensionPermission,
+    ExtensionRuntime,
+};
 
 #[test]
 fn manifest_derives_distribution_and_crate_names_from_runtime_id() {
@@ -11,7 +14,10 @@ fn manifest_derives_distribution_and_crate_names_from_runtime_id() {
     .with_display_name("OpenRouter")
     .with_entrypoint("bin/sdkwork-provider-openrouter")
     .with_config_schema("schemas/config.schema.json")
-    .with_credential_schema("schemas/credential.schema.json");
+    .with_credential_schema("schemas/credential.schema.json")
+    .with_permission(ExtensionPermission::NetworkOutbound)
+    .with_permission(ExtensionPermission::SpawnProcess)
+    .with_health_contract(ExtensionHealthContract::new("/health", 30));
 
     assert_eq!(manifest.distribution_name(), "sdkwork-provider-openrouter");
     assert_eq!(manifest.crate_name(), "sdkwork-api-ext-provider-openrouter");
@@ -27,5 +33,15 @@ fn manifest_derives_distribution_and_crate_names_from_runtime_id() {
     assert_eq!(
         manifest.credential_schema.as_deref(),
         Some("schemas/credential.schema.json")
+    );
+    assert_eq!(manifest.permissions.len(), 2);
+    assert_eq!(
+        manifest.permissions[0],
+        ExtensionPermission::NetworkOutbound
+    );
+    assert_eq!(manifest.permissions[1], ExtensionPermission::SpawnProcess);
+    assert_eq!(
+        manifest.health.as_ref(),
+        Some(&ExtensionHealthContract::new("/health", 30))
     );
 }
