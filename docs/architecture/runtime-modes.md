@@ -37,5 +37,6 @@ The current repository includes:
 - encrypted upstream credential persistence and runtime secret resolution
 - stateful OpenAI-compatible upstream relay for chat completions, responses, embeddings, and chat SSE when provider configuration is present
 - runtime config modeling for storage dialect inference and secret backend strategy selection
+- environment-driven standalone config loading for bind addresses, database URL, secret backend, and credential master key
 
 The runtime host is still intentionally lightweight, but the core gateway, admin, routing, credential, and provider relay slices now run against the same Rust workspace and can be assembled in-process for embedded mode.

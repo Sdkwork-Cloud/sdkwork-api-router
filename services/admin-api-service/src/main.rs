@@ -5,7 +5,15 @@ use tokio::net::TcpListener;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let config = StandaloneConfig::default();
+    let config = StandaloneConfig::from_env()?;
+    match config.storage_dialect().map(|dialect| dialect.as_str()) {
+        Some("sqlite") => {}
+        Some(other) => anyhow::bail!(
+            "admin-api-service startup currently supports sqlite only; requested storage dialect: {other}"
+        ),
+        None => anyhow::bail!("admin-api-service received unsupported database URL scheme"),
+    }
+
     let pool = run_migrations(&config.database_url).await?;
     let listener = TcpListener::bind(&config.admin_bind).await?;
     axum::serve(

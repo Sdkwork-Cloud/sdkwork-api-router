@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+anyhow.workspace = true
 sdkwork-api-storage-core = { path = "../sdkwork-api-storage-core" }
 
 [lib]

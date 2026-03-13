@@ -122,11 +122,21 @@ Example credential payload:
 - `secret_backend`
 - `credential_master_key`
 
+It can now be loaded from environment variables:
+
+- `SDKWORK_GATEWAY_BIND`
+- `SDKWORK_ADMIN_BIND`
+- `SDKWORK_DATABASE_URL`
+- `SDKWORK_SECRET_BACKEND`
+- `SDKWORK_CREDENTIAL_MASTER_KEY`
+
 Supported secret backend strategy identifiers are:
 
 - `database_encrypted`
 - `local_encrypted_file`
 - `os_keyring`
+
+Current standalone service binaries fail fast on unsupported storage dialects instead of silently assuming SQLite.
 
 ## Development
 
