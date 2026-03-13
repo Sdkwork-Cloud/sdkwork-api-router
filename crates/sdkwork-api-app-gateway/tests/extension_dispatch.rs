@@ -1,5 +1,5 @@
 use axum::extract::State;
-use axum::routing::post;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use sdkwork_api_app_credential::{
     persist_credential_with_secret_and_manager, CredentialSecretManager,
@@ -13,9 +13,12 @@ use sdkwork_api_extension_core::{ExtensionInstallation, ExtensionInstance, Exten
 use sdkwork_api_storage_sqlite::{run_migrations, SqliteAdminStore};
 use serde_json::{json, Value};
 use std::fs;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::time::{sleep, Duration};
 
 #[test]
 fn builtin_host_registers_current_provider_extensions() {
@@ -62,12 +65,14 @@ async fn relay_uses_persisted_extension_instance_base_url_override() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let upstream = Router::new()
+        .route("/health", get(upstream_health_handler))
         .route("/v1/chat/completions", post(upstream_chat_handler))
         .with_state(upstream_state.clone());
 
     tokio::spawn(async move {
         axum::serve(listener, upstream).await.unwrap();
     });
+    wait_for_health(&format!("http://{address}")).await;
 
     let pool = run_migrations("sqlite::memory:").await.unwrap();
     let store = SqliteAdminStore::new(pool);
@@ -157,12 +162,14 @@ async fn disabled_extension_instance_prevents_upstream_relay() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let upstream = Router::new()
+        .route("/health", get(upstream_health_handler))
         .route("/v1/chat/completions", post(upstream_chat_handler))
         .with_state(upstream_state.clone());
 
     tokio::spawn(async move {
         axum::serve(listener, upstream).await.unwrap();
     });
+    wait_for_health(&format!("http://{address}")).await;
 
     let pool = run_migrations("sqlite::memory:").await.unwrap();
     let store = SqliteAdminStore::new(pool);
@@ -255,14 +262,11 @@ async fn discovered_connector_extension_can_relay_through_supported_protocol() {
     let _guard = extension_env_guard(&extension_root);
 
     let upstream_state = UpstreamCaptureState::default();
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
-    let upstream = Router::new()
-        .route("/v1/chat/completions", post(upstream_chat_handler))
-        .with_state(upstream_state.clone());
-
-    tokio::spawn(async move {
-        axum::serve(listener, upstream).await.unwrap();
+    let upstream_thread = thread::spawn({
+        let upstream_state = upstream_state.clone();
+        move || serve_connector_compatible_upstream(listener, upstream_state, 2)
     });
 
     let pool = run_migrations("sqlite::memory:").await.unwrap();
@@ -346,6 +350,9 @@ async fn discovered_connector_extension_can_relay_through_supported_protocol() {
         upstream_state.authorization.lock().unwrap().as_deref(),
         Some("Bearer sk-upstream-openai")
     );
+
+    upstream_thread.join().unwrap();
+    cleanup_dir(&extension_root);
 }
 
 fn chat_request(model: &str) -> CreateChatCompletionRequest {
@@ -376,6 +383,57 @@ async fn upstream_chat_handler(
     }))
 }
 
+async fn upstream_health_handler() -> Json<Value> {
+    Json(json!({
+        "status": "ok"
+    }))
+}
+
+fn serve_connector_compatible_upstream(
+    listener: std::net::TcpListener,
+    state: UpstreamCaptureState,
+    expected_requests: usize,
+) {
+    for _ in 0..expected_requests {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut buffer = [0_u8; 4096];
+        let bytes_read = stream.read(&mut buffer).unwrap();
+        let request = String::from_utf8_lossy(&buffer[..bytes_read]);
+        let request_line = request.lines().next().unwrap_or_default();
+        let authorization = request
+            .lines()
+            .find_map(|line| {
+                line.strip_prefix("authorization: ")
+                    .or_else(|| line.strip_prefix("Authorization: "))
+            })
+            .map(str::trim)
+            .map(ToOwned::to_owned);
+
+        let (status, body) = if request_line.starts_with("GET /health") {
+            ("HTTP/1.1 200 OK", r#"{"status":"ok"}"#.to_owned())
+        } else if request_line.starts_with("POST /v1/chat/completions") {
+            *state.authorization.lock().unwrap() = authorization;
+            (
+                "HTTP/1.1 200 OK",
+                r#"{"id":"chatcmpl_upstream","object":"chat.completion","model":"gpt-4.1","choices":[]}"#
+                    .to_owned(),
+            )
+        } else {
+            (
+                "HTTP/1.1 404 Not Found",
+                r#"{"error":"not_found"}"#.to_owned(),
+            )
+        };
+
+        let response = format!(
+            "{status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        stream.write_all(response.as_bytes()).unwrap();
+        stream.flush().unwrap();
+    }
+}
+
 fn discovered_connector_manifest() -> &'static str {
     r#"
 api_version = "sdkwork.extension/v1"
@@ -402,6 +460,24 @@ fn temp_extension_root(suffix: &str) -> PathBuf {
         .as_millis();
     path.push(format!("sdkwork-app-gateway-{suffix}-{millis}"));
     path
+}
+
+fn cleanup_dir(path: &Path) {
+    let _ = fs::remove_dir_all(path);
+}
+
+async fn wait_for_health(base_url: &str) {
+    let health_url = format!("{}/health", base_url.trim_end_matches('/'));
+    for _ in 0..20 {
+        if let Ok(response) = reqwest::get(&health_url).await {
+            if response.status().is_success() {
+                return;
+            }
+        }
+        sleep(Duration::from_millis(25)).await;
+    }
+
+    panic!("health endpoint did not become ready: {health_url}");
 }
 
 fn extension_env_guard(path: &Path) -> ExtensionEnvGuard {

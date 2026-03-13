@@ -65,7 +65,7 @@ Admin APIs are SDKWork-owned control-plane surfaces and therefore classify as `n
 |---|---|---|
 | `builtin` | `native` | Active today through `sdkwork-api-extension-host` and built-in provider factories |
 | `native_dynamic` | `unsupported` | ABI and loader model are designed but not yet wired |
-| `connector` | `unsupported` | Lifecycle is planned but connector runtime loading is not yet implemented |
+| `connector` | `native` | Managed process lifecycle is active in the host, with HTTP health checks, reusable external endpoint attachment, and protocol-mapped relay through the current adapter set |
 
 ## Current Built-In Extension IDs
 

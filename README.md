@@ -67,6 +67,9 @@ Backend:
   - `openai`
   - `openrouter`
   - `ollama`
+- Supervised connector runtime execution for discovered provider extensions:
+  - the host can start configured connector processes on demand
+  - the host can reuse a healthy externally managed connector endpoint when one is already running at the configured `base_url`
 - Provider execution now consumes persisted extension installation and instance state during real dispatch:
   - `enabled = false` on an installation or instance forces local fallback
   - instance `base_url` overrides the provider catalog `base_url`
@@ -101,7 +104,8 @@ Known gaps:
 - provider execution is now `extension_id`-driven with `adapter_kind` retained as compatibility metadata and protocol hint
 - extension manifest discovery and configuration-driven loading are now active for both `connector` and `native_dynamic` package metadata
 - discovered provider extensions can relay through existing protocol adapters when the manifest declares a supported protocol
-- native dynamic ABI loading and connector process supervision are still not implemented
+- connector runtimes are now executable through host supervision or healthy external endpoint reuse, but they currently require HTTP health probes and the existing protocol-mapped adapter set
+- native dynamic ABI loading is still not implemented
 - only stateful gateway execution paths relay upstream responses; the stateless demo router still emits local stub payloads
 - broader API families are now wired as either `relay` or `emulated`; see `docs/api/compatibility-matrix.md` for the execution-truth matrix
 - routing policies now support deterministic priority-based selection with ordered provider fallback and optional defaults
@@ -229,6 +233,7 @@ pnpm --dir console exec vite build
   - built-in extensions compiled into the gateway
   - external manifests discovered from `SDKWORK_EXTENSION_PATHS`
 - Discovered provider extensions can participate in real relay execution when their manifest declares a supported protocol and their persisted installation or instance is enabled.
+- Connector-style discovered providers can now either be supervised as host-managed external processes or attached to an already running healthy endpoint at the configured `base_url`.
 - `openrouter` and `ollama` are registered as built-in OpenAI-compatible provider extensions in addition to the direct `openai` adapter.
 
 ## Design Docs

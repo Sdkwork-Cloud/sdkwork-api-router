@@ -54,6 +54,7 @@ The current repository includes:
 - provider runtime dispatch keyed by `ProxyProvider.extension_id`, with `adapter_kind` kept as a compatibility alias for older records and protocol classification
 - real provider dispatch now consumes persisted extension load state so instance-level `base_url` overrides are honored and disabled installations or instances short-circuit to local fallback
 - discovered provider manifests can now bind to the current protocol adapters so connector-style extensions participate in real relay execution when they declare a supported protocol
+- connector runtime supervision is now active for discovered packages, including host-managed process startup, HTTP health probing, and reuse of already healthy external endpoints
 
 ## Extension Runtime Status
 
@@ -63,7 +64,7 @@ The extension architecture is intentionally layered.
 |---|---|---|
 | `builtin` | Active | First-party provider extensions are registered in-process through `sdkwork-api-extension-host` |
 | `native_dynamic` | Discovery-only | Manifest discovery and policy filtering are active, but ABI loading and execution are still design-only |
-| `connector` | Active with protocol mapping | Manifest discovery and config-driven loading are active; supported protocols can relay through the current adapter set, but connector process lifecycle is still not supervised by the host |
+| `connector` | Active with supervised execution | Manifest discovery and config-driven loading are active; the host can start configured connector processes, probe HTTP health endpoints, reuse healthy external endpoints, and relay through the current protocol adapter set |
 
 ## Configuration Layers
 
@@ -100,7 +101,7 @@ Configuration-driven loading now uses a stable merge order:
 2. installation-level runtime choice and package config
 3. instance-level overrides such as `base_url`, `credential_ref`, and rollout weights
 
-This means `connector` and `native_dynamic` extensions can already be represented, validated, and mounted through config even before the actual executable loader lifecycle is fully wired.
+This means `connector` extensions are now executable through the host runtime contract, while `native_dynamic` extensions can already be represented, validated, and mounted through config ahead of ABI loader support.
 
 The runtime now also supports two manifest sources:
 

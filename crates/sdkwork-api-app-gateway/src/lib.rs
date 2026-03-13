@@ -76,8 +76,8 @@ use sdkwork_api_extension_core::{
     ExtensionKind, ExtensionManifest, ExtensionProtocol, ExtensionRuntime,
 };
 use sdkwork_api_extension_host::{
-    discover_extension_packages, BuiltinExtensionFactory, BuiltinProviderExtensionFactory,
-    ExtensionDiscoveryPolicy, ExtensionHost,
+    discover_extension_packages, ensure_connector_runtime_started, BuiltinProviderExtensionFactory,
+    DiscoveredExtensionPackage, ExtensionDiscoveryPolicy, ExtensionHost,
 };
 use sdkwork_api_provider_core::ProviderRequest;
 use sdkwork_api_provider_ollama::OllamaProviderAdapter;
@@ -243,12 +243,19 @@ async fn provider_execution_target_for_provider(
                 return Ok(ProviderExecutionTarget::local());
             }
 
+            let resolved_base_url = load_plan
+                .base_url
+                .clone()
+                .unwrap_or_else(|| provider.base_url.clone());
+            if load_plan.runtime == ExtensionRuntime::Connector {
+                ensure_connector_runtime_started(&load_plan, &resolved_base_url)
+                    .map_err(anyhow::Error::new)?;
+            }
+
             Ok(ProviderExecutionTarget::upstream(
                 provider.id.clone(),
                 load_plan.extension_id,
-                load_plan
-                    .base_url
-                    .unwrap_or_else(|| provider.base_url.clone()),
+                resolved_base_url,
             ))
         }
         Err(sdkwork_api_extension_host::ExtensionHostError::InstanceNotFound { .. }) => {
@@ -3899,7 +3906,7 @@ fn configured_extension_host() -> Result<ExtensionHost> {
     let policy = configured_extension_discovery_policy();
 
     for package in discover_extension_packages(&policy)? {
-        register_discovered_extension(&mut host, package.manifest);
+        register_discovered_extension(&mut host, package);
     }
 
     Ok(host)
@@ -3928,34 +3935,31 @@ fn env_flag(key: &str, default: bool) -> bool {
         .unwrap_or(default)
 }
 
-fn register_discovered_extension(host: &mut ExtensionHost, manifest: ExtensionManifest) {
-    if host.manifest(&manifest.id).is_some() {
+fn register_discovered_extension(host: &mut ExtensionHost, package: DiscoveredExtensionPackage) {
+    if host.manifest(&package.manifest.id).is_some() {
         return;
     }
 
-    match (manifest.kind.clone(), manifest.protocol.clone()) {
+    match (
+        package.manifest.kind.clone(),
+        package.manifest.protocol.clone(),
+    ) {
         (ExtensionKind::Provider, Some(ExtensionProtocol::OpenAi)) => {
-            host.register_builtin_provider(BuiltinProviderExtensionFactory::new(
-                manifest,
-                "openai",
-                |base_url| Box::new(OpenAiProviderAdapter::new(base_url)),
-            ));
+            host.register_discovered_provider(package, "openai", |base_url| {
+                Box::new(OpenAiProviderAdapter::new(base_url))
+            });
         }
         (ExtensionKind::Provider, Some(ExtensionProtocol::OpenRouter)) => {
-            host.register_builtin_provider(BuiltinProviderExtensionFactory::new(
-                manifest,
-                "openrouter",
-                |base_url| Box::new(OpenRouterProviderAdapter::new(base_url)),
-            ));
+            host.register_discovered_provider(package, "openrouter", |base_url| {
+                Box::new(OpenRouterProviderAdapter::new(base_url))
+            });
         }
         (ExtensionKind::Provider, Some(ExtensionProtocol::Ollama)) => {
-            host.register_builtin_provider(BuiltinProviderExtensionFactory::new(
-                manifest,
-                "ollama",
-                |base_url| Box::new(OllamaProviderAdapter::new(base_url)),
-            ));
+            host.register_discovered_provider(package, "ollama", |base_url| {
+                Box::new(OllamaProviderAdapter::new(base_url))
+            });
         }
-        _ => host.register_builtin(BuiltinExtensionFactory::new(manifest)),
+        _ => host.register_discovered_manifest(package),
     }
 }
 
