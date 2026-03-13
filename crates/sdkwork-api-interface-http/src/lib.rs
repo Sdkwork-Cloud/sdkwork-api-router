@@ -1,4 +1,5 @@
 use axum::{
+    body::Body,
     extract::Json as ExtractJson,
     extract::State,
     http::header,
@@ -11,7 +12,7 @@ use sdkwork_api_app_gateway::create_chat_completion;
 use sdkwork_api_app_gateway::list_models;
 use sdkwork_api_app_gateway::{
     create_embedding, create_response, list_models_from_store, relay_chat_completion_from_store,
-    relay_embedding_from_store, relay_response_from_store,
+    relay_chat_completion_stream_from_store, relay_embedding_from_store, relay_response_from_store,
 };
 use sdkwork_api_app_routing::simulate_route_with_store;
 use sdkwork_api_app_usage::persist_usage_record;
@@ -127,7 +128,45 @@ async fn chat_completions_with_state_handler(
     State(state): State<GatewayApiState>,
     ExtractJson(request): ExtractJson<CreateChatCompletionRequest>,
 ) -> Response {
-    if !request.stream.unwrap_or(false) {
+    if request.stream.unwrap_or(false) {
+        match relay_chat_completion_stream_from_store(
+            &state.store,
+            &state.credential_master_key,
+            "tenant-1",
+            "project-1",
+            &request,
+        )
+        .await
+        {
+            Ok(Some(response)) => {
+                let usage_result = record_gateway_usage(
+                    &state.store,
+                    "chat_completion",
+                    &request.model,
+                    100,
+                    0.10,
+                )
+                .await;
+                if usage_result.is_err() {
+                    return (
+                        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        "failed to record usage",
+                    )
+                        .into_response();
+                }
+
+                return upstream_stream_response(response);
+            }
+            Ok(None) => {}
+            Err(_) => {
+                return (
+                    axum::http::StatusCode::BAD_GATEWAY,
+                    "failed to relay upstream chat completion stream",
+                )
+                    .into_response();
+            }
+        }
+    } else {
         match relay_chat_completion_from_store(
             &state.store,
             &state.credential_master_key,
@@ -191,6 +230,21 @@ async fn chat_completions_with_state_handler(
         )
         .into_response()
     }
+}
+
+fn upstream_stream_response(response: reqwest::Response) -> Response {
+    let content_type = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("text/event-stream")
+        .to_owned();
+
+    Response::builder()
+        .status(axum::http::StatusCode::OK)
+        .header(header::CONTENT_TYPE, content_type)
+        .body(Body::from_stream(response.bytes_stream()))
+        .expect("valid upstream stream response")
 }
 
 async fn responses_with_state_handler(

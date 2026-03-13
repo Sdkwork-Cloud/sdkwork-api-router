@@ -34,6 +34,15 @@ impl OpenAiProviderAdapter {
             .await
     }
 
+    pub async fn chat_completions_stream(
+        &self,
+        api_key: &str,
+        request: &CreateChatCompletionRequest,
+    ) -> Result<reqwest::Response> {
+        self.post_stream("/v1/chat/completions", api_key, request)
+            .await
+    }
+
     pub async fn responses(&self, api_key: &str, request: &CreateResponseRequest) -> Result<Value> {
         self.post_json("/v1/responses", api_key, request).await
     }
@@ -62,6 +71,24 @@ impl OpenAiProviderAdapter {
             .error_for_status()?;
 
         Ok(response.json::<Value>().await?)
+    }
+
+    async fn post_stream<T: serde::Serialize>(
+        &self,
+        path: &str,
+        api_key: &str,
+        request: &T,
+    ) -> Result<reqwest::Response> {
+        let response = self
+            .client
+            .post(format!("{}{}", self.base_url, path))
+            .bearer_auth(api_key)
+            .json(request)
+            .send()
+            .await?
+            .error_for_status()?;
+
+        Ok(response)
     }
 }
 

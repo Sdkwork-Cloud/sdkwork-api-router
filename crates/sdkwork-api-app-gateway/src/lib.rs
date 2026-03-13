@@ -64,6 +64,34 @@ pub async fn relay_chat_completion_from_store(
     Ok(Some(response))
 }
 
+pub async fn relay_chat_completion_stream_from_store(
+    store: &SqliteAdminStore,
+    master_key: &str,
+    tenant_id: &str,
+    _project_id: &str,
+    request: &CreateChatCompletionRequest,
+) -> Result<Option<reqwest::Response>> {
+    let decision = simulate_route_with_store(store, "chat_completion", &request.model).await?;
+    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
+        return Ok(None);
+    };
+    let Some(api_key) = resolve_provider_secret(store, master_key, tenant_id, &provider.id).await?
+    else {
+        return Ok(None);
+    };
+
+    let response = match provider.adapter_kind.as_str() {
+        "openai" => {
+            OpenAiProviderAdapter::new(provider.base_url)
+                .chat_completions_stream(&api_key, request)
+                .await?
+        }
+        _ => return Ok(None),
+    };
+
+    Ok(Some(response))
+}
+
 pub async fn relay_response_from_store(
     store: &SqliteAdminStore,
     master_key: &str,
