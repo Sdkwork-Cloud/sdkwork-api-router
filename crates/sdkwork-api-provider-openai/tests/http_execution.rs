@@ -576,6 +576,137 @@ async fn adapter_posts_assistants_to_openai_compatible_upstream() {
 }
 
 #[tokio::test]
+async fn adapter_posts_webhooks_to_openai_compatible_upstream() {
+    let state = CaptureState::default();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+
+    let app = Router::new()
+        .route("/v1/webhooks", post(capture_webhook_request))
+        .with_state(state.clone());
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let adapter =
+        sdkwork_api_provider_openai::OpenAiProviderAdapter::new(format!("http://{address}"));
+    let request = sdkwork_api_contract_openai::webhooks::CreateWebhookRequest::new(
+        "https://example.com/webhook",
+        vec!["response.completed"],
+    );
+
+    let response = adapter
+        .webhooks("sk-upstream-openai", &request)
+        .await
+        .unwrap();
+
+    assert_eq!(response["id"], "wh_upstream");
+    assert_eq!(
+        state.authorization.lock().unwrap().as_deref(),
+        Some("Bearer sk-upstream-openai")
+    );
+}
+
+#[tokio::test]
+async fn adapter_lists_webhooks_from_openai_compatible_upstream() {
+    let state = CaptureState::default();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+
+    let app = Router::new()
+        .route("/v1/webhooks", get(capture_webhooks_list_request))
+        .with_state(state.clone());
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let adapter =
+        sdkwork_api_provider_openai::OpenAiProviderAdapter::new(format!("http://{address}"));
+    let response = adapter.list_webhooks("sk-upstream-openai").await.unwrap();
+
+    assert_eq!(response["object"], "list");
+    assert_eq!(response["data"][0]["id"], "wh_1");
+}
+
+#[tokio::test]
+async fn adapter_retrieves_webhook_from_openai_compatible_upstream() {
+    let state = CaptureState::default();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+
+    let app = Router::new()
+        .route("/v1/webhooks/wh_1", get(capture_webhook_retrieve_request))
+        .with_state(state.clone());
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let adapter =
+        sdkwork_api_provider_openai::OpenAiProviderAdapter::new(format!("http://{address}"));
+    let response = adapter
+        .retrieve_webhook("sk-upstream-openai", "wh_1")
+        .await
+        .unwrap();
+
+    assert_eq!(response["id"], "wh_1");
+}
+
+#[tokio::test]
+async fn adapter_updates_webhook_on_openai_compatible_upstream() {
+    let state = CaptureState::default();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+
+    let app = Router::new()
+        .route("/v1/webhooks/wh_1", post(capture_webhook_update_request))
+        .with_state(state.clone());
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let adapter =
+        sdkwork_api_provider_openai::OpenAiProviderAdapter::new(format!("http://{address}"));
+    let request = sdkwork_api_contract_openai::webhooks::UpdateWebhookRequest::new(
+        "https://example.com/webhook/v2",
+    );
+
+    let response = adapter
+        .update_webhook("sk-upstream-openai", "wh_1", &request)
+        .await
+        .unwrap();
+
+    assert_eq!(response["url"], "https://example.com/webhook/v2");
+}
+
+#[tokio::test]
+async fn adapter_deletes_webhook_on_openai_compatible_upstream() {
+    let state = CaptureState::default();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+
+    let app = Router::new()
+        .route("/v1/webhooks/wh_1", delete(capture_webhook_delete_request))
+        .with_state(state.clone());
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let adapter =
+        sdkwork_api_provider_openai::OpenAiProviderAdapter::new(format!("http://{address}"));
+    let response = adapter
+        .delete_webhook("sk-upstream-openai", "wh_1")
+        .await
+        .unwrap();
+
+    assert_eq!(response["deleted"], true);
+}
+
+#[tokio::test]
 async fn adapter_lists_assistants_from_openai_compatible_upstream() {
     let state = CaptureState::default();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -2094,6 +2225,112 @@ async fn capture_assistant_request(
             "object":"assistant",
             "name":"Support",
             "model":"gpt-4.1"
+        })),
+    )
+}
+
+async fn capture_webhook_request(
+    State(state): State<CaptureState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> (StatusCode, Json<Value>) {
+    *state.authorization.lock().unwrap() = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+    *state.body.lock().unwrap() = Some(body);
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "id":"wh_upstream",
+            "object":"webhook_endpoint",
+            "url":"https://example.com/webhook",
+            "status":"enabled"
+        })),
+    )
+}
+
+async fn capture_webhooks_list_request(
+    State(state): State<CaptureState>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<Value>) {
+    *state.authorization.lock().unwrap() = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "object":"list",
+            "data":[{
+                "id":"wh_1",
+                "object":"webhook_endpoint",
+                "url":"https://example.com/webhook",
+                "status":"enabled"
+            }]
+        })),
+    )
+}
+
+async fn capture_webhook_retrieve_request(
+    State(state): State<CaptureState>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<Value>) {
+    *state.authorization.lock().unwrap() = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "id":"wh_1",
+            "object":"webhook_endpoint",
+            "url":"https://example.com/webhook",
+            "status":"enabled"
+        })),
+    )
+}
+
+async fn capture_webhook_update_request(
+    State(state): State<CaptureState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> (StatusCode, Json<Value>) {
+    *state.authorization.lock().unwrap() = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+    *state.body.lock().unwrap() = Some(body);
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "id":"wh_1",
+            "object":"webhook_endpoint",
+            "url":"https://example.com/webhook/v2",
+            "status":"enabled"
+        })),
+    )
+}
+
+async fn capture_webhook_delete_request(
+    State(state): State<CaptureState>,
+    headers: HeaderMap,
+) -> (StatusCode, Json<Value>) {
+    *state.authorization.lock().unwrap() = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "id":"wh_1",
+            "object":"webhook_endpoint.deleted",
+            "deleted":true
         })),
     )
 }

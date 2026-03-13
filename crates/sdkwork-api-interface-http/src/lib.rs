@@ -38,11 +38,13 @@ use sdkwork_api_app_gateway::create_vector_store;
 use sdkwork_api_app_gateway::create_vector_store_file;
 use sdkwork_api_app_gateway::create_vector_store_file_batch;
 use sdkwork_api_app_gateway::create_video;
+use sdkwork_api_app_gateway::create_webhook;
 use sdkwork_api_app_gateway::delete_assistant;
 use sdkwork_api_app_gateway::delete_file;
 use sdkwork_api_app_gateway::delete_vector_store;
 use sdkwork_api_app_gateway::delete_vector_store_file;
 use sdkwork_api_app_gateway::delete_video;
+use sdkwork_api_app_gateway::delete_webhook;
 use sdkwork_api_app_gateway::file_content;
 use sdkwork_api_app_gateway::get_assistant;
 use sdkwork_api_app_gateway::get_batch;
@@ -54,6 +56,7 @@ use sdkwork_api_app_gateway::get_vector_store;
 use sdkwork_api_app_gateway::get_vector_store_file;
 use sdkwork_api_app_gateway::get_vector_store_file_batch;
 use sdkwork_api_app_gateway::get_video;
+use sdkwork_api_app_gateway::get_webhook;
 use sdkwork_api_app_gateway::list_assistants;
 use sdkwork_api_app_gateway::list_batches;
 use sdkwork_api_app_gateway::list_files;
@@ -63,10 +66,12 @@ use sdkwork_api_app_gateway::list_vector_store_file_batch_files;
 use sdkwork_api_app_gateway::list_vector_store_files;
 use sdkwork_api_app_gateway::list_vector_stores;
 use sdkwork_api_app_gateway::list_videos;
+use sdkwork_api_app_gateway::list_webhooks;
 use sdkwork_api_app_gateway::remix_video;
 use sdkwork_api_app_gateway::search_vector_store;
 use sdkwork_api_app_gateway::update_assistant;
 use sdkwork_api_app_gateway::update_vector_store;
+use sdkwork_api_app_gateway::update_webhook;
 use sdkwork_api_app_gateway::video_content;
 use sdkwork_api_app_gateway::{
     create_embedding, create_response, list_models_from_store, relay_assistant_from_store,
@@ -76,22 +81,24 @@ use sdkwork_api_app_gateway::{
     relay_complete_upload_from_store, relay_completion_from_store,
     relay_delete_assistant_from_store, relay_delete_file_from_store,
     relay_delete_vector_store_file_from_store, relay_delete_vector_store_from_store,
-    relay_delete_video_from_store, relay_embedding_from_store, relay_eval_from_store,
-    relay_file_content_from_store, relay_file_from_store, relay_fine_tuning_job_from_store,
-    relay_get_assistant_from_store, relay_get_batch_from_store, relay_get_file_from_store,
-    relay_get_fine_tuning_job_from_store, relay_get_vector_store_file_batch_from_store,
-    relay_get_vector_store_file_from_store, relay_get_vector_store_from_store,
-    relay_get_video_from_store, relay_image_generation_from_store,
-    relay_list_assistants_from_store, relay_list_batches_from_store, relay_list_files_from_store,
+    relay_delete_video_from_store, relay_delete_webhook_from_store, relay_embedding_from_store,
+    relay_eval_from_store, relay_file_content_from_store, relay_file_from_store,
+    relay_fine_tuning_job_from_store, relay_get_assistant_from_store, relay_get_batch_from_store,
+    relay_get_file_from_store, relay_get_fine_tuning_job_from_store,
+    relay_get_vector_store_file_batch_from_store, relay_get_vector_store_file_from_store,
+    relay_get_vector_store_from_store, relay_get_video_from_store, relay_get_webhook_from_store,
+    relay_image_generation_from_store, relay_list_assistants_from_store,
+    relay_list_batches_from_store, relay_list_files_from_store,
     relay_list_fine_tuning_jobs_from_store, relay_list_vector_store_file_batch_files_from_store,
     relay_list_vector_store_files_from_store, relay_list_vector_stores_from_store,
-    relay_list_videos_from_store, relay_moderation_from_store, relay_realtime_session_from_store,
-    relay_remix_video_from_store, relay_response_from_store, relay_search_vector_store_from_store,
-    relay_speech_from_store, relay_transcription_from_store, relay_translation_from_store,
-    relay_update_assistant_from_store, relay_update_vector_store_from_store,
-    relay_upload_from_store, relay_upload_part_from_store,
-    relay_vector_store_file_batch_from_store, relay_vector_store_file_from_store,
-    relay_vector_store_from_store, relay_video_content_from_store, relay_video_from_store,
+    relay_list_videos_from_store, relay_list_webhooks_from_store, relay_moderation_from_store,
+    relay_realtime_session_from_store, relay_remix_video_from_store, relay_response_from_store,
+    relay_search_vector_store_from_store, relay_speech_from_store, relay_transcription_from_store,
+    relay_translation_from_store, relay_update_assistant_from_store,
+    relay_update_vector_store_from_store, relay_update_webhook_from_store, relay_upload_from_store,
+    relay_upload_part_from_store, relay_vector_store_file_batch_from_store,
+    relay_vector_store_file_from_store, relay_vector_store_from_store,
+    relay_video_content_from_store, relay_video_from_store, relay_webhook_from_store,
 };
 use sdkwork_api_app_routing::simulate_route_with_store;
 use sdkwork_api_app_usage::persist_usage_record;
@@ -119,6 +126,7 @@ use sdkwork_api_contract_openai::vector_stores::{
     SearchVectorStoreRequest, UpdateVectorStoreRequest,
 };
 use sdkwork_api_contract_openai::videos::{CreateVideoRequest, RemixVideoRequest};
+use sdkwork_api_contract_openai::webhooks::{CreateWebhookRequest, UpdateWebhookRequest};
 use sdkwork_api_storage_core::AdminStore;
 use sdkwork_api_storage_sqlite::SqliteAdminStore;
 use sqlx::SqlitePool;
@@ -217,6 +225,16 @@ pub fn gateway_router() -> Router {
             get(assistant_retrieve_handler)
                 .post(assistant_update_handler)
                 .delete(assistant_delete_handler),
+        )
+        .route(
+            "/v1/webhooks",
+            get(webhooks_list_handler).post(webhooks_handler),
+        )
+        .route(
+            "/v1/webhooks/{webhook_id}",
+            get(webhook_retrieve_handler)
+                .post(webhook_update_handler)
+                .delete(webhook_delete_handler),
         )
         .route("/v1/realtime/sessions", post(realtime_sessions_handler))
         .route("/v1/evals", post(evals_handler))
@@ -391,6 +409,16 @@ pub fn gateway_router_with_store_and_secret_manager(
             get(assistant_retrieve_with_state_handler)
                 .post(assistant_update_with_state_handler)
                 .delete(assistant_delete_with_state_handler),
+        )
+        .route(
+            "/v1/webhooks",
+            get(webhooks_list_with_state_handler).post(webhooks_with_state_handler),
+        )
+        .route(
+            "/v1/webhooks/{webhook_id}",
+            get(webhook_retrieve_with_state_handler)
+                .post(webhook_update_with_state_handler)
+                .delete(webhook_delete_with_state_handler),
         )
         .route(
             "/v1/realtime/sessions",
@@ -724,6 +752,47 @@ async fn assistant_delete_handler(
     Path(assistant_id): Path<String>,
 ) -> Json<sdkwork_api_contract_openai::assistants::DeleteAssistantResponse> {
     Json(delete_assistant("tenant-1", "project-1", &assistant_id).expect("assistant delete"))
+}
+
+async fn webhooks_handler(
+    ExtractJson(request): ExtractJson<CreateWebhookRequest>,
+) -> Json<sdkwork_api_contract_openai::webhooks::WebhookObject> {
+    Json(create_webhook("tenant-1", "project-1", &request.url, &request.events).expect("webhook"))
+}
+
+async fn webhooks_list_handler() -> Json<sdkwork_api_contract_openai::webhooks::ListWebhooksResponse>
+{
+    Json(list_webhooks("tenant-1", "project-1").expect("webhooks list"))
+}
+
+async fn webhook_retrieve_handler(
+    Path(webhook_id): Path<String>,
+) -> Json<sdkwork_api_contract_openai::webhooks::WebhookObject> {
+    Json(get_webhook("tenant-1", "project-1", &webhook_id).expect("webhook retrieve"))
+}
+
+async fn webhook_update_handler(
+    Path(webhook_id): Path<String>,
+    ExtractJson(request): ExtractJson<UpdateWebhookRequest>,
+) -> Json<sdkwork_api_contract_openai::webhooks::WebhookObject> {
+    Json(
+        update_webhook(
+            "tenant-1",
+            "project-1",
+            &webhook_id,
+            request
+                .url
+                .as_deref()
+                .unwrap_or("https://example.com/webhook"),
+        )
+        .expect("webhook update"),
+    )
+}
+
+async fn webhook_delete_handler(
+    Path(webhook_id): Path<String>,
+) -> Json<sdkwork_api_contract_openai::webhooks::DeleteWebhookResponse> {
+    Json(delete_webhook("tenant-1", "project-1", &webhook_id).expect("webhook delete"))
 }
 
 async fn realtime_sessions_handler(
@@ -2839,6 +2908,276 @@ async fn assistant_delete_with_state_handler(
     }
 
     Json(delete_assistant("tenant-1", "project-1", &assistant_id).expect("assistant delete"))
+        .into_response()
+}
+
+async fn webhooks_with_state_handler(
+    State(state): State<GatewayApiState>,
+    ExtractJson(request): ExtractJson<CreateWebhookRequest>,
+) -> Response {
+    match relay_webhook_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &request,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(state.store.as_ref(), "webhooks", &request.url, 20, 0.02)
+                .await
+                .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream webhook",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(state.store.as_ref(), "webhooks", &request.url, 20, 0.02)
+        .await
+        .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(create_webhook("tenant-1", "project-1", &request.url, &request.events).expect("webhook"))
+        .into_response()
+}
+
+async fn webhooks_list_with_state_handler(State(state): State<GatewayApiState>) -> Response {
+    match relay_list_webhooks_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(state.store.as_ref(), "webhooks", "webhooks", 20, 0.02)
+                .await
+                .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream webhooks list",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(state.store.as_ref(), "webhooks", "webhooks", 20, 0.02)
+        .await
+        .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(list_webhooks("tenant-1", "project-1").expect("webhooks list")).into_response()
+}
+
+async fn webhook_retrieve_with_state_handler(
+    State(state): State<GatewayApiState>,
+    Path(webhook_id): Path<String>,
+) -> Response {
+    match relay_get_webhook_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &webhook_id,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(state.store.as_ref(), "webhooks", &webhook_id, 20, 0.02)
+                .await
+                .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream webhook retrieve",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(state.store.as_ref(), "webhooks", &webhook_id, 20, 0.02)
+        .await
+        .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(get_webhook("tenant-1", "project-1", &webhook_id).expect("webhook retrieve"))
+        .into_response()
+}
+
+async fn webhook_update_with_state_handler(
+    State(state): State<GatewayApiState>,
+    Path(webhook_id): Path<String>,
+    ExtractJson(request): ExtractJson<UpdateWebhookRequest>,
+) -> Response {
+    match relay_update_webhook_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &webhook_id,
+        &request,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            let usage_target = request.url.as_deref().unwrap_or(webhook_id.as_str());
+            if record_gateway_usage(state.store.as_ref(), "webhooks", usage_target, 20, 0.02)
+                .await
+                .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream webhook update",
+            )
+                .into_response();
+        }
+    }
+
+    let usage_target = request.url.as_deref().unwrap_or(webhook_id.as_str());
+    if record_gateway_usage(state.store.as_ref(), "webhooks", usage_target, 20, 0.02)
+        .await
+        .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(
+        update_webhook(
+            "tenant-1",
+            "project-1",
+            &webhook_id,
+            request
+                .url
+                .as_deref()
+                .unwrap_or("https://example.com/webhook"),
+        )
+        .expect("webhook update"),
+    )
+    .into_response()
+}
+
+async fn webhook_delete_with_state_handler(
+    State(state): State<GatewayApiState>,
+    Path(webhook_id): Path<String>,
+) -> Response {
+    match relay_delete_webhook_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &webhook_id,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(state.store.as_ref(), "webhooks", &webhook_id, 20, 0.02)
+                .await
+                .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream webhook delete",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(state.store.as_ref(), "webhooks", &webhook_id, 20, 0.02)
+        .await
+        .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(delete_webhook("tenant-1", "project-1", &webhook_id).expect("webhook delete"))
         .into_response()
 }
 

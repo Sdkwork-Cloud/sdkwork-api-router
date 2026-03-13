@@ -27,6 +27,8 @@
 | `/v1/fine_tuning/jobs/{fine_tuning_job_id}/cancel` | Implemented | Stateful mode supports OpenAI-compatible upstream cancel relay; otherwise emits local cancelled fine-tuning job fallback |
 | `/v1/assistants` | Implemented | Stateful mode supports OpenAI-compatible upstream create and list relay; otherwise emits local assistant fallback |
 | `/v1/assistants/{assistant_id}` | Implemented | Stateful mode supports OpenAI-compatible upstream retrieve, update, and delete relay; otherwise emits local assistant metadata or deleted response fallback |
+| `/v1/webhooks` | Implemented | Stateful mode supports OpenAI-compatible upstream create and list relay; otherwise emits local webhook fallback |
+| `/v1/webhooks/{webhook_id}` | Implemented | Stateful mode supports OpenAI-compatible upstream retrieve, update, and delete relay; otherwise emits local webhook metadata or deleted response fallback |
 | `/v1/realtime/sessions` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local realtime session fallback |
 | `/v1/evals` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local eval fallback |
 | `/v1/batches` | Implemented | Stateful mode supports OpenAI-compatible upstream create and list relay; otherwise emits local batch fallback |
@@ -83,14 +85,14 @@
 | Vector Stores | Defined | Partially implemented (`create`, `list`, `retrieve`, `update`, `delete`, `search`, `files.create`, `files.list`, `files.retrieve`, `files.delete`, `file_batches.create`, `file_batches.retrieve`, `file_batches.cancel`, `file_batches.files.list`) |
 | Batches | Defined | Partially implemented (`create`, `list`, `retrieve`, `cancel`) |
 | Videos | Defined | Implemented (`create`, `list`, `retrieve`, `delete`, `content`, `remix`) |
-| Webhooks | Defined | Contract only |
+| Webhooks | Defined | Implemented (`create`, `list`, `retrieve`, `update`, `delete`) |
 | Evals | Defined | Implemented |
 
 ## Runtime Behavior Notes
 
 | Capability | Current Behavior |
 |---|---|
-| Upstream proxying | Partially implemented; stateful gateway relays OpenAI-compatible chat, chat SSE, completions, responses, embeddings, files create/list/retrieve/delete/content, upload create/part/complete/cancel, moderations, image generations, videos create/list/retrieve/delete/content/remix, audio transcriptions, audio translations, audio speech binary passthrough, fine-tuning jobs create/list/retrieve/cancel, assistants create/list/retrieve/update/delete, realtime sessions, evals, batches create/list/retrieve/cancel, and vector stores create/list/retrieve/update/delete/search plus vector store files create/list/retrieve/delete plus vector store file batches create/retrieve/cancel/list-files when provider and credential records are configured |
+| Upstream proxying | Partially implemented; stateful gateway relays OpenAI-compatible chat, chat SSE, completions, responses, embeddings, files create/list/retrieve/delete/content, upload create/part/complete/cancel, moderations, image generations, videos create/list/retrieve/delete/content/remix, audio transcriptions, audio translations, audio speech binary passthrough, fine-tuning jobs create/list/retrieve/cancel, assistants create/list/retrieve/update/delete, webhooks create/list/retrieve/update/delete, realtime sessions, evals, batches create/list/retrieve/cancel, and vector stores create/list/retrieve/update/delete/search plus vector store files create/list/retrieve/delete plus vector store file batches create/retrieve/cancel/list-files when provider and credential records are configured |
 | Model discovery | Driven by the local catalog, not upstream auto-sync |
 | Routing | Deterministic candidate selection from catalog models |
 | Provider dispatch | Executed through `sdkwork-api-provider-core` registry abstractions with `adapter_kind` plus `base_url` resolution; `openai`, `openrouter`, and `ollama` are currently registered |

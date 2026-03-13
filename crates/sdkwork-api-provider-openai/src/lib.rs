@@ -24,6 +24,7 @@ use sdkwork_api_contract_openai::vector_stores::{
     SearchVectorStoreRequest, UpdateVectorStoreRequest,
 };
 use sdkwork_api_contract_openai::videos::{CreateVideoRequest, RemixVideoRequest};
+use sdkwork_api_contract_openai::webhooks::{CreateWebhookRequest, UpdateWebhookRequest};
 use sdkwork_api_domain_catalog::ModelCatalogEntry;
 use sdkwork_api_provider_core::{
     ProviderAdapter, ProviderExecutionAdapter, ProviderOutput, ProviderRequest,
@@ -510,6 +511,34 @@ impl OpenAiProviderAdapter {
             .await
     }
 
+    pub async fn webhooks(&self, api_key: &str, request: &CreateWebhookRequest) -> Result<Value> {
+        self.post_json("/v1/webhooks", api_key, request).await
+    }
+
+    pub async fn list_webhooks(&self, api_key: &str) -> Result<Value> {
+        self.get_json("/v1/webhooks", api_key).await
+    }
+
+    pub async fn retrieve_webhook(&self, api_key: &str, webhook_id: &str) -> Result<Value> {
+        self.get_json(&format!("/v1/webhooks/{webhook_id}"), api_key)
+            .await
+    }
+
+    pub async fn update_webhook(
+        &self,
+        api_key: &str,
+        webhook_id: &str,
+        request: &UpdateWebhookRequest,
+    ) -> Result<Value> {
+        self.post_json(&format!("/v1/webhooks/{webhook_id}"), api_key, request)
+            .await
+    }
+
+    pub async fn delete_webhook(&self, api_key: &str, webhook_id: &str) -> Result<Value> {
+        self.delete_json(&format!("/v1/webhooks/{webhook_id}"), api_key)
+            .await
+    }
+
     async fn post_json<T: serde::Serialize>(
         &self,
         path: &str,
@@ -799,6 +828,21 @@ impl ProviderExecutionAdapter for OpenAiProviderAdapter {
             )),
             ProviderRequest::VideosRemix(video_id, request) => Ok(ProviderOutput::Json(
                 self.remix_video(api_key, video_id, request).await?,
+            )),
+            ProviderRequest::Webhooks(request) => {
+                Ok(ProviderOutput::Json(self.webhooks(api_key, request).await?))
+            }
+            ProviderRequest::WebhooksList => {
+                Ok(ProviderOutput::Json(self.list_webhooks(api_key).await?))
+            }
+            ProviderRequest::WebhooksRetrieve(webhook_id) => Ok(ProviderOutput::Json(
+                self.retrieve_webhook(api_key, webhook_id).await?,
+            )),
+            ProviderRequest::WebhooksUpdate(webhook_id, request) => Ok(ProviderOutput::Json(
+                self.update_webhook(api_key, webhook_id, request).await?,
+            )),
+            ProviderRequest::WebhooksDelete(webhook_id) => Ok(ProviderOutput::Json(
+                self.delete_webhook(api_key, webhook_id).await?,
             )),
         }
     }

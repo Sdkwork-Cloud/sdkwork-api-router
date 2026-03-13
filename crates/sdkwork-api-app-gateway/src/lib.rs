@@ -44,6 +44,10 @@ use sdkwork_api_contract_openai::vector_stores::{
 use sdkwork_api_contract_openai::videos::{
     CreateVideoRequest, DeleteVideoResponse, RemixVideoRequest, VideoObject, VideosResponse,
 };
+use sdkwork_api_contract_openai::webhooks::{
+    CreateWebhookRequest, DeleteWebhookResponse, ListWebhooksResponse, UpdateWebhookRequest,
+    WebhookObject,
+};
 use sdkwork_api_provider_core::{ProviderRegistry, ProviderRequest};
 use sdkwork_api_provider_ollama::OllamaProviderAdapter;
 use sdkwork_api_provider_openai::OpenAiProviderAdapter;
@@ -841,6 +845,141 @@ pub async fn relay_delete_assistant_from_store(
         provider.base_url,
         &api_key,
         ProviderRequest::AssistantsDelete(assistant_id),
+    )
+    .await
+}
+
+pub async fn relay_webhook_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    request: &CreateWebhookRequest,
+) -> Result<Option<Value>> {
+    let decision = simulate_route_with_store(store, "webhooks", &request.url).await?;
+    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
+        return Ok(None);
+    };
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &provider.adapter_kind,
+        provider.base_url,
+        &api_key,
+        ProviderRequest::Webhooks(request),
+    )
+    .await
+}
+
+pub async fn relay_list_webhooks_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+) -> Result<Option<Value>> {
+    let decision = simulate_route_with_store(store, "webhooks", "webhooks").await?;
+    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
+        return Ok(None);
+    };
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &provider.adapter_kind,
+        provider.base_url,
+        &api_key,
+        ProviderRequest::WebhooksList,
+    )
+    .await
+}
+
+pub async fn relay_get_webhook_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    webhook_id: &str,
+) -> Result<Option<Value>> {
+    let decision = simulate_route_with_store(store, "webhooks", webhook_id).await?;
+    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
+        return Ok(None);
+    };
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &provider.adapter_kind,
+        provider.base_url,
+        &api_key,
+        ProviderRequest::WebhooksRetrieve(webhook_id),
+    )
+    .await
+}
+
+pub async fn relay_update_webhook_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    webhook_id: &str,
+    request: &UpdateWebhookRequest,
+) -> Result<Option<Value>> {
+    let decision = simulate_route_with_store(store, "webhooks", webhook_id).await?;
+    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
+        return Ok(None);
+    };
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &provider.adapter_kind,
+        provider.base_url,
+        &api_key,
+        ProviderRequest::WebhooksUpdate(webhook_id, request),
+    )
+    .await
+}
+
+pub async fn relay_delete_webhook_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    webhook_id: &str,
+) -> Result<Option<Value>> {
+    let decision = simulate_route_with_store(store, "webhooks", webhook_id).await?;
+    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
+        return Ok(None);
+    };
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &provider.adapter_kind,
+        provider.base_url,
+        &api_key,
+        ProviderRequest::WebhooksDelete(webhook_id),
     )
     .await
 }
@@ -1850,6 +1989,46 @@ pub fn delete_assistant(
     assistant_id: &str,
 ) -> Result<DeleteAssistantResponse> {
     Ok(DeleteAssistantResponse::deleted(assistant_id))
+}
+
+pub fn create_webhook(
+    _tenant_id: &str,
+    _project_id: &str,
+    url: &str,
+    _events: &[String],
+) -> Result<WebhookObject> {
+    Ok(WebhookObject::new("wh_1", url))
+}
+
+pub fn list_webhooks(_tenant_id: &str, _project_id: &str) -> Result<ListWebhooksResponse> {
+    Ok(ListWebhooksResponse::new(vec![WebhookObject::new(
+        "wh_1",
+        "https://example.com/webhook",
+    )]))
+}
+
+pub fn get_webhook(_tenant_id: &str, _project_id: &str, webhook_id: &str) -> Result<WebhookObject> {
+    Ok(WebhookObject::new(
+        webhook_id,
+        "https://example.com/webhook",
+    ))
+}
+
+pub fn update_webhook(
+    _tenant_id: &str,
+    _project_id: &str,
+    webhook_id: &str,
+    url: &str,
+) -> Result<WebhookObject> {
+    Ok(WebhookObject::new(webhook_id, url))
+}
+
+pub fn delete_webhook(
+    _tenant_id: &str,
+    _project_id: &str,
+    webhook_id: &str,
+) -> Result<DeleteWebhookResponse> {
+    Ok(DeleteWebhookResponse::deleted(webhook_id))
 }
 
 pub fn create_realtime_session(

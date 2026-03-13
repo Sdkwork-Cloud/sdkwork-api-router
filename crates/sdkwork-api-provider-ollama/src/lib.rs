@@ -23,6 +23,7 @@ use sdkwork_api_contract_openai::vector_stores::{
     SearchVectorStoreRequest, UpdateVectorStoreRequest,
 };
 use sdkwork_api_contract_openai::videos::{CreateVideoRequest, RemixVideoRequest};
+use sdkwork_api_contract_openai::webhooks::{CreateWebhookRequest, UpdateWebhookRequest};
 use sdkwork_api_domain_catalog::ModelCatalogEntry;
 use sdkwork_api_provider_core::{
     ProviderAdapter, ProviderExecutionAdapter, ProviderOutput, ProviderRequest,
@@ -225,6 +226,33 @@ impl OllamaProviderAdapter {
 
     pub async fn delete_assistant(&self, api_key: &str, assistant_id: &str) -> Result<Value> {
         self.delegate.delete_assistant(api_key, assistant_id).await
+    }
+
+    pub async fn webhooks(&self, api_key: &str, request: &CreateWebhookRequest) -> Result<Value> {
+        self.delegate.webhooks(api_key, request).await
+    }
+
+    pub async fn list_webhooks(&self, api_key: &str) -> Result<Value> {
+        self.delegate.list_webhooks(api_key).await
+    }
+
+    pub async fn retrieve_webhook(&self, api_key: &str, webhook_id: &str) -> Result<Value> {
+        self.delegate.retrieve_webhook(api_key, webhook_id).await
+    }
+
+    pub async fn update_webhook(
+        &self,
+        api_key: &str,
+        webhook_id: &str,
+        request: &UpdateWebhookRequest,
+    ) -> Result<Value> {
+        self.delegate
+            .update_webhook(api_key, webhook_id, request)
+            .await
+    }
+
+    pub async fn delete_webhook(&self, api_key: &str, webhook_id: &str) -> Result<Value> {
+        self.delegate.delete_webhook(api_key, webhook_id).await
     }
 
     pub async fn realtime_sessions(
@@ -514,6 +542,21 @@ impl ProviderExecutionAdapter for OllamaProviderAdapter {
             )),
             ProviderRequest::AssistantsDelete(assistant_id) => Ok(ProviderOutput::Json(
                 self.delete_assistant(api_key, assistant_id).await?,
+            )),
+            ProviderRequest::Webhooks(request) => {
+                Ok(ProviderOutput::Json(self.webhooks(api_key, request).await?))
+            }
+            ProviderRequest::WebhooksList => {
+                Ok(ProviderOutput::Json(self.list_webhooks(api_key).await?))
+            }
+            ProviderRequest::WebhooksRetrieve(webhook_id) => Ok(ProviderOutput::Json(
+                self.retrieve_webhook(api_key, webhook_id).await?,
+            )),
+            ProviderRequest::WebhooksUpdate(webhook_id, request) => Ok(ProviderOutput::Json(
+                self.update_webhook(api_key, webhook_id, request).await?,
+            )),
+            ProviderRequest::WebhooksDelete(webhook_id) => Ok(ProviderOutput::Json(
+                self.delete_webhook(api_key, webhook_id).await?,
             )),
             ProviderRequest::RealtimeSessions(request) => Ok(ProviderOutput::Json(
                 self.realtime_sessions(api_key, request).await?,

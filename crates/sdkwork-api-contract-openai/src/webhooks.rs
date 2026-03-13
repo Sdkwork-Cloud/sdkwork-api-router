@@ -19,6 +19,20 @@ impl CreateWebhookRequest {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateWebhookRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+}
+
+impl UpdateWebhookRequest {
+    pub fn new(url: impl Into<String>) -> Self {
+        Self {
+            url: Some(url.into()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct WebhookObject {
     pub id: String,
@@ -34,6 +48,38 @@ impl WebhookObject {
             object: "webhook_endpoint",
             url: url.into(),
             status: "enabled",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ListWebhooksResponse {
+    pub object: &'static str,
+    pub data: Vec<WebhookObject>,
+}
+
+impl ListWebhooksResponse {
+    pub fn new(data: Vec<WebhookObject>) -> Self {
+        Self {
+            object: "list",
+            data,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DeleteWebhookResponse {
+    pub id: String,
+    pub object: &'static str,
+    pub deleted: bool,
+}
+
+impl DeleteWebhookResponse {
+    pub fn deleted(id: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            object: "webhook_endpoint.deleted",
+            deleted: true,
         }
     }
 }

@@ -26,6 +26,7 @@ use sdkwork_api_contract_openai::vector_stores::{
     SearchVectorStoreRequest, UpdateVectorStoreRequest,
 };
 use sdkwork_api_contract_openai::videos::{CreateVideoRequest, RemixVideoRequest};
+use sdkwork_api_contract_openai::webhooks::{CreateWebhookRequest, UpdateWebhookRequest};
 use serde_json::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,6 +94,11 @@ pub enum ProviderRequest<'a> {
     VideosDelete(&'a str),
     VideosContent(&'a str),
     VideosRemix(&'a str, &'a RemixVideoRequest),
+    Webhooks(&'a CreateWebhookRequest),
+    WebhooksList,
+    WebhooksRetrieve(&'a str),
+    WebhooksUpdate(&'a str, &'a UpdateWebhookRequest),
+    WebhooksDelete(&'a str),
 }
 
 pub enum ProviderOutput {
