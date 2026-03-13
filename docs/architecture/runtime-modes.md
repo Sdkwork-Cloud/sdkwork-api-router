@@ -51,6 +51,7 @@ The current repository includes:
 - a built-in extension host with manifest registration for OpenAI, OpenRouter, and Ollama provider extensions
 - filesystem extension discovery through `sdkwork-extension.toml` package manifests loaded from configured search paths
 - persisted extension installation and instance records for configuration-driven mounting
+- authenticated admin visibility for discovered extension packages and active connector runtime statuses
 - provider runtime dispatch keyed by `ProxyProvider.extension_id`, with `adapter_kind` kept as a compatibility alias for older records and protocol classification
 - real provider dispatch now consumes persisted extension load state so instance-level `base_url` overrides are honored and disabled installations or instances short-circuit to local fallback
 - discovered provider manifests can now bind to the current protocol adapters so connector-style extensions participate in real relay execution when they declare a supported protocol

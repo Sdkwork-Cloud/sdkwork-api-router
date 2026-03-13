@@ -3,7 +3,19 @@ use axum::http::{Request, StatusCode};
 use axum::Router;
 use serde_json::Value;
 use sqlx::SqlitePool;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tower::ServiceExt;
+
+#[cfg(windows)]
+use sdkwork_api_extension_core::ExtensionRuntime;
+#[cfg(windows)]
+use sdkwork_api_extension_host::{
+    ensure_connector_runtime_started, shutdown_all_connector_runtimes, ExtensionLoadPlan,
+};
+#[cfg(windows)]
+use std::net::TcpListener;
 
 async fn read_json(response: axum::response::Response) -> Value {
     let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
@@ -549,4 +561,236 @@ async fn create_and_list_extension_installations_and_instances() {
         "https://openrouter.ai/api/v1"
     );
     assert_eq!(instances_json[0]["config"]["region"], "global");
+}
+
+#[tokio::test]
+async fn list_discovered_extension_packages_from_admin_api() {
+    let root = temp_extension_root("admin-extension-packages");
+    let package_dir = root.join("sdkwork-provider-custom-openai");
+    fs::create_dir_all(&package_dir).unwrap();
+    fs::write(
+        package_dir.join("sdkwork-extension.toml"),
+        r#"
+api_version = "sdkwork.extension/v1"
+id = "sdkwork.provider.custom-openai"
+kind = "provider"
+version = "0.1.0"
+display_name = "Custom OpenAI"
+runtime = "connector"
+protocol = "openai"
+entrypoint = "powershell.exe"
+channel_bindings = ["sdkwork.channel.openai"]
+
+[[capabilities]]
+operation = "chat.completions.create"
+compatibility = "relay"
+"#,
+    )
+    .unwrap();
+    let _guard = extension_env_guard(&root);
+
+    let pool = memory_pool().await;
+    let app = sdkwork_api_interface_admin::admin_router_with_pool(pool);
+    let token = login_token(app.clone()).await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/admin/extensions/packages")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let json = read_json(response).await;
+    assert_eq!(json.as_array().unwrap().len(), 1);
+    assert_eq!(json[0]["manifest"]["id"], "sdkwork.provider.custom-openai");
+    assert_eq!(
+        json[0]["root_dir"],
+        package_dir.to_string_lossy().to_string()
+    );
+
+    cleanup_dir(&root);
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn list_active_connector_runtime_statuses_from_admin_api() {
+    let root = temp_extension_root("admin-runtime-statuses");
+    fs::create_dir_all(&root).unwrap();
+    let port = free_port();
+    fs::write(root.join("connector.ps1"), connector_script_body(port)).unwrap();
+
+    let load_plan = ExtensionLoadPlan {
+        instance_id: "provider-custom-openai".to_owned(),
+        installation_id: "custom-openai-installation".to_owned(),
+        extension_id: "sdkwork.provider.custom-openai".to_owned(),
+        enabled: true,
+        runtime: ExtensionRuntime::Connector,
+        display_name: "Custom OpenAI".to_owned(),
+        entrypoint: Some("powershell.exe".to_owned()),
+        base_url: Some(format!("http://127.0.0.1:{port}")),
+        credential_ref: None,
+        config_schema: None,
+        credential_schema: None,
+        package_root: Some(root.clone()),
+        config: serde_json::json!({
+            "command_args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                "connector.ps1"
+            ],
+            "health_path": "/health",
+            "startup_timeout_ms": 4000,
+            "startup_poll_interval_ms": 50
+        }),
+    };
+
+    ensure_connector_runtime_started(&load_plan, load_plan.base_url.as_deref().expect("base url"))
+        .unwrap();
+
+    let pool = memory_pool().await;
+    let app = sdkwork_api_interface_admin::admin_router_with_pool(pool);
+    let token = login_token(app.clone()).await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/admin/extensions/runtime-statuses")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let json = read_json(response).await;
+    assert_eq!(json.as_array().unwrap().len(), 1);
+    assert_eq!(json[0]["instance_id"], "provider-custom-openai");
+    assert_eq!(json[0]["running"], true);
+    assert_eq!(json[0]["healthy"], true);
+
+    shutdown_all_connector_runtimes().unwrap();
+    cleanup_dir(&root);
+}
+
+fn temp_extension_root(suffix: &str) -> PathBuf {
+    let mut path = std::env::temp_dir();
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    path.push(format!("sdkwork-admin-routes-{suffix}-{millis}"));
+    path
+}
+
+fn cleanup_dir(path: &Path) {
+    let _ = fs::remove_dir_all(path);
+}
+
+fn extension_env_guard(path: &Path) -> ExtensionEnvGuard {
+    let previous_paths = std::env::var("SDKWORK_EXTENSION_PATHS").ok();
+    let previous_connector = std::env::var("SDKWORK_EXTENSION_ENABLE_CONNECTOR_EXTENSIONS").ok();
+    let previous_native = std::env::var("SDKWORK_EXTENSION_ENABLE_NATIVE_DYNAMIC_EXTENSIONS").ok();
+
+    let joined_paths = std::env::join_paths([path]).unwrap();
+    std::env::set_var("SDKWORK_EXTENSION_PATHS", joined_paths);
+    std::env::set_var("SDKWORK_EXTENSION_ENABLE_CONNECTOR_EXTENSIONS", "true");
+    std::env::set_var(
+        "SDKWORK_EXTENSION_ENABLE_NATIVE_DYNAMIC_EXTENSIONS",
+        "false",
+    );
+
+    ExtensionEnvGuard {
+        previous_paths,
+        previous_connector,
+        previous_native,
+    }
+}
+
+struct ExtensionEnvGuard {
+    previous_paths: Option<String>,
+    previous_connector: Option<String>,
+    previous_native: Option<String>,
+}
+
+impl Drop for ExtensionEnvGuard {
+    fn drop(&mut self) {
+        restore_env_var("SDKWORK_EXTENSION_PATHS", self.previous_paths.as_deref());
+        restore_env_var(
+            "SDKWORK_EXTENSION_ENABLE_CONNECTOR_EXTENSIONS",
+            self.previous_connector.as_deref(),
+        );
+        restore_env_var(
+            "SDKWORK_EXTENSION_ENABLE_NATIVE_DYNAMIC_EXTENSIONS",
+            self.previous_native.as_deref(),
+        );
+    }
+}
+
+fn restore_env_var(key: &str, value: Option<&str>) {
+    match value {
+        Some(value) => std::env::set_var(key, value),
+        None => std::env::remove_var(key),
+    }
+}
+
+#[cfg(windows)]
+fn connector_script_body(port: u16) -> String {
+    format!(
+        r#"
+$listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Parse("127.0.0.1"), {port})
+$listener.Start()
+while ($true) {{
+    $client = $listener.AcceptTcpClient()
+    $stream = $client.GetStream()
+    $reader = New-Object System.IO.StreamReader($stream, [System.Text.Encoding]::ASCII, $false, 1024, $true)
+    $requestLine = $reader.ReadLine()
+    while ($true) {{
+        $line = $reader.ReadLine()
+        if ([string]::IsNullOrEmpty($line)) {{
+            break
+        }}
+    }}
+
+    if ($requestLine.StartsWith('GET /health')) {{
+        $body = '{{"status":"ok"}}'
+        $status = 'HTTP/1.1 200 OK'
+    }} else {{
+        $body = '{{"error":"not_found"}}'
+        $status = 'HTTP/1.1 404 Not Found'
+    }}
+
+    $bodyBytes = [System.Text.Encoding]::UTF8.GetBytes($body)
+    $writer = New-Object System.IO.StreamWriter($stream, [System.Text.Encoding]::ASCII, 1024, $true)
+    $writer.NewLine = "`r`n"
+    $writer.WriteLine($status)
+    $writer.WriteLine('Content-Type: application/json')
+    $writer.WriteLine(('Content-Length: ' + $bodyBytes.Length))
+    $writer.WriteLine('Connection: close')
+    $writer.WriteLine()
+    $writer.Flush()
+    $stream.Write($bodyBytes, 0, $bodyBytes.Length)
+    $stream.Flush()
+    $client.Close()
+}}
+"#
+    )
+}
+
+#[cfg(windows)]
+fn free_port() -> u16 {
+    TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
 }

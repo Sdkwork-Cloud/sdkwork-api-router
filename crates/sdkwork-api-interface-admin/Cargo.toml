@@ -31,6 +31,7 @@ sqlx.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
+sdkwork-api-extension-host = { path = "../sdkwork-api-extension-host" }
 sdkwork-api-storage-sqlite = { path = "../sdkwork-api-storage-sqlite" }
 sqlx.workspace = true
 tokio.workspace = true

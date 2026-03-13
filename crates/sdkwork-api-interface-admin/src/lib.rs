@@ -17,8 +17,10 @@ use sdkwork_api_app_catalog::{
 use sdkwork_api_app_credential::CredentialSecretManager;
 use sdkwork_api_app_credential::{list_credentials, persist_credential_with_secret_and_manager};
 use sdkwork_api_app_extension::{
-    list_extension_installations, list_extension_instances, persist_extension_installation,
-    persist_extension_instance, PersistExtensionInstanceInput,
+    configured_extension_discovery_policy_from_env, list_connector_runtime_statuses,
+    list_discovered_extension_packages, list_extension_installations, list_extension_instances,
+    persist_extension_installation, persist_extension_instance, ExtensionDiscoveryPolicy,
+    PersistExtensionInstanceInput,
 };
 use sdkwork_api_app_identity::{
     issue_jwt, list_gateway_api_keys, persist_gateway_api_key, verify_jwt, Claims,
@@ -51,6 +53,7 @@ pub struct AdminApiState {
     store: Arc<dyn AdminStore>,
     secret_manager: CredentialSecretManager,
     jwt_signing_secret: String,
+    extension_discovery_policy: ExtensionDiscoveryPolicy,
 }
 
 impl AdminApiState {
@@ -82,6 +85,7 @@ impl AdminApiState {
             store: Arc::new(SqliteAdminStore::new(pool)),
             secret_manager,
             jwt_signing_secret: jwt_signing_secret.into(),
+            extension_discovery_policy: configured_extension_discovery_policy_from_env(),
         }
     }
 
@@ -105,6 +109,7 @@ impl AdminApiState {
             store,
             secret_manager,
             jwt_signing_secret: jwt_signing_secret.into(),
+            extension_discovery_policy: configured_extension_discovery_policy_from_env(),
         }
     }
 }
@@ -289,8 +294,16 @@ pub fn admin_router() -> Router {
             get(|| async { "extension-installations" }),
         )
         .route(
+            "/admin/extensions/packages",
+            get(|| async { "extension-packages" }),
+        )
+        .route(
             "/admin/extensions/instances",
             get(|| async { "extension-instances" }),
+        )
+        .route(
+            "/admin/extensions/runtime-statuses",
+            get(|| async { "extension-runtime-statuses" }),
         )
         .route("/admin/usage/records", get(|| async { "usage-records" }))
         .route("/admin/billing/ledger", get(|| async { "billing-ledger" }))
@@ -390,8 +403,16 @@ pub fn admin_router_with_store_and_secret_manager_and_jwt_secret(
             get(list_extension_installations_handler).post(create_extension_installation_handler),
         )
         .route(
+            "/admin/extensions/packages",
+            get(list_extension_packages_handler),
+        )
+        .route(
             "/admin/extensions/instances",
             get(list_extension_instances_handler).post(create_extension_instance_handler),
+        )
+        .route(
+            "/admin/extensions/runtime-statuses",
+            get(list_extension_runtime_statuses_handler),
         )
         .route("/admin/usage/records", get(list_usage_records_handler))
         .route("/admin/billing/ledger", get(list_ledger_entries_handler))
@@ -644,6 +665,15 @@ async fn list_extension_instances_handler(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
+async fn list_extension_packages_handler(
+    _claims: AuthenticatedAdminClaims,
+    State(state): State<AdminApiState>,
+) -> Result<Json<Vec<sdkwork_api_app_extension::DiscoveredExtensionPackageRecord>>, StatusCode> {
+    list_discovered_extension_packages(&state.extension_discovery_policy)
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
 async fn create_extension_instance_handler(
     _claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
@@ -664,6 +694,15 @@ async fn create_extension_instance_handler(
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok((StatusCode::CREATED, Json(instance)))
+}
+
+async fn list_extension_runtime_statuses_handler(
+    _claims: AuthenticatedAdminClaims,
+    _state: State<AdminApiState>,
+) -> Result<Json<Vec<sdkwork_api_app_extension::ConnectorRuntimeStatusRecord>>, StatusCode> {
+    list_connector_runtime_statuses()
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 async fn simulate_routing_handler(

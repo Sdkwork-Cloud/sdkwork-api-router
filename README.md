@@ -57,6 +57,7 @@ Backend:
   - `sdkwork.provider.openrouter`
   - `sdkwork.provider.ollama`
 - Persisted extension installation and instance config through admin APIs
+- Admin visibility for extension package discovery and active connector runtime status
 - Standardized extension package metadata:
   - runtime ID: `sdkwork.provider.*` / `sdkwork.channel.*`
   - distribution name: `sdkwork-provider-*` / `sdkwork-channel-*`

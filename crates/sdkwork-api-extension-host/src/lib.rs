@@ -284,6 +284,55 @@ pub fn shutdown_all_connector_runtimes() -> Result<(), ExtensionHostError> {
     Ok(())
 }
 
+pub fn list_connector_runtime_statuses() -> Result<Vec<ConnectorRuntimeStatus>, ExtensionHostError>
+{
+    let snapshots = {
+        let mut registry = connector_process_registry()?;
+        let mut exited_instance_ids = Vec::new();
+        let mut snapshots = Vec::new();
+
+        for (instance_id, process) in registry.iter_mut() {
+            match process.child.try_wait() {
+                Ok(None) => snapshots.push((
+                    instance_id.clone(),
+                    process.base_url.clone(),
+                    process.health_url.clone(),
+                    Some(process.child.id()),
+                )),
+                Ok(Some(_)) => exited_instance_ids.push(instance_id.clone()),
+                Err(error) => {
+                    return Err(ExtensionHostError::ConnectorRuntimeShutdownFailed {
+                        instance_id: instance_id.clone(),
+                        message: error.to_string(),
+                    })
+                }
+            }
+        }
+
+        for instance_id in exited_instance_ids {
+            registry.remove(&instance_id);
+        }
+
+        snapshots
+    };
+
+    let mut statuses = snapshots
+        .into_iter()
+        .map(|(instance_id, base_url, health_url, process_id)| {
+            Ok(ConnectorRuntimeStatus {
+                instance_id,
+                base_url,
+                healthy: probe_http_health(&health_url)?,
+                health_url,
+                process_id,
+                running: true,
+            })
+        })
+        .collect::<Result<Vec<_>, ExtensionHostError>>()?;
+    statuses.sort_by(|left, right| left.instance_id.cmp(&right.instance_id));
+    Ok(statuses)
+}
+
 impl ExtensionHost {
     pub fn new() -> Self {
         Self::default()
