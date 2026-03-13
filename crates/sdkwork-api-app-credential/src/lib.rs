@@ -61,3 +61,22 @@ pub async fn resolve_credential_secret(
         .ok_or_else(|| anyhow::anyhow!("credential secret not found"))?;
     decrypt(master_key, &envelope)
 }
+
+pub async fn resolve_provider_secret(
+    store: &SqliteAdminStore,
+    master_key: &str,
+    tenant_id: &str,
+    provider_id: &str,
+) -> Result<Option<String>> {
+    let Some(key_reference) = store
+        .find_credential_key_reference(tenant_id, provider_id)
+        .await?
+    else {
+        return Ok(None);
+    };
+
+    let secret =
+        resolve_credential_secret(store, master_key, tenant_id, provider_id, &key_reference)
+            .await?;
+    Ok(Some(secret))
+}

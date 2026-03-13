@@ -11,7 +11,13 @@ pub fn create_channel(id: &str, name: &str) -> Result<Channel> {
 }
 
 pub fn create_provider(id: &str, channel_id: &str, display_name: &str) -> Result<ProxyProvider> {
-    Ok(ProxyProvider::new(id, channel_id, display_name))
+    Ok(ProxyProvider::new(
+        id,
+        channel_id,
+        channel_id,
+        "http://localhost",
+        display_name,
+    ))
 }
 
 pub async fn persist_channel(store: &SqliteAdminStore, id: &str, name: &str) -> Result<Channel> {
@@ -23,13 +29,32 @@ pub async fn list_channels(store: &SqliteAdminStore) -> Result<Vec<Channel>> {
     store.list_channels().await
 }
 
+pub fn create_provider_with_config(
+    id: &str,
+    channel_id: &str,
+    adapter_kind: &str,
+    base_url: &str,
+    display_name: &str,
+) -> Result<ProxyProvider> {
+    Ok(ProxyProvider::new(
+        id,
+        channel_id,
+        adapter_kind,
+        base_url,
+        display_name,
+    ))
+}
+
 pub async fn persist_provider(
     store: &SqliteAdminStore,
     id: &str,
     channel_id: &str,
+    adapter_kind: &str,
+    base_url: &str,
     display_name: &str,
 ) -> Result<ProxyProvider> {
-    let provider = create_provider(id, channel_id, display_name)?;
+    let provider =
+        create_provider_with_config(id, channel_id, adapter_kind, base_url, display_name)?;
     store.insert_provider(&provider).await
 }
 

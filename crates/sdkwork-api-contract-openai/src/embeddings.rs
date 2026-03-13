@@ -1,4 +1,11 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateEmbeddingRequest {
+    pub model: String,
+    pub input: Value,
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct EmbeddingObject {

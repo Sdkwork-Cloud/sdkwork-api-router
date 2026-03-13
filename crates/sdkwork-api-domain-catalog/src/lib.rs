@@ -19,6 +19,8 @@ impl Channel {
 pub struct ProxyProvider {
     pub id: String,
     pub channel_id: String,
+    pub adapter_kind: String,
+    pub base_url: String,
     pub display_name: String,
 }
 
@@ -26,11 +28,15 @@ impl ProxyProvider {
     pub fn new(
         id: impl Into<String>,
         channel_id: impl Into<String>,
+        adapter_kind: impl Into<String>,
+        base_url: impl Into<String>,
         display_name: impl Into<String>,
     ) -> Self {
         Self {
             id: id.into(),
             channel_id: channel_id.into(),
+            adapter_kind: adapter_kind.into(),
+            base_url: base_url.into(),
             display_name: display_name.into(),
         }
     }

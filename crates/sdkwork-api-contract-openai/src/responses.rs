@@ -1,4 +1,12 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateResponseRequest {
+    pub model: String,
+    pub input: Value,
+    pub stream: Option<bool>,
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ResponseObject {

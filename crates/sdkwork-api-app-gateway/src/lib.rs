@@ -1,9 +1,14 @@
 use anyhow::Result;
+use sdkwork_api_app_credential::resolve_provider_secret;
+use sdkwork_api_app_routing::simulate_route_with_store;
 use sdkwork_api_contract_openai::chat_completions::ChatCompletionResponse;
+use sdkwork_api_contract_openai::chat_completions::CreateChatCompletionRequest;
 use sdkwork_api_contract_openai::embeddings::CreateEmbeddingResponse;
 use sdkwork_api_contract_openai::models::{ListModelsResponse, ModelObject};
 use sdkwork_api_contract_openai::responses::ResponseObject;
+use sdkwork_api_provider_openai::OpenAiProviderAdapter;
 use sdkwork_api_storage_sqlite::SqliteAdminStore;
+use serde_json::Value;
 
 pub fn service_name() -> &'static str {
     "gateway-service"
@@ -27,6 +32,34 @@ pub async fn list_models_from_store(
             .map(|entry| ModelObject::new(entry.external_name, entry.provider_id))
             .collect(),
     ))
+}
+
+pub async fn relay_chat_completion_from_store(
+    store: &SqliteAdminStore,
+    master_key: &str,
+    tenant_id: &str,
+    _project_id: &str,
+    request: &CreateChatCompletionRequest,
+) -> Result<Option<Value>> {
+    let decision = simulate_route_with_store(store, "chat_completion", &request.model).await?;
+    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
+        return Ok(None);
+    };
+    let Some(api_key) = resolve_provider_secret(store, master_key, tenant_id, &provider.id).await?
+    else {
+        return Ok(None);
+    };
+
+    let response = match provider.adapter_kind.as_str() {
+        "openai" => {
+            OpenAiProviderAdapter::new(provider.base_url)
+                .chat_completions(&api_key, request)
+                .await?
+        }
+        _ => return Ok(None),
+    };
+
+    Ok(Some(response))
 }
 
 pub fn create_chat_completion(

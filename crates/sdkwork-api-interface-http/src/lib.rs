@@ -9,23 +9,33 @@ use axum::{
 use sdkwork_api_app_billing::persist_ledger_entry;
 use sdkwork_api_app_gateway::create_chat_completion;
 use sdkwork_api_app_gateway::list_models;
-use sdkwork_api_app_gateway::{create_embedding, create_response, list_models_from_store};
+use sdkwork_api_app_gateway::{
+    create_embedding, create_response, list_models_from_store, relay_chat_completion_from_store,
+};
 use sdkwork_api_app_routing::simulate_route_with_store;
 use sdkwork_api_app_usage::persist_usage_record;
+use sdkwork_api_contract_openai::chat_completions::CreateChatCompletionRequest;
+use sdkwork_api_contract_openai::embeddings::CreateEmbeddingRequest;
+use sdkwork_api_contract_openai::responses::CreateResponseRequest;
 use sdkwork_api_contract_openai::streaming::SseFrame;
 use sdkwork_api_storage_sqlite::SqliteAdminStore;
-use serde::Deserialize;
 use sqlx::SqlitePool;
 
 #[derive(Debug, Clone)]
 pub struct GatewayApiState {
     store: SqliteAdminStore,
+    credential_master_key: String,
 }
 
 impl GatewayApiState {
     pub fn new(pool: SqlitePool) -> Self {
+        Self::with_master_key(pool, "local-dev-master-key")
+    }
+
+    pub fn with_master_key(pool: SqlitePool, credential_master_key: impl Into<String>) -> Self {
         Self {
             store: SqliteAdminStore::new(pool),
+            credential_master_key: credential_master_key.into(),
         }
     }
 }
@@ -40,6 +50,13 @@ pub fn gateway_router() -> Router {
 }
 
 pub fn gateway_router_with_pool(pool: SqlitePool) -> Router {
+    gateway_router_with_pool_and_master_key(pool, "local-dev-master-key")
+}
+
+pub fn gateway_router_with_pool_and_master_key(
+    pool: SqlitePool,
+    credential_master_key: impl Into<String>,
+) -> Router {
     Router::new()
         .route("/health", get(|| async { "ok" }))
         .route("/v1/models", get(list_models_from_store_handler))
@@ -49,7 +66,10 @@ pub fn gateway_router_with_pool(pool: SqlitePool) -> Router {
         )
         .route("/v1/responses", post(responses_with_state_handler))
         .route("/v1/embeddings", post(embeddings_with_state_handler))
-        .with_state(GatewayApiState::new(pool))
+        .with_state(GatewayApiState::with_master_key(
+            pool,
+            credential_master_key,
+        ))
 }
 
 async fn list_models_handler() -> Json<sdkwork_api_contract_openai::models::ListModelsResponse> {
@@ -71,25 +91,8 @@ async fn list_models_from_store_handler(
         })
 }
 
-#[derive(Debug, Deserialize)]
-struct ChatCompletionsRequest {
-    model: String,
-    #[allow(dead_code)]
-    stream: Option<bool>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ResponsesRequest {
-    model: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct EmbeddingsRequest {
-    model: String,
-}
-
 async fn chat_completions_handler(
-    ExtractJson(request): ExtractJson<ChatCompletionsRequest>,
+    ExtractJson(request): ExtractJson<CreateChatCompletionRequest>,
 ) -> Response {
     if request.stream.unwrap_or(false) {
         let body = format!(
@@ -108,21 +111,61 @@ async fn chat_completions_handler(
 }
 
 async fn responses_handler(
-    ExtractJson(request): ExtractJson<ResponsesRequest>,
+    ExtractJson(request): ExtractJson<CreateResponseRequest>,
 ) -> Json<sdkwork_api_contract_openai::responses::ResponseObject> {
     Json(create_response("tenant-1", "project-1", &request.model).expect("response"))
 }
 
 async fn embeddings_handler(
-    ExtractJson(request): ExtractJson<EmbeddingsRequest>,
+    ExtractJson(request): ExtractJson<CreateEmbeddingRequest>,
 ) -> Json<sdkwork_api_contract_openai::embeddings::CreateEmbeddingResponse> {
     Json(create_embedding("tenant-1", "project-1", &request.model).expect("embedding"))
 }
 
 async fn chat_completions_with_state_handler(
     State(state): State<GatewayApiState>,
-    ExtractJson(request): ExtractJson<ChatCompletionsRequest>,
+    ExtractJson(request): ExtractJson<CreateChatCompletionRequest>,
 ) -> Response {
+    if !request.stream.unwrap_or(false) {
+        match relay_chat_completion_from_store(
+            &state.store,
+            &state.credential_master_key,
+            "tenant-1",
+            "project-1",
+            &request,
+        )
+        .await
+        {
+            Ok(Some(response)) => {
+                let usage_result = record_gateway_usage(
+                    &state.store,
+                    "chat_completion",
+                    &request.model,
+                    100,
+                    0.10,
+                )
+                .await;
+                if usage_result.is_err() {
+                    return (
+                        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        "failed to record usage",
+                    )
+                        .into_response();
+                }
+
+                return Json(response).into_response();
+            }
+            Ok(None) => {}
+            Err(_) => {
+                return (
+                    axum::http::StatusCode::BAD_GATEWAY,
+                    "failed to relay upstream chat completion",
+                )
+                    .into_response();
+            }
+        }
+    }
+
     let usage_result =
         record_gateway_usage(&state.store, "chat_completion", &request.model, 100, 0.10).await;
     if usage_result.is_err() {
@@ -151,7 +194,7 @@ async fn chat_completions_with_state_handler(
 
 async fn responses_with_state_handler(
     State(state): State<GatewayApiState>,
-    ExtractJson(request): ExtractJson<ResponsesRequest>,
+    ExtractJson(request): ExtractJson<CreateResponseRequest>,
 ) -> Response {
     if record_gateway_usage(&state.store, "responses", &request.model, 120, 0.12)
         .await
@@ -170,7 +213,7 @@ async fn responses_with_state_handler(
 
 async fn embeddings_with_state_handler(
     State(state): State<GatewayApiState>,
-    ExtractJson(request): ExtractJson<EmbeddingsRequest>,
+    ExtractJson(request): ExtractJson<CreateEmbeddingRequest>,
 ) -> Response {
     if record_gateway_usage(&state.store, "embeddings", &request.model, 10, 0.01)
         .await

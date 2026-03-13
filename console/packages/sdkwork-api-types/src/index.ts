@@ -40,6 +40,8 @@ export interface ChannelRecord {
 export interface ProxyProviderRecord {
   id: string;
   channel_id: string;
+  adapter_kind: string;
+  base_url: string;
   display_name: string;
 }
 

@@ -1,4 +1,18 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatMessageInput {
+    pub role: String,
+    pub content: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateChatCompletionRequest {
+    pub model: String,
+    pub messages: Vec<ChatMessageInput>,
+    pub stream: Option<bool>,
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ChunkChoice {

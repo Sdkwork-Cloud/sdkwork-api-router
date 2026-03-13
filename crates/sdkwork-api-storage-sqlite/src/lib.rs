@@ -50,10 +50,26 @@ pub async fn run_migrations(url: &str) -> Result<SqlitePool> {
         "CREATE TABLE IF NOT EXISTS catalog_proxy_providers (
             id TEXT PRIMARY KEY NOT NULL,
             channel_id TEXT NOT NULL,
+            adapter_kind TEXT NOT NULL DEFAULT 'openai',
+            base_url TEXT NOT NULL DEFAULT 'http://localhost',
             display_name TEXT NOT NULL
         )",
     )
     .execute(&pool)
+    .await?;
+    ensure_sqlite_column(
+        &pool,
+        "catalog_proxy_providers",
+        "adapter_kind",
+        "adapter_kind TEXT NOT NULL DEFAULT 'openai'",
+    )
+    .await?;
+    ensure_sqlite_column(
+        &pool,
+        "catalog_proxy_providers",
+        "base_url",
+        "base_url TEXT NOT NULL DEFAULT 'http://localhost'",
+    )
     .await?;
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS credential_records (
@@ -178,11 +194,13 @@ impl SqliteAdminStore {
 
     pub async fn insert_provider(&self, provider: &ProxyProvider) -> Result<ProxyProvider> {
         sqlx::query(
-            "INSERT INTO catalog_proxy_providers (id, channel_id, display_name) VALUES (?, ?, ?)
-             ON CONFLICT(id) DO UPDATE SET channel_id = excluded.channel_id, display_name = excluded.display_name",
+            "INSERT INTO catalog_proxy_providers (id, channel_id, adapter_kind, base_url, display_name) VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT(id) DO UPDATE SET channel_id = excluded.channel_id, adapter_kind = excluded.adapter_kind, base_url = excluded.base_url, display_name = excluded.display_name",
         )
         .bind(&provider.id)
         .bind(&provider.channel_id)
+        .bind(&provider.adapter_kind)
+        .bind(&provider.base_url)
         .bind(&provider.display_name)
         .execute(&self.pool)
         .await?;
@@ -190,19 +208,42 @@ impl SqliteAdminStore {
     }
 
     pub async fn list_providers(&self) -> Result<Vec<ProxyProvider>> {
-        let rows = sqlx::query_as::<_, (String, String, String)>(
-            "SELECT id, channel_id, display_name FROM catalog_proxy_providers ORDER BY id",
+        let rows = sqlx::query_as::<_, (String, String, String, String, String)>(
+            "SELECT id, channel_id, adapter_kind, base_url, display_name FROM catalog_proxy_providers ORDER BY id",
         )
         .fetch_all(&self.pool)
         .await?;
         Ok(rows
             .into_iter()
-            .map(|(id, channel_id, display_name)| ProxyProvider {
+            .map(
+                |(id, channel_id, adapter_kind, base_url, display_name)| ProxyProvider {
+                    id,
+                    channel_id,
+                    adapter_kind,
+                    base_url,
+                    display_name,
+                },
+            )
+            .collect())
+    }
+
+    pub async fn find_provider(&self, provider_id: &str) -> Result<Option<ProxyProvider>> {
+        let row = sqlx::query_as::<_, (String, String, String, String, String)>(
+            "SELECT id, channel_id, adapter_kind, base_url, display_name FROM catalog_proxy_providers WHERE id = ?",
+        )
+        .bind(provider_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(
+            |(id, channel_id, adapter_kind, base_url, display_name)| ProxyProvider {
                 id,
                 channel_id,
+                adapter_kind,
+                base_url,
                 display_name,
-            })
-            .collect())
+            },
+        ))
     }
 
     pub async fn insert_credential(
@@ -281,6 +322,22 @@ impl SqliteAdminStore {
             ciphertext,
             key_version: u32::try_from(key_version)?,
         }))
+    }
+
+    pub async fn find_credential_key_reference(
+        &self,
+        tenant_id: &str,
+        provider_id: &str,
+    ) -> Result<Option<String>> {
+        let row = sqlx::query_as::<_, (String,)>(
+            "SELECT key_reference FROM credential_records WHERE tenant_id = ? AND provider_id = ? ORDER BY rowid LIMIT 1",
+        )
+        .bind(tenant_id)
+        .bind(provider_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|(key_reference,)| key_reference))
     }
 
     pub async fn insert_model(&self, model: &ModelCatalogEntry) -> Result<ModelCatalogEntry> {

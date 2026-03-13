@@ -67,6 +67,8 @@ struct CreateChannelRequest {
 struct CreateProviderRequest {
     id: String,
     channel_id: String,
+    adapter_kind: String,
+    base_url: String,
     display_name: String,
 }
 
@@ -228,6 +230,8 @@ async fn create_provider_handler(
         &state.store,
         &request.id,
         &request.channel_id,
+        &request.adapter_kind,
+        &request.base_url,
         &request.display_name,
     )
     .await

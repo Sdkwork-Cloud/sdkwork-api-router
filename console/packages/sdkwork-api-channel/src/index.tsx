@@ -86,7 +86,7 @@ export function ChannelRegistryPage() {
             {snapshot.providers.map((provider) => (
               <li key={provider.id}>
                 <strong>{provider.display_name}</strong>
-                <span>{provider.channel_id}</span>
+                <span>{provider.adapter_kind} @ {provider.base_url}</span>
               </li>
             ))}
             {!snapshot.providers.length && (
