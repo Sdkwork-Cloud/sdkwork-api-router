@@ -27,6 +27,9 @@ use sdkwork_api_contract_openai::realtime::CreateRealtimeSessionRequest;
 use sdkwork_api_contract_openai::responses::{
     CompactResponseRequest, CountResponseInputTokensRequest, CreateResponseRequest,
 };
+use sdkwork_api_contract_openai::runs::{
+    CreateRunRequest, CreateThreadAndRunRequest, SubmitToolOutputsRunRequest, UpdateRunRequest,
+};
 use sdkwork_api_contract_openai::threads::{
     CreateThreadMessageRequest, CreateThreadRequest, UpdateThreadMessageRequest,
     UpdateThreadRequest,
@@ -71,6 +74,15 @@ pub enum ProviderRequest<'a> {
     ThreadMessagesRetrieve(&'a str, &'a str),
     ThreadMessagesUpdate(&'a str, &'a str, &'a UpdateThreadMessageRequest),
     ThreadMessagesDelete(&'a str, &'a str),
+    ThreadRuns(&'a str, &'a CreateRunRequest),
+    ThreadRunsList(&'a str),
+    ThreadRunsRetrieve(&'a str, &'a str),
+    ThreadRunsUpdate(&'a str, &'a str, &'a UpdateRunRequest),
+    ThreadRunsCancel(&'a str, &'a str),
+    ThreadRunsSubmitToolOutputs(&'a str, &'a str, &'a SubmitToolOutputsRunRequest),
+    ThreadRunStepsList(&'a str, &'a str),
+    ThreadRunStepsRetrieve(&'a str, &'a str, &'a str),
+    ThreadsRuns(&'a CreateThreadAndRunRequest),
     Conversations(&'a CreateConversationRequest),
     ConversationsList,
     ConversationsRetrieve(&'a str),

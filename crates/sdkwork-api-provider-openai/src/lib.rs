@@ -1,6 +1,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use reqwest::Client;
+use reqwest::{Client, RequestBuilder};
 use sdkwork_api_contract_openai::assistants::{CreateAssistantRequest, UpdateAssistantRequest};
 use sdkwork_api_contract_openai::audio::{
     CreateSpeechRequest, CreateTranscriptionRequest, CreateTranslationRequest,
@@ -24,6 +24,9 @@ use sdkwork_api_contract_openai::moderations::CreateModerationRequest;
 use sdkwork_api_contract_openai::realtime::CreateRealtimeSessionRequest;
 use sdkwork_api_contract_openai::responses::{
     CompactResponseRequest, CountResponseInputTokensRequest, CreateResponseRequest,
+};
+use sdkwork_api_contract_openai::runs::{
+    CreateRunRequest, CreateThreadAndRunRequest, SubmitToolOutputsRunRequest, UpdateRunRequest,
 };
 use sdkwork_api_contract_openai::threads::{
     CreateThreadMessageRequest, CreateThreadRequest, UpdateThreadMessageRequest,
@@ -371,6 +374,109 @@ impl OpenAiProviderAdapter {
             api_key,
         )
         .await
+    }
+
+    pub async fn create_thread_run(
+        &self,
+        api_key: &str,
+        thread_id: &str,
+        request: &CreateRunRequest,
+    ) -> Result<Value> {
+        self.post_json(&format!("/v1/threads/{thread_id}/runs"), api_key, request)
+            .await
+    }
+
+    pub async fn list_thread_runs(&self, api_key: &str, thread_id: &str) -> Result<Value> {
+        self.get_json(&format!("/v1/threads/{thread_id}/runs"), api_key)
+            .await
+    }
+
+    pub async fn retrieve_thread_run(
+        &self,
+        api_key: &str,
+        thread_id: &str,
+        run_id: &str,
+    ) -> Result<Value> {
+        self.get_json(&format!("/v1/threads/{thread_id}/runs/{run_id}"), api_key)
+            .await
+    }
+
+    pub async fn update_thread_run(
+        &self,
+        api_key: &str,
+        thread_id: &str,
+        run_id: &str,
+        request: &UpdateRunRequest,
+    ) -> Result<Value> {
+        self.post_json(
+            &format!("/v1/threads/{thread_id}/runs/{run_id}"),
+            api_key,
+            request,
+        )
+        .await
+    }
+
+    pub async fn cancel_thread_run(
+        &self,
+        api_key: &str,
+        thread_id: &str,
+        run_id: &str,
+    ) -> Result<Value> {
+        self.post_empty_json(
+            &format!("/v1/threads/{thread_id}/runs/{run_id}/cancel"),
+            api_key,
+        )
+        .await
+    }
+
+    pub async fn submit_thread_run_tool_outputs(
+        &self,
+        api_key: &str,
+        thread_id: &str,
+        run_id: &str,
+        request: &SubmitToolOutputsRunRequest,
+    ) -> Result<Value> {
+        self.post_json(
+            &format!("/v1/threads/{thread_id}/runs/{run_id}/submit_tool_outputs"),
+            api_key,
+            request,
+        )
+        .await
+    }
+
+    pub async fn list_thread_run_steps(
+        &self,
+        api_key: &str,
+        thread_id: &str,
+        run_id: &str,
+    ) -> Result<Value> {
+        self.get_json(
+            &format!("/v1/threads/{thread_id}/runs/{run_id}/steps"),
+            api_key,
+        )
+        .await
+    }
+
+    pub async fn retrieve_thread_run_step(
+        &self,
+        api_key: &str,
+        thread_id: &str,
+        run_id: &str,
+        step_id: &str,
+    ) -> Result<Value> {
+        self.get_json(
+            &format!("/v1/threads/{thread_id}/runs/{run_id}/steps/{step_id}"),
+            api_key,
+        )
+        .await
+    }
+
+    pub async fn create_thread_and_run(
+        &self,
+        api_key: &str,
+        request: &CreateThreadAndRunRequest,
+    ) -> Result<Value> {
+        self.post_json("/v1/threads/runs", api_key, request).await
     }
 
     pub async fn embeddings(
@@ -897,9 +1003,7 @@ impl OpenAiProviderAdapter {
         request: &T,
     ) -> Result<Value> {
         let response = self
-            .client
-            .post(format!("{}{}", self.base_url, path))
-            .bearer_auth(api_key)
+            .authorized_request(reqwest::Method::POST, path, api_key)
             .json(request)
             .send()
             .await?
@@ -915,9 +1019,7 @@ impl OpenAiProviderAdapter {
         request: &T,
     ) -> Result<reqwest::Response> {
         let response = self
-            .client
-            .post(format!("{}{}", self.base_url, path))
-            .bearer_auth(api_key)
+            .authorized_request(reqwest::Method::POST, path, api_key)
             .json(request)
             .send()
             .await?
@@ -928,9 +1030,7 @@ impl OpenAiProviderAdapter {
 
     async fn get_json(&self, path: &str, api_key: &str) -> Result<Value> {
         let response = self
-            .client
-            .get(format!("{}{}", self.base_url, path))
-            .bearer_auth(api_key)
+            .authorized_request(reqwest::Method::GET, path, api_key)
             .send()
             .await?
             .error_for_status()?;
@@ -940,9 +1040,7 @@ impl OpenAiProviderAdapter {
 
     async fn get_stream(&self, path: &str, api_key: &str) -> Result<reqwest::Response> {
         let response = self
-            .client
-            .get(format!("{}{}", self.base_url, path))
-            .bearer_auth(api_key)
+            .authorized_request(reqwest::Method::GET, path, api_key)
             .send()
             .await?
             .error_for_status()?;
@@ -952,9 +1050,7 @@ impl OpenAiProviderAdapter {
 
     async fn delete_json(&self, path: &str, api_key: &str) -> Result<Value> {
         let response = self
-            .client
-            .delete(format!("{}{}", self.base_url, path))
-            .bearer_auth(api_key)
+            .authorized_request(reqwest::Method::DELETE, path, api_key)
             .send()
             .await?
             .error_for_status()?;
@@ -969,15 +1065,45 @@ impl OpenAiProviderAdapter {
         form: reqwest::multipart::Form,
     ) -> Result<Value> {
         let response = self
-            .client
-            .post(format!("{}{}", self.base_url, path))
-            .bearer_auth(api_key)
+            .authorized_request(reqwest::Method::POST, path, api_key)
             .multipart(form)
             .send()
             .await?
             .error_for_status()?;
 
         Ok(response.json::<Value>().await?)
+    }
+
+    async fn post_empty_json(&self, path: &str, api_key: &str) -> Result<Value> {
+        let response = self
+            .authorized_request(reqwest::Method::POST, path, api_key)
+            .send()
+            .await?
+            .error_for_status()?;
+
+        Ok(response.json::<Value>().await?)
+    }
+
+    fn authorized_request(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        api_key: &str,
+    ) -> RequestBuilder {
+        let builder = self
+            .client
+            .request(method, format!("{}{}", self.base_url, path))
+            .bearer_auth(api_key);
+
+        self.apply_openai_compat_headers(path, builder)
+    }
+
+    fn apply_openai_compat_headers(&self, path: &str, builder: RequestBuilder) -> RequestBuilder {
+        if path.starts_with("/v1/assistants") || path.starts_with("/v1/threads") {
+            builder.header("OpenAI-Beta", "assistants=v2")
+        } else {
+            builder
+        }
     }
 }
 
@@ -1062,6 +1188,43 @@ impl ProviderExecutionAdapter for OpenAiProviderAdapter {
                         .await?,
                 ))
             }
+            ProviderRequest::ThreadRuns(thread_id, request) => Ok(ProviderOutput::Json(
+                self.create_thread_run(api_key, thread_id, request).await?,
+            )),
+            ProviderRequest::ThreadRunsList(thread_id) => Ok(ProviderOutput::Json(
+                self.list_thread_runs(api_key, thread_id).await?,
+            )),
+            ProviderRequest::ThreadRunsRetrieve(thread_id, run_id) => Ok(ProviderOutput::Json(
+                self.retrieve_thread_run(api_key, thread_id, run_id).await?,
+            )),
+            ProviderRequest::ThreadRunsUpdate(thread_id, run_id, request) => {
+                Ok(ProviderOutput::Json(
+                    self.update_thread_run(api_key, thread_id, run_id, request)
+                        .await?,
+                ))
+            }
+            ProviderRequest::ThreadRunsCancel(thread_id, run_id) => Ok(ProviderOutput::Json(
+                self.cancel_thread_run(api_key, thread_id, run_id).await?,
+            )),
+            ProviderRequest::ThreadRunsSubmitToolOutputs(thread_id, run_id, request) => {
+                Ok(ProviderOutput::Json(
+                    self.submit_thread_run_tool_outputs(api_key, thread_id, run_id, request)
+                        .await?,
+                ))
+            }
+            ProviderRequest::ThreadRunStepsList(thread_id, run_id) => Ok(ProviderOutput::Json(
+                self.list_thread_run_steps(api_key, thread_id, run_id)
+                    .await?,
+            )),
+            ProviderRequest::ThreadRunStepsRetrieve(thread_id, run_id, step_id) => {
+                Ok(ProviderOutput::Json(
+                    self.retrieve_thread_run_step(api_key, thread_id, run_id, step_id)
+                        .await?,
+                ))
+            }
+            ProviderRequest::ThreadsRuns(request) => Ok(ProviderOutput::Json(
+                self.create_thread_and_run(api_key, request).await?,
+            )),
             ProviderRequest::Conversations(request) => Ok(ProviderOutput::Json(
                 self.conversations(api_key, request).await?,
             )),

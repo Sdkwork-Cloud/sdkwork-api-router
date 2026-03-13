@@ -15,6 +15,7 @@ pub mod models;
 pub mod moderations;
 pub mod realtime;
 pub mod responses;
+pub mod runs;
 pub mod streaming;
 pub mod threads;
 pub mod uploads;

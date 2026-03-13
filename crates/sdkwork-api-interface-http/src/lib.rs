@@ -17,6 +17,7 @@ use sdkwork_api_app_credential::CredentialSecretManager;
 use sdkwork_api_app_gateway::cancel_batch;
 use sdkwork_api_app_gateway::cancel_fine_tuning_job;
 use sdkwork_api_app_gateway::cancel_response;
+use sdkwork_api_app_gateway::cancel_thread_run;
 use sdkwork_api_app_gateway::cancel_upload;
 use sdkwork_api_app_gateway::cancel_vector_store_file_batch;
 use sdkwork_api_app_gateway::compact_response;
@@ -38,7 +39,9 @@ use sdkwork_api_app_gateway::create_moderation;
 use sdkwork_api_app_gateway::create_realtime_session;
 use sdkwork_api_app_gateway::create_speech_response;
 use sdkwork_api_app_gateway::create_thread;
+use sdkwork_api_app_gateway::create_thread_and_run;
 use sdkwork_api_app_gateway::create_thread_message;
+use sdkwork_api_app_gateway::create_thread_run;
 use sdkwork_api_app_gateway::create_transcription;
 use sdkwork_api_app_gateway::create_translation;
 use sdkwork_api_app_gateway::create_upload;
@@ -74,6 +77,8 @@ use sdkwork_api_app_gateway::get_model_from_store;
 use sdkwork_api_app_gateway::get_response;
 use sdkwork_api_app_gateway::get_thread;
 use sdkwork_api_app_gateway::get_thread_message;
+use sdkwork_api_app_gateway::get_thread_run;
+use sdkwork_api_app_gateway::get_thread_run_step;
 use sdkwork_api_app_gateway::get_vector_store;
 use sdkwork_api_app_gateway::get_vector_store_file;
 use sdkwork_api_app_gateway::get_vector_store_file_batch;
@@ -90,6 +95,8 @@ use sdkwork_api_app_gateway::list_fine_tuning_jobs;
 use sdkwork_api_app_gateway::list_models;
 use sdkwork_api_app_gateway::list_response_input_items;
 use sdkwork_api_app_gateway::list_thread_messages;
+use sdkwork_api_app_gateway::list_thread_run_steps;
+use sdkwork_api_app_gateway::list_thread_runs;
 use sdkwork_api_app_gateway::list_vector_store_file_batch_files;
 use sdkwork_api_app_gateway::list_vector_store_files;
 use sdkwork_api_app_gateway::list_vector_stores;
@@ -97,11 +104,13 @@ use sdkwork_api_app_gateway::list_videos;
 use sdkwork_api_app_gateway::list_webhooks;
 use sdkwork_api_app_gateway::remix_video;
 use sdkwork_api_app_gateway::search_vector_store;
+use sdkwork_api_app_gateway::submit_thread_run_tool_outputs;
 use sdkwork_api_app_gateway::update_assistant;
 use sdkwork_api_app_gateway::update_chat_completion;
 use sdkwork_api_app_gateway::update_conversation;
 use sdkwork_api_app_gateway::update_thread;
 use sdkwork_api_app_gateway::update_thread_message;
+use sdkwork_api_app_gateway::update_thread_run;
 use sdkwork_api_app_gateway::update_vector_store;
 use sdkwork_api_app_gateway::update_webhook;
 use sdkwork_api_app_gateway::video_content;
@@ -109,10 +118,10 @@ use sdkwork_api_app_gateway::{
     create_embedding, create_response, delete_model_from_store, list_models_from_store,
     relay_assistant_from_store, relay_batch_from_store, relay_cancel_batch_from_store,
     relay_cancel_fine_tuning_job_from_store, relay_cancel_response_from_store,
-    relay_cancel_upload_from_store, relay_cancel_vector_store_file_batch_from_store,
-    relay_chat_completion_from_store, relay_chat_completion_stream_from_store,
-    relay_compact_response_from_store, relay_complete_upload_from_store,
-    relay_completion_from_store, relay_conversation_from_store,
+    relay_cancel_thread_run_from_store, relay_cancel_upload_from_store,
+    relay_cancel_vector_store_file_batch_from_store, relay_chat_completion_from_store,
+    relay_chat_completion_stream_from_store, relay_compact_response_from_store,
+    relay_complete_upload_from_store, relay_completion_from_store, relay_conversation_from_store,
     relay_conversation_items_from_store, relay_count_response_input_tokens_from_store,
     relay_delete_assistant_from_store, relay_delete_chat_completion_from_store,
     relay_delete_conversation_from_store, relay_delete_conversation_item_from_store,
@@ -126,6 +135,7 @@ use sdkwork_api_app_gateway::{
     relay_get_conversation_item_from_store, relay_get_file_from_store,
     relay_get_fine_tuning_job_from_store, relay_get_response_from_store,
     relay_get_thread_from_store, relay_get_thread_message_from_store,
+    relay_get_thread_run_from_store, relay_get_thread_run_step_from_store,
     relay_get_vector_store_file_batch_from_store, relay_get_vector_store_file_from_store,
     relay_get_vector_store_from_store, relay_get_video_from_store, relay_get_webhook_from_store,
     relay_image_edit_from_store, relay_image_generation_from_store,
@@ -134,19 +144,22 @@ use sdkwork_api_app_gateway::{
     relay_list_chat_completions_from_store, relay_list_conversation_items_from_store,
     relay_list_conversations_from_store, relay_list_files_from_store,
     relay_list_fine_tuning_jobs_from_store, relay_list_response_input_items_from_store,
-    relay_list_thread_messages_from_store, relay_list_vector_store_file_batch_files_from_store,
+    relay_list_thread_messages_from_store, relay_list_thread_run_steps_from_store,
+    relay_list_thread_runs_from_store, relay_list_vector_store_file_batch_files_from_store,
     relay_list_vector_store_files_from_store, relay_list_vector_stores_from_store,
     relay_list_videos_from_store, relay_list_webhooks_from_store, relay_moderation_from_store,
     relay_realtime_session_from_store, relay_remix_video_from_store, relay_response_from_store,
-    relay_search_vector_store_from_store, relay_speech_from_store, relay_thread_from_store,
-    relay_thread_messages_from_store, relay_transcription_from_store, relay_translation_from_store,
+    relay_search_vector_store_from_store, relay_speech_from_store,
+    relay_submit_thread_run_tool_outputs_from_store, relay_thread_and_run_from_store,
+    relay_thread_from_store, relay_thread_messages_from_store, relay_thread_run_from_store,
+    relay_transcription_from_store, relay_translation_from_store,
     relay_update_assistant_from_store, relay_update_chat_completion_from_store,
     relay_update_conversation_from_store, relay_update_thread_from_store,
-    relay_update_thread_message_from_store, relay_update_vector_store_from_store,
-    relay_update_webhook_from_store, relay_upload_from_store, relay_upload_part_from_store,
-    relay_vector_store_file_batch_from_store, relay_vector_store_file_from_store,
-    relay_vector_store_from_store, relay_video_content_from_store, relay_video_from_store,
-    relay_webhook_from_store,
+    relay_update_thread_message_from_store, relay_update_thread_run_from_store,
+    relay_update_vector_store_from_store, relay_update_webhook_from_store, relay_upload_from_store,
+    relay_upload_part_from_store, relay_vector_store_file_batch_from_store,
+    relay_vector_store_file_from_store, relay_vector_store_from_store,
+    relay_video_content_from_store, relay_video_from_store, relay_webhook_from_store,
 };
 use sdkwork_api_app_routing::simulate_route_with_store;
 use sdkwork_api_app_usage::persist_usage_record;
@@ -178,6 +191,10 @@ use sdkwork_api_contract_openai::responses::{
     CompactResponseRequest, CountResponseInputTokensRequest, CreateResponseRequest,
     DeleteResponseResponse, ListResponseInputItemsResponse, ResponseCompactionObject,
     ResponseInputTokensObject, ResponseObject,
+};
+use sdkwork_api_contract_openai::runs::{
+    CreateRunRequest, CreateThreadAndRunRequest, ListRunStepsResponse, ListRunsResponse, RunObject,
+    RunStepObject, SubmitToolOutputsRunRequest, UpdateRunRequest,
 };
 use sdkwork_api_contract_openai::streaming::SseFrame;
 use sdkwork_api_contract_openai::threads::{
@@ -292,6 +309,31 @@ pub fn gateway_router() -> Router {
             get(thread_message_retrieve_handler)
                 .post(thread_message_update_handler)
                 .delete(thread_message_delete_handler),
+        )
+        .route("/v1/threads/runs", post(thread_and_run_handler))
+        .route(
+            "/v1/threads/{thread_id}/runs",
+            get(thread_runs_list_handler).post(thread_runs_handler),
+        )
+        .route(
+            "/v1/threads/{thread_id}/runs/{run_id}",
+            get(thread_run_retrieve_handler).post(thread_run_update_handler),
+        )
+        .route(
+            "/v1/threads/{thread_id}/runs/{run_id}/cancel",
+            post(thread_run_cancel_handler),
+        )
+        .route(
+            "/v1/threads/{thread_id}/runs/{run_id}/submit_tool_outputs",
+            post(thread_run_submit_tool_outputs_handler),
+        )
+        .route(
+            "/v1/threads/{thread_id}/runs/{run_id}/steps",
+            get(thread_run_steps_list_handler),
+        )
+        .route(
+            "/v1/threads/{thread_id}/runs/{run_id}/steps/{step_id}",
+            get(thread_run_step_retrieve_handler),
         )
         .route("/v1/responses", post(responses_handler))
         .route(
@@ -515,6 +557,31 @@ pub fn gateway_router_with_store_and_secret_manager(
             get(thread_message_retrieve_with_state_handler)
                 .post(thread_message_update_with_state_handler)
                 .delete(thread_message_delete_with_state_handler),
+        )
+        .route("/v1/threads/runs", post(thread_and_run_with_state_handler))
+        .route(
+            "/v1/threads/{thread_id}/runs",
+            get(thread_runs_list_with_state_handler).post(thread_runs_with_state_handler),
+        )
+        .route(
+            "/v1/threads/{thread_id}/runs/{run_id}",
+            get(thread_run_retrieve_with_state_handler).post(thread_run_update_with_state_handler),
+        )
+        .route(
+            "/v1/threads/{thread_id}/runs/{run_id}/cancel",
+            post(thread_run_cancel_with_state_handler),
+        )
+        .route(
+            "/v1/threads/{thread_id}/runs/{run_id}/submit_tool_outputs",
+            post(thread_run_submit_tool_outputs_with_state_handler),
+        )
+        .route(
+            "/v1/threads/{thread_id}/runs/{run_id}/steps",
+            get(thread_run_steps_list_with_state_handler),
+        )
+        .route(
+            "/v1/threads/{thread_id}/runs/{run_id}/steps/{step_id}",
+            get(thread_run_step_retrieve_with_state_handler),
         )
         .route("/v1/responses", post(responses_with_state_handler))
         .route(
@@ -968,6 +1035,91 @@ async fn thread_message_delete_handler(
     Json(
         delete_thread_message("tenant-1", "project-1", &thread_id, &message_id)
             .expect("thread message delete"),
+    )
+}
+
+async fn thread_and_run_handler(
+    ExtractJson(request): ExtractJson<CreateThreadAndRunRequest>,
+) -> Json<RunObject> {
+    Json(
+        create_thread_and_run("tenant-1", "project-1", &request.assistant_id)
+            .expect("thread and run create"),
+    )
+}
+
+async fn thread_runs_handler(
+    Path(thread_id): Path<String>,
+    ExtractJson(request): ExtractJson<CreateRunRequest>,
+) -> Json<RunObject> {
+    Json(
+        create_thread_run(
+            "tenant-1",
+            "project-1",
+            &thread_id,
+            &request.assistant_id,
+            request.model.as_deref(),
+        )
+        .expect("thread run create"),
+    )
+}
+
+async fn thread_runs_list_handler(Path(thread_id): Path<String>) -> Json<ListRunsResponse> {
+    Json(list_thread_runs("tenant-1", "project-1", &thread_id).expect("thread runs list"))
+}
+
+async fn thread_run_retrieve_handler(
+    Path((thread_id, run_id)): Path<(String, String)>,
+) -> Json<RunObject> {
+    Json(get_thread_run("tenant-1", "project-1", &thread_id, &run_id).expect("thread run"))
+}
+
+async fn thread_run_update_handler(
+    Path((thread_id, run_id)): Path<(String, String)>,
+    ExtractJson(_request): ExtractJson<UpdateRunRequest>,
+) -> Json<RunObject> {
+    Json(
+        update_thread_run("tenant-1", "project-1", &thread_id, &run_id).expect("thread run update"),
+    )
+}
+
+async fn thread_run_cancel_handler(
+    Path((thread_id, run_id)): Path<(String, String)>,
+) -> Json<RunObject> {
+    Json(
+        cancel_thread_run("tenant-1", "project-1", &thread_id, &run_id).expect("thread run cancel"),
+    )
+}
+
+async fn thread_run_submit_tool_outputs_handler(
+    Path((thread_id, run_id)): Path<(String, String)>,
+    ExtractJson(request): ExtractJson<SubmitToolOutputsRunRequest>,
+) -> Json<RunObject> {
+    let tool_outputs = request
+        .tool_outputs
+        .iter()
+        .map(|output| (output.tool_call_id.as_str(), output.output.as_str()))
+        .collect();
+    Json(
+        submit_thread_run_tool_outputs("tenant-1", "project-1", &thread_id, &run_id, tool_outputs)
+            .expect("thread run submit tool outputs"),
+    )
+}
+
+async fn thread_run_steps_list_handler(
+    Path((thread_id, run_id)): Path<(String, String)>,
+) -> Json<ListRunStepsResponse> {
+    Json(
+        list_thread_run_steps("tenant-1", "project-1", &thread_id, &run_id)
+            .expect("thread run steps"),
+    )
+}
+
+async fn thread_run_step_retrieve_handler(
+    Path((thread_id, run_id, step_id)): Path<(String, String, String)>,
+) -> Json<RunStepObject> {
+    Json(
+        get_thread_run_step("tenant-1", "project-1", &thread_id, &run_id, &step_id)
+            .expect("thread run step"),
     )
 }
 
@@ -2934,6 +3086,529 @@ async fn thread_message_delete_with_state_handler(
     Json(
         delete_thread_message("tenant-1", "project-1", &thread_id, &message_id)
             .expect("thread message delete"),
+    )
+    .into_response()
+}
+
+async fn thread_and_run_with_state_handler(
+    State(state): State<GatewayApiState>,
+    ExtractJson(request): ExtractJson<CreateThreadAndRunRequest>,
+) -> Response {
+    match relay_thread_and_run_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &request,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(
+                state.store.as_ref(),
+                "assistants",
+                "threads/runs",
+                25,
+                0.025,
+            )
+            .await
+            .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream thread and run",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(
+        state.store.as_ref(),
+        "assistants",
+        "threads/runs",
+        25,
+        0.025,
+    )
+    .await
+    .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(
+        create_thread_and_run("tenant-1", "project-1", &request.assistant_id)
+            .expect("thread and run create"),
+    )
+    .into_response()
+}
+
+async fn thread_runs_with_state_handler(
+    State(state): State<GatewayApiState>,
+    Path(thread_id): Path<String>,
+    ExtractJson(request): ExtractJson<CreateRunRequest>,
+) -> Response {
+    match relay_thread_run_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &thread_id,
+        &request,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(state.store.as_ref(), "assistants", &thread_id, 25, 0.025)
+                .await
+                .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream thread run",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(state.store.as_ref(), "assistants", &thread_id, 25, 0.025)
+        .await
+        .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(
+        create_thread_run(
+            "tenant-1",
+            "project-1",
+            &thread_id,
+            &request.assistant_id,
+            request.model.as_deref(),
+        )
+        .expect("thread run create"),
+    )
+    .into_response()
+}
+
+async fn thread_runs_list_with_state_handler(
+    State(state): State<GatewayApiState>,
+    Path(thread_id): Path<String>,
+) -> Response {
+    match relay_list_thread_runs_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &thread_id,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(state.store.as_ref(), "assistants", &thread_id, 15, 0.015)
+                .await
+                .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream thread runs list",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(state.store.as_ref(), "assistants", &thread_id, 15, 0.015)
+        .await
+        .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(list_thread_runs("tenant-1", "project-1", &thread_id).expect("thread runs list"))
+        .into_response()
+}
+
+async fn thread_run_retrieve_with_state_handler(
+    State(state): State<GatewayApiState>,
+    Path((thread_id, run_id)): Path<(String, String)>,
+) -> Response {
+    match relay_get_thread_run_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &thread_id,
+        &run_id,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(state.store.as_ref(), "assistants", &run_id, 15, 0.015)
+                .await
+                .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream thread run retrieve",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(state.store.as_ref(), "assistants", &run_id, 15, 0.015)
+        .await
+        .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(get_thread_run("tenant-1", "project-1", &thread_id, &run_id).expect("thread run"))
+        .into_response()
+}
+
+async fn thread_run_update_with_state_handler(
+    State(state): State<GatewayApiState>,
+    Path((thread_id, run_id)): Path<(String, String)>,
+    ExtractJson(request): ExtractJson<UpdateRunRequest>,
+) -> Response {
+    match relay_update_thread_run_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &thread_id,
+        &run_id,
+        &request,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(state.store.as_ref(), "assistants", &run_id, 20, 0.02)
+                .await
+                .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream thread run update",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(state.store.as_ref(), "assistants", &run_id, 20, 0.02)
+        .await
+        .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(
+        update_thread_run("tenant-1", "project-1", &thread_id, &run_id).expect("thread run update"),
+    )
+    .into_response()
+}
+
+async fn thread_run_cancel_with_state_handler(
+    State(state): State<GatewayApiState>,
+    Path((thread_id, run_id)): Path<(String, String)>,
+) -> Response {
+    match relay_cancel_thread_run_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &thread_id,
+        &run_id,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(state.store.as_ref(), "assistants", &run_id, 20, 0.02)
+                .await
+                .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream thread run cancel",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(state.store.as_ref(), "assistants", &run_id, 20, 0.02)
+        .await
+        .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(
+        cancel_thread_run("tenant-1", "project-1", &thread_id, &run_id).expect("thread run cancel"),
+    )
+    .into_response()
+}
+
+async fn thread_run_submit_tool_outputs_with_state_handler(
+    State(state): State<GatewayApiState>,
+    Path((thread_id, run_id)): Path<(String, String)>,
+    ExtractJson(request): ExtractJson<SubmitToolOutputsRunRequest>,
+) -> Response {
+    match relay_submit_thread_run_tool_outputs_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &thread_id,
+        &run_id,
+        &request,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(state.store.as_ref(), "assistants", &run_id, 20, 0.02)
+                .await
+                .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream thread run tool outputs",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(state.store.as_ref(), "assistants", &run_id, 20, 0.02)
+        .await
+        .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    let tool_outputs = request
+        .tool_outputs
+        .iter()
+        .map(|output| (output.tool_call_id.as_str(), output.output.as_str()))
+        .collect();
+    Json(
+        submit_thread_run_tool_outputs("tenant-1", "project-1", &thread_id, &run_id, tool_outputs)
+            .expect("thread run tool outputs"),
+    )
+    .into_response()
+}
+
+async fn thread_run_steps_list_with_state_handler(
+    State(state): State<GatewayApiState>,
+    Path((thread_id, run_id)): Path<(String, String)>,
+) -> Response {
+    match relay_list_thread_run_steps_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &thread_id,
+        &run_id,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(state.store.as_ref(), "assistants", &run_id, 15, 0.015)
+                .await
+                .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream thread run steps",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(state.store.as_ref(), "assistants", &run_id, 15, 0.015)
+        .await
+        .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(
+        list_thread_run_steps("tenant-1", "project-1", &thread_id, &run_id)
+            .expect("thread run steps"),
+    )
+    .into_response()
+}
+
+async fn thread_run_step_retrieve_with_state_handler(
+    State(state): State<GatewayApiState>,
+    Path((thread_id, run_id, step_id)): Path<(String, String, String)>,
+) -> Response {
+    match relay_get_thread_run_step_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &thread_id,
+        &run_id,
+        &step_id,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(state.store.as_ref(), "assistants", &step_id, 15, 0.015)
+                .await
+                .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream thread run step retrieve",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(state.store.as_ref(), "assistants", &step_id, 15, 0.015)
+        .await
+        .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(
+        get_thread_run_step("tenant-1", "project-1", &thread_id, &run_id, &step_id)
+            .expect("thread run step"),
     )
     .into_response()
 }

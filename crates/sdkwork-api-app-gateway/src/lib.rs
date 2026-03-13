@@ -45,6 +45,10 @@ use sdkwork_api_contract_openai::responses::{
     DeleteResponseResponse, ListResponseInputItemsResponse, ResponseCompactionObject,
     ResponseInputItemObject, ResponseInputTokensObject, ResponseObject,
 };
+use sdkwork_api_contract_openai::runs::{
+    CreateRunRequest, CreateThreadAndRunRequest, ListRunStepsResponse, ListRunsResponse, RunObject,
+    RunStepObject, SubmitToolOutputsRunRequest, UpdateRunRequest,
+};
 use sdkwork_api_contract_openai::threads::{
     CreateThreadMessageRequest, CreateThreadRequest, DeleteThreadMessageResponse,
     DeleteThreadResponse, ListThreadMessagesResponse, ThreadMessageObject, ThreadObject,
@@ -759,6 +763,228 @@ pub async fn relay_delete_thread_message_from_store(
         base_url,
         &api_key,
         ProviderRequest::ThreadMessagesDelete(thread_id, message_id),
+    )
+    .await
+}
+
+pub async fn relay_thread_run_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    thread_id: &str,
+    request: &CreateRunRequest,
+) -> Result<Option<Value>> {
+    let Some((adapter_kind, base_url, api_key)) =
+        resolve_non_model_provider(store, secret_manager, tenant_id, "assistants", thread_id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &adapter_kind,
+        base_url,
+        &api_key,
+        ProviderRequest::ThreadRuns(thread_id, request),
+    )
+    .await
+}
+
+pub async fn relay_list_thread_runs_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    thread_id: &str,
+) -> Result<Option<Value>> {
+    let Some((adapter_kind, base_url, api_key)) =
+        resolve_non_model_provider(store, secret_manager, tenant_id, "assistants", thread_id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &adapter_kind,
+        base_url,
+        &api_key,
+        ProviderRequest::ThreadRunsList(thread_id),
+    )
+    .await
+}
+
+pub async fn relay_get_thread_run_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    thread_id: &str,
+    run_id: &str,
+) -> Result<Option<Value>> {
+    let Some((adapter_kind, base_url, api_key)) =
+        resolve_non_model_provider(store, secret_manager, tenant_id, "assistants", thread_id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &adapter_kind,
+        base_url,
+        &api_key,
+        ProviderRequest::ThreadRunsRetrieve(thread_id, run_id),
+    )
+    .await
+}
+
+pub async fn relay_update_thread_run_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    thread_id: &str,
+    run_id: &str,
+    request: &UpdateRunRequest,
+) -> Result<Option<Value>> {
+    let Some((adapter_kind, base_url, api_key)) =
+        resolve_non_model_provider(store, secret_manager, tenant_id, "assistants", thread_id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &adapter_kind,
+        base_url,
+        &api_key,
+        ProviderRequest::ThreadRunsUpdate(thread_id, run_id, request),
+    )
+    .await
+}
+
+pub async fn relay_cancel_thread_run_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    thread_id: &str,
+    run_id: &str,
+) -> Result<Option<Value>> {
+    let Some((adapter_kind, base_url, api_key)) =
+        resolve_non_model_provider(store, secret_manager, tenant_id, "assistants", thread_id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &adapter_kind,
+        base_url,
+        &api_key,
+        ProviderRequest::ThreadRunsCancel(thread_id, run_id),
+    )
+    .await
+}
+
+pub async fn relay_submit_thread_run_tool_outputs_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    thread_id: &str,
+    run_id: &str,
+    request: &SubmitToolOutputsRunRequest,
+) -> Result<Option<Value>> {
+    let Some((adapter_kind, base_url, api_key)) =
+        resolve_non_model_provider(store, secret_manager, tenant_id, "assistants", thread_id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &adapter_kind,
+        base_url,
+        &api_key,
+        ProviderRequest::ThreadRunsSubmitToolOutputs(thread_id, run_id, request),
+    )
+    .await
+}
+
+pub async fn relay_list_thread_run_steps_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    thread_id: &str,
+    run_id: &str,
+) -> Result<Option<Value>> {
+    let Some((adapter_kind, base_url, api_key)) =
+        resolve_non_model_provider(store, secret_manager, tenant_id, "assistants", thread_id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &adapter_kind,
+        base_url,
+        &api_key,
+        ProviderRequest::ThreadRunStepsList(thread_id, run_id),
+    )
+    .await
+}
+
+pub async fn relay_get_thread_run_step_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    thread_id: &str,
+    run_id: &str,
+    step_id: &str,
+) -> Result<Option<Value>> {
+    let Some((adapter_kind, base_url, api_key)) =
+        resolve_non_model_provider(store, secret_manager, tenant_id, "assistants", thread_id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &adapter_kind,
+        base_url,
+        &api_key,
+        ProviderRequest::ThreadRunStepsRetrieve(thread_id, run_id, step_id),
+    )
+    .await
+}
+
+pub async fn relay_thread_and_run_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    request: &CreateThreadAndRunRequest,
+) -> Result<Option<Value>> {
+    let Some((adapter_kind, base_url, api_key)) = resolve_non_model_provider(
+        store,
+        secret_manager,
+        tenant_id,
+        "assistants",
+        "threads/runs",
+    )
+    .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &adapter_kind,
+        base_url,
+        &api_key,
+        ProviderRequest::ThreadsRuns(request),
     )
     .await
 }
@@ -3180,6 +3406,113 @@ pub fn delete_thread_message(
     message_id: &str,
 ) -> Result<DeleteThreadMessageResponse> {
     Ok(DeleteThreadMessageResponse::deleted(message_id))
+}
+
+pub fn create_thread_run(
+    _tenant_id: &str,
+    _project_id: &str,
+    thread_id: &str,
+    assistant_id: &str,
+    model: Option<&str>,
+) -> Result<RunObject> {
+    Ok(RunObject::queued(
+        "run_1",
+        thread_id,
+        assistant_id,
+        model.unwrap_or("gpt-4.1"),
+    ))
+}
+
+pub fn create_thread_and_run(
+    _tenant_id: &str,
+    _project_id: &str,
+    assistant_id: &str,
+) -> Result<RunObject> {
+    Ok(RunObject::queued(
+        "run_1",
+        "thread_1",
+        assistant_id,
+        "gpt-4.1",
+    ))
+}
+
+pub fn list_thread_runs(
+    _tenant_id: &str,
+    _project_id: &str,
+    thread_id: &str,
+) -> Result<ListRunsResponse> {
+    Ok(ListRunsResponse::new(vec![RunObject::queued(
+        "run_1", thread_id, "asst_1", "gpt-4.1",
+    )]))
+}
+
+pub fn get_thread_run(
+    _tenant_id: &str,
+    _project_id: &str,
+    thread_id: &str,
+    run_id: &str,
+) -> Result<RunObject> {
+    Ok(RunObject::in_progress(
+        run_id, thread_id, "asst_1", "gpt-4.1",
+    ))
+}
+
+pub fn update_thread_run(
+    _tenant_id: &str,
+    _project_id: &str,
+    thread_id: &str,
+    run_id: &str,
+) -> Result<RunObject> {
+    Ok(RunObject::with_metadata(
+        run_id,
+        thread_id,
+        "asst_1",
+        "gpt-4.1",
+        "in_progress",
+        serde_json::json!({"priority":"high"}),
+    ))
+}
+
+pub fn cancel_thread_run(
+    _tenant_id: &str,
+    _project_id: &str,
+    thread_id: &str,
+    run_id: &str,
+) -> Result<RunObject> {
+    Ok(RunObject::cancelled(run_id, thread_id, "asst_1", "gpt-4.1"))
+}
+
+pub fn submit_thread_run_tool_outputs(
+    _tenant_id: &str,
+    _project_id: &str,
+    thread_id: &str,
+    run_id: &str,
+    _tool_outputs: Vec<(&str, &str)>,
+) -> Result<RunObject> {
+    Ok(RunObject::queued(run_id, thread_id, "asst_1", "gpt-4.1"))
+}
+
+pub fn list_thread_run_steps(
+    _tenant_id: &str,
+    _project_id: &str,
+    thread_id: &str,
+    run_id: &str,
+) -> Result<ListRunStepsResponse> {
+    Ok(ListRunStepsResponse::new(vec![
+        RunStepObject::message_creation("step_1", thread_id, run_id, "asst_1", "msg_1"),
+    ]))
+}
+
+pub fn get_thread_run_step(
+    _tenant_id: &str,
+    _project_id: &str,
+    thread_id: &str,
+    run_id: &str,
+    step_id: &str,
+) -> Result<RunStepObject> {
+    Ok(RunStepObject::message_creation(
+        step_id, thread_id, run_id, "asst_1", "msg_1",
+    ))
 }
 
 pub fn create_webhook(
