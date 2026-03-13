@@ -9,11 +9,15 @@ use sdkwork_api_contract_openai::chat_completions::CreateChatCompletionRequest;
 use sdkwork_api_contract_openai::completions::CreateCompletionRequest;
 use sdkwork_api_contract_openai::embeddings::CreateEmbeddingRequest;
 use sdkwork_api_contract_openai::evals::CreateEvalRequest;
+use sdkwork_api_contract_openai::files::CreateFileRequest;
 use sdkwork_api_contract_openai::fine_tuning::CreateFineTuningJobRequest;
 use sdkwork_api_contract_openai::images::CreateImageRequest;
 use sdkwork_api_contract_openai::moderations::CreateModerationRequest;
 use sdkwork_api_contract_openai::realtime::CreateRealtimeSessionRequest;
 use sdkwork_api_contract_openai::responses::CreateResponseRequest;
+use sdkwork_api_contract_openai::uploads::{
+    AddUploadPartRequest, CompleteUploadRequest, CreateUploadRequest,
+};
 use sdkwork_api_contract_openai::vector_stores::CreateVectorStoreRequest;
 use sdkwork_api_domain_catalog::ModelCatalogEntry;
 use sdkwork_api_provider_core::{
@@ -120,6 +124,30 @@ impl OpenRouterProviderAdapter {
         self.delegate.audio_speech(api_key, request).await
     }
 
+    pub async fn files(&self, api_key: &str, request: &CreateFileRequest) -> Result<Value> {
+        self.delegate.files(api_key, request).await
+    }
+
+    pub async fn uploads(&self, api_key: &str, request: &CreateUploadRequest) -> Result<Value> {
+        self.delegate.uploads(api_key, request).await
+    }
+
+    pub async fn upload_parts(
+        &self,
+        api_key: &str,
+        request: &AddUploadPartRequest,
+    ) -> Result<Value> {
+        self.delegate.upload_parts(api_key, request).await
+    }
+
+    pub async fn complete_upload(
+        &self,
+        api_key: &str,
+        request: &CompleteUploadRequest,
+    ) -> Result<Value> {
+        self.delegate.complete_upload(api_key, request).await
+    }
+
     pub async fn fine_tuning_jobs(
         &self,
         api_key: &str,
@@ -200,6 +228,18 @@ impl ProviderExecutionAdapter for OpenRouterProviderAdapter {
             )),
             ProviderRequest::AudioSpeech(request) => Ok(ProviderOutput::Stream(
                 self.audio_speech(api_key, request).await?,
+            )),
+            ProviderRequest::Files(request) => {
+                Ok(ProviderOutput::Json(self.files(api_key, request).await?))
+            }
+            ProviderRequest::Uploads(request) => {
+                Ok(ProviderOutput::Json(self.uploads(api_key, request).await?))
+            }
+            ProviderRequest::UploadParts(request) => Ok(ProviderOutput::Json(
+                self.upload_parts(api_key, request).await?,
+            )),
+            ProviderRequest::UploadComplete(request) => Ok(ProviderOutput::Json(
+                self.complete_upload(api_key, request).await?,
             )),
             ProviderRequest::FineTuningJobs(request) => Ok(ProviderOutput::Json(
                 self.fine_tuning_jobs(api_key, request).await?,

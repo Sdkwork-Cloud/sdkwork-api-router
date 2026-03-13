@@ -10,11 +10,15 @@ use sdkwork_api_contract_openai::chat_completions::CreateChatCompletionRequest;
 use sdkwork_api_contract_openai::completions::CreateCompletionRequest;
 use sdkwork_api_contract_openai::embeddings::CreateEmbeddingRequest;
 use sdkwork_api_contract_openai::evals::CreateEvalRequest;
+use sdkwork_api_contract_openai::files::CreateFileRequest;
 use sdkwork_api_contract_openai::fine_tuning::CreateFineTuningJobRequest;
 use sdkwork_api_contract_openai::images::CreateImageRequest;
 use sdkwork_api_contract_openai::moderations::CreateModerationRequest;
 use sdkwork_api_contract_openai::realtime::CreateRealtimeSessionRequest;
 use sdkwork_api_contract_openai::responses::CreateResponseRequest;
+use sdkwork_api_contract_openai::uploads::{
+    AddUploadPartRequest, CompleteUploadRequest, CreateUploadRequest,
+};
 use sdkwork_api_contract_openai::vector_stores::CreateVectorStoreRequest;
 use sdkwork_api_domain_catalog::ModelCatalogEntry;
 use sdkwork_api_provider_core::{
@@ -121,6 +125,54 @@ impl OpenAiProviderAdapter {
         self.post_stream("/v1/audio/speech", api_key, request).await
     }
 
+    pub async fn files(&self, api_key: &str, request: &CreateFileRequest) -> Result<Value> {
+        let file = multipart_file_part(
+            request.bytes.clone(),
+            &request.filename,
+            request.content_type.as_deref(),
+        );
+        let form = reqwest::multipart::Form::new()
+            .text("purpose", request.purpose.clone())
+            .part("file", file);
+        self.post_multipart_json("/v1/files", api_key, form).await
+    }
+
+    pub async fn uploads(&self, api_key: &str, request: &CreateUploadRequest) -> Result<Value> {
+        self.post_json("/v1/uploads", api_key, request).await
+    }
+
+    pub async fn upload_parts(
+        &self,
+        api_key: &str,
+        request: &AddUploadPartRequest,
+    ) -> Result<Value> {
+        let data = multipart_file_part(
+            request.data.clone(),
+            request.filename.as_deref().unwrap_or("upload-part.bin"),
+            request.content_type.as_deref(),
+        );
+        let form = reqwest::multipart::Form::new().part("data", data);
+        self.post_multipart_json(
+            &format!("/v1/uploads/{}/parts", request.upload_id),
+            api_key,
+            form,
+        )
+        .await
+    }
+
+    pub async fn complete_upload(
+        &self,
+        api_key: &str,
+        request: &CompleteUploadRequest,
+    ) -> Result<Value> {
+        self.post_json(
+            &format!("/v1/uploads/{}/complete", request.upload_id),
+            api_key,
+            request,
+        )
+        .await
+    }
+
     pub async fn fine_tuning_jobs(
         &self,
         api_key: &str,
@@ -198,6 +250,24 @@ impl OpenAiProviderAdapter {
 
         Ok(response)
     }
+
+    async fn post_multipart_json(
+        &self,
+        path: &str,
+        api_key: &str,
+        form: reqwest::multipart::Form,
+    ) -> Result<Value> {
+        let response = self
+            .client
+            .post(format!("{}{}", self.base_url, path))
+            .bearer_auth(api_key)
+            .multipart(form)
+            .send()
+            .await?
+            .error_for_status()?;
+
+        Ok(response.json::<Value>().await?)
+    }
 }
 
 impl ProviderAdapter for OpenAiProviderAdapter {
@@ -240,6 +310,18 @@ impl ProviderExecutionAdapter for OpenAiProviderAdapter {
             ProviderRequest::AudioSpeech(request) => Ok(ProviderOutput::Stream(
                 self.audio_speech(api_key, request).await?,
             )),
+            ProviderRequest::Files(request) => {
+                Ok(ProviderOutput::Json(self.files(api_key, request).await?))
+            }
+            ProviderRequest::Uploads(request) => {
+                Ok(ProviderOutput::Json(self.uploads(api_key, request).await?))
+            }
+            ProviderRequest::UploadParts(request) => Ok(ProviderOutput::Json(
+                self.upload_parts(api_key, request).await?,
+            )),
+            ProviderRequest::UploadComplete(request) => Ok(ProviderOutput::Json(
+                self.complete_upload(api_key, request).await?,
+            )),
             ProviderRequest::FineTuningJobs(request) => Ok(ProviderOutput::Json(
                 self.fine_tuning_jobs(api_key, request).await?,
             )),
@@ -260,4 +342,18 @@ impl ProviderExecutionAdapter for OpenAiProviderAdapter {
             )),
         }
     }
+}
+
+fn multipart_file_part(
+    bytes: Vec<u8>,
+    filename: &str,
+    content_type: Option<&str>,
+) -> reqwest::multipart::Part {
+    let mut part = reqwest::multipart::Part::bytes(bytes).file_name(filename.to_owned());
+    if let Some(content_type) = content_type {
+        part = part
+            .mime_str(content_type)
+            .expect("valid multipart content type");
+    }
+    part
 }

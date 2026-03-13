@@ -6,7 +6,10 @@ use sdkwork_api_contract_openai::files::{CreateFileRequest, FileObject};
 use sdkwork_api_contract_openai::images::{CreateImageRequest, ImageObject, ImagesResponse};
 use sdkwork_api_contract_openai::moderations::{CreateModerationRequest, ModerationResponse};
 use sdkwork_api_contract_openai::realtime::{CreateRealtimeSessionRequest, RealtimeSessionObject};
-use sdkwork_api_contract_openai::uploads::{CreateUploadRequest, UploadObject};
+use sdkwork_api_contract_openai::uploads::{
+    AddUploadPartRequest, CompleteUploadRequest, CreateUploadRequest, UploadObject,
+    UploadPartObject,
+};
 use sdkwork_api_contract_openai::vector_stores::{
     CreateVectorStoreRequest, VectorStoreFileObject, VectorStoreObject,
 };
@@ -14,10 +17,11 @@ use sdkwork_api_contract_openai::webhooks::{CreateWebhookRequest, WebhookObject}
 
 #[test]
 fn serializes_file_contracts() {
-    let request = CreateFileRequest::new("fine-tune", "train.jsonl");
-    let request_json = serde_json::to_value(request).unwrap();
-    assert_eq!(request_json["purpose"], "fine-tune");
-    assert_eq!(request_json["filename"], "train.jsonl");
+    let request = CreateFileRequest::new("fine-tune", "train.jsonl", b"{}".to_vec());
+    assert_eq!(request.purpose, "fine-tune");
+    assert_eq!(request.filename, "train.jsonl");
+    assert_eq!(request.bytes, b"{}".to_vec());
+    assert_eq!(request.content_type, None);
 
     let file = FileObject::new("file_1", "train.jsonl", "fine-tune");
     let json = serde_json::to_value(file).unwrap();
@@ -27,15 +31,28 @@ fn serializes_file_contracts() {
 
 #[test]
 fn serializes_upload_contracts() {
-    let request = CreateUploadRequest::new("batch", "input.jsonl", 1024);
+    let request = CreateUploadRequest::new("batch", "input.jsonl", "application/jsonl", 1024);
     let request_json = serde_json::to_value(request).unwrap();
     assert_eq!(request_json["purpose"], "batch");
     assert_eq!(request_json["bytes"], 1024);
+    assert_eq!(request_json["mime_type"], "application/jsonl");
 
     let upload = UploadObject::new("upload_1", "input.jsonl", "batch");
     let json = serde_json::to_value(upload).unwrap();
     assert_eq!(json["object"], "upload");
     assert_eq!(json["status"], "pending");
+
+    let part_request = AddUploadPartRequest::new("upload_1", b"{}".to_vec());
+    assert_eq!(part_request.upload_id, "upload_1");
+    assert_eq!(part_request.data, b"{}".to_vec());
+
+    let part = UploadPartObject::new("part_1", "upload_1");
+    let part_json = serde_json::to_value(part).unwrap();
+    assert_eq!(part_json["object"], "upload.part");
+
+    let complete_request = CompleteUploadRequest::new("upload_1", vec!["part_1"]);
+    let complete_json = serde_json::to_value(complete_request).unwrap();
+    assert_eq!(complete_json["part_ids"][0], "part_1");
 }
 
 #[test]

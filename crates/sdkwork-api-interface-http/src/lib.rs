@@ -3,6 +3,8 @@ use std::sync::Arc;
 use axum::{
     body::Body,
     extract::Json as ExtractJson,
+    extract::Multipart,
+    extract::Path,
     extract::State,
     http::header,
     response::{IntoResponse, Response},
@@ -12,11 +14,13 @@ use axum::{
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use sdkwork_api_app_billing::persist_ledger_entry;
 use sdkwork_api_app_credential::CredentialSecretManager;
+use sdkwork_api_app_gateway::complete_upload;
 use sdkwork_api_app_gateway::create_assistant;
 use sdkwork_api_app_gateway::create_batch;
 use sdkwork_api_app_gateway::create_chat_completion;
 use sdkwork_api_app_gateway::create_completion;
 use sdkwork_api_app_gateway::create_eval;
+use sdkwork_api_app_gateway::create_file;
 use sdkwork_api_app_gateway::create_fine_tuning_job;
 use sdkwork_api_app_gateway::create_image_generation;
 use sdkwork_api_app_gateway::create_moderation;
@@ -24,16 +28,19 @@ use sdkwork_api_app_gateway::create_realtime_session;
 use sdkwork_api_app_gateway::create_speech_response;
 use sdkwork_api_app_gateway::create_transcription;
 use sdkwork_api_app_gateway::create_translation;
+use sdkwork_api_app_gateway::create_upload;
+use sdkwork_api_app_gateway::create_upload_part;
 use sdkwork_api_app_gateway::create_vector_store;
 use sdkwork_api_app_gateway::list_models;
 use sdkwork_api_app_gateway::{
     create_embedding, create_response, list_models_from_store, relay_assistant_from_store,
     relay_batch_from_store, relay_chat_completion_from_store,
-    relay_chat_completion_stream_from_store, relay_completion_from_store,
-    relay_embedding_from_store, relay_eval_from_store, relay_fine_tuning_job_from_store,
-    relay_image_generation_from_store, relay_moderation_from_store,
-    relay_realtime_session_from_store, relay_response_from_store, relay_speech_from_store,
-    relay_transcription_from_store, relay_translation_from_store, relay_vector_store_from_store,
+    relay_chat_completion_stream_from_store, relay_complete_upload_from_store,
+    relay_completion_from_store, relay_embedding_from_store, relay_eval_from_store,
+    relay_file_from_store, relay_fine_tuning_job_from_store, relay_image_generation_from_store,
+    relay_moderation_from_store, relay_realtime_session_from_store, relay_response_from_store,
+    relay_speech_from_store, relay_transcription_from_store, relay_translation_from_store,
+    relay_upload_from_store, relay_upload_part_from_store, relay_vector_store_from_store,
 };
 use sdkwork_api_app_routing::simulate_route_with_store;
 use sdkwork_api_app_usage::persist_usage_record;
@@ -46,12 +53,16 @@ use sdkwork_api_contract_openai::chat_completions::CreateChatCompletionRequest;
 use sdkwork_api_contract_openai::completions::CreateCompletionRequest;
 use sdkwork_api_contract_openai::embeddings::CreateEmbeddingRequest;
 use sdkwork_api_contract_openai::evals::CreateEvalRequest;
+use sdkwork_api_contract_openai::files::CreateFileRequest;
 use sdkwork_api_contract_openai::fine_tuning::CreateFineTuningJobRequest;
 use sdkwork_api_contract_openai::images::CreateImageRequest;
 use sdkwork_api_contract_openai::moderations::CreateModerationRequest;
 use sdkwork_api_contract_openai::realtime::CreateRealtimeSessionRequest;
 use sdkwork_api_contract_openai::responses::CreateResponseRequest;
 use sdkwork_api_contract_openai::streaming::SseFrame;
+use sdkwork_api_contract_openai::uploads::{
+    AddUploadPartRequest, CompleteUploadRequest, CreateUploadRequest,
+};
 use sdkwork_api_contract_openai::vector_stores::CreateVectorStoreRequest;
 use sdkwork_api_storage_core::AdminStore;
 use sdkwork_api_storage_sqlite::SqliteAdminStore;
@@ -106,6 +117,13 @@ pub fn gateway_router() -> Router {
         .route("/v1/audio/transcriptions", post(transcriptions_handler))
         .route("/v1/audio/translations", post(translations_handler))
         .route("/v1/audio/speech", post(audio_speech_handler))
+        .route("/v1/files", post(files_handler))
+        .route("/v1/uploads", post(uploads_handler))
+        .route("/v1/uploads/{upload_id}/parts", post(upload_parts_handler))
+        .route(
+            "/v1/uploads/{upload_id}/complete",
+            post(upload_complete_handler),
+        )
         .route("/v1/fine_tuning/jobs", post(fine_tuning_jobs_handler))
         .route("/v1/assistants", post(assistants_handler))
         .route("/v1/realtime/sessions", post(realtime_sessions_handler))
@@ -173,6 +191,16 @@ pub fn gateway_router_with_store_and_secret_manager(
             post(translations_with_state_handler),
         )
         .route("/v1/audio/speech", post(audio_speech_with_state_handler))
+        .route("/v1/files", post(files_with_state_handler))
+        .route("/v1/uploads", post(uploads_with_state_handler))
+        .route(
+            "/v1/uploads/{upload_id}/parts",
+            post(upload_parts_with_state_handler),
+        )
+        .route(
+            "/v1/uploads/{upload_id}/complete",
+            post(upload_complete_with_state_handler),
+        )
         .route(
             "/v1/fine_tuning/jobs",
             post(fine_tuning_jobs_with_state_handler),
@@ -275,6 +303,39 @@ async fn translations_handler(
 
 async fn audio_speech_handler(ExtractJson(request): ExtractJson<CreateSpeechRequest>) -> Response {
     local_speech_response(&request)
+}
+
+async fn files_handler(multipart: Multipart) -> Response {
+    match parse_file_request(multipart).await {
+        Ok(request) => {
+            Json(create_file("tenant-1", "project-1", &request).expect("file")).into_response()
+        }
+        Err(response) => response,
+    }
+}
+
+async fn uploads_handler(
+    ExtractJson(request): ExtractJson<CreateUploadRequest>,
+) -> Json<sdkwork_api_contract_openai::uploads::UploadObject> {
+    Json(create_upload("tenant-1", "project-1", &request).expect("upload"))
+}
+
+async fn upload_parts_handler(Path(upload_id): Path<String>, multipart: Multipart) -> Response {
+    match parse_upload_part_request(upload_id, multipart).await {
+        Ok(request) => {
+            Json(create_upload_part("tenant-1", "project-1", &request).expect("upload part"))
+                .into_response()
+        }
+        Err(response) => response,
+    }
+}
+
+async fn upload_complete_handler(
+    Path(upload_id): Path<String>,
+    ExtractJson(mut request): ExtractJson<CompleteUploadRequest>,
+) -> Json<sdkwork_api_contract_openai::uploads::UploadObject> {
+    request.upload_id = upload_id;
+    Json(complete_upload("tenant-1", "project-1", &request).expect("upload complete"))
 }
 
 async fn fine_tuning_jobs_handler(
@@ -930,6 +991,250 @@ async fn audio_speech_with_state_handler(
     local_speech_response(&request)
 }
 
+async fn files_with_state_handler(
+    State(state): State<GatewayApiState>,
+    multipart: Multipart,
+) -> Response {
+    let request = match parse_file_request(multipart).await {
+        Ok(request) => request,
+        Err(response) => return response,
+    };
+
+    match relay_file_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &request,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(state.store.as_ref(), "files", &request.purpose, 5, 0.005)
+                .await
+                .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream file",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(state.store.as_ref(), "files", &request.purpose, 5, 0.005)
+        .await
+        .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(create_file("tenant-1", "project-1", &request).expect("file")).into_response()
+}
+
+async fn uploads_with_state_handler(
+    State(state): State<GatewayApiState>,
+    ExtractJson(request): ExtractJson<CreateUploadRequest>,
+) -> Response {
+    match relay_upload_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &request,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(state.store.as_ref(), "uploads", &request.purpose, 8, 0.008)
+                .await
+                .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream upload",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(state.store.as_ref(), "uploads", &request.purpose, 8, 0.008)
+        .await
+        .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(create_upload("tenant-1", "project-1", &request).expect("upload")).into_response()
+}
+
+async fn upload_parts_with_state_handler(
+    State(state): State<GatewayApiState>,
+    Path(upload_id): Path<String>,
+    multipart: Multipart,
+) -> Response {
+    let request = match parse_upload_part_request(upload_id, multipart).await {
+        Ok(request) => request,
+        Err(response) => return response,
+    };
+
+    match relay_upload_part_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &request,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(
+                state.store.as_ref(),
+                "uploads",
+                &request.upload_id,
+                4,
+                0.004,
+            )
+            .await
+            .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream upload part",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(
+        state.store.as_ref(),
+        "uploads",
+        &request.upload_id,
+        4,
+        0.004,
+    )
+    .await
+    .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(create_upload_part("tenant-1", "project-1", &request).expect("upload part"))
+        .into_response()
+}
+
+async fn upload_complete_with_state_handler(
+    State(state): State<GatewayApiState>,
+    Path(upload_id): Path<String>,
+    ExtractJson(mut request): ExtractJson<CompleteUploadRequest>,
+) -> Response {
+    request.upload_id = upload_id;
+
+    match relay_complete_upload_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &request,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(
+                state.store.as_ref(),
+                "uploads",
+                &request.upload_id,
+                4,
+                0.004,
+            )
+            .await
+            .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream upload completion",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(
+        state.store.as_ref(),
+        "uploads",
+        &request.upload_id,
+        4,
+        0.004,
+    )
+    .await
+    .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(complete_upload("tenant-1", "project-1", &request).expect("upload complete"))
+        .into_response()
+}
+
 async fn fine_tuning_jobs_with_state_handler(
     State(state): State<GatewayApiState>,
     ExtractJson(request): ExtractJson<CreateFineTuningJobRequest>,
@@ -1338,4 +1643,78 @@ fn speech_content_type(format: &str) -> &'static str {
         "pcm" => "audio/pcm",
         _ => "audio/wav",
     }
+}
+
+async fn parse_file_request(mut multipart: Multipart) -> Result<CreateFileRequest, Response> {
+    let mut purpose = None;
+    let mut filename = None;
+    let mut bytes = None;
+    let mut content_type = None;
+
+    while let Some(field) = multipart.next_field().await.map_err(bad_multipart)? {
+        match field.name() {
+            Some("purpose") => {
+                purpose = Some(field.text().await.map_err(bad_multipart)?);
+            }
+            Some("file") => {
+                filename = field.file_name().map(ToOwned::to_owned);
+                content_type = field.content_type().map(ToOwned::to_owned);
+                bytes = Some(field.bytes().await.map_err(bad_multipart)?.to_vec());
+            }
+            _ => {}
+        }
+    }
+
+    let mut request = CreateFileRequest::new(
+        purpose.ok_or_else(missing_multipart_field)?,
+        filename.ok_or_else(missing_multipart_field)?,
+        bytes.ok_or_else(missing_multipart_field)?,
+    );
+    if let Some(content_type) = content_type {
+        request = request.with_content_type(content_type);
+    }
+    Ok(request)
+}
+
+async fn parse_upload_part_request(
+    upload_id: String,
+    mut multipart: Multipart,
+) -> Result<AddUploadPartRequest, Response> {
+    let mut data = None;
+    let mut filename = None;
+    let mut content_type = None;
+
+    while let Some(field) = multipart.next_field().await.map_err(bad_multipart)? {
+        if field.name() == Some("data") {
+            filename = field.file_name().map(ToOwned::to_owned);
+            content_type = field.content_type().map(ToOwned::to_owned);
+            data = Some(field.bytes().await.map_err(bad_multipart)?.to_vec());
+        }
+    }
+
+    let mut request =
+        AddUploadPartRequest::new(upload_id, data.ok_or_else(missing_multipart_field)?);
+    if let Some(filename) = filename {
+        request = request.with_filename(filename);
+    }
+    if let Some(content_type) = content_type {
+        request = request.with_content_type(content_type);
+    }
+    Ok(request)
+}
+
+fn bad_multipart(error: axum::extract::multipart::MultipartError) -> Response {
+    (
+        axum::http::StatusCode::BAD_REQUEST,
+        format!("invalid multipart payload: {error}"),
+    )
+        .into_response()
+}
+
+fn missing_multipart_field() -> Response {
+    (
+        axum::http::StatusCode::BAD_REQUEST,
+        "missing multipart field",
+    )
+        .into_response()
 }

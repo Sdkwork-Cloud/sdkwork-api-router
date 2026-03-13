@@ -9,11 +9,15 @@
 | `/v1/completions` | Implemented | Stateful mode supports OpenAI-compatible upstream relay for legacy text completions; otherwise emits local completion fallback |
 | `/v1/responses` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local response object fallback |
 | `/v1/embeddings` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local embeddings fallback |
+| `/v1/files` | Implemented | Stateful mode supports OpenAI-compatible upstream multipart relay; otherwise emits local file fallback |
 | `/v1/moderations` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local unflagged moderation fallback |
 | `/v1/images/generations` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local base64 image fallback |
 | `/v1/audio/transcriptions` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local transcription fallback |
 | `/v1/audio/translations` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local translation fallback |
 | `/v1/audio/speech` | Implemented | Stateful mode supports OpenAI-compatible upstream binary or event-stream relay; otherwise emits local audio fallback |
+| `/v1/uploads` | Implemented | Stateful mode supports OpenAI-compatible upstream JSON relay for upload creation; otherwise emits local upload fallback |
+| `/v1/uploads/{upload_id}/parts` | Implemented | Stateful mode supports OpenAI-compatible upstream multipart relay for upload parts; otherwise emits local upload-part fallback |
+| `/v1/uploads/{upload_id}/complete` | Implemented | Stateful mode supports OpenAI-compatible upstream relay for upload completion; otherwise emits local completion fallback |
 | `/v1/fine_tuning/jobs` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local fine-tuning job fallback |
 | `/v1/assistants` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local assistant fallback |
 | `/v1/realtime/sessions` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local realtime session fallback |
@@ -49,8 +53,8 @@
 | Moderations | Defined | Implemented |
 | Images | Defined | Implemented |
 | Streaming | Defined | Implemented |
-| Files | Defined | Contract only |
-| Uploads | Defined | Contract only |
+| Files | Defined | Implemented |
+| Uploads | Defined | Partially implemented (`create`, `parts`, `complete`); cancel remains contract only |
 | Audio | Defined | Partially implemented (`/v1/audio/transcriptions`, `/v1/audio/translations`, `/v1/audio/speech`) |
 | Fine Tuning | Defined | Implemented |
 | Realtime | Defined | Implemented |
@@ -65,7 +69,7 @@
 
 | Capability | Current Behavior |
 |---|---|
-| Upstream proxying | Partially implemented; stateful gateway relays OpenAI-compatible chat, chat SSE, completions, responses, embeddings, moderations, image generations, audio transcriptions, audio translations, audio speech binary passthrough, fine-tuning jobs, assistants, realtime sessions, evals, batches, and vector stores when provider and credential records are configured |
+| Upstream proxying | Partially implemented; stateful gateway relays OpenAI-compatible chat, chat SSE, completions, responses, embeddings, files multipart uploads, upload create/part/complete, moderations, image generations, audio transcriptions, audio translations, audio speech binary passthrough, fine-tuning jobs, assistants, realtime sessions, evals, batches, and vector stores when provider and credential records are configured |
 | Model discovery | Driven by the local catalog, not upstream auto-sync |
 | Routing | Deterministic candidate selection from catalog models |
 | Provider dispatch | Executed through `sdkwork-api-provider-core` registry abstractions with `adapter_kind` plus `base_url` resolution; `openai`, `openrouter`, and `ollama` are currently registered |

@@ -1,17 +1,26 @@
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CreateFileRequest {
     pub purpose: String,
     pub filename: String,
+    pub bytes: Vec<u8>,
+    pub content_type: Option<String>,
 }
 
 impl CreateFileRequest {
-    pub fn new(purpose: impl Into<String>, filename: impl Into<String>) -> Self {
+    pub fn new(purpose: impl Into<String>, filename: impl Into<String>, bytes: Vec<u8>) -> Self {
         Self {
             purpose: purpose.into(),
             filename: filename.into(),
+            bytes,
+            content_type: None,
         }
+    }
+
+    pub fn with_content_type(mut self, content_type: impl Into<String>) -> Self {
+        self.content_type = Some(content_type.into());
+        self
     }
 }
 
@@ -21,6 +30,7 @@ pub struct FileObject {
     pub object: &'static str,
     pub purpose: String,
     pub filename: String,
+    pub bytes: u64,
     pub status: &'static str,
 }
 
@@ -30,11 +40,21 @@ impl FileObject {
         filename: impl Into<String>,
         purpose: impl Into<String>,
     ) -> Self {
+        Self::with_bytes(id, filename, purpose, 0)
+    }
+
+    pub fn with_bytes(
+        id: impl Into<String>,
+        filename: impl Into<String>,
+        purpose: impl Into<String>,
+        bytes: u64,
+    ) -> Self {
         Self {
             id: id.into(),
             object: "file",
             purpose: purpose.into(),
             filename: filename.into(),
+            bytes,
             status: "processed",
         }
     }

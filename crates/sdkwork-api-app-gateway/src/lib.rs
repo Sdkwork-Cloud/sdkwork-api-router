@@ -14,6 +14,7 @@ use sdkwork_api_contract_openai::completions::{CompletionObject, CreateCompletio
 use sdkwork_api_contract_openai::embeddings::CreateEmbeddingRequest;
 use sdkwork_api_contract_openai::embeddings::CreateEmbeddingResponse;
 use sdkwork_api_contract_openai::evals::{CreateEvalRequest, EvalObject};
+use sdkwork_api_contract_openai::files::{CreateFileRequest, FileObject};
 use sdkwork_api_contract_openai::fine_tuning::{CreateFineTuningJobRequest, FineTuningJobObject};
 use sdkwork_api_contract_openai::images::{CreateImageRequest, ImageObject, ImagesResponse};
 use sdkwork_api_contract_openai::models::{ListModelsResponse, ModelObject};
@@ -23,6 +24,10 @@ use sdkwork_api_contract_openai::moderations::{
 use sdkwork_api_contract_openai::realtime::{CreateRealtimeSessionRequest, RealtimeSessionObject};
 use sdkwork_api_contract_openai::responses::CreateResponseRequest;
 use sdkwork_api_contract_openai::responses::ResponseObject;
+use sdkwork_api_contract_openai::uploads::{
+    AddUploadPartRequest, CompleteUploadRequest, CreateUploadRequest, UploadObject,
+    UploadPartObject,
+};
 use sdkwork_api_contract_openai::vector_stores::{CreateVectorStoreRequest, VectorStoreObject};
 use sdkwork_api_provider_core::{ProviderRegistry, ProviderRequest};
 use sdkwork_api_provider_ollama::OllamaProviderAdapter;
@@ -325,6 +330,114 @@ pub async fn relay_speech_from_store(
     .await
 }
 
+pub async fn relay_file_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    request: &CreateFileRequest,
+) -> Result<Option<Value>> {
+    let decision = simulate_route_with_store(store, "files", &request.purpose).await?;
+    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
+        return Ok(None);
+    };
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &provider.adapter_kind,
+        provider.base_url,
+        &api_key,
+        ProviderRequest::Files(request),
+    )
+    .await
+}
+
+pub async fn relay_upload_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    request: &CreateUploadRequest,
+) -> Result<Option<Value>> {
+    let decision = simulate_route_with_store(store, "uploads", &request.purpose).await?;
+    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
+        return Ok(None);
+    };
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &provider.adapter_kind,
+        provider.base_url,
+        &api_key,
+        ProviderRequest::Uploads(request),
+    )
+    .await
+}
+
+pub async fn relay_upload_part_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    request: &AddUploadPartRequest,
+) -> Result<Option<Value>> {
+    let decision = simulate_route_with_store(store, "uploads", &request.upload_id).await?;
+    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
+        return Ok(None);
+    };
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &provider.adapter_kind,
+        provider.base_url,
+        &api_key,
+        ProviderRequest::UploadParts(request),
+    )
+    .await
+}
+
+pub async fn relay_complete_upload_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    request: &CompleteUploadRequest,
+) -> Result<Option<Value>> {
+    let decision = simulate_route_with_store(store, "uploads", &request.upload_id).await?;
+    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
+        return Ok(None);
+    };
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &provider.adapter_kind,
+        provider.base_url,
+        &api_key,
+        ProviderRequest::UploadComplete(request),
+    )
+    .await
+}
+
 pub async fn relay_fine_tuning_job_from_store(
     store: &dyn AdminStore,
     secret_manager: &CredentialSecretManager,
@@ -556,6 +669,19 @@ pub fn create_translation(
     Ok(TranslationObject::new("sdkwork translation"))
 }
 
+pub fn create_file(
+    _tenant_id: &str,
+    _project_id: &str,
+    request: &CreateFileRequest,
+) -> Result<FileObject> {
+    Ok(FileObject::with_bytes(
+        "file_1",
+        &request.filename,
+        &request.purpose,
+        request.bytes.len() as u64,
+    ))
+}
+
 pub fn create_speech_response(
     _tenant_id: &str,
     _project_id: &str,
@@ -567,6 +693,44 @@ pub fn create_speech_response(
         .unwrap_or_else(|| "wav".to_owned());
     let bytes = fallback_speech_bytes(&format);
     Ok(SpeechResponse::new(format, STANDARD.encode(bytes)))
+}
+
+pub fn create_upload(
+    _tenant_id: &str,
+    _project_id: &str,
+    request: &CreateUploadRequest,
+) -> Result<UploadObject> {
+    Ok(UploadObject::with_details(
+        "upload_1",
+        &request.filename,
+        &request.purpose,
+        &request.mime_type,
+        request.bytes,
+        vec![],
+    ))
+}
+
+pub fn create_upload_part(
+    _tenant_id: &str,
+    _project_id: &str,
+    request: &AddUploadPartRequest,
+) -> Result<UploadPartObject> {
+    Ok(UploadPartObject::new("part_1", &request.upload_id))
+}
+
+pub fn complete_upload(
+    _tenant_id: &str,
+    _project_id: &str,
+    request: &CompleteUploadRequest,
+) -> Result<UploadObject> {
+    Ok(UploadObject::completed(
+        &request.upload_id,
+        "input.jsonl",
+        "batch",
+        "application/jsonl",
+        0,
+        request.part_ids.clone(),
+    ))
 }
 
 pub fn create_fine_tuning_job(

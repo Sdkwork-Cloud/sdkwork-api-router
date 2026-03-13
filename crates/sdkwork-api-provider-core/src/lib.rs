@@ -12,11 +12,15 @@ use sdkwork_api_contract_openai::chat_completions::CreateChatCompletionRequest;
 use sdkwork_api_contract_openai::completions::CreateCompletionRequest;
 use sdkwork_api_contract_openai::embeddings::CreateEmbeddingRequest;
 use sdkwork_api_contract_openai::evals::CreateEvalRequest;
+use sdkwork_api_contract_openai::files::CreateFileRequest;
 use sdkwork_api_contract_openai::fine_tuning::CreateFineTuningJobRequest;
 use sdkwork_api_contract_openai::images::CreateImageRequest;
 use sdkwork_api_contract_openai::moderations::CreateModerationRequest;
 use sdkwork_api_contract_openai::realtime::CreateRealtimeSessionRequest;
 use sdkwork_api_contract_openai::responses::CreateResponseRequest;
+use sdkwork_api_contract_openai::uploads::{
+    AddUploadPartRequest, CompleteUploadRequest, CreateUploadRequest,
+};
 use sdkwork_api_contract_openai::vector_stores::CreateVectorStoreRequest;
 use serde_json::Value;
 
@@ -41,6 +45,10 @@ pub enum ProviderRequest<'a> {
     AudioTranscriptions(&'a CreateTranscriptionRequest),
     AudioTranslations(&'a CreateTranslationRequest),
     AudioSpeech(&'a CreateSpeechRequest),
+    Files(&'a CreateFileRequest),
+    Uploads(&'a CreateUploadRequest),
+    UploadParts(&'a AddUploadPartRequest),
+    UploadComplete(&'a CompleteUploadRequest),
     FineTuningJobs(&'a CreateFineTuningJobRequest),
     Assistants(&'a CreateAssistantRequest),
     RealtimeSessions(&'a CreateRealtimeSessionRequest),
