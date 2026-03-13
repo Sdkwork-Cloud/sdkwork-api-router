@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use async_trait::async_trait;
+use sdkwork_api_contract_openai::audio::{CreateTranscriptionRequest, CreateTranslationRequest};
 use sdkwork_api_contract_openai::chat_completions::CreateChatCompletionRequest;
 use sdkwork_api_contract_openai::completions::CreateCompletionRequest;
 use sdkwork_api_contract_openai::embeddings::CreateEmbeddingRequest;
@@ -29,6 +30,8 @@ pub enum ProviderRequest<'a> {
     Embeddings(&'a CreateEmbeddingRequest),
     Moderations(&'a CreateModerationRequest),
     ImagesGenerations(&'a CreateImageRequest),
+    AudioTranscriptions(&'a CreateTranscriptionRequest),
+    AudioTranslations(&'a CreateTranslationRequest),
 }
 
 pub enum ProviderOutput {

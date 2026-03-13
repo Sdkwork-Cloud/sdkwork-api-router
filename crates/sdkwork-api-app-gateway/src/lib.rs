@@ -1,6 +1,9 @@
 use anyhow::Result;
 use sdkwork_api_app_credential::{resolve_provider_secret_with_manager, CredentialSecretManager};
 use sdkwork_api_app_routing::simulate_route_with_store;
+use sdkwork_api_contract_openai::audio::{
+    CreateTranscriptionRequest, CreateTranslationRequest, TranscriptionObject, TranslationObject,
+};
 use sdkwork_api_contract_openai::chat_completions::ChatCompletionResponse;
 use sdkwork_api_contract_openai::chat_completions::CreateChatCompletionRequest;
 use sdkwork_api_contract_openai::completions::{CompletionObject, CreateCompletionRequest};
@@ -233,6 +236,60 @@ pub async fn relay_image_generation_from_store(
     .await
 }
 
+pub async fn relay_transcription_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    request: &CreateTranscriptionRequest,
+) -> Result<Option<Value>> {
+    let decision = simulate_route_with_store(store, "audio_transcriptions", &request.model).await?;
+    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
+        return Ok(None);
+    };
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &provider.adapter_kind,
+        provider.base_url,
+        &api_key,
+        ProviderRequest::AudioTranscriptions(request),
+    )
+    .await
+}
+
+pub async fn relay_translation_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    request: &CreateTranslationRequest,
+) -> Result<Option<Value>> {
+    let decision = simulate_route_with_store(store, "audio_translations", &request.model).await?;
+    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
+        return Ok(None);
+    };
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &provider.adapter_kind,
+        provider.base_url,
+        &api_key,
+        ProviderRequest::AudioTranslations(request),
+    )
+    .await
+}
+
 pub fn create_chat_completion(
     _tenant_id: &str,
     _project_id: &str,
@@ -284,6 +341,22 @@ pub fn create_image_generation(
     Ok(ImagesResponse::new(vec![ImageObject::base64(
         "sdkwork-image",
     )]))
+}
+
+pub fn create_transcription(
+    _tenant_id: &str,
+    _project_id: &str,
+    _model: &str,
+) -> Result<TranscriptionObject> {
+    Ok(TranscriptionObject::new("sdkwork transcription"))
+}
+
+pub fn create_translation(
+    _tenant_id: &str,
+    _project_id: &str,
+    _model: &str,
+) -> Result<TranslationObject> {
+    Ok(TranslationObject::new("sdkwork translation"))
 }
 
 fn default_provider_registry() -> ProviderRegistry {

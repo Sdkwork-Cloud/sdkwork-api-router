@@ -15,15 +15,18 @@ use sdkwork_api_app_gateway::create_chat_completion;
 use sdkwork_api_app_gateway::create_completion;
 use sdkwork_api_app_gateway::create_image_generation;
 use sdkwork_api_app_gateway::create_moderation;
+use sdkwork_api_app_gateway::create_transcription;
+use sdkwork_api_app_gateway::create_translation;
 use sdkwork_api_app_gateway::list_models;
 use sdkwork_api_app_gateway::{
     create_embedding, create_response, list_models_from_store, relay_chat_completion_from_store,
     relay_chat_completion_stream_from_store, relay_completion_from_store,
     relay_embedding_from_store, relay_image_generation_from_store, relay_moderation_from_store,
-    relay_response_from_store,
+    relay_response_from_store, relay_transcription_from_store, relay_translation_from_store,
 };
 use sdkwork_api_app_routing::simulate_route_with_store;
 use sdkwork_api_app_usage::persist_usage_record;
+use sdkwork_api_contract_openai::audio::{CreateTranscriptionRequest, CreateTranslationRequest};
 use sdkwork_api_contract_openai::chat_completions::CreateChatCompletionRequest;
 use sdkwork_api_contract_openai::completions::CreateCompletionRequest;
 use sdkwork_api_contract_openai::embeddings::CreateEmbeddingRequest;
@@ -81,6 +84,8 @@ pub fn gateway_router() -> Router {
         .route("/v1/embeddings", post(embeddings_handler))
         .route("/v1/moderations", post(moderations_handler))
         .route("/v1/images/generations", post(image_generations_handler))
+        .route("/v1/audio/transcriptions", post(transcriptions_handler))
+        .route("/v1/audio/translations", post(translations_handler))
 }
 
 pub fn gateway_router_with_pool(pool: SqlitePool) -> Router {
@@ -132,6 +137,14 @@ pub fn gateway_router_with_store_and_secret_manager(
         .route(
             "/v1/images/generations",
             post(image_generations_with_state_handler),
+        )
+        .route(
+            "/v1/audio/transcriptions",
+            post(transcriptions_with_state_handler),
+        )
+        .route(
+            "/v1/audio/translations",
+            post(translations_with_state_handler),
         )
         .with_state(GatewayApiState::with_store_and_secret_manager(
             store,
@@ -207,6 +220,18 @@ async fn image_generations_handler(
     Json(
         create_image_generation("tenant-1", "project-1", &request.model).expect("image generation"),
     )
+}
+
+async fn transcriptions_handler(
+    ExtractJson(request): ExtractJson<CreateTranscriptionRequest>,
+) -> Json<sdkwork_api_contract_openai::audio::TranscriptionObject> {
+    Json(create_transcription("tenant-1", "project-1", &request.model).expect("transcription"))
+}
+
+async fn translations_handler(
+    ExtractJson(request): ExtractJson<CreateTranslationRequest>,
+) -> Json<sdkwork_api_contract_openai::audio::TranslationObject> {
+    Json(create_translation("tenant-1", "project-1", &request.model).expect("translation"))
 }
 
 async fn chat_completions_with_state_handler(
@@ -619,6 +644,134 @@ async fn image_generations_with_state_handler(
     }
 
     Json(create_image_generation("tenant-1", "project-1", &request.model).expect("image"))
+        .into_response()
+}
+
+async fn transcriptions_with_state_handler(
+    State(state): State<GatewayApiState>,
+    ExtractJson(request): ExtractJson<CreateTranscriptionRequest>,
+) -> Response {
+    match relay_transcription_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &request,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(
+                state.store.as_ref(),
+                "audio_transcriptions",
+                &request.model,
+                25,
+                0.025,
+            )
+            .await
+            .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream transcription",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(
+        state.store.as_ref(),
+        "audio_transcriptions",
+        &request.model,
+        25,
+        0.025,
+    )
+    .await
+    .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(create_transcription("tenant-1", "project-1", &request.model).expect("transcription"))
+        .into_response()
+}
+
+async fn translations_with_state_handler(
+    State(state): State<GatewayApiState>,
+    ExtractJson(request): ExtractJson<CreateTranslationRequest>,
+) -> Response {
+    match relay_translation_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &request,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(
+                state.store.as_ref(),
+                "audio_translations",
+                &request.model,
+                25,
+                0.025,
+            )
+            .await
+            .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream translation",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(
+        state.store.as_ref(),
+        "audio_translations",
+        &request.model,
+        25,
+        0.025,
+    )
+    .await
+    .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(create_translation("tenant-1", "project-1", &request.model).expect("translation"))
         .into_response()
 }
 

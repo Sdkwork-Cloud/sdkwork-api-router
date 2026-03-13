@@ -1,5 +1,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
+use sdkwork_api_contract_openai::audio::{CreateTranscriptionRequest, CreateTranslationRequest};
 use sdkwork_api_contract_openai::chat_completions::CreateChatCompletionRequest;
 use sdkwork_api_contract_openai::completions::CreateCompletionRequest;
 use sdkwork_api_contract_openai::embeddings::CreateEmbeddingRequest;
@@ -86,6 +87,22 @@ impl OllamaProviderAdapter {
     ) -> Result<Value> {
         self.delegate.images_generations(api_key, request).await
     }
+
+    pub async fn audio_transcriptions(
+        &self,
+        api_key: &str,
+        request: &CreateTranscriptionRequest,
+    ) -> Result<Value> {
+        self.delegate.audio_transcriptions(api_key, request).await
+    }
+
+    pub async fn audio_translations(
+        &self,
+        api_key: &str,
+        request: &CreateTranslationRequest,
+    ) -> Result<Value> {
+        self.delegate.audio_translations(api_key, request).await
+    }
 }
 
 impl ProviderAdapter for OllamaProviderAdapter {
@@ -118,6 +135,12 @@ impl ProviderExecutionAdapter for OllamaProviderAdapter {
             )),
             ProviderRequest::ImagesGenerations(request) => Ok(ProviderOutput::Json(
                 self.images_generations(api_key, request).await?,
+            )),
+            ProviderRequest::AudioTranscriptions(request) => Ok(ProviderOutput::Json(
+                self.audio_transcriptions(api_key, request).await?,
+            )),
+            ProviderRequest::AudioTranslations(request) => Ok(ProviderOutput::Json(
+                self.audio_translations(api_key, request).await?,
             )),
         }
     }

@@ -167,6 +167,83 @@ async fn adapter_posts_image_generations_to_openai_compatible_upstream() {
     );
 }
 
+#[tokio::test]
+async fn adapter_posts_audio_transcriptions_to_openai_compatible_upstream() {
+    let state = CaptureState::default();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+
+    let app = Router::new()
+        .route(
+            "/v1/audio/transcriptions",
+            post(capture_transcription_request),
+        )
+        .with_state(state.clone());
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let adapter =
+        sdkwork_api_provider_openai::OpenAiProviderAdapter::new(format!("http://{address}"));
+    let request = sdkwork_api_contract_openai::audio::CreateTranscriptionRequest::new(
+        "gpt-4o-mini-transcribe",
+        "file_1",
+    );
+
+    let response = adapter
+        .audio_transcriptions("sk-upstream-openai", &request)
+        .await
+        .unwrap();
+
+    assert_eq!(response["text"], "upstream transcription");
+    assert_eq!(
+        state.authorization.lock().unwrap().as_deref(),
+        Some("Bearer sk-upstream-openai")
+    );
+    assert_eq!(
+        state.body.lock().unwrap().as_ref().unwrap()["file_id"],
+        "file_1"
+    );
+}
+
+#[tokio::test]
+async fn adapter_posts_audio_translations_to_openai_compatible_upstream() {
+    let state = CaptureState::default();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+
+    let app = Router::new()
+        .route("/v1/audio/translations", post(capture_translation_request))
+        .with_state(state.clone());
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let adapter =
+        sdkwork_api_provider_openai::OpenAiProviderAdapter::new(format!("http://{address}"));
+    let request = sdkwork_api_contract_openai::audio::CreateTranslationRequest::new(
+        "gpt-4o-mini-transcribe",
+        "file_1",
+    );
+
+    let response = adapter
+        .audio_translations("sk-upstream-openai", &request)
+        .await
+        .unwrap();
+
+    assert_eq!(response["text"], "upstream translation");
+    assert_eq!(
+        state.authorization.lock().unwrap().as_deref(),
+        Some("Bearer sk-upstream-openai")
+    );
+    assert_eq!(
+        state.body.lock().unwrap().as_ref().unwrap()["file_id"],
+        "file_1"
+    );
+}
+
 async fn capture_chat_request(
     State(state): State<CaptureState>,
     headers: HeaderMap,
@@ -246,6 +323,44 @@ async fn capture_image_request(
         StatusCode::OK,
         Json(json!({
             "data":[{"b64_json":"upstream-image"}]
+        })),
+    )
+}
+
+async fn capture_transcription_request(
+    State(state): State<CaptureState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> (StatusCode, Json<Value>) {
+    *state.authorization.lock().unwrap() = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+    *state.body.lock().unwrap() = Some(body);
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "text":"upstream transcription"
+        })),
+    )
+}
+
+async fn capture_translation_request(
+    State(state): State<CaptureState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> (StatusCode, Json<Value>) {
+    *state.authorization.lock().unwrap() = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+    *state.body.lock().unwrap() = Some(body);
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "text":"upstream translation"
         })),
     )
 }

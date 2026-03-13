@@ -1,6 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use reqwest::Client;
+use sdkwork_api_contract_openai::audio::{CreateTranscriptionRequest, CreateTranslationRequest};
 use sdkwork_api_contract_openai::chat_completions::CreateChatCompletionRequest;
 use sdkwork_api_contract_openai::completions::CreateCompletionRequest;
 use sdkwork_api_contract_openai::embeddings::CreateEmbeddingRequest;
@@ -86,6 +87,24 @@ impl OpenAiProviderAdapter {
             .await
     }
 
+    pub async fn audio_transcriptions(
+        &self,
+        api_key: &str,
+        request: &CreateTranscriptionRequest,
+    ) -> Result<Value> {
+        self.post_json("/v1/audio/transcriptions", api_key, request)
+            .await
+    }
+
+    pub async fn audio_translations(
+        &self,
+        api_key: &str,
+        request: &CreateTranslationRequest,
+    ) -> Result<Value> {
+        self.post_json("/v1/audio/translations", api_key, request)
+            .await
+    }
+
     async fn post_json<T: serde::Serialize>(
         &self,
         path: &str,
@@ -153,6 +172,12 @@ impl ProviderExecutionAdapter for OpenAiProviderAdapter {
             )),
             ProviderRequest::ImagesGenerations(request) => Ok(ProviderOutput::Json(
                 self.images_generations(api_key, request).await?,
+            )),
+            ProviderRequest::AudioTranscriptions(request) => Ok(ProviderOutput::Json(
+                self.audio_transcriptions(api_key, request).await?,
+            )),
+            ProviderRequest::AudioTranslations(request) => Ok(ProviderOutput::Json(
+                self.audio_translations(api_key, request).await?,
             )),
         }
     }
