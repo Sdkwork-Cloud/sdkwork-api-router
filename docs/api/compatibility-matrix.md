@@ -16,6 +16,7 @@
 | `/v1/fine_tuning/jobs` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local fine-tuning job fallback |
 | `/v1/assistants` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local assistant fallback |
 | `/v1/realtime/sessions` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local realtime session fallback |
+| `/v1/evals` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local eval fallback |
 
 ## Current Implemented Admin APIs
 
@@ -55,13 +56,13 @@
 | Batches | Defined | Contract only |
 | Videos | Defined | Contract only |
 | Webhooks | Defined | Contract only |
-| Evals | Defined | Contract only |
+| Evals | Defined | Implemented |
 
 ## Runtime Behavior Notes
 
 | Capability | Current Behavior |
 |---|---|
-| Upstream proxying | Partially implemented; stateful gateway relays OpenAI-compatible chat, chat SSE, completions, responses, embeddings, moderations, image generations, audio transcriptions, audio translations, fine-tuning jobs, assistants, and realtime sessions when provider, model, and credential records are configured |
+| Upstream proxying | Partially implemented; stateful gateway relays OpenAI-compatible chat, chat SSE, completions, responses, embeddings, moderations, image generations, audio transcriptions, audio translations, fine-tuning jobs, assistants, realtime sessions, and evals when provider, model, and credential records are configured |
 | Model discovery | Driven by the local catalog, not upstream auto-sync |
 | Routing | Deterministic candidate selection from catalog models |
 | Provider dispatch | Executed through `sdkwork-api-provider-core` registry abstractions with `adapter_kind` plus `base_url` resolution; `openai`, `openrouter`, and `ollama` are currently registered |

@@ -6,6 +6,7 @@ use sdkwork_api_contract_openai::audio::{CreateTranscriptionRequest, CreateTrans
 use sdkwork_api_contract_openai::chat_completions::CreateChatCompletionRequest;
 use sdkwork_api_contract_openai::completions::CreateCompletionRequest;
 use sdkwork_api_contract_openai::embeddings::CreateEmbeddingRequest;
+use sdkwork_api_contract_openai::evals::CreateEvalRequest;
 use sdkwork_api_contract_openai::fine_tuning::CreateFineTuningJobRequest;
 use sdkwork_api_contract_openai::images::CreateImageRequest;
 use sdkwork_api_contract_openai::moderations::CreateModerationRequest;
@@ -134,6 +135,10 @@ impl OpenAiProviderAdapter {
             .await
     }
 
+    pub async fn evals(&self, api_key: &str, request: &CreateEvalRequest) -> Result<Value> {
+        self.post_json("/v1/evals", api_key, request).await
+    }
+
     async fn post_json<T: serde::Serialize>(
         &self,
         path: &str,
@@ -217,6 +222,9 @@ impl ProviderExecutionAdapter for OpenAiProviderAdapter {
             ProviderRequest::RealtimeSessions(request) => Ok(ProviderOutput::Json(
                 self.realtime_sessions(api_key, request).await?,
             )),
+            ProviderRequest::Evals(request) => {
+                Ok(ProviderOutput::Json(self.evals(api_key, request).await?))
+            }
         }
     }
 }

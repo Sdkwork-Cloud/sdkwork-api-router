@@ -355,6 +355,38 @@ async fn adapter_posts_realtime_sessions_to_openai_compatible_upstream() {
     );
 }
 
+#[tokio::test]
+async fn adapter_posts_evals_to_openai_compatible_upstream() {
+    let state = CaptureState::default();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+
+    let app = Router::new()
+        .route("/v1/evals", post(capture_eval_request))
+        .with_state(state.clone());
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let adapter =
+        sdkwork_api_provider_openai::OpenAiProviderAdapter::new(format!("http://{address}"));
+    let request =
+        sdkwork_api_contract_openai::evals::CreateEvalRequest::new("qa-benchmark", "file_1");
+
+    let response = adapter.evals("sk-upstream-openai", &request).await.unwrap();
+
+    assert_eq!(response["id"], "eval_upstream");
+    assert_eq!(
+        state.authorization.lock().unwrap().as_deref(),
+        Some("Bearer sk-upstream-openai")
+    );
+    assert_eq!(
+        state.body.lock().unwrap().as_ref().unwrap()["name"],
+        "qa-benchmark"
+    );
+}
+
 async fn capture_chat_request(
     State(state): State<CaptureState>,
     headers: HeaderMap,
@@ -537,6 +569,28 @@ async fn capture_realtime_session_request(
             "id":"sess_upstream",
             "object":"realtime.session",
             "model":"gpt-4o-realtime-preview"
+        })),
+    )
+}
+
+async fn capture_eval_request(
+    State(state): State<CaptureState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> (StatusCode, Json<Value>) {
+    *state.authorization.lock().unwrap() = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+    *state.body.lock().unwrap() = Some(body);
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "id":"eval_upstream",
+            "object":"eval",
+            "name":"qa-benchmark",
+            "status":"queued"
         })),
     )
 }

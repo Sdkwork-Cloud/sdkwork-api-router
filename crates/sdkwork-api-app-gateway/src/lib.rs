@@ -10,6 +10,7 @@ use sdkwork_api_contract_openai::chat_completions::CreateChatCompletionRequest;
 use sdkwork_api_contract_openai::completions::{CompletionObject, CreateCompletionRequest};
 use sdkwork_api_contract_openai::embeddings::CreateEmbeddingRequest;
 use sdkwork_api_contract_openai::embeddings::CreateEmbeddingResponse;
+use sdkwork_api_contract_openai::evals::{CreateEvalRequest, EvalObject};
 use sdkwork_api_contract_openai::fine_tuning::{CreateFineTuningJobRequest, FineTuningJobObject};
 use sdkwork_api_contract_openai::images::{CreateImageRequest, ImageObject, ImagesResponse};
 use sdkwork_api_contract_openai::models::{ListModelsResponse, ModelObject};
@@ -374,6 +375,33 @@ pub async fn relay_realtime_session_from_store(
     .await
 }
 
+pub async fn relay_eval_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    request: &CreateEvalRequest,
+) -> Result<Option<Value>> {
+    let decision = simulate_route_with_store(store, "evals", &request.name).await?;
+    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
+        return Ok(None);
+    };
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &provider.adapter_kind,
+        provider.base_url,
+        &api_key,
+        ProviderRequest::Evals(request),
+    )
+    .await
+}
+
 pub fn create_chat_completion(
     _tenant_id: &str,
     _project_id: &str,
@@ -466,6 +494,10 @@ pub fn create_realtime_session(
     model: &str,
 ) -> Result<RealtimeSessionObject> {
     Ok(RealtimeSessionObject::new("sess_1", model))
+}
+
+pub fn create_eval(_tenant_id: &str, _project_id: &str, name: &str) -> Result<EvalObject> {
+    Ok(EvalObject::new("eval_1", name))
 }
 
 fn default_provider_registry() -> ProviderRegistry {

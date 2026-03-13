@@ -5,6 +5,7 @@ use sdkwork_api_contract_openai::audio::{CreateTranscriptionRequest, CreateTrans
 use sdkwork_api_contract_openai::chat_completions::CreateChatCompletionRequest;
 use sdkwork_api_contract_openai::completions::CreateCompletionRequest;
 use sdkwork_api_contract_openai::embeddings::CreateEmbeddingRequest;
+use sdkwork_api_contract_openai::evals::CreateEvalRequest;
 use sdkwork_api_contract_openai::fine_tuning::CreateFineTuningJobRequest;
 use sdkwork_api_contract_openai::images::CreateImageRequest;
 use sdkwork_api_contract_openai::moderations::CreateModerationRequest;
@@ -130,6 +131,10 @@ impl OllamaProviderAdapter {
     ) -> Result<Value> {
         self.delegate.realtime_sessions(api_key, request).await
     }
+
+    pub async fn evals(&self, api_key: &str, request: &CreateEvalRequest) -> Result<Value> {
+        self.delegate.evals(api_key, request).await
+    }
 }
 
 impl ProviderAdapter for OllamaProviderAdapter {
@@ -178,6 +183,9 @@ impl ProviderExecutionAdapter for OllamaProviderAdapter {
             ProviderRequest::RealtimeSessions(request) => Ok(ProviderOutput::Json(
                 self.realtime_sessions(api_key, request).await?,
             )),
+            ProviderRequest::Evals(request) => {
+                Ok(ProviderOutput::Json(self.evals(api_key, request).await?))
+            }
         }
     }
 }
