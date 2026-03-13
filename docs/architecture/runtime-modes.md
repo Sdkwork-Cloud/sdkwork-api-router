@@ -36,7 +36,12 @@ The current repository includes:
 - SQLite-backed control-plane persistence for identity, catalog, usage, and billing slices
 - encrypted upstream credential persistence and runtime secret resolution
 - stateful OpenAI-compatible upstream relay for chat completions, responses, embeddings, and chat SSE when provider configuration is present
-- runtime config modeling for storage dialect inference and secret backend strategy selection
-- environment-driven standalone config loading for bind addresses, database URL, secret backend, and credential master key
+- runtime config modeling for storage dialect inference plus secret backend strategy selection
+- three live secret persistence strategies:
+  - `database_encrypted`
+  - `local_encrypted_file`
+  - `os_keyring`
+- per-credential backend tracking so previously stored secrets can still be resolved after a default backend switch
+- environment-driven standalone config loading for bind addresses, database URL, secret backend, credential master key, local secret file path, and keyring service name
 
 The runtime host is still intentionally lightweight, but the core gateway, admin, routing, credential, and provider relay slices now run against the same Rust workspace and can be assembled in-process for embedded mode.

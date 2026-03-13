@@ -8,6 +8,7 @@ use axum::{
     Json, Router,
 };
 use sdkwork_api_app_billing::persist_ledger_entry;
+use sdkwork_api_app_credential::CredentialSecretManager;
 use sdkwork_api_app_gateway::create_chat_completion;
 use sdkwork_api_app_gateway::list_models;
 use sdkwork_api_app_gateway::{
@@ -26,7 +27,7 @@ use sqlx::SqlitePool;
 #[derive(Debug, Clone)]
 pub struct GatewayApiState {
     store: SqliteAdminStore,
-    credential_master_key: String,
+    secret_manager: CredentialSecretManager,
 }
 
 impl GatewayApiState {
@@ -37,7 +38,14 @@ impl GatewayApiState {
     pub fn with_master_key(pool: SqlitePool, credential_master_key: impl Into<String>) -> Self {
         Self {
             store: SqliteAdminStore::new(pool),
-            credential_master_key: credential_master_key.into(),
+            secret_manager: CredentialSecretManager::database_encrypted(credential_master_key),
+        }
+    }
+
+    pub fn with_secret_manager(pool: SqlitePool, secret_manager: CredentialSecretManager) -> Self {
+        Self {
+            store: SqliteAdminStore::new(pool),
+            secret_manager,
         }
     }
 }
@@ -59,6 +67,16 @@ pub fn gateway_router_with_pool_and_master_key(
     pool: SqlitePool,
     credential_master_key: impl Into<String>,
 ) -> Router {
+    gateway_router_with_pool_and_secret_manager(
+        pool,
+        CredentialSecretManager::database_encrypted(credential_master_key),
+    )
+}
+
+pub fn gateway_router_with_pool_and_secret_manager(
+    pool: SqlitePool,
+    secret_manager: CredentialSecretManager,
+) -> Router {
     Router::new()
         .route("/health", get(|| async { "ok" }))
         .route("/v1/models", get(list_models_from_store_handler))
@@ -68,10 +86,7 @@ pub fn gateway_router_with_pool_and_master_key(
         )
         .route("/v1/responses", post(responses_with_state_handler))
         .route("/v1/embeddings", post(embeddings_with_state_handler))
-        .with_state(GatewayApiState::with_master_key(
-            pool,
-            credential_master_key,
-        ))
+        .with_state(GatewayApiState::with_secret_manager(pool, secret_manager))
 }
 
 async fn list_models_handler() -> Json<sdkwork_api_contract_openai::models::ListModelsResponse> {
@@ -131,7 +146,7 @@ async fn chat_completions_with_state_handler(
     if request.stream.unwrap_or(false) {
         match relay_chat_completion_stream_from_store(
             &state.store,
-            &state.credential_master_key,
+            &state.secret_manager,
             "tenant-1",
             "project-1",
             &request,
@@ -169,7 +184,7 @@ async fn chat_completions_with_state_handler(
     } else {
         match relay_chat_completion_from_store(
             &state.store,
-            &state.credential_master_key,
+            &state.secret_manager,
             "tenant-1",
             "project-1",
             &request,
@@ -253,7 +268,7 @@ async fn responses_with_state_handler(
 ) -> Response {
     match relay_response_from_store(
         &state.store,
-        &state.credential_master_key,
+        &state.secret_manager,
         "tenant-1",
         "project-1",
         &request,
@@ -305,7 +320,7 @@ async fn embeddings_with_state_handler(
 ) -> Response {
     match relay_embedding_from_store(
         &state.store,
-        &state.credential_master_key,
+        &state.secret_manager,
         "tenant-1",
         "project-1",
         &request,

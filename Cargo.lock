@@ -8,6 +8,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "sdkwork-api-app-credential",
  "sdkwork-api-config",
  "sdkwork-api-interface-admin",
  "sdkwork-api-storage-sqlite",
@@ -397,6 +398,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "sdkwork-api-app-credential",
  "sdkwork-api-config",
  "sdkwork-api-interface-http",
  "sdkwork-api-storage-sqlite",
@@ -727,6 +729,16 @@ checksum = "b49715b7073f385ba4bc528e5747d02e66cb39c6146efb66b781f131f0fb399c"
 dependencies = [
  "once_cell",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "keyring"
+version = "3.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eebcc3aff044e5944a8fbaf69eb277d11986064cba30c468730e8b9909fb551c"
+dependencies = [
+ "log",
+ "zeroize",
 ]
 
 [[package]]
@@ -1145,6 +1157,8 @@ dependencies = [
  "anyhow",
  "sdkwork-api-domain-credential",
  "sdkwork-api-secret-core",
+ "sdkwork-api-secret-keyring",
+ "sdkwork-api-secret-local",
  "sdkwork-api-storage-sqlite",
  "tokio",
 ]
@@ -1218,6 +1232,7 @@ name = "sdkwork-api-config"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "sdkwork-api-secret-core",
  "sdkwork-api-storage-core",
 ]
 
@@ -1314,6 +1329,7 @@ dependencies = [
  "axum",
  "reqwest",
  "sdkwork-api-app-billing",
+ "sdkwork-api-app-credential",
  "sdkwork-api-app-gateway",
  "sdkwork-api-app-routing",
  "sdkwork-api-app-usage",
@@ -1409,15 +1425,28 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64",
+ "serde",
 ]
 
 [[package]]
 name = "sdkwork-api-secret-keyring"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "keyring",
+ "sdkwork-api-secret-core",
+ "serde_json",
+]
 
 [[package]]
 name = "sdkwork-api-secret-local"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "sdkwork-api-secret-core",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "sdkwork-api-storage-core"

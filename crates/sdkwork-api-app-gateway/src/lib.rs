@@ -1,5 +1,5 @@
 use anyhow::Result;
-use sdkwork_api_app_credential::resolve_provider_secret;
+use sdkwork_api_app_credential::{resolve_provider_secret_with_manager, CredentialSecretManager};
 use sdkwork_api_app_routing::simulate_route_with_store;
 use sdkwork_api_contract_openai::chat_completions::ChatCompletionResponse;
 use sdkwork_api_contract_openai::chat_completions::CreateChatCompletionRequest;
@@ -41,7 +41,7 @@ pub async fn list_models_from_store(
 
 pub async fn relay_chat_completion_from_store(
     store: &SqliteAdminStore,
-    master_key: &str,
+    secret_manager: &CredentialSecretManager,
     tenant_id: &str,
     _project_id: &str,
     request: &CreateChatCompletionRequest,
@@ -50,7 +50,9 @@ pub async fn relay_chat_completion_from_store(
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
-    let Some(api_key) = resolve_provider_secret(store, master_key, tenant_id, &provider.id).await?
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
     else {
         return Ok(None);
     };
@@ -66,7 +68,7 @@ pub async fn relay_chat_completion_from_store(
 
 pub async fn relay_chat_completion_stream_from_store(
     store: &SqliteAdminStore,
-    master_key: &str,
+    secret_manager: &CredentialSecretManager,
     tenant_id: &str,
     _project_id: &str,
     request: &CreateChatCompletionRequest,
@@ -75,7 +77,9 @@ pub async fn relay_chat_completion_stream_from_store(
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
-    let Some(api_key) = resolve_provider_secret(store, master_key, tenant_id, &provider.id).await?
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
     else {
         return Ok(None);
     };
@@ -91,7 +95,7 @@ pub async fn relay_chat_completion_stream_from_store(
 
 pub async fn relay_response_from_store(
     store: &SqliteAdminStore,
-    master_key: &str,
+    secret_manager: &CredentialSecretManager,
     tenant_id: &str,
     _project_id: &str,
     request: &CreateResponseRequest,
@@ -100,7 +104,9 @@ pub async fn relay_response_from_store(
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
-    let Some(api_key) = resolve_provider_secret(store, master_key, tenant_id, &provider.id).await?
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
     else {
         return Ok(None);
     };
@@ -116,7 +122,7 @@ pub async fn relay_response_from_store(
 
 pub async fn relay_embedding_from_store(
     store: &SqliteAdminStore,
-    master_key: &str,
+    secret_manager: &CredentialSecretManager,
     tenant_id: &str,
     _project_id: &str,
     request: &CreateEmbeddingRequest,
@@ -125,7 +131,9 @@ pub async fn relay_embedding_from_store(
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
-    let Some(api_key) = resolve_provider_secret(store, master_key, tenant_id, &provider.id).await?
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
     else {
         return Ok(None);
     };

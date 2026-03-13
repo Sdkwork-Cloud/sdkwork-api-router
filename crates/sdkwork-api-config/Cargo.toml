@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+sdkwork-api-secret-core = { path = "../sdkwork-api-secret-core" }
 sdkwork-api-storage-core = { path = "../sdkwork-api-storage-core" }
 
 [lib]

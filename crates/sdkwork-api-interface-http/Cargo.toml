@@ -10,6 +10,7 @@ axum.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 sdkwork-api-app-billing = { path = "../sdkwork-api-app-billing" }
+sdkwork-api-app-credential = { path = "../sdkwork-api-app-credential" }
 sdkwork-api-app-gateway = { path = "../sdkwork-api-app-gateway" }
 sdkwork-api-app-routing = { path = "../sdkwork-api-app-routing" }
 sdkwork-api-app-usage = { path = "../sdkwork-api-app-usage" }

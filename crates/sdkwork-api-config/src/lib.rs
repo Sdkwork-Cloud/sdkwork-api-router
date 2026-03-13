@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
+pub use sdkwork_api_secret_core::SecretBackendKind;
 use sdkwork_api_storage_core::StorageDialect;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -10,33 +11,6 @@ pub enum RuntimeMode {
     Embedded,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum SecretBackendKind {
-    #[default]
-    DatabaseEncrypted,
-    LocalEncryptedFile,
-    OsKeyring,
-}
-
-impl SecretBackendKind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::DatabaseEncrypted => "database_encrypted",
-            Self::LocalEncryptedFile => "local_encrypted_file",
-            Self::OsKeyring => "os_keyring",
-        }
-    }
-
-    pub fn parse(value: &str) -> Result<Self> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "database_encrypted" => Ok(Self::DatabaseEncrypted),
-            "local_encrypted_file" => Ok(Self::LocalEncryptedFile),
-            "os_keyring" => Ok(Self::OsKeyring),
-            other => Err(anyhow!("unsupported secret backend: {other}")),
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StandaloneConfig {
     pub gateway_bind: String,
@@ -44,6 +18,8 @@ pub struct StandaloneConfig {
     pub database_url: String,
     pub secret_backend: SecretBackendKind,
     pub credential_master_key: String,
+    pub secret_local_file: String,
+    pub secret_keyring_service: String,
 }
 
 impl Default for StandaloneConfig {
@@ -54,6 +30,8 @@ impl Default for StandaloneConfig {
             database_url: "sqlite://sdkwork-api-server.db".to_owned(),
             secret_backend: SecretBackendKind::DatabaseEncrypted,
             credential_master_key: "local-dev-master-key".to_owned(),
+            secret_local_file: "sdkwork-api-secrets.json".to_owned(),
+            secret_keyring_service: "sdkwork-api-server".to_owned(),
         }
     }
 }
@@ -99,6 +77,14 @@ impl StandaloneConfig {
                 .get("SDKWORK_CREDENTIAL_MASTER_KEY")
                 .cloned()
                 .unwrap_or(default.credential_master_key),
+            secret_local_file: values
+                .get("SDKWORK_SECRET_LOCAL_FILE")
+                .cloned()
+                .unwrap_or(default.secret_local_file),
+            secret_keyring_service: values
+                .get("SDKWORK_SECRET_KEYRING_SERVICE")
+                .cloned()
+                .unwrap_or(default.secret_keyring_service),
         })
     }
 

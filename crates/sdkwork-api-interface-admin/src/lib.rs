@@ -9,7 +9,8 @@ use sdkwork_api_app_catalog::{
     list_channels, list_model_entries, list_providers, persist_channel, persist_model,
     persist_provider,
 };
-use sdkwork_api_app_credential::{list_credentials, persist_credential_with_secret};
+use sdkwork_api_app_credential::CredentialSecretManager;
+use sdkwork_api_app_credential::{list_credentials, persist_credential_with_secret_and_manager};
 use sdkwork_api_app_identity::{
     issue_jwt, list_gateway_api_keys, persist_gateway_api_key, verify_jwt, Claims,
     CreatedGatewayApiKey,
@@ -30,7 +31,7 @@ use sqlx::SqlitePool;
 #[derive(Debug, Clone)]
 pub struct AdminApiState {
     store: SqliteAdminStore,
-    credential_master_key: String,
+    secret_manager: CredentialSecretManager,
 }
 
 impl AdminApiState {
@@ -41,7 +42,14 @@ impl AdminApiState {
     pub fn with_master_key(pool: SqlitePool, credential_master_key: impl Into<String>) -> Self {
         Self {
             store: SqliteAdminStore::new(pool),
-            credential_master_key: credential_master_key.into(),
+            secret_manager: CredentialSecretManager::database_encrypted(credential_master_key),
+        }
+    }
+
+    pub fn with_secret_manager(pool: SqlitePool, secret_manager: CredentialSecretManager) -> Self {
+        Self {
+            store: SqliteAdminStore::new(pool),
+            secret_manager,
         }
     }
 }
@@ -147,6 +155,16 @@ pub fn admin_router_with_pool_and_master_key(
     pool: SqlitePool,
     credential_master_key: impl Into<String>,
 ) -> Router {
+    admin_router_with_pool_and_secret_manager(
+        pool,
+        CredentialSecretManager::database_encrypted(credential_master_key),
+    )
+}
+
+pub fn admin_router_with_pool_and_secret_manager(
+    pool: SqlitePool,
+    secret_manager: CredentialSecretManager,
+) -> Router {
     Router::new()
         .route("/admin/health", get(|| async { "ok" }))
         .route("/admin/auth/login", post(login_handler))
@@ -183,7 +201,7 @@ pub fn admin_router_with_pool_and_master_key(
         .route("/admin/billing/ledger", get(list_ledger_entries_handler))
         .route("/admin/routing/policies", get(|| async { "policies" }))
         .route("/admin/routing/simulations", post(simulate_routing_handler))
-        .with_state(AdminApiState::with_master_key(pool, credential_master_key))
+        .with_state(AdminApiState::with_secret_manager(pool, secret_manager))
 }
 
 async fn login_handler(
@@ -252,9 +270,9 @@ async fn create_credential_handler(
     State(state): State<AdminApiState>,
     Json(request): Json<CreateCredentialRequest>,
 ) -> Result<(StatusCode, Json<UpstreamCredential>), StatusCode> {
-    let credential = persist_credential_with_secret(
+    let credential = persist_credential_with_secret_and_manager(
         &state.store,
-        &state.credential_master_key,
+        &state.secret_manager,
         &request.tenant_id,
         &request.provider_id,
         &request.key_reference,

@@ -77,3 +77,15 @@ fn builds_config_from_pairs() {
     assert_eq!(config.credential_master_key, "prod-master-key");
     assert_eq!(config.storage_dialect().unwrap(), StorageDialect::Postgres);
 }
+
+#[test]
+fn builds_secret_runtime_locations_from_pairs() {
+    let config = StandaloneConfig::from_pairs([
+        ("SDKWORK_SECRET_LOCAL_FILE", "D:/sdkwork/secrets.json"),
+        ("SDKWORK_SECRET_KEYRING_SERVICE", "sdkwork-api-server"),
+    ])
+    .unwrap();
+
+    assert_eq!(config.secret_local_file, "D:/sdkwork/secrets.json");
+    assert_eq!(config.secret_keyring_service, "sdkwork-api-server");
+}

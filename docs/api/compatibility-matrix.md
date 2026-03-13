@@ -57,7 +57,7 @@
 | Model discovery | Driven by the local catalog, not upstream auto-sync |
 | Routing | Deterministic candidate selection from catalog models |
 | Provider dispatch | Executed through `sdkwork-api-provider-core` registry abstractions with `adapter_kind` plus `base_url` resolution; `openai`, `openrouter`, and `ollama` are currently registered |
-| Credential handling | Upstream secrets are encrypted at rest and resolved with `credential_master_key` during execution |
+| Credential handling | Upstream secrets are encrypted at rest and resolved with `credential_master_key` during execution; active persistence backends are `database_encrypted`, `local_encrypted_file`, and `os_keyring` |
 | Usage tracking | Persisted through admin SQLite store |
 | Billing | Ledger entries booked from gateway-side request hooks |
 

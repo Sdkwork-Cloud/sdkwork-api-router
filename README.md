@@ -49,7 +49,11 @@ Backend:
 - Real upstream relay for stateful `/v1/responses` and `/v1/embeddings` when provider, model, and credential records are present
 - Stub fallback responses for unconfigured providers or unsupported adapter kinds
 - Routing simulation API backed by catalog model candidates
-- Encrypted upstream credential storage and runtime secret resolution through `credential_master_key`
+- Runtime-selectable upstream credential persistence with three local strategies:
+  - `database_encrypted`
+  - `local_encrypted_file`
+  - `os_keyring`
+- Per-credential backend binding and runtime secret resolution through `credential_master_key`
 - Usage and billing telemetry recording from stateful gateway handlers
 
 Console:
@@ -111,7 +115,13 @@ Example credential payload:
 }
 ```
 
-`secret_value` is encrypted before being stored in SQLite. The runtime resolves it with the configured `credential_master_key`.
+`secret_value` is now persisted according to the active secret backend:
+
+- `database_encrypted`: encrypted envelope stored in SQLite
+- `local_encrypted_file`: encrypted envelope stored in a local JSON file
+- `os_keyring`: encrypted envelope stored in the operating system keyring
+
+The credential binding itself remains in SQLite so routing and provider resolution stay catalog-driven. Gateway resolution uses the credential record's stored backend kind, so existing credentials remain readable even if the runtime default backend changes later.
 
 ## Runtime Configuration
 
@@ -121,6 +131,8 @@ Example credential payload:
 - inferred storage dialect via `storage_dialect()`
 - `secret_backend`
 - `credential_master_key`
+- `secret_local_file`
+- `secret_keyring_service`
 
 It can now be loaded from environment variables:
 
@@ -129,6 +141,8 @@ It can now be loaded from environment variables:
 - `SDKWORK_DATABASE_URL`
 - `SDKWORK_SECRET_BACKEND`
 - `SDKWORK_CREDENTIAL_MASTER_KEY`
+- `SDKWORK_SECRET_LOCAL_FILE`
+- `SDKWORK_SECRET_KEYRING_SERVICE`
 
 Supported secret backend strategy identifiers are:
 

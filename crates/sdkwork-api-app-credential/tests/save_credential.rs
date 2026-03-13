@@ -1,7 +1,37 @@
 use sdkwork_api_app_credential::{
-    persist_credential_with_secret, resolve_credential_secret, save_credential,
+    persist_credential_with_secret, persist_credential_with_secret_and_manager,
+    resolve_credential_secret, resolve_provider_secret_with_manager, save_credential,
+    CredentialSecretManager,
 };
+use sdkwork_api_secret_keyring::KeyringBackend;
 use sdkwork_api_storage_sqlite::{run_migrations, SqliteAdminStore};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+#[derive(Debug, Default)]
+struct MemoryKeyringBackend {
+    entries: Mutex<HashMap<(String, String), String>>,
+}
+
+impl KeyringBackend for MemoryKeyringBackend {
+    fn set_password(&self, service: &str, username: &str, secret: &str) -> anyhow::Result<()> {
+        self.entries
+            .lock()
+            .unwrap()
+            .insert((service.to_owned(), username.to_owned()), secret.to_owned());
+        Ok(())
+    }
+
+    fn get_password(&self, service: &str, username: &str) -> anyhow::Result<Option<String>> {
+        Ok(self
+            .entries
+            .lock()
+            .unwrap()
+            .get(&(service.to_owned(), username.to_owned()))
+            .cloned())
+    }
+}
 
 #[test]
 fn saves_upstream_credential_binding() {
@@ -39,4 +69,79 @@ async fn persists_encrypted_credential_and_resolves_plaintext_secret() {
     .unwrap();
 
     assert_eq!(secret, "sk-upstream-openai");
+}
+
+#[tokio::test]
+async fn local_file_backend_persists_binding_and_resolves_plaintext_secret() {
+    let pool = run_migrations("sqlite::memory:").await.unwrap();
+    let store = SqliteAdminStore::new(pool);
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "sdkwork-api-credential-{}-{unique}.json",
+        std::process::id()
+    ));
+    let manager = CredentialSecretManager::local_encrypted_file("local-dev-master-key", &path);
+
+    let credential = persist_credential_with_secret_and_manager(
+        &store,
+        &manager,
+        "tenant-1",
+        "provider-openai-official",
+        "cred-openai",
+        "sk-upstream-openai",
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(credential.secret_backend, "local_encrypted_file");
+
+    let secret = resolve_provider_secret_with_manager(
+        &store,
+        &manager,
+        "tenant-1",
+        "provider-openai-official",
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(secret.as_deref(), Some("sk-upstream-openai"));
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn keyring_backend_persists_binding_and_resolves_plaintext_secret() {
+    let pool = run_migrations("sqlite::memory:").await.unwrap();
+    let store = SqliteAdminStore::new(pool);
+    let manager = CredentialSecretManager::os_keyring_with_backend(
+        "local-dev-master-key",
+        "sdkwork-api-server-test",
+        Arc::new(MemoryKeyringBackend::default()),
+    );
+
+    let credential = persist_credential_with_secret_and_manager(
+        &store,
+        &manager,
+        "tenant-1",
+        "provider-openai-official",
+        "cred-openai",
+        "sk-upstream-openai",
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(credential.secret_backend, "os_keyring");
+
+    let secret = resolve_provider_secret_with_manager(
+        &store,
+        &manager,
+        "tenant-1",
+        "provider-openai-official",
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(secret.as_deref(), Some("sk-upstream-openai"));
 }
