@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use async_trait::async_trait;
+use sdkwork_api_contract_openai::assistants::CreateAssistantRequest;
 use sdkwork_api_contract_openai::audio::{CreateTranscriptionRequest, CreateTranslationRequest};
 use sdkwork_api_contract_openai::chat_completions::CreateChatCompletionRequest;
 use sdkwork_api_contract_openai::completions::CreateCompletionRequest;
@@ -10,6 +11,7 @@ use sdkwork_api_contract_openai::embeddings::CreateEmbeddingRequest;
 use sdkwork_api_contract_openai::fine_tuning::CreateFineTuningJobRequest;
 use sdkwork_api_contract_openai::images::CreateImageRequest;
 use sdkwork_api_contract_openai::moderations::CreateModerationRequest;
+use sdkwork_api_contract_openai::realtime::CreateRealtimeSessionRequest;
 use sdkwork_api_contract_openai::responses::CreateResponseRequest;
 use serde_json::Value;
 
@@ -34,6 +36,8 @@ pub enum ProviderRequest<'a> {
     AudioTranscriptions(&'a CreateTranscriptionRequest),
     AudioTranslations(&'a CreateTranslationRequest),
     FineTuningJobs(&'a CreateFineTuningJobRequest),
+    Assistants(&'a CreateAssistantRequest),
+    RealtimeSessions(&'a CreateRealtimeSessionRequest),
 }
 
 pub enum ProviderOutput {

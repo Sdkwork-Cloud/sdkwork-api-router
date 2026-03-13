@@ -281,6 +281,80 @@ async fn adapter_posts_fine_tuning_jobs_to_openai_compatible_upstream() {
     );
 }
 
+#[tokio::test]
+async fn adapter_posts_assistants_to_openai_compatible_upstream() {
+    let state = CaptureState::default();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+
+    let app = Router::new()
+        .route("/v1/assistants", post(capture_assistant_request))
+        .with_state(state.clone());
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let adapter =
+        sdkwork_api_provider_openai::OpenAiProviderAdapter::new(format!("http://{address}"));
+    let request =
+        sdkwork_api_contract_openai::assistants::CreateAssistantRequest::new("Support", "gpt-4.1");
+
+    let response = adapter
+        .assistants("sk-upstream-openai", &request)
+        .await
+        .unwrap();
+
+    assert_eq!(response["id"], "asst_upstream");
+    assert_eq!(
+        state.authorization.lock().unwrap().as_deref(),
+        Some("Bearer sk-upstream-openai")
+    );
+    assert_eq!(
+        state.body.lock().unwrap().as_ref().unwrap()["name"],
+        "Support"
+    );
+}
+
+#[tokio::test]
+async fn adapter_posts_realtime_sessions_to_openai_compatible_upstream() {
+    let state = CaptureState::default();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+
+    let app = Router::new()
+        .route(
+            "/v1/realtime/sessions",
+            post(capture_realtime_session_request),
+        )
+        .with_state(state.clone());
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let adapter =
+        sdkwork_api_provider_openai::OpenAiProviderAdapter::new(format!("http://{address}"));
+    let request = sdkwork_api_contract_openai::realtime::CreateRealtimeSessionRequest::new(
+        "gpt-4o-realtime-preview",
+    );
+
+    let response = adapter
+        .realtime_sessions("sk-upstream-openai", &request)
+        .await
+        .unwrap();
+
+    assert_eq!(response["id"], "sess_upstream");
+    assert_eq!(
+        state.authorization.lock().unwrap().as_deref(),
+        Some("Bearer sk-upstream-openai")
+    );
+    assert_eq!(
+        state.body.lock().unwrap().as_ref().unwrap()["model"],
+        "gpt-4o-realtime-preview"
+    );
+}
+
 async fn capture_chat_request(
     State(state): State<CaptureState>,
     headers: HeaderMap,
@@ -420,6 +494,49 @@ async fn capture_fine_tuning_request(
             "object":"fine_tuning.job",
             "model":"gpt-4.1-mini",
             "status":"queued"
+        })),
+    )
+}
+
+async fn capture_assistant_request(
+    State(state): State<CaptureState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> (StatusCode, Json<Value>) {
+    *state.authorization.lock().unwrap() = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+    *state.body.lock().unwrap() = Some(body);
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "id":"asst_upstream",
+            "object":"assistant",
+            "name":"Support",
+            "model":"gpt-4.1"
+        })),
+    )
+}
+
+async fn capture_realtime_session_request(
+    State(state): State<CaptureState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> (StatusCode, Json<Value>) {
+    *state.authorization.lock().unwrap() = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+    *state.body.lock().unwrap() = Some(body);
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "id":"sess_upstream",
+            "object":"realtime.session",
+            "model":"gpt-4o-realtime-preview"
         })),
     )
 }

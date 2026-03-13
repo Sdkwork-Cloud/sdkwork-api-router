@@ -1,6 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use reqwest::Client;
+use sdkwork_api_contract_openai::assistants::CreateAssistantRequest;
 use sdkwork_api_contract_openai::audio::{CreateTranscriptionRequest, CreateTranslationRequest};
 use sdkwork_api_contract_openai::chat_completions::CreateChatCompletionRequest;
 use sdkwork_api_contract_openai::completions::CreateCompletionRequest;
@@ -8,6 +9,7 @@ use sdkwork_api_contract_openai::embeddings::CreateEmbeddingRequest;
 use sdkwork_api_contract_openai::fine_tuning::CreateFineTuningJobRequest;
 use sdkwork_api_contract_openai::images::CreateImageRequest;
 use sdkwork_api_contract_openai::moderations::CreateModerationRequest;
+use sdkwork_api_contract_openai::realtime::CreateRealtimeSessionRequest;
 use sdkwork_api_contract_openai::responses::CreateResponseRequest;
 use sdkwork_api_domain_catalog::ModelCatalogEntry;
 use sdkwork_api_provider_core::{
@@ -115,6 +117,23 @@ impl OpenAiProviderAdapter {
             .await
     }
 
+    pub async fn assistants(
+        &self,
+        api_key: &str,
+        request: &CreateAssistantRequest,
+    ) -> Result<Value> {
+        self.post_json("/v1/assistants", api_key, request).await
+    }
+
+    pub async fn realtime_sessions(
+        &self,
+        api_key: &str,
+        request: &CreateRealtimeSessionRequest,
+    ) -> Result<Value> {
+        self.post_json("/v1/realtime/sessions", api_key, request)
+            .await
+    }
+
     async fn post_json<T: serde::Serialize>(
         &self,
         path: &str,
@@ -191,6 +210,12 @@ impl ProviderExecutionAdapter for OpenAiProviderAdapter {
             )),
             ProviderRequest::FineTuningJobs(request) => Ok(ProviderOutput::Json(
                 self.fine_tuning_jobs(api_key, request).await?,
+            )),
+            ProviderRequest::Assistants(request) => Ok(ProviderOutput::Json(
+                self.assistants(api_key, request).await?,
+            )),
+            ProviderRequest::RealtimeSessions(request) => Ok(ProviderOutput::Json(
+                self.realtime_sessions(api_key, request).await?,
             )),
         }
     }

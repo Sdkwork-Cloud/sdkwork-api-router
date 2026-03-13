@@ -11,23 +11,27 @@ use axum::{
 };
 use sdkwork_api_app_billing::persist_ledger_entry;
 use sdkwork_api_app_credential::CredentialSecretManager;
+use sdkwork_api_app_gateway::create_assistant;
 use sdkwork_api_app_gateway::create_chat_completion;
 use sdkwork_api_app_gateway::create_completion;
 use sdkwork_api_app_gateway::create_fine_tuning_job;
 use sdkwork_api_app_gateway::create_image_generation;
 use sdkwork_api_app_gateway::create_moderation;
+use sdkwork_api_app_gateway::create_realtime_session;
 use sdkwork_api_app_gateway::create_transcription;
 use sdkwork_api_app_gateway::create_translation;
 use sdkwork_api_app_gateway::list_models;
 use sdkwork_api_app_gateway::{
-    create_embedding, create_response, list_models_from_store, relay_chat_completion_from_store,
-    relay_chat_completion_stream_from_store, relay_completion_from_store,
-    relay_embedding_from_store, relay_fine_tuning_job_from_store,
-    relay_image_generation_from_store, relay_moderation_from_store, relay_response_from_store,
-    relay_transcription_from_store, relay_translation_from_store,
+    create_embedding, create_response, list_models_from_store, relay_assistant_from_store,
+    relay_chat_completion_from_store, relay_chat_completion_stream_from_store,
+    relay_completion_from_store, relay_embedding_from_store, relay_fine_tuning_job_from_store,
+    relay_image_generation_from_store, relay_moderation_from_store,
+    relay_realtime_session_from_store, relay_response_from_store, relay_transcription_from_store,
+    relay_translation_from_store,
 };
 use sdkwork_api_app_routing::simulate_route_with_store;
 use sdkwork_api_app_usage::persist_usage_record;
+use sdkwork_api_contract_openai::assistants::CreateAssistantRequest;
 use sdkwork_api_contract_openai::audio::{CreateTranscriptionRequest, CreateTranslationRequest};
 use sdkwork_api_contract_openai::chat_completions::CreateChatCompletionRequest;
 use sdkwork_api_contract_openai::completions::CreateCompletionRequest;
@@ -35,6 +39,7 @@ use sdkwork_api_contract_openai::embeddings::CreateEmbeddingRequest;
 use sdkwork_api_contract_openai::fine_tuning::CreateFineTuningJobRequest;
 use sdkwork_api_contract_openai::images::CreateImageRequest;
 use sdkwork_api_contract_openai::moderations::CreateModerationRequest;
+use sdkwork_api_contract_openai::realtime::CreateRealtimeSessionRequest;
 use sdkwork_api_contract_openai::responses::CreateResponseRequest;
 use sdkwork_api_contract_openai::streaming::SseFrame;
 use sdkwork_api_storage_core::AdminStore;
@@ -90,6 +95,8 @@ pub fn gateway_router() -> Router {
         .route("/v1/audio/transcriptions", post(transcriptions_handler))
         .route("/v1/audio/translations", post(translations_handler))
         .route("/v1/fine_tuning/jobs", post(fine_tuning_jobs_handler))
+        .route("/v1/assistants", post(assistants_handler))
+        .route("/v1/realtime/sessions", post(realtime_sessions_handler))
 }
 
 pub fn gateway_router_with_pool(pool: SqlitePool) -> Router {
@@ -153,6 +160,11 @@ pub fn gateway_router_with_store_and_secret_manager(
         .route(
             "/v1/fine_tuning/jobs",
             post(fine_tuning_jobs_with_state_handler),
+        )
+        .route("/v1/assistants", post(assistants_with_state_handler))
+        .route(
+            "/v1/realtime/sessions",
+            post(realtime_sessions_with_state_handler),
         )
         .with_state(GatewayApiState::with_store_and_secret_manager(
             store,
@@ -246,6 +258,23 @@ async fn fine_tuning_jobs_handler(
     ExtractJson(request): ExtractJson<CreateFineTuningJobRequest>,
 ) -> Json<sdkwork_api_contract_openai::fine_tuning::FineTuningJobObject> {
     Json(create_fine_tuning_job("tenant-1", "project-1", &request.model).expect("fine tuning"))
+}
+
+async fn assistants_handler(
+    ExtractJson(request): ExtractJson<CreateAssistantRequest>,
+) -> Json<sdkwork_api_contract_openai::assistants::AssistantObject> {
+    Json(
+        create_assistant("tenant-1", "project-1", &request.name, &request.model)
+            .expect("assistant"),
+    )
+}
+
+async fn realtime_sessions_handler(
+    ExtractJson(request): ExtractJson<CreateRealtimeSessionRequest>,
+) -> Json<sdkwork_api_contract_openai::realtime::RealtimeSessionObject> {
+    Json(
+        create_realtime_session("tenant-1", "project-1", &request.model).expect("realtime session"),
+    )
 }
 
 async fn chat_completions_with_state_handler(
@@ -850,6 +879,125 @@ async fn fine_tuning_jobs_with_state_handler(
     }
 
     Json(create_fine_tuning_job("tenant-1", "project-1", &request.model).expect("fine tuning"))
+        .into_response()
+}
+
+async fn assistants_with_state_handler(
+    State(state): State<GatewayApiState>,
+    ExtractJson(request): ExtractJson<CreateAssistantRequest>,
+) -> Response {
+    match relay_assistant_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &request,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(state.store.as_ref(), "assistants", &request.model, 20, 0.02)
+                .await
+                .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream assistant",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(state.store.as_ref(), "assistants", &request.model, 20, 0.02)
+        .await
+        .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(
+        create_assistant("tenant-1", "project-1", &request.name, &request.model)
+            .expect("assistant"),
+    )
+    .into_response()
+}
+
+async fn realtime_sessions_with_state_handler(
+    State(state): State<GatewayApiState>,
+    ExtractJson(request): ExtractJson<CreateRealtimeSessionRequest>,
+) -> Response {
+    match relay_realtime_session_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &request,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(
+                state.store.as_ref(),
+                "realtime_sessions",
+                &request.model,
+                30,
+                0.03,
+            )
+            .await
+            .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream realtime session",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(
+        state.store.as_ref(),
+        "realtime_sessions",
+        &request.model,
+        30,
+        0.03,
+    )
+    .await
+    .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(create_realtime_session("tenant-1", "project-1", &request.model).expect("realtime"))
         .into_response()
 }
 

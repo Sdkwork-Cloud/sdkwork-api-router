@@ -1,6 +1,7 @@
 use anyhow::Result;
 use sdkwork_api_app_credential::{resolve_provider_secret_with_manager, CredentialSecretManager};
 use sdkwork_api_app_routing::simulate_route_with_store;
+use sdkwork_api_contract_openai::assistants::{AssistantObject, CreateAssistantRequest};
 use sdkwork_api_contract_openai::audio::{
     CreateTranscriptionRequest, CreateTranslationRequest, TranscriptionObject, TranslationObject,
 };
@@ -15,6 +16,7 @@ use sdkwork_api_contract_openai::models::{ListModelsResponse, ModelObject};
 use sdkwork_api_contract_openai::moderations::{
     CreateModerationRequest, ModerationCategoryScores, ModerationResponse, ModerationResult,
 };
+use sdkwork_api_contract_openai::realtime::{CreateRealtimeSessionRequest, RealtimeSessionObject};
 use sdkwork_api_contract_openai::responses::CreateResponseRequest;
 use sdkwork_api_contract_openai::responses::ResponseObject;
 use sdkwork_api_provider_core::{ProviderRegistry, ProviderRequest};
@@ -318,6 +320,60 @@ pub async fn relay_fine_tuning_job_from_store(
     .await
 }
 
+pub async fn relay_assistant_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    request: &CreateAssistantRequest,
+) -> Result<Option<Value>> {
+    let decision = simulate_route_with_store(store, "assistants", &request.model).await?;
+    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
+        return Ok(None);
+    };
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &provider.adapter_kind,
+        provider.base_url,
+        &api_key,
+        ProviderRequest::Assistants(request),
+    )
+    .await
+}
+
+pub async fn relay_realtime_session_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    request: &CreateRealtimeSessionRequest,
+) -> Result<Option<Value>> {
+    let decision = simulate_route_with_store(store, "realtime_sessions", &request.model).await?;
+    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
+        return Ok(None);
+    };
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &provider.adapter_kind,
+        provider.base_url,
+        &api_key,
+        ProviderRequest::RealtimeSessions(request),
+    )
+    .await
+}
+
 pub fn create_chat_completion(
     _tenant_id: &str,
     _project_id: &str,
@@ -393,6 +449,23 @@ pub fn create_fine_tuning_job(
     model: &str,
 ) -> Result<FineTuningJobObject> {
     Ok(FineTuningJobObject::new("ftjob_1", model))
+}
+
+pub fn create_assistant(
+    _tenant_id: &str,
+    _project_id: &str,
+    name: &str,
+    model: &str,
+) -> Result<AssistantObject> {
+    Ok(AssistantObject::new("asst_1", name, model))
+}
+
+pub fn create_realtime_session(
+    _tenant_id: &str,
+    _project_id: &str,
+    model: &str,
+) -> Result<RealtimeSessionObject> {
+    Ok(RealtimeSessionObject::new("sess_1", model))
 }
 
 fn default_provider_registry() -> ProviderRegistry {
