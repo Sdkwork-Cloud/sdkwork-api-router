@@ -75,11 +75,14 @@ async fn models_route_reads_persisted_catalog_models() {
     let app = sdkwork_api_interface_http::gateway_router_with_pool(pool.clone());
 
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool);
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
     let create = admin_app
         .oneshot(
             Request::builder()
                 .method("POST")
                 .uri("/admin/models")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("authorization", format!("Bearer {admin_token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(
                     "{\"external_name\":\"gpt-4.1\",\"provider_id\":\"provider-openai-official\"}",
@@ -114,11 +117,14 @@ async fn model_retrieve_route_reads_persisted_catalog_model() {
     let app = sdkwork_api_interface_http::gateway_router_with_pool(pool.clone());
 
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool);
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
     let create = admin_app
         .oneshot(
             Request::builder()
                 .method("POST")
                 .uri("/admin/models")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("authorization", format!("Bearer {admin_token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(
                     "{\"external_name\":\"gpt-4.1\",\"provider_id\":\"provider-openai-official\"}",
@@ -153,12 +159,15 @@ async fn model_delete_route_removes_persisted_catalog_model() {
     let app = sdkwork_api_interface_http::gateway_router_with_pool(pool.clone());
 
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool);
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
     let create = admin_app
         .oneshot(
             Request::builder()
                 .method("POST")
                 .uri("/admin/models")
-                .header("content-type", "application/json")
+               .header("authorization", format!("Bearer {admin_token}"))
+ .header("authorization", format!("Bearer {admin_token}"))
+.header("content-type", "application/json")
                 .body(Body::from(
                     "{\"external_name\":\"ft:gpt-4.1:sdkwork\",\"provider_id\":\"provider-openai-official\"}",
                 ))

@@ -129,7 +129,7 @@ async fn create_and_list_providers_and_credentials() {
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    "{\"id\":\"provider-openai-official\",\"channel_id\":\"openai\",\"adapter_kind\":\"openai\",\"base_url\":\"https://api.openai.com\",\"display_name\":\"OpenAI Official\"}",
+                    "{\"id\":\"provider-openai-official\",\"channel_id\":\"openai\",\"channel_bindings\":[{\"channel_id\":\"openai\",\"is_primary\":true},{\"channel_id\":\"responses-compatible\",\"is_primary\":false}],\"adapter_kind\":\"openai\",\"base_url\":\"https://api.openai.com\",\"display_name\":\"OpenAI Official\"}",
                 ))
                 .unwrap(),
         )
@@ -173,6 +173,18 @@ async fn create_and_list_providers_and_credentials() {
     assert_eq!(providers_json[0]["channel_id"], "openai");
     assert_eq!(providers_json[0]["adapter_kind"], "openai");
     assert_eq!(providers_json[0]["base_url"], "https://api.openai.com");
+    assert_eq!(
+        providers_json[0]["channel_bindings"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        providers_json[0]["channel_bindings"][1]["channel_id"],
+        "responses-compatible"
+    );
+    assert_eq!(providers_json[0]["channel_bindings"][0]["is_primary"], true);
 
     let credentials = app
         .oneshot(
@@ -220,7 +232,7 @@ async fn create_and_list_models() {
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    "{\"external_name\":\"gpt-4.1\",\"provider_id\":\"provider-openai-official\"}",
+                    "{\"external_name\":\"gpt-4.1\",\"provider_id\":\"provider-openai-official\",\"capabilities\":[\"responses\",\"chat_completions\"],\"streaming\":true,\"context_window\":128000}",
                 ))
                 .unwrap(),
         )
@@ -243,6 +255,9 @@ async fn create_and_list_models() {
 
     let models_json = read_json(list).await;
     assert_eq!(models_json[0]["external_name"], "gpt-4.1");
+    assert_eq!(models_json[0]["capabilities"].as_array().unwrap().len(), 2);
+    assert_eq!(models_json[0]["streaming"], true);
+    assert_eq!(models_json[0]["context_window"], 128000);
 }
 
 #[tokio::test]

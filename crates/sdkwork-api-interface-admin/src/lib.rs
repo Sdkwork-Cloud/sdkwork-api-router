@@ -11,8 +11,8 @@ use axum::{
 };
 use sdkwork_api_app_billing::list_ledger_entries;
 use sdkwork_api_app_catalog::{
-    list_channels, list_model_entries, list_providers, persist_channel, persist_model,
-    persist_provider,
+    list_channels, list_model_entries, list_providers, persist_channel,
+    persist_model_with_metadata, persist_provider_with_bindings,
 };
 use sdkwork_api_app_credential::CredentialSecretManager;
 use sdkwork_api_app_credential::{list_credentials, persist_credential_with_secret_and_manager};
@@ -24,7 +24,9 @@ use sdkwork_api_app_routing::simulate_route_with_store;
 use sdkwork_api_app_tenant::{list_projects, list_tenants, persist_project, persist_tenant};
 use sdkwork_api_app_usage::list_usage_records;
 use sdkwork_api_domain_billing::LedgerEntry;
-use sdkwork_api_domain_catalog::{Channel, ModelCatalogEntry, ProxyProvider};
+use sdkwork_api_domain_catalog::{
+    Channel, ModelCapability, ModelCatalogEntry, ProviderChannelBinding, ProxyProvider,
+};
 use sdkwork_api_domain_credential::UpstreamCredential;
 use sdkwork_api_domain_identity::GatewayApiKeyRecord;
 use sdkwork_api_domain_tenant::{Project, Tenant};
@@ -129,9 +131,18 @@ struct CreateChannelRequest {
 struct CreateProviderRequest {
     id: String,
     channel_id: String,
+    #[serde(default)]
+    channel_bindings: Vec<CreateProviderChannelBindingRequest>,
     adapter_kind: String,
     base_url: String,
     display_name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateProviderChannelBindingRequest {
+    channel_id: String,
+    #[serde(default)]
+    is_primary: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -146,6 +157,11 @@ struct CreateCredentialRequest {
 struct CreateModelRequest {
     external_name: String,
     provider_id: String,
+    #[serde(default)]
+    capabilities: Vec<ModelCapability>,
+    #[serde(default)]
+    streaming: bool,
+    context_window: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -327,13 +343,21 @@ async fn create_provider_handler(
     State(state): State<AdminApiState>,
     Json(request): Json<CreateProviderRequest>,
 ) -> Result<(StatusCode, Json<ProxyProvider>), StatusCode> {
-    let provider = persist_provider(
+    let primary_channel_id = request
+        .channel_bindings
+        .iter()
+        .find(|binding| binding.is_primary)
+        .map(|binding| binding.channel_id.as_str())
+        .unwrap_or(&request.channel_id);
+    let bindings = provider_bindings_from_request(&request);
+    let provider = persist_provider_with_bindings(
         state.store.as_ref(),
         &request.id,
-        &request.channel_id,
+        primary_channel_id,
         &request.adapter_kind,
         &request.base_url,
         &request.display_name,
+        &bindings,
     )
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -383,10 +407,13 @@ async fn create_model_handler(
     State(state): State<AdminApiState>,
     Json(request): Json<CreateModelRequest>,
 ) -> Result<(StatusCode, Json<ModelCatalogEntry>), StatusCode> {
-    let model = persist_model(
+    let model = persist_model_with_metadata(
         state.store.as_ref(),
         &request.external_name,
         &request.provider_id,
+        &request.capabilities,
+        request.streaming,
+        request.context_window,
     )
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -499,4 +526,38 @@ async fn list_ledger_entries_handler(
         .await
         .map(Json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+fn provider_bindings_from_request(request: &CreateProviderRequest) -> Vec<ProviderChannelBinding> {
+    let mut bindings = if request.channel_bindings.is_empty() {
+        vec![ProviderChannelBinding::primary(
+            &request.id,
+            &request.channel_id,
+        )]
+    } else {
+        request
+            .channel_bindings
+            .iter()
+            .map(|binding| {
+                let base = ProviderChannelBinding::new(&request.id, &binding.channel_id);
+                if binding.is_primary {
+                    ProviderChannelBinding::primary(&request.id, &binding.channel_id)
+                } else {
+                    base
+                }
+            })
+            .collect::<Vec<_>>()
+    };
+
+    if !bindings
+        .iter()
+        .any(|binding| binding.channel_id == request.channel_id)
+    {
+        bindings.push(ProviderChannelBinding::primary(
+            &request.id,
+            &request.channel_id,
+        ));
+    }
+
+    bindings
 }

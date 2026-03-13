@@ -6,6 +6,8 @@ use serde_json::Value;
 use sqlx::SqlitePool;
 use tower::ServiceExt;
 
+mod support;
+
 async fn read_json(response: axum::response::Response) -> Value {
     let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
@@ -29,6 +31,7 @@ async fn stateful_gateway_requires_api_key_and_uses_request_context() {
 
     let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool.clone());
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool);
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
 
     let unauthorized = gateway_app
         .clone()
@@ -69,6 +72,7 @@ async fn stateful_gateway_requires_api_key_and_uses_request_context() {
             Request::builder()
                 .method("GET")
                 .uri("/admin/billing/ledger")
+                .header("authorization", format!("Bearer {admin_token}"))
                 .body(Body::empty())
                 .unwrap(),
         )

@@ -1,6 +1,8 @@
 use anyhow::Result;
 use sdkwork_api_domain_billing::LedgerEntry;
-use sdkwork_api_domain_catalog::{Channel, ModelCatalogEntry, ProxyProvider};
+use sdkwork_api_domain_catalog::{
+    Channel, ModelCapability, ModelCatalogEntry, ProviderChannelBinding, ProxyProvider,
+};
 use sdkwork_api_domain_credential::UpstreamCredential;
 use sdkwork_api_domain_identity::GatewayApiKeyRecord;
 use sdkwork_api_domain_tenant::{Project, Tenant};
@@ -73,6 +75,16 @@ pub async fn run_migrations(url: &str) -> Result<SqlitePool> {
     )
     .await?;
     sqlx::query(
+        "CREATE TABLE IF NOT EXISTS catalog_provider_channel_bindings (
+            provider_id TEXT NOT NULL,
+            channel_id TEXT NOT NULL,
+            is_primary INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (provider_id, channel_id)
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
         "CREATE TABLE IF NOT EXISTS credential_records (
             tenant_id TEXT NOT NULL,
             provider_id TEXT NOT NULL,
@@ -114,6 +126,27 @@ pub async fn run_migrations(url: &str) -> Result<SqlitePool> {
         )",
     )
     .execute(&pool)
+    .await?;
+    ensure_sqlite_column(
+        &pool,
+        "catalog_models",
+        "capabilities",
+        "capabilities TEXT NOT NULL DEFAULT '[]'",
+    )
+    .await?;
+    ensure_sqlite_column(
+        &pool,
+        "catalog_models",
+        "streaming",
+        "streaming INTEGER NOT NULL DEFAULT 0",
+    )
+    .await?;
+    ensure_sqlite_column(
+        &pool,
+        "catalog_models",
+        "context_window",
+        "context_window INTEGER",
+    )
     .await?;
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS usage_records (
@@ -167,6 +200,57 @@ async fn ensure_sqlite_column(
     Ok(())
 }
 
+fn provider_channel_bindings(provider: &ProxyProvider) -> Vec<ProviderChannelBinding> {
+    if provider.channel_bindings.is_empty() {
+        vec![ProviderChannelBinding::primary(
+            provider.id.clone(),
+            provider.channel_id.clone(),
+        )]
+    } else {
+        provider.channel_bindings.clone()
+    }
+}
+
+async fn load_provider_channel_bindings(
+    pool: &SqlitePool,
+    provider_id: &str,
+    channel_id: &str,
+) -> Result<Vec<ProviderChannelBinding>> {
+    let rows = sqlx::query_as::<_, (String, i64)>(
+        "SELECT channel_id, is_primary
+         FROM catalog_provider_channel_bindings
+         WHERE provider_id = ?
+         ORDER BY is_primary DESC, channel_id",
+    )
+    .bind(provider_id)
+    .fetch_all(pool)
+    .await?;
+
+    if rows.is_empty() {
+        return Ok(vec![ProviderChannelBinding::primary(
+            provider_id.to_owned(),
+            channel_id.to_owned(),
+        )]);
+    }
+
+    Ok(rows
+        .into_iter()
+        .map(|(binding_channel_id, is_primary)| ProviderChannelBinding {
+            provider_id: provider_id.to_owned(),
+            channel_id: binding_channel_id,
+            is_primary: is_primary != 0,
+        })
+        .collect())
+}
+
+fn encode_model_capabilities(capabilities: &[ModelCapability]) -> Result<String> {
+    Ok(serde_json::to_string(capabilities)?)
+}
+
+fn decode_model_capabilities(capabilities: &str) -> Result<Vec<ModelCapability>> {
+    Ok(serde_json::from_str(capabilities)?)
+}
+
 #[derive(Debug, Clone)]
 pub struct SqliteAdminStore {
     pool: SqlitePool,
@@ -213,6 +297,22 @@ impl SqliteAdminStore {
         .bind(&provider.display_name)
         .execute(&self.pool)
         .await?;
+        sqlx::query("DELETE FROM catalog_provider_channel_bindings WHERE provider_id = ?")
+            .bind(&provider.id)
+            .execute(&self.pool)
+            .await?;
+
+        for binding in provider_channel_bindings(provider) {
+            sqlx::query(
+                "INSERT INTO catalog_provider_channel_bindings (provider_id, channel_id, is_primary) VALUES (?, ?, ?)
+                 ON CONFLICT(provider_id, channel_id) DO UPDATE SET is_primary = excluded.is_primary",
+            )
+            .bind(&binding.provider_id)
+            .bind(&binding.channel_id)
+            .bind(if binding.is_primary { 1_i64 } else { 0_i64 })
+            .execute(&self.pool)
+            .await?;
+        }
         Ok(provider.clone())
     }
 
@@ -222,18 +322,20 @@ impl SqliteAdminStore {
         )
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows
-            .into_iter()
-            .map(
-                |(id, channel_id, adapter_kind, base_url, display_name)| ProxyProvider {
-                    id,
-                    channel_id,
-                    adapter_kind,
-                    base_url,
-                    display_name,
-                },
-            )
-            .collect())
+        let mut providers = Vec::with_capacity(rows.len());
+        for (id, channel_id, adapter_kind, base_url, display_name) in rows {
+            let channel_bindings =
+                load_provider_channel_bindings(&self.pool, &id, &channel_id).await?;
+            providers.push(ProxyProvider {
+                id,
+                channel_id,
+                adapter_kind,
+                base_url,
+                display_name,
+                channel_bindings,
+            });
+        }
+        Ok(providers)
     }
 
     pub async fn find_provider(&self, provider_id: &str) -> Result<Option<ProxyProvider>> {
@@ -244,15 +346,20 @@ impl SqliteAdminStore {
         .fetch_optional(&self.pool)
         .await?;
 
-        Ok(row.map(
-            |(id, channel_id, adapter_kind, base_url, display_name)| ProxyProvider {
-                id,
-                channel_id,
-                adapter_kind,
-                base_url,
-                display_name,
-            },
-        ))
+        let Some((id, channel_id, adapter_kind, base_url, display_name)) = row else {
+            return Ok(None);
+        };
+
+        let channel_bindings = load_provider_channel_bindings(&self.pool, &id, &channel_id).await?;
+
+        Ok(Some(ProxyProvider {
+            id,
+            channel_id,
+            adapter_kind,
+            base_url,
+            display_name,
+            channel_bindings,
+        }))
     }
 
     pub async fn insert_credential(
@@ -401,35 +508,45 @@ impl SqliteAdminStore {
     }
 
     pub async fn insert_model(&self, model: &ModelCatalogEntry) -> Result<ModelCatalogEntry> {
+        let context_window = model.context_window.map(i64::try_from).transpose()?;
         sqlx::query(
-            "INSERT INTO catalog_models (external_name, provider_id) VALUES (?, ?)
-             ON CONFLICT(external_name, provider_id) DO NOTHING",
+            "INSERT INTO catalog_models (external_name, provider_id, capabilities, streaming, context_window) VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT(external_name, provider_id) DO UPDATE SET capabilities = excluded.capabilities, streaming = excluded.streaming, context_window = excluded.context_window",
         )
         .bind(&model.external_name)
         .bind(&model.provider_id)
+        .bind(encode_model_capabilities(&model.capabilities)?)
+        .bind(if model.streaming { 1_i64 } else { 0_i64 })
+        .bind(context_window)
         .execute(&self.pool)
         .await?;
         Ok(model.clone())
     }
 
     pub async fn list_models(&self) -> Result<Vec<ModelCatalogEntry>> {
-        let rows = sqlx::query_as::<_, (String, String)>(
-            "SELECT external_name, provider_id FROM catalog_models ORDER BY external_name, provider_id",
+        let rows = sqlx::query_as::<_, (String, String, String, i64, Option<i64>)>(
+            "SELECT external_name, provider_id, capabilities, streaming, context_window
+             FROM catalog_models
+             ORDER BY external_name, provider_id",
         )
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows
-            .into_iter()
-            .map(|(external_name, provider_id)| ModelCatalogEntry {
+        let mut models = Vec::with_capacity(rows.len());
+        for (external_name, provider_id, capabilities, streaming, context_window) in rows {
+            models.push(ModelCatalogEntry {
                 external_name,
                 provider_id,
-            })
-            .collect())
+                capabilities: decode_model_capabilities(&capabilities)?,
+                streaming: streaming != 0,
+                context_window: context_window.map(u64::try_from).transpose()?,
+            });
+        }
+        Ok(models)
     }
 
     pub async fn find_model(&self, external_name: &str) -> Result<Option<ModelCatalogEntry>> {
-        let row = sqlx::query_as::<_, (String, String)>(
-            "SELECT external_name, provider_id FROM catalog_models
+        let row = sqlx::query_as::<_, (String, String, String, i64, Option<i64>)>(
+            "SELECT external_name, provider_id, capabilities, streaming, context_window FROM catalog_models
              WHERE external_name = ?
              ORDER BY provider_id
              LIMIT 1",
@@ -438,10 +555,18 @@ impl SqliteAdminStore {
         .fetch_optional(&self.pool)
         .await?;
 
-        Ok(row.map(|(external_name, provider_id)| ModelCatalogEntry {
-            external_name,
-            provider_id,
-        }))
+        Ok(match row {
+            Some((external_name, provider_id, capabilities, streaming, context_window)) => {
+                Some(ModelCatalogEntry {
+                    external_name,
+                    provider_id,
+                    capabilities: decode_model_capabilities(&capabilities)?,
+                    streaming: streaming != 0,
+                    context_window: context_window.map(u64::try_from).transpose()?,
+                })
+            }
+            None => None,
+        })
     }
 
     pub async fn delete_model(&self, external_name: &str) -> Result<bool> {

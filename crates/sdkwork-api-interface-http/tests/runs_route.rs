@@ -8,6 +8,8 @@ use sqlx::SqlitePool;
 use std::sync::{Arc, Mutex};
 use tower::ServiceExt;
 
+mod support;
+
 #[tokio::test]
 async fn thread_runs_routes_return_ok() {
     let app = sdkwork_api_interface_http::gateway_router();
@@ -197,6 +199,7 @@ async fn stateful_thread_runs_routes_relay_to_openai_compatible_provider() {
 
     let pool = memory_pool().await;
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
     let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
 
     let _ = admin_app
@@ -205,6 +208,7 @@ async fn stateful_thread_runs_routes_relay_to_openai_compatible_provider() {
             Request::builder()
                 .method("POST")
                 .uri("/admin/channels")
+                .header("authorization", format!("Bearer {admin_token}"))
                 .header("content-type", "application/json")
                 .body(Body::from("{\"id\":\"openai\",\"name\":\"OpenAI\"}"))
                 .unwrap(),
@@ -218,7 +222,8 @@ async fn stateful_thread_runs_routes_relay_to_openai_compatible_provider() {
             Request::builder()
                 .method("POST")
                 .uri("/admin/providers")
-                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {admin_token}"))
+.header("content-type", "application/json")
                 .body(Body::from(format!(
                     "{{\"id\":\"provider-openai-official\",\"channel_id\":\"openai\",\"adapter_kind\":\"openai\",\"base_url\":\"http://{address}\",\"display_name\":\"OpenAI Official\"}}"
                 )))
@@ -234,7 +239,8 @@ async fn stateful_thread_runs_routes_relay_to_openai_compatible_provider() {
             Request::builder()
                 .method("POST")
                 .uri("/admin/credentials")
-                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {admin_token}"))
+.header("content-type", "application/json")
                 .body(Body::from(
                     "{\"tenant_id\":\"tenant-1\",\"provider_id\":\"provider-openai-official\",\"key_reference\":\"cred-openai\",\"secret_value\":\"sk-upstream-openai\"}",
                 ))

@@ -1,5 +1,7 @@
 use anyhow::Result;
-use sdkwork_api_domain_catalog::{Channel, ModelCatalogEntry, ProxyProvider};
+use sdkwork_api_domain_catalog::{
+    Channel, ModelCapability, ModelCatalogEntry, ProviderChannelBinding, ProxyProvider,
+};
 use sdkwork_api_storage_core::AdminStore;
 
 pub fn service_name() -> &'static str {
@@ -45,6 +47,22 @@ pub fn create_provider_with_config(
     ))
 }
 
+pub fn create_provider_with_bindings(
+    id: &str,
+    channel_id: &str,
+    adapter_kind: &str,
+    base_url: &str,
+    display_name: &str,
+    channel_bindings: &[ProviderChannelBinding],
+) -> Result<ProxyProvider> {
+    let mut provider =
+        create_provider_with_config(id, channel_id, adapter_kind, base_url, display_name)?;
+    for binding in channel_bindings {
+        provider = provider.with_channel_binding(binding.clone());
+    }
+    Ok(provider)
+}
+
 pub async fn persist_provider(
     store: &dyn AdminStore,
     id: &str,
@@ -58,6 +76,26 @@ pub async fn persist_provider(
     store.insert_provider(&provider).await
 }
 
+pub async fn persist_provider_with_bindings(
+    store: &dyn AdminStore,
+    id: &str,
+    channel_id: &str,
+    adapter_kind: &str,
+    base_url: &str,
+    display_name: &str,
+    channel_bindings: &[ProviderChannelBinding],
+) -> Result<ProxyProvider> {
+    let provider = create_provider_with_bindings(
+        id,
+        channel_id,
+        adapter_kind,
+        base_url,
+        display_name,
+        channel_bindings,
+    )?;
+    store.insert_provider(&provider).await
+}
+
 pub async fn list_providers(store: &dyn AdminStore) -> Result<Vec<ProxyProvider>> {
     store.list_providers().await
 }
@@ -66,12 +104,47 @@ pub fn create_model(external_name: &str, provider_id: &str) -> Result<ModelCatal
     Ok(ModelCatalogEntry::new(external_name, provider_id))
 }
 
+pub fn create_model_with_metadata(
+    external_name: &str,
+    provider_id: &str,
+    capabilities: &[ModelCapability],
+    streaming: bool,
+    context_window: Option<u64>,
+) -> Result<ModelCatalogEntry> {
+    let mut model = create_model(external_name, provider_id)?.with_streaming(streaming);
+    for capability in capabilities {
+        model = model.with_capability(capability.clone());
+    }
+    if let Some(context_window) = context_window {
+        model = model.with_context_window(context_window);
+    }
+    Ok(model)
+}
+
 pub async fn persist_model(
     store: &dyn AdminStore,
     external_name: &str,
     provider_id: &str,
 ) -> Result<ModelCatalogEntry> {
     let model = create_model(external_name, provider_id)?;
+    store.insert_model(&model).await
+}
+
+pub async fn persist_model_with_metadata(
+    store: &dyn AdminStore,
+    external_name: &str,
+    provider_id: &str,
+    capabilities: &[ModelCapability],
+    streaming: bool,
+    context_window: Option<u64>,
+) -> Result<ModelCatalogEntry> {
+    let model = create_model_with_metadata(
+        external_name,
+        provider_id,
+        capabilities,
+        streaming,
+        context_window,
+    )?;
     store.insert_model(&model).await
 }
 

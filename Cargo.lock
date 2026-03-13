@@ -1734,6 +1734,7 @@ dependencies = [
  "sdkwork-api-domain-usage",
  "sdkwork-api-secret-core",
  "sdkwork-api-storage-core",
+ "serde_json",
  "sqlx",
  "tokio",
 ]
@@ -1752,6 +1753,7 @@ dependencies = [
  "sdkwork-api-domain-usage",
  "sdkwork-api-secret-core",
  "sdkwork-api-storage-core",
+ "serde_json",
  "sqlx",
  "tokio",
 ]

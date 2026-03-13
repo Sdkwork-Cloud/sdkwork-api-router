@@ -191,6 +191,7 @@ async fn stateful_responses_route_relays_to_openai_compatible_provider() {
     let pool = memory_pool().await;
     let api_key = support::issue_gateway_api_key(&pool, "tenant-1", "project-1").await;
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
     let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
 
     let _ = admin_app
@@ -199,6 +200,7 @@ async fn stateful_responses_route_relays_to_openai_compatible_provider() {
             Request::builder()
                 .method("POST")
                 .uri("/admin/channels")
+                .header("authorization", format!("Bearer {admin_token}"))
                 .header("content-type", "application/json")
                 .body(Body::from("{\"id\":\"openai\",\"name\":\"OpenAI\"}"))
                 .unwrap(),
@@ -212,7 +214,8 @@ async fn stateful_responses_route_relays_to_openai_compatible_provider() {
             Request::builder()
                 .method("POST")
                 .uri("/admin/providers")
-                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {admin_token}"))
+.header("content-type", "application/json")
                 .body(Body::from(format!(
                     "{{\"id\":\"provider-openai-official\",\"channel_id\":\"openai\",\"adapter_kind\":\"openai\",\"base_url\":\"http://{address}\",\"display_name\":\"OpenAI Official\"}}"
                 )))
@@ -229,7 +232,8 @@ async fn stateful_responses_route_relays_to_openai_compatible_provider() {
             Request::builder()
                 .method("POST")
                 .uri("/admin/credentials")
-                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {admin_token}"))
+.header("content-type", "application/json")
                 .body(Body::from(
                     "{\"tenant_id\":\"tenant-1\",\"provider_id\":\"provider-openai-official\",\"key_reference\":\"cred-openai\",\"secret_value\":\"sk-upstream-openai\"}",
                 ))
@@ -246,6 +250,7 @@ async fn stateful_responses_route_relays_to_openai_compatible_provider() {
             Request::builder()
                 .method("POST")
                 .uri("/admin/models")
+                .header("authorization", format!("Bearer {admin_token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(
                     "{\"external_name\":\"gpt-4.1\",\"provider_id\":\"provider-openai-official\"}",
