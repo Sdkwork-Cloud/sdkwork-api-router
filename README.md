@@ -40,6 +40,8 @@ Backend:
   - channels
   - proxy providers
   - model catalog entries
+  - extension installations
+  - extension instances
   - upstream credential references
   - usage records
   - billing ledger entries
@@ -50,6 +52,11 @@ Backend:
 - Real upstream relay for stateful `/v1/responses` and `/v1/embeddings` when provider, model, and credential records are present
 - Stub fallback responses for unconfigured providers or unsupported adapter kinds
 - Routing simulation API backed by catalog model candidates
+- Built-in extension host with pluggable extension manifests for:
+  - `sdkwork.provider.openai.official`
+  - `sdkwork.provider.openrouter`
+  - `sdkwork.provider.ollama`
+- Persisted extension installation and instance config through admin APIs
 - Runtime-selectable upstream credential persistence with three local strategies:
   - `database_encrypted`
   - `local_encrypted_file`
@@ -79,8 +86,9 @@ Known gaps:
   - `openrouter`
   - `ollama`
 - provider execution is now registry-based, but only the OpenAI-compatible adapter is registered by default
+- dynamic runtime loading for `native_dynamic` and `connector` extensions is designed but not yet implemented
 - only stateful gateway execution paths relay upstream responses; the stateless demo router still emits local stub payloads
-- the broader API families beyond models/chat/responses/embeddings/streaming are contract-defined but not yet wired to HTTP handlers or upstream adapters
+- broader API families are now wired as either `relay` or `emulated`; see `docs/api/compatibility-matrix.md` for the execution-truth matrix
 - routing policies are still placeholder-only; current routing uses catalog candidates plus deterministic fallback
 - SQLite and PostgreSQL are active persistence drivers; MySQL and libsql remain extension boundaries
 
@@ -99,6 +107,9 @@ Example provider payload:
 {
   "id": "provider-openai-official",
   "channel_id": "openai",
+  "channel_bindings": [
+    { "channel_id": "openai", "is_primary": true }
+  ],
   "adapter_kind": "openai",
   "base_url": "https://api.openai.com",
   "display_name": "OpenAI Official"
@@ -175,12 +186,15 @@ pnpm --dir console exec vite build
 ## Architecture Notes
 
 - `Channel` models the upstream ecosystem or vendor family, such as OpenAI, Anthropic, Google, or DeepSeek.
-- `ProxyProvider` models a concrete access path under a channel, such as an official endpoint, OpenRouter-style broker, or self-hosted Ollama node.
+- `ProxyProvider` models a concrete access path under one or more channels, such as an official endpoint, OpenRouter-style broker, or self-hosted Ollama node.
+- `ProviderChannelBinding` now allows one provider to bind to multiple channel ecosystems without losing a primary channel for compatibility.
+- `ModelCatalogEntry` now carries capability and streaming metadata instead of only `external_name + provider_id`.
 - The backend is split into domain, application, interface, storage, provider, secret, and runtime crates to preserve controller/service/repository layering without forcing separate deployable processes for every boundary.
 - Standalone and embedded runtime modes share the same Rust crates; Tauri integration consumes the same admin and gateway capabilities through the runtime host boundary.
 - Stateful gateway execution now uses the catalog, routing, credential, and provider layers together to relay OpenAI-compatible upstream requests while still preserving local stub fallbacks for incomplete configuration.
-- Provider dispatch is now routed through `sdkwork-api-provider-core` registry abstractions so new adapter kinds can be added without reworking every gateway relay path.
-- `openrouter` and `ollama` are now registered as OpenAI-compatible provider adapters in addition to the direct `openai` adapter.
+- Provider dispatch is now routed through `sdkwork-api-extension-host`, which owns built-in extension manifests and provider factory resolution.
+- Extension runtime configuration is split into package metadata, installation state, and mounted instances so one extension can back multiple provider instances.
+- `openrouter` and `ollama` are registered as built-in OpenAI-compatible provider extensions in addition to the direct `openai` adapter.
 
 ## Design Docs
 

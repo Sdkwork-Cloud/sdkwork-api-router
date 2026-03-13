@@ -44,5 +44,31 @@ The current repository includes:
   - `os_keyring`
 - per-credential backend tracking so previously stored secrets can still be resolved after a default backend switch
 - environment-driven standalone config loading for bind addresses, database URL, secret backend, credential master key, local secret file path, and keyring service name
+- signed admin JWT authentication for the control plane
+- gateway request tenancy derived from persisted gateway API keys instead of hardcoded tenant or project placeholders
+- a built-in extension host with manifest registration for OpenAI, OpenRouter, and Ollama provider extensions
+- persisted extension installation and instance records for configuration-driven mounting
+
+## Extension Runtime Status
+
+The extension architecture is intentionally layered.
+
+| Runtime | Current Status | Notes |
+|---|---|---|
+| `builtin` | Active | First-party provider extensions are registered in-process through `sdkwork-api-extension-host` |
+| `native_dynamic` | Planned | ABI boundary is still design-only; no loader is active yet |
+| `connector` | Planned | Configuration model exists, but connector process lifecycle is not wired yet |
+
+## Configuration Layers
+
+The current extension runtime now separates three concerns:
+
+| Layer | Responsibility |
+|---|---|
+| `ExtensionManifest` | Package identity, compatibility, and capability declaration |
+| `ExtensionInstallation` | Installed runtime choice, trust or entrypoint state, enablement, and package-level config |
+| `ExtensionInstance` | Mounted environment-specific config such as `base_url`, credential reference, and per-instance settings |
+
+This enables one extension package to back multiple concrete instances in either standalone or embedded mode.
 
 The runtime host is still intentionally lightweight, but the core gateway, admin, routing, credential, and provider relay slices now run against the same Rust workspace and can be assembled in-process for embedded mode.

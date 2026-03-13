@@ -1,136 +1,76 @@
 # Compatibility Matrix
 
-## Current Implemented Endpoints
+## Compatibility Levels
 
-| Endpoint | Status | Notes |
-|---|---|---|
-| `/v1/models` | Implemented | Catalog-backed through SQLite when the stateful gateway is used |
-| `/v1/models/{model}` | Implemented | Catalog-backed model retrieval and delete through SQLite when the stateful gateway is used; local mode emits compatible model metadata or deleted fallback |
-| `/v1/chat/completions` | Implemented | Stateful mode supports OpenAI-compatible upstream create, list, and `text/event-stream` relay; falls back to local chat completion or list output when provider execution is unavailable |
-| `/v1/chat/completions/{completion_id}` | Implemented | Stateful mode supports OpenAI-compatible upstream retrieve, update, and delete relay; otherwise emits local chat completion metadata or deleted fallback |
-| `/v1/chat/completions/{completion_id}/messages` | Implemented | Stateful mode supports OpenAI-compatible upstream message listing relay; otherwise emits local chat completion message fallback |
-| `/v1/completions` | Implemented | Stateful mode supports OpenAI-compatible upstream relay for legacy text completions; otherwise emits local completion fallback |
-| `/v1/conversations` | Implemented | Stateful mode supports OpenAI-compatible upstream create and list relay; otherwise emits local conversation fallback |
-| `/v1/conversations/{conversation_id}` | Implemented | Stateful mode supports OpenAI-compatible upstream retrieve, update, and delete relay; otherwise emits local conversation metadata or deleted fallback |
-| `/v1/conversations/{conversation_id}/items` | Implemented | Stateful mode supports OpenAI-compatible upstream item create and list relay; otherwise emits local conversation item list fallback |
-| `/v1/conversations/{conversation_id}/items/{item_id}` | Implemented | Stateful mode supports OpenAI-compatible upstream item retrieve and delete relay; otherwise emits local conversation item metadata or deleted fallback |
-| `/v1/threads` | Implemented | Stateful mode supports OpenAI-compatible upstream create relay; otherwise emits local thread fallback |
-| `/v1/threads/{thread_id}` | Implemented | Stateful mode supports OpenAI-compatible upstream retrieve, update, and delete relay; otherwise emits local thread metadata or deleted fallback |
-| `/v1/threads/{thread_id}/messages` | Implemented | Stateful mode supports OpenAI-compatible upstream create and list relay; otherwise emits local thread message fallback |
-| `/v1/threads/{thread_id}/messages/{message_id}` | Implemented | Stateful mode supports OpenAI-compatible upstream retrieve, update, and delete relay; otherwise emits local thread message metadata or deleted fallback |
-| `/v1/threads/runs` | Implemented | Stateful mode supports OpenAI-compatible upstream create-and-run relay; otherwise emits local thread-run fallback |
-| `/v1/threads/{thread_id}/runs` | Implemented | Stateful mode supports OpenAI-compatible upstream create and list relay; otherwise emits local thread-run fallback |
-| `/v1/threads/{thread_id}/runs/{run_id}` | Implemented | Stateful mode supports OpenAI-compatible upstream retrieve and update relay; otherwise emits local thread-run metadata fallback |
-| `/v1/threads/{thread_id}/runs/{run_id}/cancel` | Implemented | Stateful mode supports OpenAI-compatible upstream cancel relay; otherwise emits local cancelled thread-run fallback |
-| `/v1/threads/{thread_id}/runs/{run_id}/submit_tool_outputs` | Implemented | Stateful mode supports OpenAI-compatible upstream tool-output submission relay; otherwise emits local thread-run fallback |
-| `/v1/threads/{thread_id}/runs/{run_id}/steps` | Implemented | Stateful mode supports OpenAI-compatible upstream step listing relay; otherwise emits local thread-run-step list fallback |
-| `/v1/threads/{thread_id}/runs/{run_id}/steps/{step_id}` | Implemented | Stateful mode supports OpenAI-compatible upstream step retrieval relay; otherwise emits local thread-run-step fallback |
-| `/v1/responses` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local response object fallback |
-| `/v1/responses/input_tokens` | Implemented | Stateful mode supports OpenAI-compatible upstream input token counting; otherwise emits local input-token count fallback |
-| `/v1/responses/compact` | Implemented | Stateful mode supports OpenAI-compatible upstream compaction relay; otherwise emits local response compaction fallback |
-| `/v1/responses/{response_id}` | Implemented | Stateful mode supports OpenAI-compatible upstream retrieve and delete relay; otherwise emits local response metadata or deleted response fallback |
-| `/v1/responses/{response_id}/input_items` | Implemented | Stateful mode supports OpenAI-compatible upstream input item listing; otherwise emits local response input item fallback |
-| `/v1/responses/{response_id}/cancel` | Implemented | Stateful mode supports OpenAI-compatible upstream cancel relay; otherwise emits local cancelled response fallback |
-| `/v1/embeddings` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local embeddings fallback |
-| `/v1/files` | Implemented | Stateful mode supports OpenAI-compatible upstream multipart create and JSON list relay; otherwise emits local file fallback |
-| `/v1/files/{file_id}` | Implemented | Stateful mode supports OpenAI-compatible upstream retrieve and delete relay; otherwise emits local file metadata or deleted response fallback |
-| `/v1/files/{file_id}/content` | Implemented | Stateful mode supports OpenAI-compatible upstream binary passthrough; otherwise emits local file-content fallback |
-| `/v1/moderations` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local unflagged moderation fallback |
-| `/v1/images/generations` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local base64 image fallback |
-| `/v1/images/edits` | Implemented | Stateful mode supports OpenAI-compatible upstream multipart relay; otherwise emits local base64 image fallback |
-| `/v1/images/variations` | Implemented | Stateful mode supports OpenAI-compatible upstream multipart relay; otherwise emits local base64 image fallback |
-| `/v1/audio/transcriptions` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local transcription fallback |
-| `/v1/audio/translations` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local translation fallback |
-| `/v1/audio/speech` | Implemented | Stateful mode supports OpenAI-compatible upstream binary or event-stream relay; otherwise emits local audio fallback |
-| `/v1/uploads` | Implemented | Stateful mode supports OpenAI-compatible upstream JSON relay for upload creation; otherwise emits local upload fallback |
-| `/v1/uploads/{upload_id}/parts` | Implemented | Stateful mode supports OpenAI-compatible upstream multipart relay for upload parts; otherwise emits local upload-part fallback |
-| `/v1/uploads/{upload_id}/complete` | Implemented | Stateful mode supports OpenAI-compatible upstream relay for upload completion; otherwise emits local completion fallback |
-| `/v1/uploads/{upload_id}/cancel` | Implemented | Stateful mode supports OpenAI-compatible upstream relay for upload cancellation; otherwise emits local cancelled-upload fallback |
-| `/v1/fine_tuning/jobs` | Implemented | Stateful mode supports OpenAI-compatible upstream create and list relay; otherwise emits local fine-tuning job fallback |
-| `/v1/fine_tuning/jobs/{fine_tuning_job_id}` | Implemented | Stateful mode supports OpenAI-compatible upstream retrieve relay; otherwise emits local fine-tuning job metadata fallback |
-| `/v1/fine_tuning/jobs/{fine_tuning_job_id}/cancel` | Implemented | Stateful mode supports OpenAI-compatible upstream cancel relay; otherwise emits local cancelled fine-tuning job fallback |
-| `/v1/assistants` | Implemented | Stateful mode supports OpenAI-compatible upstream create and list relay; otherwise emits local assistant fallback |
-| `/v1/assistants/{assistant_id}` | Implemented | Stateful mode supports OpenAI-compatible upstream retrieve, update, and delete relay; otherwise emits local assistant metadata or deleted response fallback |
-| `/v1/webhooks` | Implemented | Stateful mode supports OpenAI-compatible upstream create and list relay; otherwise emits local webhook fallback |
-| `/v1/webhooks/{webhook_id}` | Implemented | Stateful mode supports OpenAI-compatible upstream retrieve, update, and delete relay; otherwise emits local webhook metadata or deleted response fallback |
-| `/v1/realtime/sessions` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local realtime session fallback |
-| `/v1/evals` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local eval fallback |
-| `/v1/batches` | Implemented | Stateful mode supports OpenAI-compatible upstream create and list relay; otherwise emits local batch fallback |
-| `/v1/batches/{batch_id}` | Implemented | Stateful mode supports OpenAI-compatible upstream retrieve relay; otherwise emits local batch metadata fallback |
-| `/v1/batches/{batch_id}/cancel` | Implemented | Stateful mode supports OpenAI-compatible upstream cancel relay; otherwise emits local cancelled batch fallback |
-| `/v1/vector_stores` | Implemented | Stateful mode supports OpenAI-compatible upstream create and list relay; otherwise emits local vector store fallback |
-| `/v1/vector_stores/{vector_store_id}` | Implemented | Stateful mode supports OpenAI-compatible upstream retrieve, update, and delete relay; otherwise emits local vector store metadata or deleted response fallback |
-| `/v1/vector_stores/{vector_store_id}/search` | Implemented | Stateful mode supports OpenAI-compatible upstream semantic search relay; otherwise emits local vector store search fallback |
-| `/v1/vector_stores/{vector_store_id}/files` | Implemented | Stateful mode supports OpenAI-compatible upstream create and list relay; otherwise emits local vector store file fallback |
-| `/v1/vector_stores/{vector_store_id}/files/{file_id}` | Implemented | Stateful mode supports OpenAI-compatible upstream retrieve and delete relay; otherwise emits local vector store file metadata or deleted response fallback |
-| `/v1/vector_stores/{vector_store_id}/file_batches` | Implemented | Stateful mode supports OpenAI-compatible upstream create relay; otherwise emits local vector store file batch fallback |
-| `/v1/vector_stores/{vector_store_id}/file_batches/{batch_id}` | Implemented | Stateful mode supports OpenAI-compatible upstream retrieve relay; otherwise emits local vector store file batch metadata fallback |
-| `/v1/vector_stores/{vector_store_id}/file_batches/{batch_id}/cancel` | Implemented | Stateful mode supports OpenAI-compatible upstream cancel relay; otherwise emits local cancelled vector store file batch fallback |
-| `/v1/vector_stores/{vector_store_id}/file_batches/{batch_id}/files` | Implemented | Stateful mode supports OpenAI-compatible upstream file listing relay; otherwise emits local vector store batch file list fallback |
-| `/v1/videos` | Implemented | Stateful mode supports OpenAI-compatible upstream create and list relay; otherwise emits local video fallback |
-| `/v1/videos/{video_id}` | Implemented | Stateful mode supports OpenAI-compatible upstream retrieve and delete relay; otherwise emits local video metadata or deleted response fallback |
-| `/v1/videos/{video_id}/content` | Implemented | Stateful mode supports OpenAI-compatible upstream binary passthrough; otherwise emits local video-content fallback |
-| `/v1/videos/{video_id}/remix` | Implemented | Stateful mode supports OpenAI-compatible upstream remix relay; otherwise emits local remixed video fallback |
+The gateway now uses five execution-truth labels instead of a binary `implemented / not implemented` flag.
 
-## Current Implemented Admin APIs
-
-| Endpoint Family | Status | Notes |
-|---|---|---|
-| `/admin/auth/login` | Implemented | Issues and verifies SDKWork-style token payloads |
-| `/admin/tenants` | Implemented | SQLite-backed list and create |
-| `/admin/projects` | Implemented | SQLite-backed list and create |
-| `/admin/api-keys` | Implemented | SQLite-backed issuance and list |
-| `/admin/channels` | Implemented | SQLite-backed list and create |
-| `/admin/providers` | Implemented | SQLite-backed list and create with `adapter_kind` and `base_url` execution config |
-| `/admin/models` | Implemented | SQLite-backed list and create |
-| `/admin/credentials` | Implemented | SQLite-backed encrypted secret storage and credential reference listing |
-| `/admin/routing/simulations` | Implemented | Catalog-backed route simulation |
-| `/admin/usage/records` | Implemented | Lists gateway-recorded usage events |
-| `/admin/billing/ledger` | Implemented | Lists booked cost entries |
-
-## Defined Contract Families
-
-| API Family | Contract Status | Execution Status |
-|---|---|---|
-| Models | Defined | Implemented |
-| Chat Completions | Defined | Implemented |
-| Completions | Defined | Implemented |
-| Conversations | Defined | Implemented |
-| Responses | Defined | Implemented |
-| Embeddings | Defined | Implemented |
-| Moderations | Defined | Implemented |
-| Images | Defined | Implemented |
-| Streaming | Defined | Implemented |
-| Files | Defined | Implemented (`create`, `list`, `retrieve`, `delete`, `content`) |
-| Uploads | Defined | Implemented |
-| Audio | Defined | Implemented |
-| Fine Tuning | Defined | Implemented |
-| Realtime | Defined | Implemented |
-| Assistants | Defined | Implemented (`create`, `list`, `retrieve`, `update`, `delete`) |
-| Threads | Defined | Implemented (`create`, `retrieve`, `update`, `delete`, `messages create/list/retrieve/update/delete`, `runs create/create-and-run/list/retrieve/update/cancel/submit_tool_outputs`, `run steps list/retrieve`) |
-| Vector Stores | Defined | Implemented |
-| Batches | Defined | Implemented |
-| Videos | Defined | Implemented (`create`, `list`, `retrieve`, `delete`, `content`, `remix`) |
-| Webhooks | Defined | Implemented (`create`, `list`, `retrieve`, `update`, `delete`) |
-| Evals | Defined | Implemented |
-
-## Runtime Behavior Notes
-
-| Capability | Current Behavior |
+| Level | Meaning |
 |---|---|
-| Upstream proxying | Implemented across all currently defined contract families; stateful gateway relays OpenAI-compatible chat create/list/retrieve/update/delete/message-list, chat SSE, completions, conversations create/list/retrieve/update/delete plus conversation items create/list/retrieve/delete, threads create/retrieve/update/delete plus thread messages create/list/retrieve/update/delete plus thread runs create/create-and-run/list/retrieve/update/cancel/submit_tool_outputs plus run steps list/retrieve, responses create/input_tokens/retrieve/delete/input_items/cancel/compact, embeddings, files create/list/retrieve/delete/content, upload create/part/complete/cancel, moderations, image generations plus image edits plus image variations, videos create/list/retrieve/delete/content/remix, audio transcriptions, audio translations, audio speech binary passthrough, fine-tuning jobs create/list/retrieve/cancel, assistants create/list/retrieve/update/delete, webhooks create/list/retrieve/update/delete, realtime sessions, evals, batches create/list/retrieve/cancel, and vector stores create/list/retrieve/update/delete/search plus vector store files create/list/retrieve/delete plus vector store file batches create/retrieve/cancel/list-files when provider and credential records are configured |
-| Model discovery | Driven by the local catalog, not upstream auto-sync |
-| Routing | Deterministic candidate selection from catalog models |
-| Provider dispatch | Executed through `sdkwork-api-provider-core` registry abstractions with `adapter_kind` plus `base_url` resolution; `openai`, `openrouter`, and `ollama` are currently registered |
-| Credential handling | Upstream secrets are encrypted at rest and resolved with `credential_master_key` during execution; active persistence backends are `database_encrypted`, `local_encrypted_file`, and `os_keyring` |
-| Usage tracking | Persisted through admin SQLite store |
-| Billing | Ledger entries booked from gateway-side request hooks |
+| `native` | Implemented directly by SDKWork and backed by local control-plane or runtime state |
+| `relay` | Forwarded to an upstream OpenAI-compatible provider when the gateway is configured with provider, credential, and model data |
+| `translated` | Accepted by the gateway but mapped to a different upstream capability or execution primitive |
+| `emulated` | Returned locally in a compatible shape without real upstream execution |
+| `unsupported` | Contract is not available in the current runtime |
 
-## Storage Support
+## Data Plane
 
-| Driver | Status |
-|---|---|
-| SQLite | Active implementation with control-plane and telemetry persistence |
-| PostgreSQL | Active implementation with shared admin store parity and standalone service startup support |
-| MySQL | Boundary crate implemented |
-| libsql | Boundary crate implemented |
+The table below reflects the current runtime truth as of 2026-03-14.
+
+| API Family | Stateful Gateway | Stateless Gateway | Notes |
+|---|---|---|---|
+| `/v1/models` | `native` | `emulated` | Stateful mode reads the local catalog; stateless mode returns a compatible local list |
+| `/v1/chat/completions` | `relay` | `emulated` | Supports JSON and SSE relay for configured OpenAI-compatible upstreams |
+| `/v1/completions` | `relay` | `emulated` | Relays legacy text completions when provider wiring exists |
+| `/v1/responses` | `relay` | `emulated` | Stateful mode relays create, retrieve, delete, cancel, compact, and input item flows |
+| `/v1/embeddings` | `relay` | `emulated` | Uses catalog, credential, and provider state in stateful mode |
+| `/v1/files` | `relay` | `emulated` | Stateful mode relays multipart upload, metadata, and binary content |
+| `/v1/uploads` | `relay` | `emulated` | Upload creation, part upload, completion, and cancel relay in stateful mode |
+| `/v1/audio/*` | `relay` | `emulated` | Speech can relay binary or event-stream output |
+| `/v1/images/*` | `relay` | `emulated` | Generations, edits, and variations relay in stateful mode |
+| `/v1/moderations` | `relay` | `emulated` | Stateful mode relays provider moderation calls |
+| `/v1/realtime/sessions` | `relay` | `emulated` | Compatible request/response contract is present in both modes |
+| `/v1/assistants` | `relay` | `emulated` | Stateful mode relays create, list, retrieve, update, and delete |
+| `/v1/threads` | `relay` | `emulated` | Includes messages, runs, run steps, cancel, and tool output submission |
+| `/v1/conversations` | `relay` | `emulated` | Includes conversation items CRUD-compatible flows |
+| `/v1/vector_stores` | `relay` | `emulated` | Includes search, files, and file batch flows |
+| `/v1/batches` | `relay` | `emulated` | Create, list, retrieve, and cancel are wired in stateful mode |
+| `/v1/fine_tuning/jobs` | `relay` | `emulated` | Create, list, retrieve, and cancel are relay-capable |
+| `/v1/webhooks` | `relay` | `emulated` | CRUD-compatible relay path when upstream supports the same contract |
+| `/v1/evals` | `relay` | `emulated` | Stateful mode relays eval creation/listing-compatible flow |
+| `/v1/videos` | `relay` | `emulated` | Create, list, retrieve, content, delete, and remix relay in stateful mode |
+
+## Control Plane
+
+Admin APIs are SDKWork-owned control-plane surfaces and therefore classify as `native`.
+
+| Endpoint Family | Level | Notes |
+|---|---|---|
+| `/admin/auth/*` | `native` | Signed JWT login plus authenticated caller inspection |
+| `/admin/tenants` | `native` | SQLite and PostgreSQL backed |
+| `/admin/projects` | `native` | SQLite and PostgreSQL backed |
+| `/admin/api-keys` | `native` | Gateway API key issuance plus tenancy-aware lookup |
+| `/admin/channels` | `native` | Control-plane definition of upstream ecosystems |
+| `/admin/providers` | `native` | Supports multi-channel bindings plus adapter and base URL config |
+| `/admin/models` | `native` | Stores model capability metadata and streaming flags |
+| `/admin/credentials` | `native` | Secret references with encrypted persistence backends |
+| `/admin/extensions/installations` | `native` | Stores extension installation state and config payload |
+| `/admin/extensions/instances` | `native` | Stores mounted extension instances with runtime config |
+| `/admin/routing/simulations` | `native` | Catalog-backed routing decision preview |
+| `/admin/usage/records` | `native` | Lists gateway-recorded usage |
+| `/admin/billing/ledger` | `native` | Lists gateway-booked billing entries |
+
+## Extension Runtime
+
+| Runtime Mode | Level | Notes |
+|---|---|---|
+| `builtin` | `native` | Active today through `sdkwork-api-extension-host` and built-in provider factories |
+| `native_dynamic` | `unsupported` | ABI and loader model are designed but not yet wired |
+| `connector` | `unsupported` | Lifecycle is planned but connector runtime loading is not yet implemented |
+
+## Current Built-In Extension IDs
+
+| Extension ID | Kind | Runtime | Notes |
+|---|---|---|---|
+| `sdkwork.provider.openai.official` | `provider` | `builtin` | OpenAI-compatible direct upstream |
+| `sdkwork.provider.openrouter` | `provider` | `builtin` | OpenRouter-compatible upstream |
+| `sdkwork.provider.ollama` | `provider` | `builtin` | Local Ollama-compatible upstream |
