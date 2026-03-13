@@ -13,17 +13,22 @@ use sdkwork_api_app_billing::persist_ledger_entry;
 use sdkwork_api_app_credential::CredentialSecretManager;
 use sdkwork_api_app_gateway::create_chat_completion;
 use sdkwork_api_app_gateway::create_completion;
+use sdkwork_api_app_gateway::create_image_generation;
+use sdkwork_api_app_gateway::create_moderation;
 use sdkwork_api_app_gateway::list_models;
 use sdkwork_api_app_gateway::{
     create_embedding, create_response, list_models_from_store, relay_chat_completion_from_store,
     relay_chat_completion_stream_from_store, relay_completion_from_store,
-    relay_embedding_from_store, relay_response_from_store,
+    relay_embedding_from_store, relay_image_generation_from_store, relay_moderation_from_store,
+    relay_response_from_store,
 };
 use sdkwork_api_app_routing::simulate_route_with_store;
 use sdkwork_api_app_usage::persist_usage_record;
 use sdkwork_api_contract_openai::chat_completions::CreateChatCompletionRequest;
 use sdkwork_api_contract_openai::completions::CreateCompletionRequest;
 use sdkwork_api_contract_openai::embeddings::CreateEmbeddingRequest;
+use sdkwork_api_contract_openai::images::CreateImageRequest;
+use sdkwork_api_contract_openai::moderations::CreateModerationRequest;
 use sdkwork_api_contract_openai::responses::CreateResponseRequest;
 use sdkwork_api_contract_openai::streaming::SseFrame;
 use sdkwork_api_storage_core::AdminStore;
@@ -74,6 +79,8 @@ pub fn gateway_router() -> Router {
         .route("/v1/completions", post(completions_handler))
         .route("/v1/responses", post(responses_handler))
         .route("/v1/embeddings", post(embeddings_handler))
+        .route("/v1/moderations", post(moderations_handler))
+        .route("/v1/images/generations", post(image_generations_handler))
 }
 
 pub fn gateway_router_with_pool(pool: SqlitePool) -> Router {
@@ -121,6 +128,11 @@ pub fn gateway_router_with_store_and_secret_manager(
         .route("/v1/completions", post(completions_with_state_handler))
         .route("/v1/responses", post(responses_with_state_handler))
         .route("/v1/embeddings", post(embeddings_with_state_handler))
+        .route("/v1/moderations", post(moderations_with_state_handler))
+        .route(
+            "/v1/images/generations",
+            post(image_generations_with_state_handler),
+        )
         .with_state(GatewayApiState::with_store_and_secret_manager(
             store,
             secret_manager,
@@ -181,6 +193,20 @@ async fn embeddings_handler(
     ExtractJson(request): ExtractJson<CreateEmbeddingRequest>,
 ) -> Json<sdkwork_api_contract_openai::embeddings::CreateEmbeddingResponse> {
     Json(create_embedding("tenant-1", "project-1", &request.model).expect("embedding"))
+}
+
+async fn moderations_handler(
+    ExtractJson(request): ExtractJson<CreateModerationRequest>,
+) -> Json<sdkwork_api_contract_openai::moderations::ModerationResponse> {
+    Json(create_moderation("tenant-1", "project-1", &request.model).expect("moderation"))
+}
+
+async fn image_generations_handler(
+    ExtractJson(request): ExtractJson<CreateImageRequest>,
+) -> Json<sdkwork_api_contract_openai::images::ImagesResponse> {
+    Json(
+        create_image_generation("tenant-1", "project-1", &request.model).expect("image generation"),
+    )
 }
 
 async fn chat_completions_with_state_handler(
@@ -477,6 +503,122 @@ async fn embeddings_with_state_handler(
     }
 
     Json(create_embedding("tenant-1", "project-1", &request.model).expect("embedding"))
+        .into_response()
+}
+
+async fn moderations_with_state_handler(
+    State(state): State<GatewayApiState>,
+    ExtractJson(request): ExtractJson<CreateModerationRequest>,
+) -> Response {
+    match relay_moderation_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &request,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(
+                state.store.as_ref(),
+                "moderations",
+                &request.model,
+                1,
+                0.001,
+            )
+            .await
+            .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream moderation",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(
+        state.store.as_ref(),
+        "moderations",
+        &request.model,
+        1,
+        0.001,
+    )
+    .await
+    .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(create_moderation("tenant-1", "project-1", &request.model).expect("moderation"))
+        .into_response()
+}
+
+async fn image_generations_with_state_handler(
+    State(state): State<GatewayApiState>,
+    ExtractJson(request): ExtractJson<CreateImageRequest>,
+) -> Response {
+    match relay_image_generation_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        "tenant-1",
+        "project-1",
+        &request,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage(state.store.as_ref(), "images", &request.model, 50, 0.05)
+                .await
+                .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream image generation",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage(state.store.as_ref(), "images", &request.model, 50, 0.05)
+        .await
+        .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(create_image_generation("tenant-1", "project-1", &request.model).expect("image"))
         .into_response()
 }
 

@@ -4,6 +4,8 @@ use reqwest::Client;
 use sdkwork_api_contract_openai::chat_completions::CreateChatCompletionRequest;
 use sdkwork_api_contract_openai::completions::CreateCompletionRequest;
 use sdkwork_api_contract_openai::embeddings::CreateEmbeddingRequest;
+use sdkwork_api_contract_openai::images::CreateImageRequest;
+use sdkwork_api_contract_openai::moderations::CreateModerationRequest;
 use sdkwork_api_contract_openai::responses::CreateResponseRequest;
 use sdkwork_api_domain_catalog::ModelCatalogEntry;
 use sdkwork_api_provider_core::{
@@ -67,6 +69,23 @@ impl OpenAiProviderAdapter {
         self.post_json("/v1/embeddings", api_key, request).await
     }
 
+    pub async fn moderations(
+        &self,
+        api_key: &str,
+        request: &CreateModerationRequest,
+    ) -> Result<Value> {
+        self.post_json("/v1/moderations", api_key, request).await
+    }
+
+    pub async fn images_generations(
+        &self,
+        api_key: &str,
+        request: &CreateImageRequest,
+    ) -> Result<Value> {
+        self.post_json("/v1/images/generations", api_key, request)
+            .await
+    }
+
     async fn post_json<T: serde::Serialize>(
         &self,
         path: &str,
@@ -128,6 +147,12 @@ impl ProviderExecutionAdapter for OpenAiProviderAdapter {
             )),
             ProviderRequest::Embeddings(request) => Ok(ProviderOutput::Json(
                 self.embeddings(api_key, request).await?,
+            )),
+            ProviderRequest::Moderations(request) => Ok(ProviderOutput::Json(
+                self.moderations(api_key, request).await?,
+            )),
+            ProviderRequest::ImagesGenerations(request) => Ok(ProviderOutput::Json(
+                self.images_generations(api_key, request).await?,
             )),
         }
     }

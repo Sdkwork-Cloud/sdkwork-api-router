@@ -3,6 +3,8 @@ use async_trait::async_trait;
 use sdkwork_api_contract_openai::chat_completions::CreateChatCompletionRequest;
 use sdkwork_api_contract_openai::completions::CreateCompletionRequest;
 use sdkwork_api_contract_openai::embeddings::CreateEmbeddingRequest;
+use sdkwork_api_contract_openai::images::CreateImageRequest;
+use sdkwork_api_contract_openai::moderations::CreateModerationRequest;
 use sdkwork_api_contract_openai::responses::CreateResponseRequest;
 use sdkwork_api_domain_catalog::ModelCatalogEntry;
 use sdkwork_api_provider_core::{
@@ -68,6 +70,22 @@ impl OllamaProviderAdapter {
     ) -> Result<Value> {
         self.delegate.embeddings(api_key, request).await
     }
+
+    pub async fn moderations(
+        &self,
+        api_key: &str,
+        request: &CreateModerationRequest,
+    ) -> Result<Value> {
+        self.delegate.moderations(api_key, request).await
+    }
+
+    pub async fn images_generations(
+        &self,
+        api_key: &str,
+        request: &CreateImageRequest,
+    ) -> Result<Value> {
+        self.delegate.images_generations(api_key, request).await
+    }
 }
 
 impl ProviderAdapter for OllamaProviderAdapter {
@@ -94,6 +112,12 @@ impl ProviderExecutionAdapter for OllamaProviderAdapter {
             )),
             ProviderRequest::Embeddings(request) => Ok(ProviderOutput::Json(
                 self.embeddings(api_key, request).await?,
+            )),
+            ProviderRequest::Moderations(request) => Ok(ProviderOutput::Json(
+                self.moderations(api_key, request).await?,
+            )),
+            ProviderRequest::ImagesGenerations(request) => Ok(ProviderOutput::Json(
+                self.images_generations(api_key, request).await?,
             )),
         }
     }

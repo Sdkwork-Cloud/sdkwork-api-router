@@ -9,6 +9,8 @@
 | `/v1/completions` | Implemented | Stateful mode supports OpenAI-compatible upstream relay for legacy text completions; otherwise emits local completion fallback |
 | `/v1/responses` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local response object fallback |
 | `/v1/embeddings` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local embeddings fallback |
+| `/v1/moderations` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local unflagged moderation fallback |
+| `/v1/images/generations` | Implemented | Stateful mode supports OpenAI-compatible upstream relay; otherwise emits local base64 image fallback |
 
 ## Current Implemented Admin APIs
 
@@ -35,12 +37,12 @@
 | Completions | Defined | Implemented |
 | Responses | Defined | Implemented |
 | Embeddings | Defined | Implemented |
+| Moderations | Defined | Implemented |
+| Images | Defined | Implemented |
 | Streaming | Defined | Implemented |
 | Files | Defined | Contract only |
 | Uploads | Defined | Contract only |
 | Audio | Defined | Contract only |
-| Images | Defined | Contract only |
-| Moderations | Defined | Contract only |
 | Fine Tuning | Defined | Contract only |
 | Realtime | Defined | Contract only |
 | Assistants | Defined | Contract only |
@@ -54,7 +56,7 @@
 
 | Capability | Current Behavior |
 |---|---|
-| Upstream proxying | Partially implemented; stateful gateway relays OpenAI-compatible chat, responses, embeddings, and chat SSE when provider, model, and credential records are configured |
+| Upstream proxying | Partially implemented; stateful gateway relays OpenAI-compatible chat, chat SSE, completions, responses, embeddings, moderations, and image generations when provider, model, and credential records are configured |
 | Model discovery | Driven by the local catalog, not upstream auto-sync |
 | Routing | Deterministic candidate selection from catalog models |
 | Provider dispatch | Executed through `sdkwork-api-provider-core` registry abstractions with `adapter_kind` plus `base_url` resolution; `openai`, `openrouter`, and `ollama` are currently registered |

@@ -6,7 +6,11 @@ use sdkwork_api_contract_openai::chat_completions::CreateChatCompletionRequest;
 use sdkwork_api_contract_openai::completions::{CompletionObject, CreateCompletionRequest};
 use sdkwork_api_contract_openai::embeddings::CreateEmbeddingRequest;
 use sdkwork_api_contract_openai::embeddings::CreateEmbeddingResponse;
+use sdkwork_api_contract_openai::images::{CreateImageRequest, ImageObject, ImagesResponse};
 use sdkwork_api_contract_openai::models::{ListModelsResponse, ModelObject};
+use sdkwork_api_contract_openai::moderations::{
+    CreateModerationRequest, ModerationCategoryScores, ModerationResponse, ModerationResult,
+};
 use sdkwork_api_contract_openai::responses::CreateResponseRequest;
 use sdkwork_api_contract_openai::responses::ResponseObject;
 use sdkwork_api_provider_core::{ProviderRegistry, ProviderRequest};
@@ -175,6 +179,60 @@ pub async fn relay_embedding_from_store(
     .await
 }
 
+pub async fn relay_moderation_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    request: &CreateModerationRequest,
+) -> Result<Option<Value>> {
+    let decision = simulate_route_with_store(store, "moderations", &request.model).await?;
+    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
+        return Ok(None);
+    };
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &provider.adapter_kind,
+        provider.base_url,
+        &api_key,
+        ProviderRequest::Moderations(request),
+    )
+    .await
+}
+
+pub async fn relay_image_generation_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    _project_id: &str,
+    request: &CreateImageRequest,
+) -> Result<Option<Value>> {
+    let decision = simulate_route_with_store(store, "images", &request.model).await?;
+    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
+        return Ok(None);
+    };
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request(
+        &provider.adapter_kind,
+        provider.base_url,
+        &api_key,
+        ProviderRequest::ImagesGenerations(request),
+    )
+    .await
+}
+
 pub fn create_chat_completion(
     _tenant_id: &str,
     _project_id: &str,
@@ -201,6 +259,31 @@ pub fn create_embedding(
     model: &str,
 ) -> Result<CreateEmbeddingResponse> {
     Ok(CreateEmbeddingResponse::empty(model))
+}
+
+pub fn create_moderation(
+    _tenant_id: &str,
+    _project_id: &str,
+    model: &str,
+) -> Result<ModerationResponse> {
+    Ok(ModerationResponse {
+        id: "modr_1".to_owned(),
+        model: model.to_owned(),
+        results: vec![ModerationResult {
+            flagged: false,
+            category_scores: ModerationCategoryScores { violence: 0.0 },
+        }],
+    })
+}
+
+pub fn create_image_generation(
+    _tenant_id: &str,
+    _project_id: &str,
+    _model: &str,
+) -> Result<ImagesResponse> {
+    Ok(ImagesResponse::new(vec![ImageObject::base64(
+        "sdkwork-image",
+    )]))
 }
 
 fn default_provider_registry() -> ProviderRegistry {
