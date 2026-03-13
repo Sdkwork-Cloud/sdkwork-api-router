@@ -48,6 +48,7 @@ The current repository includes:
 - gateway request tenancy derived from persisted gateway API keys instead of hardcoded tenant or project placeholders
 - a built-in extension host with manifest registration for OpenAI, OpenRouter, and Ollama provider extensions
 - persisted extension installation and instance records for configuration-driven mounting
+- provider runtime dispatch keyed by `ProxyProvider.extension_id`, with `adapter_kind` kept as a compatibility alias for older records and protocol classification
 
 ## Extension Runtime Status
 
@@ -70,5 +71,10 @@ The current extension runtime now separates three concerns:
 | `ExtensionInstance` | Mounted environment-specific config such as `base_url`, credential reference, and per-instance settings |
 
 This enables one extension package to back multiple concrete instances in either standalone or embedded mode.
+
+Provider execution identity is now split deliberately:
+
+- `extension_id`: the canonical runtime key used by the gateway to resolve a provider extension implementation
+- `adapter_kind`: a compatibility alias and protocol hint that lets older records and OpenAI-compatible provider families continue to map cleanly during migration
 
 The runtime host is still intentionally lightweight, but the core gateway, admin, routing, credential, and provider relay slices now run against the same Rust workspace and can be assembled in-process for embedded mode.

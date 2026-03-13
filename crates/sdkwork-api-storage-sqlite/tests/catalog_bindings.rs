@@ -33,6 +33,7 @@ async fn sqlite_store_persists_provider_bindings_and_model_metadata() {
     let providers = store.list_providers().await.unwrap();
     assert_eq!(providers[0].channel_bindings.len(), 2);
     assert_eq!(providers[0].channel_bindings[1].channel_id, "openai");
+    assert_eq!(providers[0].extension_id, "sdkwork.provider.openrouter");
 
     let models = store.list_models().await.unwrap();
     assert_eq!(models[0].capabilities.len(), 2);

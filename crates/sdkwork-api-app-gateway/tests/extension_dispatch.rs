@@ -18,3 +18,18 @@ fn builtin_host_registers_current_provider_extensions() {
         .resolve_provider("ollama", "http://localhost")
         .is_some());
 }
+
+#[test]
+fn builtin_host_resolves_provider_by_extension_id() {
+    let host = builtin_extension_host();
+
+    assert!(host
+        .resolve_provider("sdkwork.provider.openai.official", "http://localhost")
+        .is_some());
+    assert!(host
+        .resolve_provider("sdkwork.provider.openrouter", "http://localhost")
+        .is_some());
+    assert!(host
+        .resolve_provider("sdkwork.provider.ollama", "http://localhost")
+        .is_some());
+}

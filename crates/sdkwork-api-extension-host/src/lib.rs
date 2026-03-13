@@ -43,6 +43,7 @@ impl BuiltinProviderExtensionFactory {
 pub struct ExtensionHost {
     manifests: HashMap<String, ExtensionManifest>,
     provider_factories: HashMap<String, ProviderFactory>,
+    provider_aliases: HashMap<String, String>,
     installations: HashMap<String, ExtensionInstallation>,
     instances_by_extension: HashMap<String, Vec<ExtensionInstance>>,
 }
@@ -58,10 +59,13 @@ impl ExtensionHost {
     }
 
     pub fn register_builtin_provider(&mut self, factory: BuiltinProviderExtensionFactory) {
+        let extension_id = factory.manifest.id.clone();
         self.manifests
-            .insert(factory.manifest.id.clone(), factory.manifest);
+            .insert(extension_id.clone(), factory.manifest);
         self.provider_factories
-            .insert(factory.adapter_kind, factory.factory);
+            .insert(extension_id.clone(), factory.factory);
+        self.provider_aliases
+            .insert(factory.adapter_kind, extension_id);
     }
 
     pub fn manifest(&self, id: &str) -> Option<&ExtensionManifest> {
@@ -130,12 +134,19 @@ impl ExtensionHost {
 
     pub fn resolve_provider(
         &self,
-        adapter_kind: &str,
+        runtime_key: &str,
         base_url: impl Into<String>,
     ) -> Option<Box<dyn ProviderExecutionAdapter>> {
+        let base_url = base_url.into();
+
         self.provider_factories
-            .get(adapter_kind)
-            .map(|factory| factory(base_url.into()))
+            .get(runtime_key)
+            .or_else(|| {
+                self.provider_aliases
+                    .get(runtime_key)
+                    .and_then(|extension_id| self.provider_factories.get(extension_id))
+            })
+            .map(|factory| factory(base_url))
     }
 }
 

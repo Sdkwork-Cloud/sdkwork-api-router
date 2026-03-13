@@ -3,7 +3,8 @@ use std::str::FromStr;
 
 use sdkwork_api_domain_billing::LedgerEntry;
 use sdkwork_api_domain_catalog::{
-    Channel, ModelCapability, ModelCatalogEntry, ProviderChannelBinding, ProxyProvider,
+    normalize_provider_extension_id, Channel, ModelCapability, ModelCatalogEntry,
+    ProviderChannelBinding, ProxyProvider,
 };
 use sdkwork_api_domain_credential::UpstreamCredential;
 use sdkwork_api_domain_identity::GatewayApiKeyRecord;
@@ -57,12 +58,20 @@ pub async fn run_migrations(url: &str) -> Result<SqlitePool> {
         "CREATE TABLE IF NOT EXISTS catalog_proxy_providers (
             id TEXT PRIMARY KEY NOT NULL,
             channel_id TEXT NOT NULL,
+            extension_id TEXT NOT NULL DEFAULT '',
             adapter_kind TEXT NOT NULL DEFAULT 'openai',
             base_url TEXT NOT NULL DEFAULT 'http://localhost',
             display_name TEXT NOT NULL
         )",
     )
     .execute(&pool)
+    .await?;
+    ensure_sqlite_column(
+        &pool,
+        "catalog_proxy_providers",
+        "extension_id",
+        "extension_id TEXT NOT NULL DEFAULT ''",
+    )
     .await?;
     ensure_sqlite_column(
         &pool,
@@ -324,11 +333,12 @@ impl SqliteAdminStore {
 
     pub async fn insert_provider(&self, provider: &ProxyProvider) -> Result<ProxyProvider> {
         sqlx::query(
-            "INSERT INTO catalog_proxy_providers (id, channel_id, adapter_kind, base_url, display_name) VALUES (?, ?, ?, ?, ?)
-             ON CONFLICT(id) DO UPDATE SET channel_id = excluded.channel_id, adapter_kind = excluded.adapter_kind, base_url = excluded.base_url, display_name = excluded.display_name",
+            "INSERT INTO catalog_proxy_providers (id, channel_id, extension_id, adapter_kind, base_url, display_name) VALUES (?, ?, ?, ?, ?, ?)
+             ON CONFLICT(id) DO UPDATE SET channel_id = excluded.channel_id, extension_id = excluded.extension_id, adapter_kind = excluded.adapter_kind, base_url = excluded.base_url, display_name = excluded.display_name",
         )
         .bind(&provider.id)
         .bind(&provider.channel_id)
+        .bind(&provider.extension_id)
         .bind(&provider.adapter_kind)
         .bind(&provider.base_url)
         .bind(&provider.display_name)
@@ -354,18 +364,19 @@ impl SqliteAdminStore {
     }
 
     pub async fn list_providers(&self) -> Result<Vec<ProxyProvider>> {
-        let rows = sqlx::query_as::<_, (String, String, String, String, String)>(
-            "SELECT id, channel_id, adapter_kind, base_url, display_name FROM catalog_proxy_providers ORDER BY id",
+        let rows = sqlx::query_as::<_, (String, String, String, String, String, String)>(
+            "SELECT id, channel_id, extension_id, adapter_kind, base_url, display_name FROM catalog_proxy_providers ORDER BY id",
         )
         .fetch_all(&self.pool)
         .await?;
         let mut providers = Vec::with_capacity(rows.len());
-        for (id, channel_id, adapter_kind, base_url, display_name) in rows {
+        for (id, channel_id, extension_id, adapter_kind, base_url, display_name) in rows {
             let channel_bindings =
                 load_provider_channel_bindings(&self.pool, &id, &channel_id).await?;
             providers.push(ProxyProvider {
                 id,
                 channel_id,
+                extension_id: normalize_provider_extension_id(extension_id, &adapter_kind),
                 adapter_kind,
                 base_url,
                 display_name,
@@ -376,14 +387,14 @@ impl SqliteAdminStore {
     }
 
     pub async fn find_provider(&self, provider_id: &str) -> Result<Option<ProxyProvider>> {
-        let row = sqlx::query_as::<_, (String, String, String, String, String)>(
-            "SELECT id, channel_id, adapter_kind, base_url, display_name FROM catalog_proxy_providers WHERE id = ?",
+        let row = sqlx::query_as::<_, (String, String, String, String, String, String)>(
+            "SELECT id, channel_id, extension_id, adapter_kind, base_url, display_name FROM catalog_proxy_providers WHERE id = ?",
         )
         .bind(provider_id)
         .fetch_optional(&self.pool)
         .await?;
 
-        let Some((id, channel_id, adapter_kind, base_url, display_name)) = row else {
+        let Some((id, channel_id, extension_id, adapter_kind, base_url, display_name)) = row else {
             return Ok(None);
         };
 
@@ -392,6 +403,7 @@ impl SqliteAdminStore {
         Ok(Some(ProxyProvider {
             id,
             channel_id,
+            extension_id: normalize_provider_extension_id(extension_id, &adapter_kind),
             adapter_kind,
             base_url,
             display_name,

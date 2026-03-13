@@ -12,7 +12,7 @@ use axum::{
 use sdkwork_api_app_billing::list_ledger_entries;
 use sdkwork_api_app_catalog::{
     list_channels, list_model_entries, list_providers, persist_channel,
-    persist_model_with_metadata, persist_provider_with_bindings,
+    persist_model_with_metadata, persist_provider_with_bindings_and_extension_id,
 };
 use sdkwork_api_app_credential::CredentialSecretManager;
 use sdkwork_api_app_credential::{list_credentials, persist_credential_with_secret_and_manager};
@@ -136,6 +136,8 @@ struct CreateChannelRequest {
 struct CreateProviderRequest {
     id: String,
     channel_id: String,
+    #[serde(default)]
+    extension_id: Option<String>,
     #[serde(default)]
     channel_bindings: Vec<CreateProviderChannelBindingRequest>,
     adapter_kind: String,
@@ -394,11 +396,12 @@ async fn create_provider_handler(
         .map(|binding| binding.channel_id.as_str())
         .unwrap_or(&request.channel_id);
     let bindings = provider_bindings_from_request(&request);
-    let provider = persist_provider_with_bindings(
+    let provider = persist_provider_with_bindings_and_extension_id(
         state.store.as_ref(),
         &request.id,
         primary_channel_id,
         &request.adapter_kind,
+        request.extension_id.as_deref(),
         &request.base_url,
         &request.display_name,
         &bindings,

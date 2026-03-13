@@ -29,6 +29,28 @@ fn provider_can_bind_to_multiple_channels() {
 }
 
 #[test]
+fn provider_tracks_extension_runtime_identity() {
+    let derived = ProxyProvider::new(
+        "provider-openrouter-main",
+        "openrouter",
+        "openrouter",
+        "https://openrouter.ai/api/v1",
+        "OpenRouter Main",
+    );
+    assert_eq!(derived.extension_id, "sdkwork.provider.openrouter");
+
+    let explicit = ProxyProvider::new(
+        "provider-openrouter-main",
+        "openrouter",
+        "openrouter-compatible",
+        "https://openrouter.ai/api/v1",
+        "OpenRouter Main",
+    )
+    .with_extension_id("sdkwork.provider.openrouter");
+    assert_eq!(explicit.extension_id, "sdkwork.provider.openrouter");
+}
+
+#[test]
 fn model_variant_tracks_capabilities_and_streaming() {
     let model = ModelVariant::new("gpt-4.1", "provider-openai-official")
         .with_capability(ModelCapability::Responses)

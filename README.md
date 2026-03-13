@@ -47,7 +47,7 @@ Backend:
   - billing ledger entries
 - Catalog-backed `/v1/models`
 - Real upstream relay for stateful `/v1/chat/completions` and `/v1/completions`:
-  - non-stream JSON relay for `adapter_kind = openai`
+  - extension-driven JSON relay for providers bound to OpenAI-compatible built-in extensions
   - SSE relay for `stream = true` against OpenAI-compatible upstreams
 - Real upstream relay for stateful `/v1/responses` and `/v1/embeddings` when provider, model, and credential records are present
 - Stub fallback responses for unconfigured providers or unsupported adapter kinds
@@ -85,7 +85,7 @@ Known gaps:
   - `openai`
   - `openrouter`
   - `ollama`
-- provider execution is now registry-based, but only the OpenAI-compatible adapter is registered by default
+- provider execution is now `extension_id`-driven with `adapter_kind` retained as compatibility metadata and protocol hint
 - dynamic runtime loading for `native_dynamic` and `connector` extensions is designed but not yet implemented
 - only stateful gateway execution paths relay upstream responses; the stateless demo router still emits local stub payloads
 - broader API families are now wired as either `relay` or `emulated`; see `docs/api/compatibility-matrix.md` for the execution-truth matrix
@@ -97,7 +97,7 @@ Known gaps:
 The current relay path expects:
 
 1. a channel
-2. a provider with `adapter_kind` and `base_url`
+2. a provider with `extension_id`, `adapter_kind`, and `base_url`
 3. an encrypted upstream credential
 4. a model catalog entry pointing at that provider
 
@@ -107,6 +107,7 @@ Example provider payload:
 {
   "id": "provider-openai-official",
   "channel_id": "openai",
+  "extension_id": "sdkwork.provider.openai.official",
   "channel_bindings": [
     { "channel_id": "openai", "is_primary": true }
   ],
@@ -187,12 +188,13 @@ pnpm --dir console exec vite build
 
 - `Channel` models the upstream ecosystem or vendor family, such as OpenAI, Anthropic, Google, or DeepSeek.
 - `ProxyProvider` models a concrete access path under one or more channels, such as an official endpoint, OpenRouter-style broker, or self-hosted Ollama node.
+- `ProxyProvider.extension_id` is now the runtime execution identity used to resolve a concrete extension package; `adapter_kind` remains useful as compatibility and protocol metadata.
 - `ProviderChannelBinding` now allows one provider to bind to multiple channel ecosystems without losing a primary channel for compatibility.
 - `ModelCatalogEntry` now carries capability and streaming metadata instead of only `external_name + provider_id`.
 - The backend is split into domain, application, interface, storage, provider, secret, and runtime crates to preserve controller/service/repository layering without forcing separate deployable processes for every boundary.
 - Standalone and embedded runtime modes share the same Rust crates; Tauri integration consumes the same admin and gateway capabilities through the runtime host boundary.
 - Stateful gateway execution now uses the catalog, routing, credential, and provider layers together to relay OpenAI-compatible upstream requests while still preserving local stub fallbacks for incomplete configuration.
-- Provider dispatch is now routed through `sdkwork-api-extension-host`, which owns built-in extension manifests and provider factory resolution.
+- Provider dispatch is now routed through `sdkwork-api-extension-host`, which resolves factories by `extension_id` first and keeps legacy `adapter_kind` aliases as a fallback.
 - Extension runtime configuration is split into package metadata, installation state, and mounted instances so one extension can back multiple provider instances.
 - `openrouter` and `ollama` are registered as built-in OpenAI-compatible provider extensions in addition to the direct `openai` adapter.
 

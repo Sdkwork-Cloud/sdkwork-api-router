@@ -71,6 +71,7 @@ use sdkwork_api_contract_openai::webhooks::{
     CreateWebhookRequest, DeleteWebhookResponse, ListWebhooksResponse, UpdateWebhookRequest,
     WebhookObject,
 };
+use sdkwork_api_domain_catalog::ProxyProvider;
 use sdkwork_api_extension_core::{ExtensionKind, ExtensionManifest, ExtensionRuntime};
 use sdkwork_api_extension_host::{BuiltinProviderExtensionFactory, ExtensionHost};
 use sdkwork_api_provider_core::ProviderRequest;
@@ -144,9 +145,8 @@ pub async fn delete_model_from_store(
             resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
                 .await?
         {
-            let response = execute_json_provider_request(
-                &provider.adapter_kind,
-                provider.base_url,
+            let response = execute_json_provider_request_for_provider(
+                &provider,
                 &api_key,
                 ProviderRequest::ModelsDelete(model_id),
             )
@@ -195,7 +195,11 @@ async fn resolve_non_model_provider(
         return Ok(None);
     };
 
-    Ok(Some((provider.adapter_kind, provider.base_url, api_key)))
+    Ok(Some((
+        provider_runtime_key(&provider).to_owned(),
+        provider.base_url,
+        api_key,
+    )))
 }
 
 pub async fn relay_chat_completion_from_store(
@@ -216,9 +220,8 @@ pub async fn relay_chat_completion_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::ChatCompletions(request),
     )
@@ -242,9 +245,8 @@ pub async fn relay_list_chat_completions_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::ChatCompletionsList,
     )
@@ -269,9 +271,8 @@ pub async fn relay_get_chat_completion_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::ChatCompletionsRetrieve(completion_id),
     )
@@ -297,9 +298,8 @@ pub async fn relay_update_chat_completion_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::ChatCompletionsUpdate(completion_id, request),
     )
@@ -324,9 +324,8 @@ pub async fn relay_delete_chat_completion_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::ChatCompletionsDelete(completion_id),
     )
@@ -351,9 +350,8 @@ pub async fn relay_list_chat_completion_messages_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::ChatCompletionsMessagesList(completion_id),
     )
@@ -378,9 +376,8 @@ pub async fn relay_chat_completion_stream_from_store(
         return Ok(None);
     };
 
-    execute_stream_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_stream_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::ChatCompletionsStream(request),
     )
@@ -1095,9 +1092,8 @@ pub async fn relay_response_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::Responses(request),
     )
@@ -1122,9 +1118,8 @@ pub async fn relay_count_response_input_tokens_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::ResponsesInputTokens(request),
     )
@@ -1149,9 +1144,8 @@ pub async fn relay_get_response_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::ResponsesRetrieve(response_id),
     )
@@ -1176,9 +1170,8 @@ pub async fn relay_cancel_response_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::ResponsesCancel(response_id),
     )
@@ -1203,9 +1196,8 @@ pub async fn relay_delete_response_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::ResponsesDelete(response_id),
     )
@@ -1230,9 +1222,8 @@ pub async fn relay_compact_response_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::ResponsesCompact(request),
     )
@@ -1257,9 +1248,8 @@ pub async fn relay_list_response_input_items_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::ResponsesInputItemsList(response_id),
     )
@@ -1284,9 +1274,8 @@ pub async fn relay_completion_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::Completions(request),
     )
@@ -1311,9 +1300,8 @@ pub async fn relay_embedding_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::Embeddings(request),
     )
@@ -1338,9 +1326,8 @@ pub async fn relay_moderation_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::Moderations(request),
     )
@@ -1365,9 +1352,8 @@ pub async fn relay_image_generation_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::ImagesGenerations(request),
     )
@@ -1392,9 +1378,8 @@ pub async fn relay_image_edit_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::ImagesEdits(request),
     )
@@ -1419,9 +1404,8 @@ pub async fn relay_image_variation_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::ImagesVariations(request),
     )
@@ -1446,9 +1430,8 @@ pub async fn relay_transcription_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::AudioTranscriptions(request),
     )
@@ -1473,9 +1456,8 @@ pub async fn relay_translation_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::AudioTranslations(request),
     )
@@ -1500,9 +1482,8 @@ pub async fn relay_speech_from_store(
         return Ok(None);
     };
 
-    execute_stream_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_stream_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::AudioSpeech(request),
     )
@@ -1527,13 +1508,8 @@ pub async fn relay_file_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
-        &api_key,
-        ProviderRequest::Files(request),
-    )
-    .await
+    execute_json_provider_request_for_provider(&provider, &api_key, ProviderRequest::Files(request))
+        .await
 }
 
 pub async fn relay_list_files_from_store(
@@ -1553,13 +1529,8 @@ pub async fn relay_list_files_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
-        &api_key,
-        ProviderRequest::FilesList,
-    )
-    .await
+    execute_json_provider_request_for_provider(&provider, &api_key, ProviderRequest::FilesList)
+        .await
 }
 
 pub async fn relay_get_file_from_store(
@@ -1580,9 +1551,8 @@ pub async fn relay_get_file_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::FilesRetrieve(file_id),
     )
@@ -1607,9 +1577,8 @@ pub async fn relay_delete_file_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::FilesDelete(file_id),
     )
@@ -1634,9 +1603,8 @@ pub async fn relay_file_content_from_store(
         return Ok(None);
     };
 
-    execute_stream_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_stream_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::FilesContent(file_id),
     )
@@ -1661,9 +1629,8 @@ pub async fn relay_upload_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::Uploads(request),
     )
@@ -1688,9 +1655,8 @@ pub async fn relay_upload_part_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::UploadParts(request),
     )
@@ -1715,9 +1681,8 @@ pub async fn relay_complete_upload_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::UploadComplete(request),
     )
@@ -1742,9 +1707,8 @@ pub async fn relay_cancel_upload_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::UploadCancel(upload_id),
     )
@@ -1769,9 +1733,8 @@ pub async fn relay_fine_tuning_job_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::FineTuningJobs(request),
     )
@@ -1795,9 +1758,8 @@ pub async fn relay_list_fine_tuning_jobs_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::FineTuningJobsList,
     )
@@ -1822,9 +1784,8 @@ pub async fn relay_get_fine_tuning_job_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::FineTuningJobsRetrieve(job_id),
     )
@@ -1849,9 +1810,8 @@ pub async fn relay_cancel_fine_tuning_job_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::FineTuningJobsCancel(job_id),
     )
@@ -1876,9 +1836,8 @@ pub async fn relay_assistant_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::Assistants(request),
     )
@@ -1902,13 +1861,8 @@ pub async fn relay_list_assistants_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
-        &api_key,
-        ProviderRequest::AssistantsList,
-    )
-    .await
+    execute_json_provider_request_for_provider(&provider, &api_key, ProviderRequest::AssistantsList)
+        .await
 }
 
 pub async fn relay_get_assistant_from_store(
@@ -1929,9 +1883,8 @@ pub async fn relay_get_assistant_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::AssistantsRetrieve(assistant_id),
     )
@@ -1957,9 +1910,8 @@ pub async fn relay_update_assistant_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::AssistantsUpdate(assistant_id, request),
     )
@@ -1984,9 +1936,8 @@ pub async fn relay_delete_assistant_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::AssistantsDelete(assistant_id),
     )
@@ -2011,9 +1962,8 @@ pub async fn relay_webhook_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::Webhooks(request),
     )
@@ -2037,13 +1987,8 @@ pub async fn relay_list_webhooks_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
-        &api_key,
-        ProviderRequest::WebhooksList,
-    )
-    .await
+    execute_json_provider_request_for_provider(&provider, &api_key, ProviderRequest::WebhooksList)
+        .await
 }
 
 pub async fn relay_get_webhook_from_store(
@@ -2064,9 +2009,8 @@ pub async fn relay_get_webhook_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::WebhooksRetrieve(webhook_id),
     )
@@ -2092,9 +2036,8 @@ pub async fn relay_update_webhook_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::WebhooksUpdate(webhook_id, request),
     )
@@ -2119,9 +2062,8 @@ pub async fn relay_delete_webhook_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::WebhooksDelete(webhook_id),
     )
@@ -2146,9 +2088,8 @@ pub async fn relay_realtime_session_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::RealtimeSessions(request),
     )
@@ -2173,13 +2114,8 @@ pub async fn relay_eval_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
-        &api_key,
-        ProviderRequest::Evals(request),
-    )
-    .await
+    execute_json_provider_request_for_provider(&provider, &api_key, ProviderRequest::Evals(request))
+        .await
 }
 
 pub async fn relay_batch_from_store(
@@ -2200,9 +2136,8 @@ pub async fn relay_batch_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::Batches(request),
     )
@@ -2226,13 +2161,8 @@ pub async fn relay_list_batches_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
-        &api_key,
-        ProviderRequest::BatchesList,
-    )
-    .await
+    execute_json_provider_request_for_provider(&provider, &api_key, ProviderRequest::BatchesList)
+        .await
 }
 
 pub async fn relay_get_batch_from_store(
@@ -2253,9 +2183,8 @@ pub async fn relay_get_batch_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::BatchesRetrieve(batch_id),
     )
@@ -2280,9 +2209,8 @@ pub async fn relay_cancel_batch_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::BatchesCancel(batch_id),
     )
@@ -2307,9 +2235,8 @@ pub async fn relay_vector_store_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::VectorStores(request),
     )
@@ -2333,9 +2260,8 @@ pub async fn relay_list_vector_stores_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::VectorStoresList,
     )
@@ -2360,9 +2286,8 @@ pub async fn relay_get_vector_store_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::VectorStoresRetrieve(vector_store_id),
     )
@@ -2388,9 +2313,8 @@ pub async fn relay_update_vector_store_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::VectorStoresUpdate(vector_store_id, request),
     )
@@ -2415,9 +2339,8 @@ pub async fn relay_delete_vector_store_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::VectorStoresDelete(vector_store_id),
     )
@@ -2443,9 +2366,8 @@ pub async fn relay_search_vector_store_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::VectorStoresSearch(vector_store_id, request),
     )
@@ -2471,9 +2393,8 @@ pub async fn relay_vector_store_file_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::VectorStoreFiles(vector_store_id, request),
     )
@@ -2498,9 +2419,8 @@ pub async fn relay_list_vector_store_files_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::VectorStoreFilesList(vector_store_id),
     )
@@ -2526,9 +2446,8 @@ pub async fn relay_get_vector_store_file_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::VectorStoreFilesRetrieve(vector_store_id, file_id),
     )
@@ -2554,9 +2473,8 @@ pub async fn relay_delete_vector_store_file_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::VectorStoreFilesDelete(vector_store_id, file_id),
     )
@@ -2583,9 +2501,8 @@ pub async fn relay_vector_store_file_batch_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::VectorStoreFileBatches(vector_store_id, request),
     )
@@ -2612,9 +2529,8 @@ pub async fn relay_get_vector_store_file_batch_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::VectorStoreFileBatchesRetrieve(vector_store_id, batch_id),
     )
@@ -2641,9 +2557,8 @@ pub async fn relay_cancel_vector_store_file_batch_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::VectorStoreFileBatchesCancel(vector_store_id, batch_id),
     )
@@ -2670,9 +2585,8 @@ pub async fn relay_list_vector_store_file_batch_files_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::VectorStoreFileBatchesListFiles(vector_store_id, batch_id),
     )
@@ -2697,9 +2611,8 @@ pub async fn relay_video_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::Videos(request),
     )
@@ -2723,13 +2636,8 @@ pub async fn relay_list_videos_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
-        &api_key,
-        ProviderRequest::VideosList,
-    )
-    .await
+    execute_json_provider_request_for_provider(&provider, &api_key, ProviderRequest::VideosList)
+        .await
 }
 
 pub async fn relay_get_video_from_store(
@@ -2750,9 +2658,8 @@ pub async fn relay_get_video_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::VideosRetrieve(video_id),
     )
@@ -2777,9 +2684,8 @@ pub async fn relay_delete_video_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::VideosDelete(video_id),
     )
@@ -2804,9 +2710,8 @@ pub async fn relay_video_content_from_store(
         return Ok(None);
     };
 
-    execute_stream_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_stream_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::VideosContent(video_id),
     )
@@ -2832,9 +2737,8 @@ pub async fn relay_remix_video_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request(
-        &provider.adapter_kind,
-        provider.base_url,
+    execute_json_provider_request_for_provider(
+        &provider,
         &api_key,
         ProviderRequest::VideosRemix(video_id, request),
     )
@@ -3753,14 +3657,46 @@ pub fn builtin_extension_host() -> ExtensionHost {
     host
 }
 
+fn provider_runtime_key(provider: &ProxyProvider) -> &str {
+    &provider.extension_id
+}
+
+async fn execute_json_provider_request_for_provider(
+    provider: &ProxyProvider,
+    api_key: &str,
+    request: ProviderRequest<'_>,
+) -> Result<Option<Value>> {
+    execute_json_provider_request(
+        provider_runtime_key(provider),
+        provider.base_url.clone(),
+        api_key,
+        request,
+    )
+    .await
+}
+
+async fn execute_stream_provider_request_for_provider(
+    provider: &ProxyProvider,
+    api_key: &str,
+    request: ProviderRequest<'_>,
+) -> Result<Option<reqwest::Response>> {
+    execute_stream_provider_request(
+        provider_runtime_key(provider),
+        provider.base_url.clone(),
+        api_key,
+        request,
+    )
+    .await
+}
+
 async fn execute_json_provider_request(
-    adapter_kind: &str,
+    runtime_key: &str,
     base_url: String,
     api_key: &str,
     request: ProviderRequest<'_>,
 ) -> Result<Option<Value>> {
     let host = builtin_extension_host();
-    let Some(adapter) = host.resolve_provider(adapter_kind, base_url) else {
+    let Some(adapter) = host.resolve_provider(runtime_key, base_url) else {
         return Ok(None);
     };
 
@@ -3769,13 +3705,13 @@ async fn execute_json_provider_request(
 }
 
 async fn execute_stream_provider_request(
-    adapter_kind: &str,
+    runtime_key: &str,
     base_url: String,
     api_key: &str,
     request: ProviderRequest<'_>,
 ) -> Result<Option<reqwest::Response>> {
     let host = builtin_extension_host();
-    let Some(adapter) = host.resolve_provider(adapter_kind, base_url) else {
+    let Some(adapter) = host.resolve_provider(runtime_key, base_url) else {
         return Ok(None);
     };
 

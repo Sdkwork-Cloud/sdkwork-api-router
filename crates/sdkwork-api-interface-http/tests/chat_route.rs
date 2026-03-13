@@ -251,9 +251,9 @@ async fn stateful_chat_route_relays_to_openai_compatible_provider() {
                 .method("POST")
                 .uri("/admin/providers")
                 .header("authorization", format!("Bearer {admin_token}"))
-.header("content-type", "application/json")
+                .header("content-type", "application/json")
                 .body(Body::from(format!(
-                    "{{\"id\":\"provider-openai-official\",\"channel_id\":\"openai\",\"adapter_kind\":\"openai\",\"base_url\":\"http://{address}\",\"display_name\":\"OpenAI Official\"}}"
+                    "{{\"id\":\"provider-openai-official\",\"channel_id\":\"openai\",\"extension_id\":\"sdkwork.provider.openai.official\",\"adapter_kind\":\"custom-openai\",\"base_url\":\"http://{address}\",\"display_name\":\"OpenAI Official\"}}"
                 )))
                 .unwrap(),
         )

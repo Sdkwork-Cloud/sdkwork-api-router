@@ -38,13 +38,22 @@ pub fn create_provider_with_config(
     base_url: &str,
     display_name: &str,
 ) -> Result<ProxyProvider> {
-    Ok(ProxyProvider::new(
-        id,
-        channel_id,
-        adapter_kind,
-        base_url,
-        display_name,
-    ))
+    create_provider_with_extension_id(id, channel_id, adapter_kind, None, base_url, display_name)
+}
+
+pub fn create_provider_with_extension_id(
+    id: &str,
+    channel_id: &str,
+    adapter_kind: &str,
+    extension_id: Option<&str>,
+    base_url: &str,
+    display_name: &str,
+) -> Result<ProxyProvider> {
+    let provider = ProxyProvider::new(id, channel_id, adapter_kind, base_url, display_name);
+    Ok(match extension_id {
+        Some(extension_id) => provider.with_extension_id(extension_id),
+        None => provider,
+    })
 }
 
 pub fn create_provider_with_bindings(
@@ -55,8 +64,34 @@ pub fn create_provider_with_bindings(
     display_name: &str,
     channel_bindings: &[ProviderChannelBinding],
 ) -> Result<ProxyProvider> {
-    let mut provider =
-        create_provider_with_config(id, channel_id, adapter_kind, base_url, display_name)?;
+    create_provider_with_bindings_and_extension_id(
+        id,
+        channel_id,
+        adapter_kind,
+        None,
+        base_url,
+        display_name,
+        channel_bindings,
+    )
+}
+
+pub fn create_provider_with_bindings_and_extension_id(
+    id: &str,
+    channel_id: &str,
+    adapter_kind: &str,
+    extension_id: Option<&str>,
+    base_url: &str,
+    display_name: &str,
+    channel_bindings: &[ProviderChannelBinding],
+) -> Result<ProxyProvider> {
+    let mut provider = create_provider_with_extension_id(
+        id,
+        channel_id,
+        adapter_kind,
+        extension_id,
+        base_url,
+        display_name,
+    )?;
     for binding in channel_bindings {
         provider = provider.with_channel_binding(binding.clone());
     }
@@ -71,8 +106,14 @@ pub async fn persist_provider(
     base_url: &str,
     display_name: &str,
 ) -> Result<ProxyProvider> {
-    let provider =
-        create_provider_with_config(id, channel_id, adapter_kind, base_url, display_name)?;
+    let provider = create_provider_with_extension_id(
+        id,
+        channel_id,
+        adapter_kind,
+        None,
+        base_url,
+        display_name,
+    )?;
     store.insert_provider(&provider).await
 }
 
@@ -85,10 +126,34 @@ pub async fn persist_provider_with_bindings(
     display_name: &str,
     channel_bindings: &[ProviderChannelBinding],
 ) -> Result<ProxyProvider> {
-    let provider = create_provider_with_bindings(
+    persist_provider_with_bindings_and_extension_id(
+        store,
         id,
         channel_id,
         adapter_kind,
+        None,
+        base_url,
+        display_name,
+        channel_bindings,
+    )
+    .await
+}
+
+pub async fn persist_provider_with_bindings_and_extension_id(
+    store: &dyn AdminStore,
+    id: &str,
+    channel_id: &str,
+    adapter_kind: &str,
+    extension_id: Option<&str>,
+    base_url: &str,
+    display_name: &str,
+    channel_bindings: &[ProviderChannelBinding],
+) -> Result<ProxyProvider> {
+    let provider = create_provider_with_bindings_and_extension_id(
+        id,
+        channel_id,
+        adapter_kind,
+        extension_id,
         base_url,
         display_name,
         channel_bindings,

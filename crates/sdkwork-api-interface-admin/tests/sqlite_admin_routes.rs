@@ -129,7 +129,7 @@ async fn create_and_list_providers_and_credentials() {
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    "{\"id\":\"provider-openai-official\",\"channel_id\":\"openai\",\"channel_bindings\":[{\"channel_id\":\"openai\",\"is_primary\":true},{\"channel_id\":\"responses-compatible\",\"is_primary\":false}],\"adapter_kind\":\"openai\",\"base_url\":\"https://api.openai.com\",\"display_name\":\"OpenAI Official\"}",
+                    "{\"id\":\"provider-openai-official\",\"channel_id\":\"openai\",\"extension_id\":\"sdkwork.provider.openai.official\",\"channel_bindings\":[{\"channel_id\":\"openai\",\"is_primary\":true},{\"channel_id\":\"responses-compatible\",\"is_primary\":false}],\"adapter_kind\":\"openai\",\"base_url\":\"https://api.openai.com\",\"display_name\":\"OpenAI Official\"}",
                 ))
                 .unwrap(),
         )
@@ -171,6 +171,10 @@ async fn create_and_list_providers_and_credentials() {
 
     let providers_json = read_json(providers).await;
     assert_eq!(providers_json[0]["channel_id"], "openai");
+    assert_eq!(
+        providers_json[0]["extension_id"],
+        "sdkwork.provider.openai.official"
+    );
     assert_eq!(providers_json[0]["adapter_kind"], "openai");
     assert_eq!(providers_json[0]["base_url"], "https://api.openai.com");
     assert_eq!(

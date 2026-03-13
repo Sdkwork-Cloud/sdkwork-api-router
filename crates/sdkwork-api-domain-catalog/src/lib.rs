@@ -19,6 +19,7 @@ impl Channel {
 pub struct ProxyProvider {
     pub id: String,
     pub channel_id: String,
+    pub extension_id: String,
     pub adapter_kind: String,
     pub base_url: String,
     pub display_name: String,
@@ -36,6 +37,7 @@ impl ProxyProvider {
     ) -> Self {
         let id = id.into();
         let channel_id = channel_id.into();
+        let adapter_kind = adapter_kind.into();
         Self {
             channel_bindings: vec![ProviderChannelBinding::primary(
                 id.clone(),
@@ -43,10 +45,17 @@ impl ProxyProvider {
             )],
             id,
             channel_id,
-            adapter_kind: adapter_kind.into(),
+            extension_id: derive_provider_extension_id(&adapter_kind),
+            adapter_kind,
             base_url: base_url.into(),
             display_name: display_name.into(),
         }
+    }
+
+    pub fn with_extension_id(mut self, extension_id: impl Into<String>) -> Self {
+        self.extension_id =
+            normalize_provider_extension_id(extension_id.into(), &self.adapter_kind);
+        self
     }
 
     pub fn with_channel_binding(mut self, binding: ProviderChannelBinding) -> Self {
@@ -66,6 +75,54 @@ impl ProxyProvider {
         self.channel_bindings
             .sort_by_key(|binding| (!binding.is_primary, binding.channel_id.clone()));
         self
+    }
+}
+
+pub fn derive_provider_extension_id(adapter_kind: &str) -> String {
+    match adapter_kind {
+        "openai" | "openai-compatible" | "custom-openai" => {
+            "sdkwork.provider.openai.official".to_owned()
+        }
+        "openrouter" | "openrouter-compatible" => "sdkwork.provider.openrouter".to_owned(),
+        "ollama" | "ollama-compatible" => "sdkwork.provider.ollama".to_owned(),
+        _ => format!(
+            "sdkwork.provider.{}",
+            sanitize_provider_identity_segment(adapter_kind)
+        ),
+    }
+}
+
+pub fn normalize_provider_extension_id(
+    extension_id: impl Into<String>,
+    adapter_kind: &str,
+) -> String {
+    let extension_id = extension_id.into();
+    if extension_id.trim().is_empty() {
+        derive_provider_extension_id(adapter_kind)
+    } else {
+        extension_id
+    }
+}
+
+fn sanitize_provider_identity_segment(adapter_kind: &str) -> String {
+    let mut sanitized = String::with_capacity(adapter_kind.len());
+    let mut previous_dash = false;
+
+    for ch in adapter_kind.chars() {
+        if ch.is_ascii_alphanumeric() {
+            sanitized.push(ch.to_ascii_lowercase());
+            previous_dash = false;
+        } else if !previous_dash {
+            sanitized.push('-');
+            previous_dash = true;
+        }
+    }
+
+    let sanitized = sanitized.trim_matches('-');
+    if sanitized.is_empty() {
+        "custom".to_owned()
+    } else {
+        sanitized.to_owned()
     }
 }
 
