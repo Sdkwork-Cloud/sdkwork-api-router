@@ -2,11 +2,14 @@ use std::sync::Arc;
 
 use axum::{
     body::Body,
+    extract::FromRequestParts,
     extract::Json as ExtractJson,
     extract::Multipart,
     extract::Path,
     extract::State,
     http::header,
+    http::request::Parts,
+    http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
@@ -161,6 +164,9 @@ use sdkwork_api_app_gateway::{
     relay_vector_store_file_from_store, relay_vector_store_from_store,
     relay_video_content_from_store, relay_video_from_store, relay_webhook_from_store,
 };
+use sdkwork_api_app_identity::{
+    resolve_gateway_request_context, GatewayRequestContext as IdentityGatewayRequestContext,
+};
 use sdkwork_api_app_routing::simulate_route_with_store;
 use sdkwork_api_app_usage::persist_usage_record;
 use sdkwork_api_contract_openai::assistants::{CreateAssistantRequest, UpdateAssistantRequest};
@@ -249,6 +255,50 @@ impl GatewayApiState {
             store,
             secret_manager,
         }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct AuthenticatedGatewayRequest(IdentityGatewayRequestContext);
+
+impl AuthenticatedGatewayRequest {
+    fn tenant_id(&self) -> &str {
+        self.0.tenant_id()
+    }
+
+    fn project_id(&self) -> &str {
+        self.0.project_id()
+    }
+}
+
+impl FromRequestParts<GatewayApiState> for AuthenticatedGatewayRequest {
+    type Rejection = StatusCode;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &GatewayApiState,
+    ) -> Result<Self, Self::Rejection> {
+        let Some(header_value) = parts.headers.get(header::AUTHORIZATION) else {
+            return Err(StatusCode::UNAUTHORIZED);
+        };
+        let Ok(header_value) = header_value.to_str() else {
+            return Err(StatusCode::UNAUTHORIZED);
+        };
+        let Some(token) = header_value
+            .strip_prefix("Bearer ")
+            .or_else(|| header_value.strip_prefix("bearer "))
+        else {
+            return Err(StatusCode::UNAUTHORIZED);
+        };
+
+        let Some(context) = resolve_gateway_request_context(state.store.as_ref(), token)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        else {
+            return Err(StatusCode::UNAUTHORIZED);
+        };
+
+        Ok(Self(context))
     }
 }
 
@@ -777,46 +827,58 @@ async fn model_delete_handler(
 }
 
 async fn list_models_from_store_handler(
+    request_context: AuthenticatedGatewayRequest,
     State(state): State<GatewayApiState>,
 ) -> Result<Json<sdkwork_api_contract_openai::models::ListModelsResponse>, Response> {
-    list_models_from_store(state.store.as_ref(), "tenant-1", "project-1")
-        .await
-        .map(Json)
-        .map_err(|_| {
-            (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "failed to load models",
-            )
-                .into_response()
-        })
+    list_models_from_store(
+        state.store.as_ref(),
+        request_context.tenant_id(),
+        request_context.project_id(),
+    )
+    .await
+    .map(Json)
+    .map_err(|_| {
+        (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to load models",
+        )
+            .into_response()
+    })
 }
 
 async fn model_retrieve_from_store_handler(
+    request_context: AuthenticatedGatewayRequest,
     State(state): State<GatewayApiState>,
     Path(model_id): Path<String>,
 ) -> Result<Json<sdkwork_api_contract_openai::models::ModelObject>, Response> {
-    get_model_from_store(state.store.as_ref(), "tenant-1", "project-1", &model_id)
-        .await
-        .map_err(|_| {
-            (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "failed to load model",
-            )
-                .into_response()
-        })?
-        .map(Json)
-        .ok_or_else(|| (axum::http::StatusCode::NOT_FOUND, "model not found").into_response())
+    get_model_from_store(
+        state.store.as_ref(),
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &model_id,
+    )
+    .await
+    .map_err(|_| {
+        (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to load model",
+        )
+            .into_response()
+    })?
+    .map(Json)
+    .ok_or_else(|| (axum::http::StatusCode::NOT_FOUND, "model not found").into_response())
 }
 
 async fn model_delete_from_store_handler(
+    request_context: AuthenticatedGatewayRequest,
     State(state): State<GatewayApiState>,
     Path(model_id): Path<String>,
 ) -> Result<Json<Value>, Response> {
     delete_model_from_store(
         state.store.as_ref(),
         &state.secret_manager,
-        "tenant-1",
-        "project-1",
+        request_context.tenant_id(),
+        request_context.project_id(),
         &model_id,
     )
     .await
@@ -1607,6 +1669,7 @@ async fn vector_store_file_batch_files_handler(
 }
 
 async fn chat_completions_with_state_handler(
+    request_context: AuthenticatedGatewayRequest,
     State(state): State<GatewayApiState>,
     ExtractJson(request): ExtractJson<CreateChatCompletionRequest>,
 ) -> Response {
@@ -1614,15 +1677,16 @@ async fn chat_completions_with_state_handler(
         match relay_chat_completion_stream_from_store(
             state.store.as_ref(),
             &state.secret_manager,
-            "tenant-1",
-            "project-1",
+            request_context.tenant_id(),
+            request_context.project_id(),
             &request,
         )
         .await
         {
             Ok(Some(response)) => {
-                let usage_result = record_gateway_usage(
+                let usage_result = record_gateway_usage_for_project(
                     state.store.as_ref(),
+                    request_context.project_id(),
                     "chat_completion",
                     &request.model,
                     100,
@@ -1652,15 +1716,16 @@ async fn chat_completions_with_state_handler(
         match relay_chat_completion_from_store(
             state.store.as_ref(),
             &state.secret_manager,
-            "tenant-1",
-            "project-1",
+            request_context.tenant_id(),
+            request_context.project_id(),
             &request,
         )
         .await
         {
             Ok(Some(response)) => {
-                let usage_result = record_gateway_usage(
+                let usage_result = record_gateway_usage_for_project(
                     state.store.as_ref(),
+                    request_context.project_id(),
                     "chat_completion",
                     &request.model,
                     100,
@@ -1688,8 +1753,9 @@ async fn chat_completions_with_state_handler(
         }
     }
 
-    let usage_result = record_gateway_usage(
+    let usage_result = record_gateway_usage_for_project(
         state.store.as_ref(),
+        request_context.project_id(),
         "chat_completion",
         &request.model,
         100,
@@ -1713,27 +1779,33 @@ async fn chat_completions_with_state_handler(
         ([(header::CONTENT_TYPE, "text/event-stream")], body).into_response()
     } else {
         Json(
-            create_chat_completion("tenant-1", "project-1", &request.model)
-                .expect("chat completion"),
+            create_chat_completion(
+                request_context.tenant_id(),
+                request_context.project_id(),
+                &request.model,
+            )
+            .expect("chat completion"),
         )
         .into_response()
     }
 }
 
 async fn chat_completions_list_with_state_handler(
+    request_context: AuthenticatedGatewayRequest,
     State(state): State<GatewayApiState>,
 ) -> Response {
     match relay_list_chat_completions_from_store(
         state.store.as_ref(),
         &state.secret_manager,
-        "tenant-1",
-        "project-1",
+        request_context.tenant_id(),
+        request_context.project_id(),
     )
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage(
+            if record_gateway_usage_for_project(
                 state.store.as_ref(),
+                request_context.project_id(),
                 "chat_completion",
                 "chat_completions",
                 20,
@@ -1761,8 +1833,9 @@ async fn chat_completions_list_with_state_handler(
         }
     }
 
-    if record_gateway_usage(
+    if record_gateway_usage_for_project(
         state.store.as_ref(),
+        request_context.project_id(),
         "chat_completion",
         "chat_completions",
         20,
@@ -1778,25 +1851,31 @@ async fn chat_completions_list_with_state_handler(
             .into_response();
     }
 
-    Json(list_chat_completions("tenant-1", "project-1").expect("chat completions")).into_response()
+    Json(
+        list_chat_completions(request_context.tenant_id(), request_context.project_id())
+            .expect("chat completions"),
+    )
+    .into_response()
 }
 
 async fn chat_completion_retrieve_with_state_handler(
+    request_context: AuthenticatedGatewayRequest,
     State(state): State<GatewayApiState>,
     Path(completion_id): Path<String>,
 ) -> Response {
     match relay_get_chat_completion_from_store(
         state.store.as_ref(),
         &state.secret_manager,
-        "tenant-1",
-        "project-1",
+        request_context.tenant_id(),
+        request_context.project_id(),
         &completion_id,
     )
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage(
+            if record_gateway_usage_for_project(
                 state.store.as_ref(),
+                request_context.project_id(),
                 "chat_completion",
                 &completion_id,
                 20,
@@ -1824,8 +1903,9 @@ async fn chat_completion_retrieve_with_state_handler(
         }
     }
 
-    if record_gateway_usage(
+    if record_gateway_usage_for_project(
         state.store.as_ref(),
+        request_context.project_id(),
         "chat_completion",
         &completion_id,
         20,
@@ -1841,11 +1921,19 @@ async fn chat_completion_retrieve_with_state_handler(
             .into_response();
     }
 
-    Json(get_chat_completion("tenant-1", "project-1", &completion_id).expect("chat completion"))
-        .into_response()
+    Json(
+        get_chat_completion(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &completion_id,
+        )
+        .expect("chat completion"),
+    )
+    .into_response()
 }
 
 async fn chat_completion_update_with_state_handler(
+    request_context: AuthenticatedGatewayRequest,
     State(state): State<GatewayApiState>,
     Path(completion_id): Path<String>,
     ExtractJson(request): ExtractJson<UpdateChatCompletionRequest>,
@@ -1853,16 +1941,17 @@ async fn chat_completion_update_with_state_handler(
     match relay_update_chat_completion_from_store(
         state.store.as_ref(),
         &state.secret_manager,
-        "tenant-1",
-        "project-1",
+        request_context.tenant_id(),
+        request_context.project_id(),
         &completion_id,
         &request,
     )
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage(
+            if record_gateway_usage_for_project(
                 state.store.as_ref(),
+                request_context.project_id(),
                 "chat_completion",
                 &completion_id,
                 20,
@@ -1890,8 +1979,9 @@ async fn chat_completion_update_with_state_handler(
         }
     }
 
-    if record_gateway_usage(
+    if record_gateway_usage_for_project(
         state.store.as_ref(),
+        request_context.project_id(),
         "chat_completion",
         &completion_id,
         20,
@@ -1909,8 +1999,8 @@ async fn chat_completion_update_with_state_handler(
 
     Json(
         update_chat_completion(
-            "tenant-1",
-            "project-1",
+            request_context.tenant_id(),
+            request_context.project_id(),
             &completion_id,
             request.metadata.unwrap_or(serde_json::json!({})),
         )
@@ -1920,21 +2010,23 @@ async fn chat_completion_update_with_state_handler(
 }
 
 async fn chat_completion_delete_with_state_handler(
+    request_context: AuthenticatedGatewayRequest,
     State(state): State<GatewayApiState>,
     Path(completion_id): Path<String>,
 ) -> Response {
     match relay_delete_chat_completion_from_store(
         state.store.as_ref(),
         &state.secret_manager,
-        "tenant-1",
-        "project-1",
+        request_context.tenant_id(),
+        request_context.project_id(),
         &completion_id,
     )
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage(
+            if record_gateway_usage_for_project(
                 state.store.as_ref(),
+                request_context.project_id(),
                 "chat_completion",
                 &completion_id,
                 20,
@@ -1962,8 +2054,9 @@ async fn chat_completion_delete_with_state_handler(
         }
     }
 
-    if record_gateway_usage(
+    if record_gateway_usage_for_project(
         state.store.as_ref(),
+        request_context.project_id(),
         "chat_completion",
         &completion_id,
         20,
@@ -1980,28 +2073,34 @@ async fn chat_completion_delete_with_state_handler(
     }
 
     Json(
-        delete_chat_completion("tenant-1", "project-1", &completion_id)
-            .expect("chat completion delete"),
+        delete_chat_completion(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &completion_id,
+        )
+        .expect("chat completion delete"),
     )
     .into_response()
 }
 
 async fn chat_completion_messages_list_with_state_handler(
+    request_context: AuthenticatedGatewayRequest,
     State(state): State<GatewayApiState>,
     Path(completion_id): Path<String>,
 ) -> Response {
     match relay_list_chat_completion_messages_from_store(
         state.store.as_ref(),
         &state.secret_manager,
-        "tenant-1",
-        "project-1",
+        request_context.tenant_id(),
+        request_context.project_id(),
         &completion_id,
     )
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage(
+            if record_gateway_usage_for_project(
                 state.store.as_ref(),
+                request_context.project_id(),
                 "chat_completion",
                 &completion_id,
                 20,
@@ -2029,8 +2128,9 @@ async fn chat_completion_messages_list_with_state_handler(
         }
     }
 
-    if record_gateway_usage(
+    if record_gateway_usage_for_project(
         state.store.as_ref(),
+        request_context.project_id(),
         "chat_completion",
         &completion_id,
         20,
@@ -2047,8 +2147,12 @@ async fn chat_completion_messages_list_with_state_handler(
     }
 
     Json(
-        list_chat_completion_messages("tenant-1", "project-1", &completion_id)
-            .expect("chat completion messages"),
+        list_chat_completion_messages(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &completion_id,
+        )
+        .expect("chat completion messages"),
     )
     .into_response()
 }
@@ -3647,22 +3751,30 @@ fn local_video_content_response(video_id: &str) -> Response {
 }
 
 async fn responses_with_state_handler(
+    request_context: AuthenticatedGatewayRequest,
     State(state): State<GatewayApiState>,
     ExtractJson(request): ExtractJson<CreateResponseRequest>,
 ) -> Response {
     match relay_response_from_store(
         state.store.as_ref(),
         &state.secret_manager,
-        "tenant-1",
-        "project-1",
+        request_context.tenant_id(),
+        request_context.project_id(),
         &request,
     )
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage(state.store.as_ref(), "responses", &request.model, 120, 0.12)
-                .await
-                .is_err()
+            if record_gateway_usage_for_project(
+                state.store.as_ref(),
+                request_context.project_id(),
+                "responses",
+                &request.model,
+                120,
+                0.12,
+            )
+            .await
+            .is_err()
             {
                 return (
                     axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -3683,9 +3795,16 @@ async fn responses_with_state_handler(
         }
     }
 
-    if record_gateway_usage(state.store.as_ref(), "responses", &request.model, 120, 0.12)
-        .await
-        .is_err()
+    if record_gateway_usage_for_project(
+        state.store.as_ref(),
+        request_context.project_id(),
+        "responses",
+        &request.model,
+        120,
+        0.12,
+    )
+    .await
+    .is_err()
     {
         return (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -3694,27 +3813,42 @@ async fn responses_with_state_handler(
             .into_response();
     }
 
-    Json(create_response("tenant-1", "project-1", &request.model).expect("response"))
-        .into_response()
+    Json(
+        create_response(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &request.model,
+        )
+        .expect("response"),
+    )
+    .into_response()
 }
 
 async fn response_input_tokens_with_state_handler(
+    request_context: AuthenticatedGatewayRequest,
     State(state): State<GatewayApiState>,
     ExtractJson(request): ExtractJson<CountResponseInputTokensRequest>,
 ) -> Response {
     match relay_count_response_input_tokens_from_store(
         state.store.as_ref(),
         &state.secret_manager,
-        "tenant-1",
-        "project-1",
+        request_context.tenant_id(),
+        request_context.project_id(),
         &request,
     )
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage(state.store.as_ref(), "responses", &request.model, 20, 0.02)
-                .await
-                .is_err()
+            if record_gateway_usage_for_project(
+                state.store.as_ref(),
+                request_context.project_id(),
+                "responses",
+                &request.model,
+                20,
+                0.02,
+            )
+            .await
+            .is_err()
             {
                 return (
                     axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -3735,9 +3869,16 @@ async fn response_input_tokens_with_state_handler(
         }
     }
 
-    if record_gateway_usage(state.store.as_ref(), "responses", &request.model, 20, 0.02)
-        .await
-        .is_err()
+    if record_gateway_usage_for_project(
+        state.store.as_ref(),
+        request_context.project_id(),
+        "responses",
+        &request.model,
+        20,
+        0.02,
+    )
+    .await
+    .is_err()
     {
         return (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -3747,29 +3888,41 @@ async fn response_input_tokens_with_state_handler(
     }
 
     Json(
-        count_response_input_tokens("tenant-1", "project-1", &request.model)
-            .expect("response input tokens"),
+        count_response_input_tokens(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &request.model,
+        )
+        .expect("response input tokens"),
     )
     .into_response()
 }
 
 async fn response_retrieve_with_state_handler(
+    request_context: AuthenticatedGatewayRequest,
     State(state): State<GatewayApiState>,
     Path(response_id): Path<String>,
 ) -> Response {
     match relay_get_response_from_store(
         state.store.as_ref(),
         &state.secret_manager,
-        "tenant-1",
-        "project-1",
+        request_context.tenant_id(),
+        request_context.project_id(),
         &response_id,
     )
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage(state.store.as_ref(), "responses", &response_id, 20, 0.02)
-                .await
-                .is_err()
+            if record_gateway_usage_for_project(
+                state.store.as_ref(),
+                request_context.project_id(),
+                "responses",
+                &response_id,
+                20,
+                0.02,
+            )
+            .await
+            .is_err()
             {
                 return (
                     axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -3790,9 +3943,16 @@ async fn response_retrieve_with_state_handler(
         }
     }
 
-    if record_gateway_usage(state.store.as_ref(), "responses", &response_id, 20, 0.02)
-        .await
-        .is_err()
+    if record_gateway_usage_for_project(
+        state.store.as_ref(),
+        request_context.project_id(),
+        "responses",
+        &response_id,
+        20,
+        0.02,
+    )
+    .await
+    .is_err()
     {
         return (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -3801,27 +3961,42 @@ async fn response_retrieve_with_state_handler(
             .into_response();
     }
 
-    Json(get_response("tenant-1", "project-1", &response_id).expect("response retrieve"))
-        .into_response()
+    Json(
+        get_response(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &response_id,
+        )
+        .expect("response retrieve"),
+    )
+    .into_response()
 }
 
 async fn response_input_items_list_with_state_handler(
+    request_context: AuthenticatedGatewayRequest,
     State(state): State<GatewayApiState>,
     Path(response_id): Path<String>,
 ) -> Response {
     match relay_list_response_input_items_from_store(
         state.store.as_ref(),
         &state.secret_manager,
-        "tenant-1",
-        "project-1",
+        request_context.tenant_id(),
+        request_context.project_id(),
         &response_id,
     )
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage(state.store.as_ref(), "responses", &response_id, 20, 0.02)
-                .await
-                .is_err()
+            if record_gateway_usage_for_project(
+                state.store.as_ref(),
+                request_context.project_id(),
+                "responses",
+                &response_id,
+                20,
+                0.02,
+            )
+            .await
+            .is_err()
             {
                 return (
                     axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -3842,9 +4017,16 @@ async fn response_input_items_list_with_state_handler(
         }
     }
 
-    if record_gateway_usage(state.store.as_ref(), "responses", &response_id, 20, 0.02)
-        .await
-        .is_err()
+    if record_gateway_usage_for_project(
+        state.store.as_ref(),
+        request_context.project_id(),
+        "responses",
+        &response_id,
+        20,
+        0.02,
+    )
+    .await
+    .is_err()
     {
         return (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -3854,29 +4036,41 @@ async fn response_input_items_list_with_state_handler(
     }
 
     Json(
-        list_response_input_items("tenant-1", "project-1", &response_id)
-            .expect("response input items"),
+        list_response_input_items(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &response_id,
+        )
+        .expect("response input items"),
     )
     .into_response()
 }
 
 async fn response_delete_with_state_handler(
+    request_context: AuthenticatedGatewayRequest,
     State(state): State<GatewayApiState>,
     Path(response_id): Path<String>,
 ) -> Response {
     match relay_delete_response_from_store(
         state.store.as_ref(),
         &state.secret_manager,
-        "tenant-1",
-        "project-1",
+        request_context.tenant_id(),
+        request_context.project_id(),
         &response_id,
     )
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage(state.store.as_ref(), "responses", &response_id, 20, 0.02)
-                .await
-                .is_err()
+            if record_gateway_usage_for_project(
+                state.store.as_ref(),
+                request_context.project_id(),
+                "responses",
+                &response_id,
+                20,
+                0.02,
+            )
+            .await
+            .is_err()
             {
                 return (
                     axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -3897,9 +4091,16 @@ async fn response_delete_with_state_handler(
         }
     }
 
-    if record_gateway_usage(state.store.as_ref(), "responses", &response_id, 20, 0.02)
-        .await
-        .is_err()
+    if record_gateway_usage_for_project(
+        state.store.as_ref(),
+        request_context.project_id(),
+        "responses",
+        &response_id,
+        20,
+        0.02,
+    )
+    .await
+    .is_err()
     {
         return (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -3908,27 +4109,42 @@ async fn response_delete_with_state_handler(
             .into_response();
     }
 
-    Json(delete_response("tenant-1", "project-1", &response_id).expect("response delete"))
-        .into_response()
+    Json(
+        delete_response(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &response_id,
+        )
+        .expect("response delete"),
+    )
+    .into_response()
 }
 
 async fn response_cancel_with_state_handler(
+    request_context: AuthenticatedGatewayRequest,
     State(state): State<GatewayApiState>,
     Path(response_id): Path<String>,
 ) -> Response {
     match relay_cancel_response_from_store(
         state.store.as_ref(),
         &state.secret_manager,
-        "tenant-1",
-        "project-1",
+        request_context.tenant_id(),
+        request_context.project_id(),
         &response_id,
     )
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage(state.store.as_ref(), "responses", &response_id, 20, 0.02)
-                .await
-                .is_err()
+            if record_gateway_usage_for_project(
+                state.store.as_ref(),
+                request_context.project_id(),
+                "responses",
+                &response_id,
+                20,
+                0.02,
+            )
+            .await
+            .is_err()
             {
                 return (
                     axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -3949,9 +4165,16 @@ async fn response_cancel_with_state_handler(
         }
     }
 
-    if record_gateway_usage(state.store.as_ref(), "responses", &response_id, 20, 0.02)
-        .await
-        .is_err()
+    if record_gateway_usage_for_project(
+        state.store.as_ref(),
+        request_context.project_id(),
+        "responses",
+        &response_id,
+        20,
+        0.02,
+    )
+    .await
+    .is_err()
     {
         return (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -3960,27 +4183,42 @@ async fn response_cancel_with_state_handler(
             .into_response();
     }
 
-    Json(cancel_response("tenant-1", "project-1", &response_id).expect("response cancel"))
-        .into_response()
+    Json(
+        cancel_response(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &response_id,
+        )
+        .expect("response cancel"),
+    )
+    .into_response()
 }
 
 async fn response_compact_with_state_handler(
+    request_context: AuthenticatedGatewayRequest,
     State(state): State<GatewayApiState>,
     ExtractJson(request): ExtractJson<CompactResponseRequest>,
 ) -> Response {
     match relay_compact_response_from_store(
         state.store.as_ref(),
         &state.secret_manager,
-        "tenant-1",
-        "project-1",
+        request_context.tenant_id(),
+        request_context.project_id(),
         &request,
     )
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage(state.store.as_ref(), "responses", &request.model, 60, 0.06)
-                .await
-                .is_err()
+            if record_gateway_usage_for_project(
+                state.store.as_ref(),
+                request_context.project_id(),
+                "responses",
+                &request.model,
+                60,
+                0.06,
+            )
+            .await
+            .is_err()
             {
                 return (
                     axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -4001,9 +4239,16 @@ async fn response_compact_with_state_handler(
         }
     }
 
-    if record_gateway_usage(state.store.as_ref(), "responses", &request.model, 60, 0.06)
-        .await
-        .is_err()
+    if record_gateway_usage_for_project(
+        state.store.as_ref(),
+        request_context.project_id(),
+        "responses",
+        &request.model,
+        60,
+        0.06,
+    )
+    .await
+    .is_err()
     {
         return (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -4012,26 +4257,35 @@ async fn response_compact_with_state_handler(
             .into_response();
     }
 
-    Json(compact_response("tenant-1", "project-1", &request.model).expect("response compact"))
-        .into_response()
+    Json(
+        compact_response(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &request.model,
+        )
+        .expect("response compact"),
+    )
+    .into_response()
 }
 
 async fn completions_with_state_handler(
+    request_context: AuthenticatedGatewayRequest,
     State(state): State<GatewayApiState>,
     ExtractJson(request): ExtractJson<CreateCompletionRequest>,
 ) -> Response {
     match relay_completion_from_store(
         state.store.as_ref(),
         &state.secret_manager,
-        "tenant-1",
-        "project-1",
+        request_context.tenant_id(),
+        request_context.project_id(),
         &request,
     )
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage(
+            if record_gateway_usage_for_project(
                 state.store.as_ref(),
+                request_context.project_id(),
                 "completions",
                 &request.model,
                 80,
@@ -4059,8 +4313,9 @@ async fn completions_with_state_handler(
         }
     }
 
-    if record_gateway_usage(
+    if record_gateway_usage_for_project(
         state.store.as_ref(),
+        request_context.project_id(),
         "completions",
         &request.model,
         80,
@@ -4076,27 +4331,42 @@ async fn completions_with_state_handler(
             .into_response();
     }
 
-    Json(create_completion("tenant-1", "project-1", &request.model).expect("completion"))
-        .into_response()
+    Json(
+        create_completion(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &request.model,
+        )
+        .expect("completion"),
+    )
+    .into_response()
 }
 
 async fn embeddings_with_state_handler(
+    request_context: AuthenticatedGatewayRequest,
     State(state): State<GatewayApiState>,
     ExtractJson(request): ExtractJson<CreateEmbeddingRequest>,
 ) -> Response {
     match relay_embedding_from_store(
         state.store.as_ref(),
         &state.secret_manager,
-        "tenant-1",
-        "project-1",
+        request_context.tenant_id(),
+        request_context.project_id(),
         &request,
     )
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage(state.store.as_ref(), "embeddings", &request.model, 10, 0.01)
-                .await
-                .is_err()
+            if record_gateway_usage_for_project(
+                state.store.as_ref(),
+                request_context.project_id(),
+                "embeddings",
+                &request.model,
+                10,
+                0.01,
+            )
+            .await
+            .is_err()
             {
                 return (
                     axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -4117,9 +4387,16 @@ async fn embeddings_with_state_handler(
         }
     }
 
-    if record_gateway_usage(state.store.as_ref(), "embeddings", &request.model, 10, 0.01)
-        .await
-        .is_err()
+    if record_gateway_usage_for_project(
+        state.store.as_ref(),
+        request_context.project_id(),
+        "embeddings",
+        &request.model,
+        10,
+        0.01,
+    )
+    .await
+    .is_err()
     {
         return (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -4128,8 +4405,15 @@ async fn embeddings_with_state_handler(
             .into_response();
     }
 
-    Json(create_embedding("tenant-1", "project-1", &request.model).expect("embedding"))
-        .into_response()
+    Json(
+        create_embedding(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &request.model,
+        )
+        .expect("embedding"),
+    )
+    .into_response()
 }
 
 async fn moderations_with_state_handler(
@@ -7422,9 +7706,20 @@ async fn record_gateway_usage(
     units: u64,
     amount: f64,
 ) -> anyhow::Result<()> {
+    record_gateway_usage_for_project(store, "project-1", capability, model, units, amount).await
+}
+
+async fn record_gateway_usage_for_project(
+    store: &dyn AdminStore,
+    project_id: &str,
+    capability: &str,
+    model: &str,
+    units: u64,
+    amount: f64,
+) -> anyhow::Result<()> {
     let decision = simulate_route_with_store(store, capability, model).await?;
-    persist_usage_record(store, "project-1", model, &decision.selected_provider_id).await?;
-    persist_ledger_entry(store, "project-1", units, amount).await?;
+    persist_usage_record(store, project_id, model, &decision.selected_provider_id).await?;
+    persist_ledger_entry(store, project_id, units, amount).await?;
     Ok(())
 }
 

@@ -88,4 +88,5 @@ pub trait AdminStore: Send + Sync {
         record: &GatewayApiKeyRecord,
     ) -> Result<GatewayApiKeyRecord>;
     async fn list_gateway_api_keys(&self) -> Result<Vec<GatewayApiKeyRecord>>;
+    async fn find_gateway_api_key(&self, hashed_key: &str) -> Result<Option<GatewayApiKeyRecord>>;
 }

@@ -7,6 +7,8 @@ use serde_json::Value;
 use sqlx::SqlitePool;
 use tower::ServiceExt;
 
+mod support;
+
 #[tokio::test]
 async fn chat_route_returns_ok() {
     let app = sdkwork_api_interface_http::gateway_router();
@@ -134,6 +136,7 @@ async fn memory_pool() -> SqlitePool {
 #[tokio::test]
 async fn stateful_chat_route_records_usage_and_billing() {
     let pool = memory_pool().await;
+    let api_key = support::issue_gateway_api_key(&pool, "tenant-1", "project-1").await;
     let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool.clone());
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool);
 
@@ -143,6 +146,7 @@ async fn stateful_chat_route_records_usage_and_billing() {
             Request::builder()
                 .method("POST")
                 .uri("/v1/chat/completions")
+                .header("authorization", format!("Bearer {api_key}"))
                 .header("content-type", "application/json")
                 .body(Body::from(
                     "{\"model\":\"gpt-4.1\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}",
@@ -218,6 +222,7 @@ async fn stateful_chat_route_relays_to_openai_compatible_provider() {
     });
 
     let pool = memory_pool().await;
+    let api_key = support::issue_gateway_api_key(&pool, "tenant-1", "project-1").await;
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
     let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
 
@@ -291,6 +296,7 @@ async fn stateful_chat_route_relays_to_openai_compatible_provider() {
             Request::builder()
                 .method("POST")
                 .uri("/v1/chat/completions")
+                .header("authorization", format!("Bearer {api_key}"))
                 .header("content-type", "application/json")
                 .body(Body::from(
                     "{\"model\":\"gpt-4.1\",\"messages\":[{\"role\":\"user\",\"content\":\"relay me\"}]}",
@@ -314,6 +320,7 @@ async fn stateful_chat_route_relays_to_openai_compatible_provider() {
             Request::builder()
                 .method("GET")
                 .uri("/v1/chat/completions")
+                .header("authorization", format!("Bearer {api_key}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -330,6 +337,7 @@ async fn stateful_chat_route_relays_to_openai_compatible_provider() {
             Request::builder()
                 .method("GET")
                 .uri("/v1/chat/completions/chatcmpl_1")
+                .header("authorization", format!("Bearer {api_key}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -346,6 +354,7 @@ async fn stateful_chat_route_relays_to_openai_compatible_provider() {
             Request::builder()
                 .method("POST")
                 .uri("/v1/chat/completions/chatcmpl_1")
+                .header("authorization", format!("Bearer {api_key}"))
                 .header("content-type", "application/json")
                 .body(Body::from("{\"metadata\":{\"tier\":\"gold\"}}"))
                 .unwrap(),
@@ -363,6 +372,7 @@ async fn stateful_chat_route_relays_to_openai_compatible_provider() {
             Request::builder()
                 .method("DELETE")
                 .uri("/v1/chat/completions/chatcmpl_1")
+                .header("authorization", format!("Bearer {api_key}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -378,6 +388,7 @@ async fn stateful_chat_route_relays_to_openai_compatible_provider() {
             Request::builder()
                 .method("GET")
                 .uri("/v1/chat/completions/chatcmpl_1/messages")
+                .header("authorization", format!("Bearer {api_key}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -403,6 +414,7 @@ async fn stateful_chat_route_relays_to_openrouter_provider() {
     });
 
     let pool = memory_pool().await;
+    let api_key = support::issue_gateway_api_key(&pool, "tenant-1", "project-1").await;
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
     let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
 
@@ -477,6 +489,7 @@ async fn stateful_chat_route_relays_to_openrouter_provider() {
             Request::builder()
                 .method("POST")
                 .uri("/v1/chat/completions")
+                .header("authorization", format!("Bearer {api_key}"))
                 .header("content-type", "application/json")
                 .body(Body::from(
                     "{\"model\":\"openai/gpt-4.1\",\"messages\":[{\"role\":\"user\",\"content\":\"relay openrouter\"}]}",
@@ -509,6 +522,7 @@ async fn stateful_chat_route_relays_to_ollama_provider() {
     });
 
     let pool = memory_pool().await;
+    let api_key = support::issue_gateway_api_key(&pool, "tenant-1", "project-1").await;
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
     let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
 
@@ -581,6 +595,7 @@ async fn stateful_chat_route_relays_to_ollama_provider() {
             Request::builder()
                 .method("POST")
                 .uri("/v1/chat/completions")
+                .header("authorization", format!("Bearer {api_key}"))
                 .header("content-type", "application/json")
                 .body(Body::from(
                     "{\"model\":\"llama3.2\",\"messages\":[{\"role\":\"user\",\"content\":\"relay ollama\"}]}",

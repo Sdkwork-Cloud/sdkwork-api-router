@@ -554,6 +554,30 @@ impl PostgresAdminStore {
             )
             .collect())
     }
+
+    pub async fn find_gateway_api_key(
+        &self,
+        hashed_key: &str,
+    ) -> Result<Option<GatewayApiKeyRecord>> {
+        let row = sqlx::query_as::<_, (String, String, String, String, bool)>(
+            "SELECT tenant_id, project_id, environment, hashed_key, active FROM identity_gateway_api_keys WHERE hashed_key = $1",
+        )
+        .bind(hashed_key)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(
+            row.map(|(tenant_id, project_id, environment, hashed_key, active)| {
+                GatewayApiKeyRecord {
+                    tenant_id,
+                    project_id,
+                    environment,
+                    hashed_key,
+                    active,
+                }
+            }),
+        )
+    }
 }
 
 #[async_trait::async_trait]
@@ -685,5 +709,9 @@ impl AdminStore for PostgresAdminStore {
 
     async fn list_gateway_api_keys(&self) -> Result<Vec<GatewayApiKeyRecord>> {
         PostgresAdminStore::list_gateway_api_keys(self).await
+    }
+
+    async fn find_gateway_api_key(&self, hashed_key: &str) -> Result<Option<GatewayApiKeyRecord>> {
+        PostgresAdminStore::find_gateway_api_key(self, hashed_key).await
     }
 }

@@ -7,6 +7,8 @@ use sqlx::SqlitePool;
 use std::sync::{Arc, Mutex};
 use tower::ServiceExt;
 
+mod support;
+
 #[tokio::test]
 async fn chat_stream_route_accepts_requests() {
     let app = sdkwork_api_interface_http::gateway_router();
@@ -57,6 +59,7 @@ async fn stateful_chat_stream_route_relays_to_openai_compatible_provider() {
     });
 
     let pool = memory_pool().await;
+    let api_key = support::issue_gateway_api_key(&pool, "tenant-1", "project-1").await;
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
     let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
 
@@ -129,6 +132,7 @@ async fn stateful_chat_stream_route_relays_to_openai_compatible_provider() {
             Request::builder()
                 .method("POST")
                 .uri("/v1/chat/completions")
+                .header("authorization", format!("Bearer {api_key}"))
                 .header("content-type", "application/json")
                 .body(Body::from(
                     "{\"model\":\"gpt-4.1\",\"messages\":[{\"role\":\"user\",\"content\":\"relay me\"}],\"stream\":true}",

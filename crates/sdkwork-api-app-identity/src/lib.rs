@@ -11,6 +11,23 @@ pub struct Claims {
     pub sub: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GatewayRequestContext {
+    pub tenant_id: String,
+    pub project_id: String,
+    pub environment: String,
+}
+
+impl GatewayRequestContext {
+    pub fn tenant_id(&self) -> &str {
+        &self.tenant_id
+    }
+
+    pub fn project_id(&self) -> &str {
+        &self.project_id
+    }
+}
+
 pub fn hash_gateway_api_key(value: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(value.as_bytes());
@@ -81,4 +98,24 @@ pub async fn persist_gateway_api_key(
 
 pub async fn list_gateway_api_keys(store: &dyn AdminStore) -> Result<Vec<GatewayApiKeyRecord>> {
     store.list_gateway_api_keys().await
+}
+
+pub async fn resolve_gateway_request_context(
+    store: &dyn AdminStore,
+    plaintext_key: &str,
+) -> Result<Option<GatewayRequestContext>> {
+    let hashed_key = hash_gateway_api_key(plaintext_key);
+    let Some(record) = store.find_gateway_api_key(&hashed_key).await? else {
+        return Ok(None);
+    };
+
+    if !record.active {
+        return Ok(None);
+    }
+
+    Ok(Some(GatewayRequestContext {
+        tenant_id: record.tenant_id,
+        project_id: record.project_id,
+        environment: record.environment,
+    }))
 }

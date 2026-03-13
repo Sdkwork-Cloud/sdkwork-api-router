@@ -4,6 +4,8 @@ use serde_json::Value;
 use sqlx::SqlitePool;
 use tower::ServiceExt;
 
+mod support;
+
 #[tokio::test]
 async fn models_route_returns_ok() {
     let app = sdkwork_api_interface_http::gateway_router();
@@ -69,6 +71,7 @@ async fn memory_pool() -> SqlitePool {
 #[tokio::test]
 async fn models_route_reads_persisted_catalog_models() {
     let pool = memory_pool().await;
+    let api_key = support::issue_gateway_api_key(&pool, "tenant-1", "project-1").await;
     let app = sdkwork_api_interface_http::gateway_router_with_pool(pool.clone());
 
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool);
@@ -92,6 +95,7 @@ async fn models_route_reads_persisted_catalog_models() {
         .oneshot(
             Request::builder()
                 .uri("/v1/models")
+                .header("authorization", format!("Bearer {api_key}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -106,6 +110,7 @@ async fn models_route_reads_persisted_catalog_models() {
 #[tokio::test]
 async fn model_retrieve_route_reads_persisted_catalog_model() {
     let pool = memory_pool().await;
+    let api_key = support::issue_gateway_api_key(&pool, "tenant-1", "project-1").await;
     let app = sdkwork_api_interface_http::gateway_router_with_pool(pool.clone());
 
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool);
@@ -129,6 +134,7 @@ async fn model_retrieve_route_reads_persisted_catalog_model() {
         .oneshot(
             Request::builder()
                 .uri("/v1/models/gpt-4.1")
+                .header("authorization", format!("Bearer {api_key}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -143,6 +149,7 @@ async fn model_retrieve_route_reads_persisted_catalog_model() {
 #[tokio::test]
 async fn model_delete_route_removes_persisted_catalog_model() {
     let pool = memory_pool().await;
+    let api_key = support::issue_gateway_api_key(&pool, "tenant-1", "project-1").await;
     let app = sdkwork_api_interface_http::gateway_router_with_pool(pool.clone());
 
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool);
@@ -168,6 +175,7 @@ async fn model_delete_route_removes_persisted_catalog_model() {
             Request::builder()
                 .method("DELETE")
                 .uri("/v1/models/ft:gpt-4.1:sdkwork")
+                .header("authorization", format!("Bearer {api_key}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -183,6 +191,7 @@ async fn model_delete_route_removes_persisted_catalog_model() {
         .oneshot(
             Request::builder()
                 .uri("/v1/models/ft:gpt-4.1:sdkwork")
+                .header("authorization", format!("Bearer {api_key}"))
                 .body(Body::empty())
                 .unwrap(),
         )

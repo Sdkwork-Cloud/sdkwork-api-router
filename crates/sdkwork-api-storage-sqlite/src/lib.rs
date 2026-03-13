@@ -599,6 +599,30 @@ impl SqliteAdminStore {
             )
             .collect())
     }
+
+    pub async fn find_gateway_api_key(
+        &self,
+        hashed_key: &str,
+    ) -> Result<Option<GatewayApiKeyRecord>> {
+        let row = sqlx::query_as::<_, (String, String, String, String, i64)>(
+            "SELECT tenant_id, project_id, environment, hashed_key, active FROM identity_gateway_api_keys WHERE hashed_key = ?",
+        )
+        .bind(hashed_key)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(
+            row.map(|(tenant_id, project_id, environment, hashed_key, active)| {
+                GatewayApiKeyRecord {
+                    tenant_id,
+                    project_id,
+                    environment,
+                    hashed_key,
+                    active: active != 0,
+                }
+            }),
+        )
+    }
 }
 
 #[async_trait::async_trait]
@@ -730,5 +754,9 @@ impl AdminStore for SqliteAdminStore {
 
     async fn list_gateway_api_keys(&self) -> Result<Vec<GatewayApiKeyRecord>> {
         SqliteAdminStore::list_gateway_api_keys(self).await
+    }
+
+    async fn find_gateway_api_key(&self, hashed_key: &str) -> Result<Option<GatewayApiKeyRecord>> {
+        SqliteAdminStore::find_gateway_api_key(self, hashed_key).await
     }
 }
