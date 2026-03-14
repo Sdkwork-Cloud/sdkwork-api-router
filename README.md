@@ -51,6 +51,7 @@ Backend:
 
 - `admin-api-service` on `127.0.0.1:8081` by default
 - `gateway-service` on `127.0.0.1:8080` by default
+- Prometheus-compatible `/metrics` endpoints on both services
 
 Frontend:
 
@@ -115,6 +116,18 @@ Admin health:
 
 ```bash
 curl http://127.0.0.1:8081/admin/health
+```
+
+Gateway metrics:
+
+```bash
+curl http://127.0.0.1:8080/metrics
+```
+
+Admin metrics:
+
+```bash
+curl http://127.0.0.1:8081/metrics
 ```
 
 ## Quick Start With PostgreSQL
@@ -331,6 +344,7 @@ Control-plane features include:
 - routing decision logs for admin simulation and real gateway dispatch
 - usage records and usage summaries
 - billing ledger entries, billing summaries, and quota policies
+- Prometheus-compatible HTTP metrics for gateway and admin services
 
 For the up-to-date execution-truth matrix, see:
 

@@ -49,6 +49,7 @@ use sdkwork_api_domain_routing::{
 use sdkwork_api_domain_tenant::{Project, Tenant};
 use sdkwork_api_domain_usage::{UsageRecord, UsageSummary};
 use sdkwork_api_extension_core::{ExtensionInstallation, ExtensionInstance, ExtensionRuntime};
+use sdkwork_api_observability::{observe_http_metrics, HttpMetricsRegistry};
 use sdkwork_api_storage_core::AdminStore;
 use sdkwork_api_storage_sqlite::SqliteAdminStore;
 use serde::{Deserialize, Serialize};
@@ -317,7 +318,26 @@ struct RoutingSimulationResponse {
 }
 
 pub fn admin_router() -> Router {
+    let metrics = Arc::new(HttpMetricsRegistry::new("admin"));
     Router::new()
+        .route(
+            "/metrics",
+            get({
+                let metrics = metrics.clone();
+                move || {
+                    let metrics = metrics.clone();
+                    async move {
+                        (
+                            [(
+                                header::CONTENT_TYPE,
+                                "text/plain; version=0.0.4; charset=utf-8",
+                            )],
+                            metrics.render_prometheus(),
+                        )
+                    }
+                }
+            }),
+        )
         .route("/admin/health", get(|| async { "ok" }))
         .route("/admin/auth/login", post(|| async { "login" }))
         .route("/admin/auth/me", get(|| async { "me" }))
@@ -368,6 +388,10 @@ pub fn admin_router() -> Router {
             "/admin/routing/simulations",
             post(|| async { "simulations" }),
         )
+        .layer(axum::middleware::from_fn_with_state(
+            metrics,
+            observe_http_metrics,
+        ))
 }
 
 pub fn admin_router_with_pool(pool: SqlitePool) -> Router {
@@ -417,12 +441,31 @@ pub fn admin_router_with_store_and_secret_manager_and_jwt_secret(
     secret_manager: CredentialSecretManager,
     jwt_signing_secret: impl Into<String>,
 ) -> Router {
+    let metrics = Arc::new(HttpMetricsRegistry::new("admin"));
     let state = AdminApiState::with_store_and_secret_manager_and_jwt_secret(
         store,
         secret_manager,
         jwt_signing_secret,
     );
     Router::new()
+        .route(
+            "/metrics",
+            get({
+                let metrics = metrics.clone();
+                move || {
+                    let metrics = metrics.clone();
+                    async move {
+                        (
+                            [(
+                                header::CONTENT_TYPE,
+                                "text/plain; version=0.0.4; charset=utf-8",
+                            )],
+                            metrics.render_prometheus(),
+                        )
+                    }
+                }
+            }),
+        )
         .route("/admin/health", get(|| async { "ok" }))
         .route("/admin/auth/login", post(login_handler))
         .route("/admin/auth/me", get(me_handler))
@@ -491,6 +534,10 @@ pub fn admin_router_with_store_and_secret_manager_and_jwt_secret(
             get(list_routing_decision_logs_handler),
         )
         .route("/admin/routing/simulations", post(simulate_routing_handler))
+        .layer(axum::middleware::from_fn_with_state(
+            metrics,
+            observe_http_metrics,
+        ))
         .with_state(state)
 }
 

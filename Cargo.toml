@@ -71,3 +71,11 @@ tokio = { version = "1.43", features = ["macros", "rt-multi-thread"] }
 tokio-stream = "0.1"
 tower = { version = "0.5", features = ["util"] }
 toml = "0.8"
+
+[profile.dev]
+debug = 0
+incremental = false
+
+[profile.test]
+debug = 0
+incremental = false

@@ -74,6 +74,13 @@ Admin APIs are SDKWork-owned control-plane surfaces and therefore classify as `n
 | `native_dynamic` | `native` | Trusted provider packages can now load through the JSON ABI, manifest verification, dynamic library symbol resolution, optional `init` or `health_check` or `shutdown` lifecycle hooks, and callback-based stream execution for `/v1/chat/completions`, `/v1/responses`, `/v1/audio/speech`, `/v1/files/{file_id}/content`, and `/v1/videos/{video_id}/content` |
 | `connector` | `native` | Managed process lifecycle is active in the host, with HTTP health checks, reusable external endpoint attachment, protocol-mapped relay through the current adapter set, and trust-policy gating for discovered external packages |
 
+## Operational Endpoints
+
+| Endpoint | Level | Notes |
+|---|---|---|
+| `/health` | `native` | Basic liveness endpoint exposed by gateway and admin services |
+| `/metrics` | `native` | Prometheus-compatible HTTP request counters and duration summaries exposed by gateway and admin services |
+
 ## Current Built-In Extension IDs
 
 | Extension ID | Kind | Runtime | Notes |

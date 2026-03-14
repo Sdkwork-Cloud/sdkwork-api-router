@@ -1757,6 +1757,7 @@ dependencies = [
  "sdkwork-api-domain-usage",
  "sdkwork-api-extension-core",
  "sdkwork-api-extension-host",
+ "sdkwork-api-observability",
  "sdkwork-api-storage-core",
  "sdkwork-api-storage-sqlite",
  "serde",
@@ -1786,6 +1787,7 @@ dependencies = [
  "sdkwork-api-ext-provider-native-mock",
  "sdkwork-api-extension-core",
  "sdkwork-api-interface-admin",
+ "sdkwork-api-observability",
  "sdkwork-api-provider-core",
  "sdkwork-api-storage-core",
  "sdkwork-api-storage-sqlite",
@@ -1806,6 +1808,9 @@ version = "0.1.0"
 [[package]]
 name = "sdkwork-api-observability"
 version = "0.1.0"
+dependencies = [
+ "axum",
+]
 
 [[package]]
 name = "sdkwork-api-provider-core"

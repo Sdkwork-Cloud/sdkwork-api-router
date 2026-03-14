@@ -148,3 +148,60 @@ async fn admin_routes_use_the_configured_jwt_signing_secret() {
 
     assert_eq!(authorized.status(), StatusCode::OK);
 }
+
+#[tokio::test]
+async fn admin_metrics_route_reports_login_and_authenticated_requests() {
+    let pool = memory_pool().await;
+    let app = sdkwork_api_interface_admin::admin_router_with_pool(pool);
+
+    let login = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from("{\"subject\":\"admin-metrics\"}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(login.status(), StatusCode::OK);
+    let token = read_json(login).await["token"].as_str().unwrap().to_owned();
+
+    let projects = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/admin/projects")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(projects.status(), StatusCode::OK);
+
+    let metrics = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/metrics")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(metrics.status(), StatusCode::OK);
+
+    let bytes = to_bytes(metrics.into_body(), usize::MAX).await.unwrap();
+    let body = String::from_utf8(bytes.to_vec()).unwrap();
+    assert!(body.contains("sdkwork_service_info{service=\"admin\"} 1"));
+    assert!(body.contains(
+        "sdkwork_http_requests_total{service=\"admin\",method=\"POST\",route=\"/admin/auth/login\",status=\"200\"} 1"
+    ));
+    assert!(body.contains(
+        "sdkwork_http_requests_total{service=\"admin\",method=\"GET\",route=\"/admin/projects\",status=\"200\"} 1"
+    ));
+}

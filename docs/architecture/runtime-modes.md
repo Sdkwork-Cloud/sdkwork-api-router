@@ -47,6 +47,7 @@ The current repository includes:
 - environment-driven extension discovery config for manifest search paths plus connector and native-dynamic runtime toggles
 - signed admin JWT authentication for the control plane, with the signing secret now provided by runtime config instead of a hardcoded development constant
 - gateway request tenancy derived from persisted gateway API keys instead of hardcoded tenant or project placeholders
+- shared Prometheus-compatible HTTP metrics exposed through `/metrics` on both admin and gateway routers
 - persisted routing policies shared by admin simulations and real gateway provider dispatch
 - routing decisions now join persisted policy order with runtime status and instance-level config hints for deterministic health-aware selection, seeded weighted-random balancing, or first-class `slo_aware` selection with best-effort degraded fallback
 - routing decision logs are now persisted for both gateway execution and admin simulations so recent selection evidence can be inspected through the control plane

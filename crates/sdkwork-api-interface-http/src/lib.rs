@@ -218,6 +218,7 @@ use sdkwork_api_contract_openai::vector_stores::{
 };
 use sdkwork_api_contract_openai::videos::{CreateVideoRequest, RemixVideoRequest};
 use sdkwork_api_contract_openai::webhooks::{CreateWebhookRequest, UpdateWebhookRequest};
+use sdkwork_api_observability::{observe_http_metrics, HttpMetricsRegistry};
 use sdkwork_api_provider_core::ProviderStreamOutput;
 use sdkwork_api_storage_core::AdminStore;
 use sdkwork_api_storage_sqlite::SqliteAdminStore;
@@ -305,7 +306,26 @@ impl FromRequestParts<GatewayApiState> for AuthenticatedGatewayRequest {
 }
 
 pub fn gateway_router() -> Router {
+    let metrics = Arc::new(HttpMetricsRegistry::new("gateway"));
     Router::new()
+        .route(
+            "/metrics",
+            get({
+                let metrics = metrics.clone();
+                move || {
+                    let metrics = metrics.clone();
+                    async move {
+                        (
+                            [(
+                                header::CONTENT_TYPE,
+                                "text/plain; version=0.0.4; charset=utf-8",
+                            )],
+                            metrics.render_prometheus(),
+                        )
+                    }
+                }
+            }),
+        )
         .route("/health", get(|| async { "ok" }))
         .route("/v1/models", get(list_models_handler))
         .route(
@@ -514,6 +534,10 @@ pub fn gateway_router() -> Router {
             "/v1/vector_stores/{vector_store_id}/file_batches/{batch_id}/files",
             get(vector_store_file_batch_files_handler),
         )
+        .layer(axum::middleware::from_fn_with_state(
+            metrics,
+            observe_http_metrics,
+        ))
 }
 
 pub fn gateway_router_with_pool(pool: SqlitePool) -> Router {
@@ -551,7 +575,26 @@ pub fn gateway_router_with_store_and_secret_manager(
     store: Arc<dyn AdminStore>,
     secret_manager: CredentialSecretManager,
 ) -> Router {
+    let metrics = Arc::new(HttpMetricsRegistry::new("gateway"));
     Router::new()
+        .route(
+            "/metrics",
+            get({
+                let metrics = metrics.clone();
+                move || {
+                    let metrics = metrics.clone();
+                    async move {
+                        (
+                            [(
+                                header::CONTENT_TYPE,
+                                "text/plain; version=0.0.4; charset=utf-8",
+                            )],
+                            metrics.render_prometheus(),
+                        )
+                    }
+                }
+            }),
+        )
         .route("/health", get(|| async { "ok" }))
         .route("/v1/models", get(list_models_from_store_handler))
         .route(
@@ -806,6 +849,10 @@ pub fn gateway_router_with_store_and_secret_manager(
             "/v1/vector_stores/{vector_store_id}/file_batches/{batch_id}/files",
             get(vector_store_file_batch_files_with_state_handler),
         )
+        .layer(axum::middleware::from_fn_with_state(
+            metrics,
+            observe_http_metrics,
+        ))
         .with_state(GatewayApiState::with_store_and_secret_manager(
             store,
             secret_manager,
