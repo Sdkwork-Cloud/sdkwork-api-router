@@ -3993,6 +3993,11 @@ fn register_discovered_extension(host: &mut ExtensionHost, package: DiscoveredEx
         return;
     }
 
+    if package.manifest.runtime == ExtensionRuntime::NativeDynamic {
+        let _ = host.register_discovered_native_dynamic_provider(package);
+        return;
+    }
+
     match (
         package.manifest.kind.clone(),
         package.manifest.protocol.clone(),

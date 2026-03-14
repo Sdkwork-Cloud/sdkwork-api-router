@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct CreateFileRequest {
     pub purpose: String,
     pub filename: String,

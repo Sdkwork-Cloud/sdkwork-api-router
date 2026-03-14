@@ -1,0 +1,14 @@
+[package]
+name = "sdkwork-api-ext-provider-native-mock"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+sdkwork-api-extension-abi = { path = "../sdkwork-api-extension-abi" }
+sdkwork-api-extension-core = { path = "../sdkwork-api-extension-core" }
+serde_json.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+path = "src/lib.rs"

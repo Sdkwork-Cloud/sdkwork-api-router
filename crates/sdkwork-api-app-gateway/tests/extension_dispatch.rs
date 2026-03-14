@@ -1,6 +1,8 @@
 use axum::extract::State;
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+use ed25519_dalek::SigningKey;
 use sdkwork_api_app_credential::{
     persist_credential_with_secret_and_manager, CredentialSecretManager,
 };
@@ -9,7 +11,11 @@ use sdkwork_api_contract_openai::chat_completions::{
     ChatMessageInput, CreateChatCompletionRequest,
 };
 use sdkwork_api_domain_catalog::{Channel, ModelCatalogEntry, ProxyProvider};
-use sdkwork_api_extension_core::{ExtensionInstallation, ExtensionInstance, ExtensionRuntime};
+use sdkwork_api_ext_provider_native_mock::FIXTURE_EXTENSION_ID;
+use sdkwork_api_extension_core::{
+    ExtensionInstallation, ExtensionInstance, ExtensionRuntime, ExtensionSignature,
+    ExtensionSignatureAlgorithm, ExtensionTrustDeclaration,
+};
 use sdkwork_api_storage_sqlite::{run_migrations, SqliteAdminStore};
 use serde_json::{json, Value};
 use serial_test::serial;
@@ -463,6 +469,112 @@ async fn unsigned_discovered_connector_extension_is_blocked_when_signature_is_re
     cleanup_dir(&extension_root);
 }
 
+#[serial(extension_env)]
+#[tokio::test]
+async fn native_dynamic_extension_can_relay_through_loaded_library() {
+    let extension_root = temp_extension_root("native-dynamic");
+    let package_dir = extension_root.join("sdkwork-provider-native-mock");
+    fs::create_dir_all(&package_dir).unwrap();
+
+    let signing_key = SigningKey::from_bytes(&[9_u8; 32]);
+    let public_key = STANDARD.encode(signing_key.verifying_key().to_bytes());
+    let library_path = native_dynamic_fixture_library_path();
+    let manifest = native_dynamic_manifest(&library_path);
+    let signature = sign_native_dynamic_package(&package_dir, &manifest, &signing_key);
+    let manifest = manifest.with_trust(ExtensionTrustDeclaration::signed(
+        "sdkwork",
+        ExtensionSignature::new(
+            ExtensionSignatureAlgorithm::Ed25519,
+            public_key.clone(),
+            signature,
+        ),
+    ));
+    fs::write(
+        package_dir.join("sdkwork-extension.toml"),
+        toml::to_string(&manifest).unwrap(),
+    )
+    .unwrap();
+
+    let _guard = native_dynamic_env_guard(&extension_root, &public_key);
+
+    let pool = run_migrations("sqlite::memory:").await.unwrap();
+    let store = SqliteAdminStore::new(pool);
+    let secret_manager = CredentialSecretManager::database_encrypted("local-dev-master-key");
+
+    store
+        .insert_channel(&Channel::new("openai", "OpenAI"))
+        .await
+        .unwrap();
+    store
+        .insert_provider(
+            &ProxyProvider::new(
+                "provider-native-mock",
+                "openai",
+                "native-dynamic",
+                "https://native-dynamic.invalid/v1",
+                "Native Mock",
+            )
+            .with_extension_id(FIXTURE_EXTENSION_ID),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_model(&ModelCatalogEntry::new("gpt-4.1", "provider-native-mock"))
+        .await
+        .unwrap();
+    persist_credential_with_secret_and_manager(
+        &store,
+        &secret_manager,
+        "tenant-1",
+        "provider-native-mock",
+        "cred-native-mock",
+        "sk-native",
+    )
+    .await
+    .unwrap();
+    store
+        .insert_extension_installation(
+            &ExtensionInstallation::new(
+                "native-mock-installation",
+                FIXTURE_EXTENSION_ID,
+                ExtensionRuntime::NativeDynamic,
+            )
+            .with_enabled(true)
+            .with_entrypoint(library_path.to_string_lossy())
+            .with_config(json!({})),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_extension_instance(
+            &ExtensionInstance::new(
+                "provider-native-mock",
+                "native-mock-installation",
+                FIXTURE_EXTENSION_ID,
+            )
+            .with_enabled(true)
+            .with_base_url("https://native-dynamic.invalid/v1")
+            .with_config(json!({})),
+        )
+        .await
+        .unwrap();
+
+    let response = relay_chat_completion_from_store(
+        &store,
+        &secret_manager,
+        "tenant-1",
+        "project-1",
+        &chat_request("gpt-4.1"),
+    )
+    .await
+    .unwrap()
+    .expect("native dynamic response");
+
+    assert_eq!(response["id"], "chatcmpl_native_dynamic");
+
+    cleanup_dir(&extension_root);
+}
+
 fn chat_request(model: &str) -> CreateChatCompletionRequest {
     CreateChatCompletionRequest {
         model: model.to_owned(),
@@ -628,6 +740,8 @@ fn extension_env_guard_with_signature_requirement(
         previous_connector,
         previous_native,
         previous_connector_signature,
+        previous_native_signature: None,
+        previous_trusted_signers: None,
     }
 }
 
@@ -636,6 +750,8 @@ struct ExtensionEnvGuard {
     previous_connector: Option<String>,
     previous_native: Option<String>,
     previous_connector_signature: Option<String>,
+    previous_native_signature: Option<String>,
+    previous_trusted_signers: Option<String>,
 }
 
 impl Drop for ExtensionEnvGuard {
@@ -653,6 +769,14 @@ impl Drop for ExtensionEnvGuard {
             "SDKWORK_EXTENSION_REQUIRE_SIGNATURE_FOR_CONNECTOR_EXTENSIONS",
             self.previous_connector_signature.as_deref(),
         );
+        restore_env_var(
+            "SDKWORK_EXTENSION_REQUIRE_SIGNATURE_FOR_NATIVE_DYNAMIC_EXTENSIONS",
+            self.previous_native_signature.as_deref(),
+        );
+        restore_env_var(
+            "SDKWORK_EXTENSION_TRUSTED_SIGNERS",
+            self.previous_trusted_signers.as_deref(),
+        );
     }
 }
 
@@ -661,4 +785,131 @@ fn restore_env_var(key: &str, value: Option<&str>) {
         Some(value) => std::env::set_var(key, value),
         None => std::env::remove_var(key),
     }
+}
+
+fn native_dynamic_env_guard(path: &Path, public_key: &str) -> ExtensionEnvGuard {
+    let previous_paths = std::env::var("SDKWORK_EXTENSION_PATHS").ok();
+    let previous_connector = std::env::var("SDKWORK_EXTENSION_ENABLE_CONNECTOR_EXTENSIONS").ok();
+    let previous_native = std::env::var("SDKWORK_EXTENSION_ENABLE_NATIVE_DYNAMIC_EXTENSIONS").ok();
+    let previous_connector_signature =
+        std::env::var("SDKWORK_EXTENSION_REQUIRE_SIGNATURE_FOR_CONNECTOR_EXTENSIONS").ok();
+    let previous_native_signature =
+        std::env::var("SDKWORK_EXTENSION_REQUIRE_SIGNATURE_FOR_NATIVE_DYNAMIC_EXTENSIONS").ok();
+    let previous_trusted_signers = std::env::var("SDKWORK_EXTENSION_TRUSTED_SIGNERS").ok();
+
+    let joined_paths = std::env::join_paths([path]).unwrap();
+    std::env::set_var("SDKWORK_EXTENSION_PATHS", joined_paths);
+    std::env::set_var("SDKWORK_EXTENSION_ENABLE_CONNECTOR_EXTENSIONS", "false");
+    std::env::set_var("SDKWORK_EXTENSION_ENABLE_NATIVE_DYNAMIC_EXTENSIONS", "true");
+    std::env::set_var(
+        "SDKWORK_EXTENSION_REQUIRE_SIGNATURE_FOR_CONNECTOR_EXTENSIONS",
+        "false",
+    );
+    std::env::set_var(
+        "SDKWORK_EXTENSION_REQUIRE_SIGNATURE_FOR_NATIVE_DYNAMIC_EXTENSIONS",
+        "true",
+    );
+    std::env::set_var(
+        "SDKWORK_EXTENSION_TRUSTED_SIGNERS",
+        format!("sdkwork={public_key}"),
+    );
+
+    ExtensionEnvGuard {
+        previous_paths,
+        previous_connector,
+        previous_native,
+        previous_connector_signature,
+        previous_native_signature,
+        previous_trusted_signers,
+    }
+}
+
+fn native_dynamic_fixture_library_path() -> PathBuf {
+    let current_exe = std::env::current_exe().expect("current exe");
+    let directory = current_exe.parent().expect("exe dir");
+    let prefix = if cfg!(windows) {
+        "sdkwork_api_ext_provider_native_mock"
+    } else {
+        "libsdkwork_api_ext_provider_native_mock"
+    };
+    let extension = if cfg!(windows) {
+        "dll"
+    } else if cfg!(target_os = "macos") {
+        "dylib"
+    } else {
+        "so"
+    };
+
+    std::fs::read_dir(directory)
+        .expect("deps dir")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.extension().and_then(|value| value.to_str()) == Some(extension)
+                && path
+                    .file_stem()
+                    .and_then(|value| value.to_str())
+                    .is_some_and(|stem| stem.starts_with(prefix))
+        })
+        .expect("native dynamic fixture library")
+}
+
+fn native_dynamic_manifest(library_path: &Path) -> sdkwork_api_extension_core::ExtensionManifest {
+    sdkwork_api_extension_core::ExtensionManifest::new(
+        FIXTURE_EXTENSION_ID,
+        sdkwork_api_extension_core::ExtensionKind::Provider,
+        "0.1.0",
+        ExtensionRuntime::NativeDynamic,
+    )
+    .with_display_name("Native Mock")
+    .with_protocol(sdkwork_api_extension_core::ExtensionProtocol::OpenAi)
+    .with_entrypoint(library_path.to_string_lossy())
+    .with_channel_binding("sdkwork.channel.openai")
+    .with_permission(sdkwork_api_extension_core::ExtensionPermission::NetworkOutbound)
+    .with_capability(sdkwork_api_extension_core::CapabilityDescriptor::new(
+        "chat.completions.create",
+        sdkwork_api_extension_core::CompatibilityLevel::Native,
+    ))
+}
+
+fn sign_native_dynamic_package(
+    package_dir: &Path,
+    manifest: &sdkwork_api_extension_core::ExtensionManifest,
+    signing_key: &SigningKey,
+) -> String {
+    use ed25519_dalek::Signer;
+    use sha2::{Digest, Sha256};
+
+    #[derive(serde::Serialize)]
+    struct PackageSignaturePayload<'a> {
+        manifest: &'a sdkwork_api_extension_core::ExtensionManifest,
+        files: Vec<PackageFileDigest>,
+    }
+
+    #[derive(serde::Serialize)]
+    struct PackageFileDigest {
+        path: String,
+        sha256: String,
+    }
+
+    let files = std::fs::read_dir(package_dir)
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name().and_then(|value| value.to_str()) != Some("sdkwork-extension.toml")
+        })
+        .map(|path| PackageFileDigest {
+            path: path
+                .strip_prefix(package_dir)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/"),
+            sha256: format!("{:x}", Sha256::digest(std::fs::read(&path).unwrap())),
+        })
+        .collect::<Vec<_>>();
+
+    let payload = serde_json::to_vec(&PackageSignaturePayload { manifest, files }).unwrap();
+    let signature = signing_key.sign(&payload);
+    STANDARD.encode(signature.to_bytes())
 }

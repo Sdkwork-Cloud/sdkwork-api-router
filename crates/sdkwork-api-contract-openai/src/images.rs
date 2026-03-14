@@ -15,7 +15,7 @@ impl CreateImageRequest {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImageUpload {
     pub filename: String,
     pub bytes: Vec<u8>,
@@ -37,7 +37,7 @@ impl ImageUpload {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateImageEditRequest {
     pub model: Option<String>,
     pub prompt: String,
@@ -80,7 +80,7 @@ impl CreateImageEditRequest {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateImageVariationRequest {
     pub model: Option<String>,
     pub image: ImageUpload,

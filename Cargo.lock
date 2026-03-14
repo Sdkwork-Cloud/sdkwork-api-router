@@ -910,6 +910,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b5b646652bf6661599e1da8901b3b9522896f01e736bad5f723fe7a3a27f899d"
 
 [[package]]
+name = "libloading"
+version = "0.8.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7c4b02199fee7c5d21a5ae7d8cfa79a6ef5bb2fc834d6e9058e89c825efdc55"
+dependencies = [
+ "cfg-if",
+ "windows-link",
+]
+
+[[package]]
 name = "libredox"
 version = "0.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1517,12 +1527,14 @@ dependencies = [
  "anyhow",
  "axum",
  "base64",
+ "ed25519-dalek",
  "reqwest",
  "sdkwork-api-app-credential",
  "sdkwork-api-app-routing",
  "sdkwork-api-contract-openai",
  "sdkwork-api-domain-catalog",
  "sdkwork-api-domain-routing",
+ "sdkwork-api-ext-provider-native-mock",
  "sdkwork-api-extension-core",
  "sdkwork-api-extension-host",
  "sdkwork-api-provider-core",
@@ -1531,9 +1543,12 @@ dependencies = [
  "sdkwork-api-provider-openrouter",
  "sdkwork-api-storage-core",
  "sdkwork-api-storage-sqlite",
+ "serde",
  "serde_json",
  "serial_test",
+ "sha2",
  "tokio",
+ "toml",
 ]
 
 [[package]]
@@ -1656,6 +1671,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "sdkwork-api-ext-provider-native-mock"
+version = "0.1.0"
+dependencies = [
+ "sdkwork-api-extension-abi",
+ "sdkwork-api-extension-core",
+ "serde_json",
+]
+
+[[package]]
+name = "sdkwork-api-extension-abi"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "sdkwork-api-extension-core"
 version = "0.1.0"
 dependencies = [
@@ -1667,13 +1699,20 @@ dependencies = [
 name = "sdkwork-api-extension-host"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "async-trait",
  "base64",
  "ed25519-dalek",
+ "libloading",
+ "sdkwork-api-contract-openai",
+ "sdkwork-api-ext-provider-native-mock",
+ "sdkwork-api-extension-abi",
  "sdkwork-api-extension-core",
  "sdkwork-api-provider-core",
  "serde",
  "serde_json",
  "sha2",
+ "tokio",
  "toml",
 ]
 

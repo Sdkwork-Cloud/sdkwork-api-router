@@ -79,6 +79,10 @@ Backend:
 - Supervised connector runtime execution for discovered provider extensions:
   - the host can start configured connector processes on demand
   - the host can reuse a healthy externally managed connector endpoint when one is already running at the configured `base_url`
+- Native dynamic runtime execution for discovered provider extensions:
+  - trusted `native_dynamic` packages can now load through a stable JSON ABI
+  - the host verifies required symbols plus manifest parity before registration
+  - JSON-capable provider operations can execute in-process through the loaded library
 - Provider execution now consumes persisted extension installation and instance state during real dispatch:
   - `enabled = false` on an installation or instance forces local fallback
   - instance `base_url` overrides the provider catalog `base_url`
@@ -118,7 +122,7 @@ Known gaps:
   - trusted-signer verification is enforced for signed packages
   - unsigned connector packages can be allowed or blocked by policy
   - native dynamic packages are intended to run only when explicitly enabled and signed by a trusted publisher
-- native dynamic ABI loading is still not implemented
+- native dynamic execution currently supports JSON-capable provider operations only; stream ABI and hot reload are not implemented yet
 - only stateful gateway execution paths relay upstream responses; the stateless demo router still emits local stub payloads
 - broader API families are now wired as either `relay` or `emulated`; see `docs/api/compatibility-matrix.md` for the execution-truth matrix
 - routing policies now support deterministic priority-based selection with ordered provider fallback and optional defaults

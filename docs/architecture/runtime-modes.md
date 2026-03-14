@@ -58,6 +58,7 @@ The current repository includes:
 - real provider dispatch now consumes persisted extension load state so instance-level `base_url` overrides are honored and disabled installations or instances short-circuit to local fallback
 - discovered provider manifests can now bind to the current protocol adapters so connector-style extensions participate in real relay execution when they declare a supported protocol
 - connector runtime supervision is now active for discovered packages, including host-managed process startup, HTTP health probing, and reuse of already healthy external endpoints
+- native dynamic runtime execution is now active for trusted provider packages through a narrow JSON ABI, with manifest matching and symbol validation at load time
 - gateway runtime loading now skips external packages whose trust policy does not allow execution, so blocked connector or native-dynamic packages fall back cleanly instead of entering the execution host
 
 ## Extension Runtime Status
@@ -67,7 +68,7 @@ The extension architecture is intentionally layered.
 | Runtime | Current Status | Notes |
 |---|---|---|
 | `builtin` | Active | First-party provider extensions are registered in-process through `sdkwork-api-extension-host` |
-| `native_dynamic` | Discovery-only | Manifest discovery and policy filtering are active, but ABI loading and execution are still design-only |
+| `native_dynamic` | Active with JSON ABI execution | Trusted packages can be loaded in-process through `libloading`, validated against the exported manifest, and executed for JSON-capable provider operations |
 | `connector` | Active with supervised execution | Manifest discovery and config-driven loading are active; the host can start configured connector processes, probe HTTP health endpoints, reuse healthy external endpoints, and relay through the current protocol adapter set |
 
 ## Configuration Layers
@@ -105,7 +106,7 @@ Configuration-driven loading now uses a stable merge order:
 2. installation-level runtime choice and package config
 3. instance-level overrides such as `base_url`, `credential_ref`, and rollout weights
 
-This means `connector` extensions are now executable through the host runtime contract, while `native_dynamic` extensions can already be represented, validated, and mounted through config ahead of ABI loader support.
+This means `connector` extensions are executable through the host runtime contract, while `native_dynamic` extensions are now executable for JSON-capable provider operations through the current ABI boundary. Stream ABI, hot reload, and richer lifecycle hooks remain future work.
 
 The runtime now also supports two manifest sources:
 

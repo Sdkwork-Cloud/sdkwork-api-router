@@ -92,7 +92,7 @@ impl UploadObject {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AddUploadPartRequest {
     pub upload_id: String,
     pub data: Vec<u8>,

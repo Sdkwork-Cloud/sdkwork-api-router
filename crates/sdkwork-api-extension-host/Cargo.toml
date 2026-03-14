@@ -5,17 +5,24 @@ version.workspace = true
 license.workspace = true
 
 [dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
 base64.workspace = true
 ed25519-dalek.workspace = true
+libloading.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+sdkwork-api-extension-abi = { path = "../sdkwork-api-extension-abi" }
 sdkwork-api-extension-core = { path = "../sdkwork-api-extension-core" }
 sdkwork-api-provider-core = { path = "../sdkwork-api-provider-core" }
 toml.workspace = true
 
 [dev-dependencies]
+sdkwork-api-ext-provider-native-mock = { path = "../sdkwork-api-ext-provider-native-mock" }
 base64.workspace = true
 ed25519-dalek.workspace = true
+sdkwork-api-contract-openai = { path = "../sdkwork-api-contract-openai" }
 serde_json.workspace = true
 sha2.workspace = true
+tokio.workspace = true

@@ -3,18 +3,30 @@ use std::fmt;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
+use std::os::raw::c_char;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use anyhow::{anyhow, Result as AnyhowResult};
+use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use libloading::Library;
+use sdkwork_api_extension_abi::{
+    from_raw_c_str, into_raw_c_string, ProviderInvocation, ProviderInvocationResult,
+    SDKWORK_EXTENSION_ABI_VERSION, SDKWORK_EXTENSION_ABI_VERSION_SYMBOL,
+    SDKWORK_EXTENSION_FREE_STRING_SYMBOL, SDKWORK_EXTENSION_MANIFEST_JSON_SYMBOL,
+    SDKWORK_EXTENSION_PROVIDER_EXECUTE_JSON_SYMBOL,
+};
 use sdkwork_api_extension_core::{
     ExtensionInstallation, ExtensionInstance, ExtensionManifest, ExtensionRuntime,
     ExtensionSignatureAlgorithm,
 };
-use sdkwork_api_provider_core::ProviderExecutionAdapter;
+use sdkwork_api_provider_core::{
+    ProviderAdapter, ProviderExecutionAdapter, ProviderOutput, ProviderRequest,
+};
 use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -32,6 +44,11 @@ impl BuiltinExtensionFactory {
 
 type ProviderFactory =
     Arc<dyn Fn(String) -> Box<dyn ProviderExecutionAdapter> + Send + Sync + 'static>;
+
+type AbiVersionFn = unsafe extern "C" fn() -> u32;
+type ManifestJsonFn = unsafe extern "C" fn() -> *const c_char;
+type ExecuteJsonFn = unsafe extern "C" fn(*const c_char) -> *mut c_char;
+type FreeStringFn = unsafe extern "C" fn(*mut c_char);
 
 #[derive(Clone)]
 pub struct BuiltinProviderExtensionFactory {
@@ -245,6 +262,21 @@ struct ConnectorLaunchConfig {
     startup_poll_interval: Duration,
 }
 
+struct NativeDynamicRuntime {
+    entrypoint: String,
+    _library: Library,
+    execute_json: ExecuteJsonFn,
+    free_string: FreeStringFn,
+}
+
+unsafe impl Send for NativeDynamicRuntime {}
+unsafe impl Sync for NativeDynamicRuntime {}
+
+struct NativeDynamicProviderAdapter {
+    runtime: Arc<NativeDynamicRuntime>,
+    base_url: String,
+}
+
 static CONNECTOR_PROCESS_REGISTRY: OnceLock<Mutex<HashMap<String, ManagedConnectorProcess>>> =
     OnceLock::new();
 
@@ -362,6 +394,24 @@ pub fn verify_discovered_extension_package_trust(
         load_allowed: true,
         issues: Vec::new(),
     }
+}
+
+pub fn load_native_dynamic_library_manifest(
+    entrypoint: &Path,
+) -> Result<ExtensionManifest, ExtensionHostError> {
+    let (_, manifest) = load_native_dynamic_runtime(entrypoint)?;
+    Ok(manifest)
+}
+
+pub fn load_native_dynamic_provider_adapter(
+    entrypoint: &Path,
+    base_url: impl Into<String>,
+) -> Result<Box<dyn ProviderExecutionAdapter>, ExtensionHostError> {
+    let (runtime, _) = load_native_dynamic_runtime(entrypoint)?;
+    Ok(Box::new(NativeDynamicProviderAdapter {
+        runtime,
+        base_url: base_url.into(),
+    }))
 }
 
 pub fn ensure_connector_runtime_started(
@@ -638,6 +688,41 @@ impl ExtensionHost {
             .insert(adapter_kind.into(), extension_id);
     }
 
+    pub fn register_discovered_native_dynamic_provider(
+        &mut self,
+        package: DiscoveredExtensionPackage,
+    ) -> Result<(), ExtensionHostError> {
+        let extension_id = package.manifest.id.clone();
+        let entrypoint = package.manifest.entrypoint.as_deref().ok_or(
+            ExtensionHostError::ManifestReadFailed {
+                path: package.manifest_path.display().to_string(),
+                message: "native dynamic extension manifest has no entrypoint".to_owned(),
+            },
+        )?;
+        let library_path = resolve_entrypoint(entrypoint, Some(&package.root_dir));
+        let (runtime, library_manifest) = load_native_dynamic_runtime(&library_path)?;
+        ensure_native_dynamic_manifest_matches(
+            &package.manifest,
+            &library_manifest,
+            &library_path,
+        )?;
+
+        self.package_roots
+            .insert(extension_id.clone(), package.root_dir.clone());
+        self.manifests
+            .insert(extension_id.clone(), package.manifest);
+        self.provider_factories.insert(
+            extension_id,
+            Arc::new(move |base_url| {
+                Box::new(NativeDynamicProviderAdapter {
+                    runtime: runtime.clone(),
+                    base_url,
+                })
+            }),
+        );
+        Ok(())
+    }
+
     pub fn manifest(&self, id: &str) -> Option<&ExtensionManifest> {
         self.manifests.get(id)
     }
@@ -766,6 +851,34 @@ impl ExtensionHost {
     }
 }
 
+impl ProviderAdapter for NativeDynamicProviderAdapter {
+    fn id(&self) -> &'static str {
+        "native_dynamic"
+    }
+}
+
+#[async_trait]
+impl ProviderExecutionAdapter for NativeDynamicProviderAdapter {
+    async fn execute(
+        &self,
+        api_key: &str,
+        request: ProviderRequest<'_>,
+    ) -> AnyhowResult<ProviderOutput> {
+        let invocation = provider_invocation_from_request(request, api_key, &self.base_url)?;
+        let result = execute_native_dynamic_invocation(&self.runtime, &invocation)?;
+        match result {
+            ProviderInvocationResult::Json { body } => Ok(ProviderOutput::Json(body)),
+            ProviderInvocationResult::Unsupported { message } => Err(anyhow!(
+                "{}",
+                message.unwrap_or_else(
+                    || "native dynamic provider reported unsupported operation".to_owned()
+                )
+            )),
+            ProviderInvocationResult::Error { message } => Err(anyhow!("{message}")),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExtensionHostError {
     ManifestNotFound {
@@ -793,6 +906,38 @@ pub enum ExtensionHostError {
     },
     ManifestParseFailed {
         path: String,
+        message: String,
+    },
+    NativeDynamicLibraryLoadFailed {
+        entrypoint: String,
+        message: String,
+    },
+    NativeDynamicSymbolMissing {
+        entrypoint: String,
+        symbol: String,
+        message: String,
+    },
+    NativeDynamicAbiVersionUnsupported {
+        entrypoint: String,
+        actual_version: u32,
+    },
+    NativeDynamicManifestExportMissing {
+        entrypoint: String,
+    },
+    NativeDynamicManifestMismatch {
+        entrypoint: String,
+        message: String,
+    },
+    NativeDynamicInvocationSerializeFailed {
+        operation: String,
+        message: String,
+    },
+    NativeDynamicInvocationFailed {
+        entrypoint: String,
+        message: String,
+    },
+    NativeDynamicResponseParseFailed {
+        entrypoint: String,
         message: String,
     },
     ConnectorRuntimeUnsupported {
@@ -867,6 +1012,65 @@ impl fmt::Display for ExtensionHostError {
                     path, message
                 )
             }
+            Self::NativeDynamicLibraryLoadFailed {
+                entrypoint,
+                message,
+            } => write!(
+                f,
+                "failed to load native dynamic extension library {}: {}",
+                entrypoint, message
+            ),
+            Self::NativeDynamicSymbolMissing {
+                entrypoint,
+                symbol,
+                message,
+            } => write!(
+                f,
+                "native dynamic extension library {} is missing symbol {}: {}",
+                entrypoint, symbol, message
+            ),
+            Self::NativeDynamicAbiVersionUnsupported {
+                entrypoint,
+                actual_version,
+            } => write!(
+                f,
+                "native dynamic extension library {} reported unsupported ABI version {}",
+                entrypoint, actual_version
+            ),
+            Self::NativeDynamicManifestExportMissing { entrypoint } => write!(
+                f,
+                "native dynamic extension library {} returned no manifest export",
+                entrypoint
+            ),
+            Self::NativeDynamicManifestMismatch {
+                entrypoint,
+                message,
+            } => write!(
+                f,
+                "native dynamic extension library {} manifest does not match package manifest: {}",
+                entrypoint, message
+            ),
+            Self::NativeDynamicInvocationSerializeFailed { operation, message } => write!(
+                f,
+                "failed to serialize native dynamic provider invocation {}: {}",
+                operation, message
+            ),
+            Self::NativeDynamicInvocationFailed {
+                entrypoint,
+                message,
+            } => write!(
+                f,
+                "native dynamic extension library {} failed during invocation: {}",
+                entrypoint, message
+            ),
+            Self::NativeDynamicResponseParseFailed {
+                entrypoint,
+                message,
+            } => write!(
+                f,
+                "native dynamic extension library {} returned invalid response payload: {}",
+                entrypoint, message
+            ),
             Self::ConnectorRuntimeUnsupported {
                 instance_id,
                 runtime,
@@ -946,6 +1150,521 @@ fn merge_config(base: &Value, overlay: &Value) -> Value {
         }
         (_, overlay) => overlay.clone(),
     }
+}
+
+fn load_native_dynamic_runtime(
+    entrypoint: &Path,
+) -> Result<(Arc<NativeDynamicRuntime>, ExtensionManifest), ExtensionHostError> {
+    unsafe {
+        let library = Library::new(entrypoint).map_err(|error| {
+            ExtensionHostError::NativeDynamicLibraryLoadFailed {
+                entrypoint: entrypoint.display().to_string(),
+                message: error.to_string(),
+            }
+        })?;
+        let abi_version = load_native_dynamic_symbol::<AbiVersionFn>(
+            &library,
+            SDKWORK_EXTENSION_ABI_VERSION_SYMBOL,
+            entrypoint,
+        )?;
+        let manifest_json = load_native_dynamic_symbol::<ManifestJsonFn>(
+            &library,
+            SDKWORK_EXTENSION_MANIFEST_JSON_SYMBOL,
+            entrypoint,
+        )?;
+        let execute_json = load_native_dynamic_symbol::<ExecuteJsonFn>(
+            &library,
+            SDKWORK_EXTENSION_PROVIDER_EXECUTE_JSON_SYMBOL,
+            entrypoint,
+        )?;
+        let free_string = load_native_dynamic_symbol::<FreeStringFn>(
+            &library,
+            SDKWORK_EXTENSION_FREE_STRING_SYMBOL,
+            entrypoint,
+        )?;
+
+        let actual_version = abi_version();
+        if actual_version != SDKWORK_EXTENSION_ABI_VERSION {
+            return Err(ExtensionHostError::NativeDynamicAbiVersionUnsupported {
+                entrypoint: entrypoint.display().to_string(),
+                actual_version,
+            });
+        }
+
+        let manifest_ptr = manifest_json();
+        let Some(manifest_json) = from_raw_c_str(manifest_ptr) else {
+            return Err(ExtensionHostError::NativeDynamicManifestExportMissing {
+                entrypoint: entrypoint.display().to_string(),
+            });
+        };
+        let manifest = serde_json::from_str(&manifest_json).map_err(|error| {
+            ExtensionHostError::ManifestParseFailed {
+                path: entrypoint.display().to_string(),
+                message: error.to_string(),
+            }
+        })?;
+
+        Ok((
+            Arc::new(NativeDynamicRuntime {
+                entrypoint: entrypoint.display().to_string(),
+                _library: library,
+                execute_json,
+                free_string,
+            }),
+            manifest,
+        ))
+    }
+}
+
+unsafe fn load_native_dynamic_symbol<T: Copy>(
+    library: &Library,
+    symbol: &[u8],
+    entrypoint: &Path,
+) -> Result<T, ExtensionHostError> {
+    library
+        .get::<T>(symbol)
+        .map(|loaded| *loaded)
+        .map_err(|error| ExtensionHostError::NativeDynamicSymbolMissing {
+            entrypoint: entrypoint.display().to_string(),
+            symbol: String::from_utf8_lossy(symbol)
+                .trim_end_matches('\0')
+                .to_owned(),
+            message: error.to_string(),
+        })
+}
+
+fn ensure_native_dynamic_manifest_matches(
+    package_manifest: &ExtensionManifest,
+    library_manifest: &ExtensionManifest,
+    entrypoint: &Path,
+) -> Result<(), ExtensionHostError> {
+    let same = package_manifest.api_version == library_manifest.api_version
+        && package_manifest.id == library_manifest.id
+        && package_manifest.kind == library_manifest.kind
+        && package_manifest.version == library_manifest.version
+        && package_manifest.display_name == library_manifest.display_name
+        && package_manifest.runtime == library_manifest.runtime
+        && package_manifest.protocol == library_manifest.protocol
+        && package_manifest.config_schema == library_manifest.config_schema
+        && package_manifest.credential_schema == library_manifest.credential_schema
+        && package_manifest.permissions == library_manifest.permissions
+        && package_manifest.channel_bindings == library_manifest.channel_bindings
+        && package_manifest.capabilities == library_manifest.capabilities;
+
+    if same {
+        Ok(())
+    } else {
+        Err(ExtensionHostError::NativeDynamicManifestMismatch {
+            entrypoint: entrypoint.display().to_string(),
+            message: format!(
+                "package manifest {} does not match library-exported manifest {}",
+                package_manifest.id, library_manifest.id
+            ),
+        })
+    }
+}
+
+fn execute_native_dynamic_invocation(
+    runtime: &NativeDynamicRuntime,
+    invocation: &ProviderInvocation,
+) -> Result<ProviderInvocationResult, ExtensionHostError> {
+    let payload = serde_json::to_string(invocation).map_err(|error| {
+        ExtensionHostError::NativeDynamicInvocationSerializeFailed {
+            operation: invocation.operation.clone(),
+            message: error.to_string(),
+        }
+    })?;
+    let raw_payload = into_raw_c_string(payload);
+    let raw_result = unsafe { (runtime.execute_json)(raw_payload.cast_const()) };
+    unsafe { sdkwork_api_extension_abi::free_raw_c_string(raw_payload) };
+    let Some(raw_result_json) = (unsafe { from_raw_c_str(raw_result) }) else {
+        return Err(ExtensionHostError::NativeDynamicResponseParseFailed {
+            entrypoint: runtime.entrypoint.clone(),
+            message: "plugin returned null result".to_owned(),
+        });
+    };
+    unsafe { (runtime.free_string)(raw_result) };
+
+    serde_json::from_str(&raw_result_json).map_err(|error| {
+        ExtensionHostError::NativeDynamicResponseParseFailed {
+            entrypoint: runtime.entrypoint.clone(),
+            message: error.to_string(),
+        }
+    })
+}
+
+fn serialize_json_body<T: Serialize>(
+    body: &T,
+    operation: &str,
+) -> Result<Value, ExtensionHostError> {
+    serde_json::to_value(body).map_err(|error| {
+        ExtensionHostError::NativeDynamicInvocationSerializeFailed {
+            operation: operation.to_owned(),
+            message: error.to_string(),
+        }
+    })
+}
+
+fn provider_invocation_from_request(
+    request: ProviderRequest<'_>,
+    api_key: &str,
+    base_url: &str,
+) -> Result<ProviderInvocation, ExtensionHostError> {
+    macro_rules! invocation_with_body {
+        ($operation:expr, [$($param:expr),*], $body:expr, $expects_stream:expr) => {
+            ProviderInvocation::new(
+                $operation,
+                api_key,
+                base_url,
+                vec![$($param.to_owned()),*],
+                serialize_json_body($body, $operation)?,
+                $expects_stream,
+            )
+        };
+    }
+
+    macro_rules! invocation_without_body {
+        ($operation:expr, [$($param:expr),*], $expects_stream:expr) => {
+            ProviderInvocation::new(
+                $operation,
+                api_key,
+                base_url,
+                vec![$($param.to_owned()),*],
+                Value::Null,
+                $expects_stream,
+            )
+        };
+    }
+
+    Ok(match request {
+        ProviderRequest::ChatCompletions(body) => {
+            invocation_with_body!("chat.completions.create", [], body, false)
+        }
+        ProviderRequest::ChatCompletionsStream(body) => {
+            invocation_with_body!("chat.completions.create", [], body, true)
+        }
+        ProviderRequest::ChatCompletionsList => {
+            invocation_without_body!("chat.completions.list", [], false)
+        }
+        ProviderRequest::ChatCompletionsRetrieve(completion_id) => {
+            invocation_without_body!("chat.completions.retrieve", [completion_id], false)
+        }
+        ProviderRequest::ChatCompletionsUpdate(completion_id, body) => {
+            invocation_with_body!("chat.completions.update", [completion_id], body, false)
+        }
+        ProviderRequest::ChatCompletionsDelete(completion_id) => {
+            invocation_without_body!("chat.completions.delete", [completion_id], false)
+        }
+        ProviderRequest::ChatCompletionsMessagesList(completion_id) => {
+            invocation_without_body!("chat.completions.messages.list", [completion_id], false)
+        }
+        ProviderRequest::Completions(body) => {
+            invocation_with_body!("completions.create", [], body, false)
+        }
+        ProviderRequest::ModelsDelete(model_id) => {
+            invocation_without_body!("models.delete", [model_id], false)
+        }
+        ProviderRequest::Threads(body) => invocation_with_body!("threads.create", [], body, false),
+        ProviderRequest::ThreadsRetrieve(thread_id) => {
+            invocation_without_body!("threads.retrieve", [thread_id], false)
+        }
+        ProviderRequest::ThreadsUpdate(thread_id, body) => {
+            invocation_with_body!("threads.update", [thread_id], body, false)
+        }
+        ProviderRequest::ThreadsDelete(thread_id) => {
+            invocation_without_body!("threads.delete", [thread_id], false)
+        }
+        ProviderRequest::ThreadMessages(thread_id, body) => {
+            invocation_with_body!("threads.messages.create", [thread_id], body, false)
+        }
+        ProviderRequest::ThreadMessagesList(thread_id) => {
+            invocation_without_body!("threads.messages.list", [thread_id], false)
+        }
+        ProviderRequest::ThreadMessagesRetrieve(thread_id, message_id) => {
+            invocation_without_body!("threads.messages.retrieve", [thread_id, message_id], false)
+        }
+        ProviderRequest::ThreadMessagesUpdate(thread_id, message_id, body) => {
+            invocation_with_body!(
+                "threads.messages.update",
+                [thread_id, message_id],
+                body,
+                false
+            )
+        }
+        ProviderRequest::ThreadMessagesDelete(thread_id, message_id) => {
+            invocation_without_body!("threads.messages.delete", [thread_id, message_id], false)
+        }
+        ProviderRequest::ThreadRuns(thread_id, body) => {
+            invocation_with_body!("threads.runs.create", [thread_id], body, false)
+        }
+        ProviderRequest::ThreadRunsList(thread_id) => {
+            invocation_without_body!("threads.runs.list", [thread_id], false)
+        }
+        ProviderRequest::ThreadRunsRetrieve(thread_id, run_id) => {
+            invocation_without_body!("threads.runs.retrieve", [thread_id, run_id], false)
+        }
+        ProviderRequest::ThreadRunsUpdate(thread_id, run_id, body) => {
+            invocation_with_body!("threads.runs.update", [thread_id, run_id], body, false)
+        }
+        ProviderRequest::ThreadRunsCancel(thread_id, run_id) => {
+            invocation_without_body!("threads.runs.cancel", [thread_id, run_id], false)
+        }
+        ProviderRequest::ThreadRunsSubmitToolOutputs(thread_id, run_id, body) => {
+            invocation_with_body!(
+                "threads.runs.submit_tool_outputs",
+                [thread_id, run_id],
+                body,
+                false
+            )
+        }
+        ProviderRequest::ThreadRunStepsList(thread_id, run_id) => {
+            invocation_without_body!("threads.runs.steps.list", [thread_id, run_id], false)
+        }
+        ProviderRequest::ThreadRunStepsRetrieve(thread_id, run_id, step_id) => {
+            invocation_without_body!(
+                "threads.runs.steps.retrieve",
+                [thread_id, run_id, step_id],
+                false
+            )
+        }
+        ProviderRequest::ThreadsRuns(body) => {
+            invocation_with_body!("threads.runs.create_on_thread", [], body, false)
+        }
+        ProviderRequest::Conversations(body) => {
+            invocation_with_body!("conversations.create", [], body, false)
+        }
+        ProviderRequest::ConversationsList => {
+            invocation_without_body!("conversations.list", [], false)
+        }
+        ProviderRequest::ConversationsRetrieve(conversation_id) => {
+            invocation_without_body!("conversations.retrieve", [conversation_id], false)
+        }
+        ProviderRequest::ConversationsUpdate(conversation_id, body) => {
+            invocation_with_body!("conversations.update", [conversation_id], body, false)
+        }
+        ProviderRequest::ConversationsDelete(conversation_id) => {
+            invocation_without_body!("conversations.delete", [conversation_id], false)
+        }
+        ProviderRequest::ConversationItems(conversation_id, body) => {
+            invocation_with_body!("conversations.items.create", [conversation_id], body, false)
+        }
+        ProviderRequest::ConversationItemsList(conversation_id) => {
+            invocation_without_body!("conversations.items.list", [conversation_id], false)
+        }
+        ProviderRequest::ConversationItemsRetrieve(conversation_id, item_id) => {
+            invocation_without_body!(
+                "conversations.items.retrieve",
+                [conversation_id, item_id],
+                false
+            )
+        }
+        ProviderRequest::ConversationItemsDelete(conversation_id, item_id) => {
+            invocation_without_body!(
+                "conversations.items.delete",
+                [conversation_id, item_id],
+                false
+            )
+        }
+        ProviderRequest::Responses(body) => {
+            invocation_with_body!("responses.create", [], body, false)
+        }
+        ProviderRequest::ResponsesInputTokens(body) => {
+            invocation_with_body!("responses.input_tokens.count", [], body, false)
+        }
+        ProviderRequest::ResponsesRetrieve(response_id) => {
+            invocation_without_body!("responses.retrieve", [response_id], false)
+        }
+        ProviderRequest::ResponsesDelete(response_id) => {
+            invocation_without_body!("responses.delete", [response_id], false)
+        }
+        ProviderRequest::ResponsesInputItemsList(response_id) => {
+            invocation_without_body!("responses.input_items.list", [response_id], false)
+        }
+        ProviderRequest::ResponsesCancel(response_id) => {
+            invocation_without_body!("responses.cancel", [response_id], false)
+        }
+        ProviderRequest::ResponsesCompact(body) => {
+            invocation_with_body!("responses.compact", [], body, false)
+        }
+        ProviderRequest::Embeddings(body) => {
+            invocation_with_body!("embeddings.create", [], body, false)
+        }
+        ProviderRequest::Moderations(body) => {
+            invocation_with_body!("moderations.create", [], body, false)
+        }
+        ProviderRequest::ImagesGenerations(body) => {
+            invocation_with_body!("images.generate", [], body, false)
+        }
+        ProviderRequest::ImagesEdits(body) => {
+            invocation_with_body!("images.edit", [], body, false)
+        }
+        ProviderRequest::ImagesVariations(body) => {
+            invocation_with_body!("images.variation", [], body, false)
+        }
+        ProviderRequest::AudioTranscriptions(body) => {
+            invocation_with_body!("audio.transcriptions.create", [], body, false)
+        }
+        ProviderRequest::AudioTranslations(body) => {
+            invocation_with_body!("audio.translations.create", [], body, false)
+        }
+        ProviderRequest::AudioSpeech(body) => {
+            invocation_with_body!("audio.speech.create", [], body, false)
+        }
+        ProviderRequest::Files(body) => invocation_with_body!("files.create", [], body, false),
+        ProviderRequest::FilesList => invocation_without_body!("files.list", [], false),
+        ProviderRequest::FilesRetrieve(file_id) => {
+            invocation_without_body!("files.retrieve", [file_id], false)
+        }
+        ProviderRequest::FilesDelete(file_id) => {
+            invocation_without_body!("files.delete", [file_id], false)
+        }
+        ProviderRequest::FilesContent(file_id) => {
+            invocation_without_body!("files.content", [file_id], false)
+        }
+        ProviderRequest::Uploads(body) => invocation_with_body!("uploads.create", [], body, false),
+        ProviderRequest::UploadParts(body) => {
+            invocation_with_body!("uploads.parts.create", [], body, false)
+        }
+        ProviderRequest::UploadComplete(body) => {
+            invocation_with_body!("uploads.complete", [&body.upload_id], body, false)
+        }
+        ProviderRequest::UploadCancel(upload_id) => {
+            invocation_without_body!("uploads.cancel", [upload_id], false)
+        }
+        ProviderRequest::FineTuningJobs(body) => {
+            invocation_with_body!("fine_tuning.jobs.create", [], body, false)
+        }
+        ProviderRequest::FineTuningJobsList => {
+            invocation_without_body!("fine_tuning.jobs.list", [], false)
+        }
+        ProviderRequest::FineTuningJobsRetrieve(job_id) => {
+            invocation_without_body!("fine_tuning.jobs.retrieve", [job_id], false)
+        }
+        ProviderRequest::FineTuningJobsCancel(job_id) => {
+            invocation_without_body!("fine_tuning.jobs.cancel", [job_id], false)
+        }
+        ProviderRequest::Assistants(body) => {
+            invocation_with_body!("assistants.create", [], body, false)
+        }
+        ProviderRequest::AssistantsList => {
+            invocation_without_body!("assistants.list", [], false)
+        }
+        ProviderRequest::AssistantsRetrieve(assistant_id) => {
+            invocation_without_body!("assistants.retrieve", [assistant_id], false)
+        }
+        ProviderRequest::AssistantsUpdate(assistant_id, body) => {
+            invocation_with_body!("assistants.update", [assistant_id], body, false)
+        }
+        ProviderRequest::AssistantsDelete(assistant_id) => {
+            invocation_without_body!("assistants.delete", [assistant_id], false)
+        }
+        ProviderRequest::RealtimeSessions(body) => {
+            invocation_with_body!("realtime.sessions.create", [], body, false)
+        }
+        ProviderRequest::Evals(body) => invocation_with_body!("evals.create", [], body, false),
+        ProviderRequest::Batches(body) => invocation_with_body!("batches.create", [], body, false),
+        ProviderRequest::BatchesList => invocation_without_body!("batches.list", [], false),
+        ProviderRequest::BatchesRetrieve(batch_id) => {
+            invocation_without_body!("batches.retrieve", [batch_id], false)
+        }
+        ProviderRequest::BatchesCancel(batch_id) => {
+            invocation_without_body!("batches.cancel", [batch_id], false)
+        }
+        ProviderRequest::VectorStores(body) => {
+            invocation_with_body!("vector_stores.create", [], body, false)
+        }
+        ProviderRequest::VectorStoresList => {
+            invocation_without_body!("vector_stores.list", [], false)
+        }
+        ProviderRequest::VectorStoresRetrieve(vector_store_id) => {
+            invocation_without_body!("vector_stores.retrieve", [vector_store_id], false)
+        }
+        ProviderRequest::VectorStoresUpdate(vector_store_id, body) => {
+            invocation_with_body!("vector_stores.update", [vector_store_id], body, false)
+        }
+        ProviderRequest::VectorStoresDelete(vector_store_id) => {
+            invocation_without_body!("vector_stores.delete", [vector_store_id], false)
+        }
+        ProviderRequest::VectorStoresSearch(vector_store_id, body) => {
+            invocation_with_body!("vector_stores.search", [vector_store_id], body, false)
+        }
+        ProviderRequest::VectorStoreFiles(vector_store_id, body) => {
+            invocation_with_body!("vector_stores.files.create", [vector_store_id], body, false)
+        }
+        ProviderRequest::VectorStoreFilesList(vector_store_id) => {
+            invocation_without_body!("vector_stores.files.list", [vector_store_id], false)
+        }
+        ProviderRequest::VectorStoreFilesRetrieve(vector_store_id, file_id) => {
+            invocation_without_body!(
+                "vector_stores.files.retrieve",
+                [vector_store_id, file_id],
+                false
+            )
+        }
+        ProviderRequest::VectorStoreFilesDelete(vector_store_id, file_id) => {
+            invocation_without_body!(
+                "vector_stores.files.delete",
+                [vector_store_id, file_id],
+                false
+            )
+        }
+        ProviderRequest::VectorStoreFileBatches(vector_store_id, body) => {
+            invocation_with_body!(
+                "vector_stores.file_batches.create",
+                [vector_store_id],
+                body,
+                false
+            )
+        }
+        ProviderRequest::VectorStoreFileBatchesRetrieve(vector_store_id, batch_id) => {
+            invocation_without_body!(
+                "vector_stores.file_batches.retrieve",
+                [vector_store_id, batch_id],
+                false
+            )
+        }
+        ProviderRequest::VectorStoreFileBatchesCancel(vector_store_id, batch_id) => {
+            invocation_without_body!(
+                "vector_stores.file_batches.cancel",
+                [vector_store_id, batch_id],
+                false
+            )
+        }
+        ProviderRequest::VectorStoreFileBatchesListFiles(vector_store_id, batch_id) => {
+            invocation_without_body!(
+                "vector_stores.file_batches.files.list",
+                [vector_store_id, batch_id],
+                false
+            )
+        }
+        ProviderRequest::Videos(body) => invocation_with_body!("videos.create", [], body, false),
+        ProviderRequest::VideosList => invocation_without_body!("videos.list", [], false),
+        ProviderRequest::VideosRetrieve(video_id) => {
+            invocation_without_body!("videos.retrieve", [video_id], false)
+        }
+        ProviderRequest::VideosDelete(video_id) => {
+            invocation_without_body!("videos.delete", [video_id], false)
+        }
+        ProviderRequest::VideosContent(video_id) => {
+            invocation_without_body!("videos.content", [video_id], false)
+        }
+        ProviderRequest::VideosRemix(video_id, body) => {
+            invocation_with_body!("videos.remix", [video_id], body, false)
+        }
+        ProviderRequest::Webhooks(body) => {
+            invocation_with_body!("webhooks.create", [], body, false)
+        }
+        ProviderRequest::WebhooksList => invocation_without_body!("webhooks.list", [], false),
+        ProviderRequest::WebhooksRetrieve(webhook_id) => {
+            invocation_without_body!("webhooks.retrieve", [webhook_id], false)
+        }
+        ProviderRequest::WebhooksUpdate(webhook_id, body) => {
+            invocation_with_body!("webhooks.update", [webhook_id], body, false)
+        }
+        ProviderRequest::WebhooksDelete(webhook_id) => {
+            invocation_without_body!("webhooks.delete", [webhook_id], false)
+        }
+    })
 }
 
 #[derive(Serialize)]
@@ -1442,4 +2161,30 @@ fn parse_http_health_url(health_url: &str) -> Result<(SocketAddr, String), Exten
         })?;
 
     Ok((address, path))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::provider_invocation_from_request;
+    use sdkwork_api_contract_openai::uploads::CompleteUploadRequest;
+    use sdkwork_api_provider_core::ProviderRequest;
+
+    #[test]
+    fn upload_complete_invocation_preserves_upload_id_as_path_param() {
+        let request = CompleteUploadRequest::new("upload_123", ["part_1", "part_2"]);
+
+        let invocation = provider_invocation_from_request(
+            ProviderRequest::UploadComplete(&request),
+            "sk-native",
+            "https://example.com/v1",
+        )
+        .expect("provider invocation");
+
+        assert_eq!(invocation.operation, "uploads.complete");
+        assert_eq!(invocation.path_params, vec!["upload_123".to_owned()]);
+        assert_eq!(
+            invocation.body["part_ids"],
+            serde_json::json!(["part_1", "part_2"])
+        );
+    }
 }
