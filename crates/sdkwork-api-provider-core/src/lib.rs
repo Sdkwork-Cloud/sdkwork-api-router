@@ -11,6 +11,7 @@ use futures_util::StreamExt;
 use sdkwork_api_contract_openai::assistants::{CreateAssistantRequest, UpdateAssistantRequest};
 use sdkwork_api_contract_openai::audio::{
     CreateSpeechRequest, CreateTranscriptionRequest, CreateTranslationRequest,
+    CreateVoiceConsentRequest,
 };
 use sdkwork_api_contract_openai::batches::CreateBatchRequest;
 use sdkwork_api_contract_openai::chat_completions::{
@@ -21,7 +22,9 @@ use sdkwork_api_contract_openai::conversations::{
     CreateConversationItemsRequest, CreateConversationRequest, UpdateConversationRequest,
 };
 use sdkwork_api_contract_openai::embeddings::CreateEmbeddingRequest;
-use sdkwork_api_contract_openai::evals::CreateEvalRequest;
+use sdkwork_api_contract_openai::evals::{
+    CreateEvalRequest, CreateEvalRunRequest, UpdateEvalRequest,
+};
 use sdkwork_api_contract_openai::files::CreateFileRequest;
 use sdkwork_api_contract_openai::fine_tuning::CreateFineTuningJobRequest;
 use sdkwork_api_contract_openai::images::{
@@ -46,7 +49,9 @@ use sdkwork_api_contract_openai::vector_stores::{
     CreateVectorStoreFileBatchRequest, CreateVectorStoreFileRequest, CreateVectorStoreRequest,
     SearchVectorStoreRequest, UpdateVectorStoreRequest,
 };
-use sdkwork_api_contract_openai::videos::{CreateVideoRequest, RemixVideoRequest};
+use sdkwork_api_contract_openai::videos::{
+    CreateVideoRequest, ExtendVideoRequest, RemixVideoRequest, UpdateVideoCharacterRequest,
+};
 use sdkwork_api_contract_openai::webhooks::{CreateWebhookRequest, UpdateWebhookRequest};
 use serde_json::Value;
 
@@ -115,6 +120,8 @@ pub enum ProviderRequest<'a> {
     AudioTranscriptions(&'a CreateTranscriptionRequest),
     AudioTranslations(&'a CreateTranslationRequest),
     AudioSpeech(&'a CreateSpeechRequest),
+    AudioVoicesList,
+    AudioVoiceConsents(&'a CreateVoiceConsentRequest),
     Files(&'a CreateFileRequest),
     FilesList,
     FilesRetrieve(&'a str),
@@ -128,6 +135,8 @@ pub enum ProviderRequest<'a> {
     FineTuningJobsList,
     FineTuningJobsRetrieve(&'a str),
     FineTuningJobsCancel(&'a str),
+    FineTuningJobsEvents(&'a str),
+    FineTuningJobsCheckpoints(&'a str),
     Assistants(&'a CreateAssistantRequest),
     AssistantsList,
     AssistantsRetrieve(&'a str),
@@ -135,6 +144,13 @@ pub enum ProviderRequest<'a> {
     AssistantsDelete(&'a str),
     RealtimeSessions(&'a CreateRealtimeSessionRequest),
     Evals(&'a CreateEvalRequest),
+    EvalsList,
+    EvalsRetrieve(&'a str),
+    EvalsUpdate(&'a str, &'a UpdateEvalRequest),
+    EvalsDelete(&'a str),
+    EvalRunsList(&'a str),
+    EvalRuns(&'a str, &'a CreateEvalRunRequest),
+    EvalRunsRetrieve(&'a str, &'a str),
     Batches(&'a CreateBatchRequest),
     BatchesList,
     BatchesRetrieve(&'a str),
@@ -159,6 +175,10 @@ pub enum ProviderRequest<'a> {
     VideosDelete(&'a str),
     VideosContent(&'a str),
     VideosRemix(&'a str, &'a RemixVideoRequest),
+    VideoCharactersList(&'a str),
+    VideoCharactersRetrieve(&'a str, &'a str),
+    VideoCharactersUpdate(&'a str, &'a str, &'a UpdateVideoCharacterRequest),
+    VideosExtend(&'a str, &'a ExtendVideoRequest),
     Webhooks(&'a CreateWebhookRequest),
     WebhooksList,
     WebhooksRetrieve(&'a str),

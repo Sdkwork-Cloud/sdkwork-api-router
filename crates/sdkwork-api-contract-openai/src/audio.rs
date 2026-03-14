@@ -53,6 +53,84 @@ impl TranslationObject {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateVoiceConsentRequest {
+    pub voice: String,
+    pub name: String,
+    pub consent_text: String,
+}
+
+impl CreateVoiceConsentRequest {
+    pub fn new(
+        voice: impl Into<String>,
+        name: impl Into<String>,
+        consent_text: impl Into<String>,
+    ) -> Self {
+        Self {
+            voice: voice.into(),
+            name: name.into(),
+            consent_text: consent_text.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct VoiceObject {
+    pub id: String,
+    pub object: &'static str,
+    pub name: String,
+}
+
+impl VoiceObject {
+    pub fn new(id: impl Into<String>, name: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            object: "voice",
+            name: name.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ListVoicesResponse {
+    pub object: &'static str,
+    pub data: Vec<VoiceObject>,
+}
+
+impl ListVoicesResponse {
+    pub fn new(data: Vec<VoiceObject>) -> Self {
+        Self {
+            object: "list",
+            data,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct VoiceConsentObject {
+    pub id: String,
+    pub object: &'static str,
+    pub status: &'static str,
+    pub voice: String,
+    pub name: String,
+}
+
+impl VoiceConsentObject {
+    pub fn approved(
+        id: impl Into<String>,
+        voice: impl Into<String>,
+        name: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            object: "voice_consent",
+            status: "approved",
+            voice: voice.into(),
+            name: name.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateSpeechRequest {
     pub model: String,
     pub voice: String,

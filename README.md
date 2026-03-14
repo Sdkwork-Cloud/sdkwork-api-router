@@ -297,13 +297,13 @@ Current stateless upstream-relay coverage:
 - `/v1/embeddings`
 - `/v1/files`, including list, retrieve, delete, and binary content relay
 - `/v1/uploads`, including part upload, completion, and cancel relay
-- `/v1/audio/*`, including speech binary relay plus transcription and translation relay
+- `/v1/audio/*`, including speech binary relay, transcription and translation relay, audio voices list, and voice consent relay
 - `/v1/images/*`, including generations, edits, and variations relay
 - `/v1/moderations` and `/v1/realtime/sessions`
 - `/v1/assistants`, `/v1/threads`, and `/v1/conversations`, including their nested resource flows
 - `/v1/vector_stores`, including search, files, and file batch flows
-- `/v1/batches` and `/v1/fine_tuning/jobs`
-- `/v1/webhooks`, `/v1/evals`, and `/v1/videos`, including video content and remix relay
+- `/v1/batches` and `/v1/fine_tuning/jobs`, including events and checkpoints relay
+- `/v1/webhooks`, `/v1/evals`, and `/v1/videos`, including eval list, retrieve, update, delete, run flows plus video characters, extend, content, and remix relay
 
 Runtime-key resolution accepts:
 
@@ -402,7 +402,7 @@ Implemented backend surfaces include:
 - `/v1/embeddings`
 - SSE streaming for chat and responses
 - explicit stateless runtime configuration for library and embedded bootstrap use cases
-- stateless relay coverage for files, uploads, audio, images, moderations, realtime sessions, assistants, threads, conversations, vector stores, batches, fine-tuning jobs, webhooks, evals, and videos when an upstream runtime is configured
+- stateless relay coverage for files, uploads, audio including voices and voice consents, images, moderations, realtime sessions, assistants, threads, conversations, vector stores, batches, fine-tuning jobs including events and checkpoints, webhooks, evals including run flows, and videos including characters and extend when an upstream runtime is configured
 
 Control-plane features include:
 

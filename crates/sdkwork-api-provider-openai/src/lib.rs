@@ -4,6 +4,7 @@ use reqwest::{Client, RequestBuilder};
 use sdkwork_api_contract_openai::assistants::{CreateAssistantRequest, UpdateAssistantRequest};
 use sdkwork_api_contract_openai::audio::{
     CreateSpeechRequest, CreateTranscriptionRequest, CreateTranslationRequest,
+    CreateVoiceConsentRequest,
 };
 use sdkwork_api_contract_openai::batches::CreateBatchRequest;
 use sdkwork_api_contract_openai::chat_completions::{
@@ -14,7 +15,9 @@ use sdkwork_api_contract_openai::conversations::{
     CreateConversationItemsRequest, CreateConversationRequest, UpdateConversationRequest,
 };
 use sdkwork_api_contract_openai::embeddings::CreateEmbeddingRequest;
-use sdkwork_api_contract_openai::evals::CreateEvalRequest;
+use sdkwork_api_contract_openai::evals::{
+    CreateEvalRequest, CreateEvalRunRequest, UpdateEvalRequest,
+};
 use sdkwork_api_contract_openai::files::CreateFileRequest;
 use sdkwork_api_contract_openai::fine_tuning::CreateFineTuningJobRequest;
 use sdkwork_api_contract_openai::images::{
@@ -39,7 +42,9 @@ use sdkwork_api_contract_openai::vector_stores::{
     CreateVectorStoreFileBatchRequest, CreateVectorStoreFileRequest, CreateVectorStoreRequest,
     SearchVectorStoreRequest, UpdateVectorStoreRequest,
 };
-use sdkwork_api_contract_openai::videos::{CreateVideoRequest, RemixVideoRequest};
+use sdkwork_api_contract_openai::videos::{
+    CreateVideoRequest, ExtendVideoRequest, RemixVideoRequest, UpdateVideoCharacterRequest,
+};
 use sdkwork_api_contract_openai::webhooks::{CreateWebhookRequest, UpdateWebhookRequest};
 use sdkwork_api_domain_catalog::ModelCatalogEntry;
 use sdkwork_api_provider_core::{
@@ -605,6 +610,19 @@ impl OpenAiProviderAdapter {
         self.post_stream("/v1/audio/speech", api_key, request).await
     }
 
+    pub async fn list_audio_voices(&self, api_key: &str) -> Result<Value> {
+        self.get_json("/v1/audio/voices", api_key).await
+    }
+
+    pub async fn audio_voice_consents(
+        &self,
+        api_key: &str,
+        request: &CreateVoiceConsentRequest,
+    ) -> Result<Value> {
+        self.post_json("/v1/audio/voice_consents", api_key, request)
+            .await
+    }
+
     pub async fn files(&self, api_key: &str, request: &CreateFileRequest) -> Result<Value> {
         let file = multipart_file_part(
             request.bytes.clone(),
@@ -717,6 +735,23 @@ impl OpenAiProviderAdapter {
         Ok(response.json::<Value>().await?)
     }
 
+    pub async fn list_fine_tuning_job_events(&self, api_key: &str, job_id: &str) -> Result<Value> {
+        self.get_json(&format!("/v1/fine_tuning/jobs/{job_id}/events"), api_key)
+            .await
+    }
+
+    pub async fn list_fine_tuning_job_checkpoints(
+        &self,
+        api_key: &str,
+        job_id: &str,
+    ) -> Result<Value> {
+        self.get_json(
+            &format!("/v1/fine_tuning/jobs/{job_id}/checkpoints"),
+            api_key,
+        )
+        .await
+    }
+
     pub async fn assistants(
         &self,
         api_key: &str,
@@ -760,6 +795,55 @@ impl OpenAiProviderAdapter {
 
     pub async fn evals(&self, api_key: &str, request: &CreateEvalRequest) -> Result<Value> {
         self.post_json("/v1/evals", api_key, request).await
+    }
+
+    pub async fn list_evals(&self, api_key: &str) -> Result<Value> {
+        self.get_json("/v1/evals", api_key).await
+    }
+
+    pub async fn retrieve_eval(&self, api_key: &str, eval_id: &str) -> Result<Value> {
+        self.get_json(&format!("/v1/evals/{eval_id}"), api_key)
+            .await
+    }
+
+    pub async fn update_eval(
+        &self,
+        api_key: &str,
+        eval_id: &str,
+        request: &UpdateEvalRequest,
+    ) -> Result<Value> {
+        self.post_json(&format!("/v1/evals/{eval_id}"), api_key, request)
+            .await
+    }
+
+    pub async fn delete_eval(&self, api_key: &str, eval_id: &str) -> Result<Value> {
+        self.delete_json(&format!("/v1/evals/{eval_id}"), api_key)
+            .await
+    }
+
+    pub async fn list_eval_runs(&self, api_key: &str, eval_id: &str) -> Result<Value> {
+        self.get_json(&format!("/v1/evals/{eval_id}/runs"), api_key)
+            .await
+    }
+
+    pub async fn create_eval_run(
+        &self,
+        api_key: &str,
+        eval_id: &str,
+        request: &CreateEvalRunRequest,
+    ) -> Result<Value> {
+        self.post_json(&format!("/v1/evals/{eval_id}/runs"), api_key, request)
+            .await
+    }
+
+    pub async fn retrieve_eval_run(
+        &self,
+        api_key: &str,
+        eval_id: &str,
+        run_id: &str,
+    ) -> Result<Value> {
+        self.get_json(&format!("/v1/evals/{eval_id}/runs/{run_id}"), api_key)
+            .await
     }
 
     pub async fn batches(&self, api_key: &str, request: &CreateBatchRequest) -> Result<Value> {
@@ -987,6 +1071,49 @@ impl OpenAiProviderAdapter {
         request: &RemixVideoRequest,
     ) -> Result<Value> {
         self.post_json(&format!("/v1/videos/{video_id}/remix"), api_key, request)
+            .await
+    }
+
+    pub async fn list_video_characters(&self, api_key: &str, video_id: &str) -> Result<Value> {
+        self.get_json(&format!("/v1/videos/{video_id}/characters"), api_key)
+            .await
+    }
+
+    pub async fn retrieve_video_character(
+        &self,
+        api_key: &str,
+        video_id: &str,
+        character_id: &str,
+    ) -> Result<Value> {
+        self.get_json(
+            &format!("/v1/videos/{video_id}/characters/{character_id}"),
+            api_key,
+        )
+        .await
+    }
+
+    pub async fn update_video_character(
+        &self,
+        api_key: &str,
+        video_id: &str,
+        character_id: &str,
+        request: &UpdateVideoCharacterRequest,
+    ) -> Result<Value> {
+        self.post_json(
+            &format!("/v1/videos/{video_id}/characters/{character_id}"),
+            api_key,
+            request,
+        )
+        .await
+    }
+
+    pub async fn extend_video(
+        &self,
+        api_key: &str,
+        video_id: &str,
+        request: &ExtendVideoRequest,
+    ) -> Result<Value> {
+        self.post_json(&format!("/v1/videos/{video_id}/extend"), api_key, request)
             .await
     }
 
@@ -1341,6 +1468,12 @@ impl ProviderExecutionAdapter for OpenAiProviderAdapter {
             ProviderRequest::AudioSpeech(request) => Ok(ProviderOutput::Stream(
                 self.audio_speech(api_key, request).await?,
             )),
+            ProviderRequest::AudioVoicesList => {
+                Ok(ProviderOutput::Json(self.list_audio_voices(api_key).await?))
+            }
+            ProviderRequest::AudioVoiceConsents(request) => Ok(ProviderOutput::Json(
+                self.audio_voice_consents(api_key, request).await?,
+            )),
             ProviderRequest::Files(request) => {
                 Ok(ProviderOutput::Json(self.files(api_key, request).await?))
             }
@@ -1378,6 +1511,13 @@ impl ProviderExecutionAdapter for OpenAiProviderAdapter {
             ProviderRequest::FineTuningJobsCancel(job_id) => Ok(ProviderOutput::Json(
                 self.cancel_fine_tuning_job(api_key, job_id).await?,
             )),
+            ProviderRequest::FineTuningJobsEvents(job_id) => Ok(ProviderOutput::Json(
+                self.list_fine_tuning_job_events(api_key, job_id).await?,
+            )),
+            ProviderRequest::FineTuningJobsCheckpoints(job_id) => Ok(ProviderOutput::Json(
+                self.list_fine_tuning_job_checkpoints(api_key, job_id)
+                    .await?,
+            )),
             ProviderRequest::Assistants(request) => Ok(ProviderOutput::Json(
                 self.assistants(api_key, request).await?,
             )),
@@ -1400,6 +1540,25 @@ impl ProviderExecutionAdapter for OpenAiProviderAdapter {
             ProviderRequest::Evals(request) => {
                 Ok(ProviderOutput::Json(self.evals(api_key, request).await?))
             }
+            ProviderRequest::EvalsList => Ok(ProviderOutput::Json(self.list_evals(api_key).await?)),
+            ProviderRequest::EvalsRetrieve(eval_id) => Ok(ProviderOutput::Json(
+                self.retrieve_eval(api_key, eval_id).await?,
+            )),
+            ProviderRequest::EvalsUpdate(eval_id, request) => Ok(ProviderOutput::Json(
+                self.update_eval(api_key, eval_id, request).await?,
+            )),
+            ProviderRequest::EvalsDelete(eval_id) => Ok(ProviderOutput::Json(
+                self.delete_eval(api_key, eval_id).await?,
+            )),
+            ProviderRequest::EvalRunsList(eval_id) => Ok(ProviderOutput::Json(
+                self.list_eval_runs(api_key, eval_id).await?,
+            )),
+            ProviderRequest::EvalRuns(eval_id, request) => Ok(ProviderOutput::Json(
+                self.create_eval_run(api_key, eval_id, request).await?,
+            )),
+            ProviderRequest::EvalRunsRetrieve(eval_id, run_id) => Ok(ProviderOutput::Json(
+                self.retrieve_eval_run(api_key, eval_id, run_id).await?,
+            )),
             ProviderRequest::Batches(request) => {
                 Ok(ProviderOutput::Json(self.batches(api_key, request).await?))
             }
@@ -1499,6 +1658,24 @@ impl ProviderExecutionAdapter for OpenAiProviderAdapter {
             )),
             ProviderRequest::VideosRemix(video_id, request) => Ok(ProviderOutput::Json(
                 self.remix_video(api_key, video_id, request).await?,
+            )),
+            ProviderRequest::VideoCharactersList(video_id) => Ok(ProviderOutput::Json(
+                self.list_video_characters(api_key, video_id).await?,
+            )),
+            ProviderRequest::VideoCharactersRetrieve(video_id, character_id) => {
+                Ok(ProviderOutput::Json(
+                    self.retrieve_video_character(api_key, video_id, character_id)
+                        .await?,
+                ))
+            }
+            ProviderRequest::VideoCharactersUpdate(video_id, character_id, request) => {
+                Ok(ProviderOutput::Json(
+                    self.update_video_character(api_key, video_id, character_id, request)
+                        .await?,
+                ))
+            }
+            ProviderRequest::VideosExtend(video_id, request) => Ok(ProviderOutput::Json(
+                self.extend_video(api_key, video_id, request).await?,
             )),
             ProviderRequest::Webhooks(request) => {
                 Ok(ProviderOutput::Json(self.webhooks(api_key, request).await?))

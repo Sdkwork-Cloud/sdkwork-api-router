@@ -47,7 +47,7 @@ The current repository includes:
 - environment-driven extension discovery config for manifest search paths plus connector and native-dynamic runtime toggles
 - signed admin JWT authentication for the control plane, with the signing secret now provided by runtime config instead of a hardcoded development constant
 - gateway request tenancy derived from persisted gateway API keys instead of hardcoded tenant or project placeholders
-- explicit stateless gateway runtime modeling with synthetic tenant and project scope plus optional single-upstream relay across the current OpenAI-compatible data-plane surface, including files, uploads, audio, images, assistants, threads, conversations, vector stores, batches, fine-tuning jobs, webhooks, evals, and videos
+- explicit stateless gateway runtime modeling with synthetic tenant and project scope plus optional single-upstream relay across the current OpenAI-compatible data-plane surface, including files, uploads, audio with voices and voice consents, images, assistants, threads, conversations, vector stores, batches, fine-tuning jobs with events and checkpoints, webhooks, evals with run flows, and videos with characters and extend
 - shared Prometheus-compatible HTTP metrics exposed through `/metrics` on both admin and gateway routers
 - shared `x-request-id` propagation and structured HTTP request tracing across both admin and gateway routers, with tracing initialized by the standalone binaries
 - persisted routing policies shared by admin simulations and real gateway provider dispatch
@@ -111,6 +111,24 @@ The extension package standard also distinguishes three names:
 - Rust crate name:
   - `sdkwork-api-ext-provider-openrouter`
   - `sdkwork-api-ext-channel-openai`
+
+The provider operation vocabulary is also additive and stable across builtin, connector, and native-dynamic runtimes. Recent extensions to that contract now include:
+
+- `audio.voices.list`
+- `audio.voice_consents.create`
+- `evals.list`
+- `evals.retrieve`
+- `evals.update`
+- `evals.delete`
+- `evals.runs.list`
+- `evals.runs.create`
+- `evals.runs.retrieve`
+- `fine_tuning.jobs.events.list`
+- `fine_tuning.jobs.checkpoints.list`
+- `videos.characters.list`
+- `videos.characters.retrieve`
+- `videos.characters.update`
+- `videos.extend`
 
 Configuration-driven loading now uses a stable merge order:
 

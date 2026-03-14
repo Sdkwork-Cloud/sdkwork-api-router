@@ -84,6 +84,42 @@ async fn fine_tuning_cancel_route_returns_ok() {
 }
 
 #[tokio::test]
+async fn fine_tuning_events_route_returns_ok() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/fine_tuning/jobs/ftjob_1/events")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn fine_tuning_checkpoints_route_returns_ok() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/fine_tuning/jobs/ftjob_1/checkpoints")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
 async fn stateless_fine_tuning_route_relays_to_openai_compatible_provider() {
     let upstream_state = UpstreamCaptureState::default();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -100,6 +136,14 @@ async fn stateless_fine_tuning_route_relays_to_openai_compatible_provider() {
         .route(
             "/v1/fine_tuning/jobs/ftjob_1/cancel",
             post(upstream_fine_tuning_cancel_handler),
+        )
+        .route(
+            "/v1/fine_tuning/jobs/ftjob_1/events",
+            get(upstream_fine_tuning_events_handler),
+        )
+        .route(
+            "/v1/fine_tuning/jobs/ftjob_1/checkpoints",
+            get(upstream_fine_tuning_checkpoints_handler),
         )
         .with_state(upstream_state.clone());
 
@@ -171,6 +215,7 @@ async fn stateless_fine_tuning_route_relays_to_openai_compatible_provider() {
     assert_eq!(retrieve_json["id"], "ftjob_1");
 
     let cancel_response = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -183,6 +228,35 @@ async fn stateless_fine_tuning_route_relays_to_openai_compatible_provider() {
     assert_eq!(cancel_response.status(), StatusCode::OK);
     let cancel_json = read_json(cancel_response).await;
     assert_eq!(cancel_json["status"], "cancelled");
+
+    let events_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/fine_tuning/jobs/ftjob_1/events")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(events_response.status(), StatusCode::OK);
+    let events_json = read_json(events_response).await;
+    assert_eq!(events_json["data"][0]["id"], "ftevent_1");
+
+    let checkpoints_response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/fine_tuning/jobs/ftjob_1/checkpoints")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(checkpoints_response.status(), StatusCode::OK);
+    let checkpoints_json = read_json(checkpoints_response).await;
+    assert_eq!(checkpoints_json["data"][0]["id"], "ftckpt_1");
 }
 
 async fn read_json(response: axum::response::Response) -> Value {
@@ -220,6 +294,14 @@ async fn stateful_fine_tuning_route_relays_to_openai_compatible_provider() {
         .route(
             "/v1/fine_tuning/jobs/ftjob_1/cancel",
             post(upstream_fine_tuning_cancel_handler),
+        )
+        .route(
+            "/v1/fine_tuning/jobs/ftjob_1/events",
+            get(upstream_fine_tuning_events_handler),
+        )
+        .route(
+            "/v1/fine_tuning/jobs/ftjob_1/checkpoints",
+            get(upstream_fine_tuning_checkpoints_handler),
         )
         .with_state(upstream_state.clone());
 
@@ -358,6 +440,7 @@ async fn stateful_fine_tuning_route_relays_to_openai_compatible_provider() {
     assert_eq!(retrieve_json["id"], "ftjob_1");
 
     let cancel_response = gateway_app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -371,6 +454,37 @@ async fn stateful_fine_tuning_route_relays_to_openai_compatible_provider() {
     assert_eq!(cancel_response.status(), StatusCode::OK);
     let cancel_json = read_json(cancel_response).await;
     assert_eq!(cancel_json["status"], "cancelled");
+
+    let events_response = gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/fine_tuning/jobs/ftjob_1/events")
+                .header("authorization", format!("Bearer {api_key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(events_response.status(), StatusCode::OK);
+    let events_json = read_json(events_response).await;
+    assert_eq!(events_json["data"][0]["id"], "ftevent_1");
+
+    let checkpoints_response = gateway_app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/fine_tuning/jobs/ftjob_1/checkpoints")
+                .header("authorization", format!("Bearer {api_key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(checkpoints_response.status(), StatusCode::OK);
+    let checkpoints_json = read_json(checkpoints_response).await;
+    assert_eq!(checkpoints_json["data"][0]["id"], "ftckpt_1");
 }
 
 async fn upstream_fine_tuning_handler(
@@ -452,6 +566,51 @@ async fn upstream_fine_tuning_cancel_handler(
             "object":"fine_tuning.job",
             "model":"gpt-4.1-mini",
             "status":"cancelled"
+        })),
+    )
+}
+
+async fn upstream_fine_tuning_events_handler(
+    State(state): State<UpstreamCaptureState>,
+    headers: axum::http::HeaderMap,
+) -> (StatusCode, Json<Value>) {
+    *state.authorization.lock().unwrap() = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "object":"list",
+            "data":[{
+                "id":"ftevent_1",
+                "object":"fine_tuning.job.event",
+                "level":"info",
+                "message":"job queued"
+            }]
+        })),
+    )
+}
+
+async fn upstream_fine_tuning_checkpoints_handler(
+    State(state): State<UpstreamCaptureState>,
+    headers: axum::http::HeaderMap,
+) -> (StatusCode, Json<Value>) {
+    *state.authorization.lock().unwrap() = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "object":"list",
+            "data":[{
+                "id":"ftckpt_1",
+                "object":"fine_tuning.job.checkpoint",
+                "fine_tuned_model_checkpoint":"ft:gpt-4.1-mini:checkpoint-1"
+            }]
         })),
     )
 }

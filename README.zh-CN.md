@@ -312,13 +312,13 @@ SDKWORK_EXTENSION_TRUSTED_SIGNERS=sdkwork=<base64-public-key>;partner=<base64-pu
 - `/v1/embeddings`
 - `/v1/files`，包含 list / retrieve / delete / binary content relay
 - `/v1/uploads`，包含 part upload / complete / cancel relay
-- `/v1/audio/*`，包含 speech 二进制 relay，以及 transcription / translation relay
+- `/v1/audio/*`，包含 speech 二进制 relay、transcription / translation relay，以及 audio voices list 与 voice consent relay
 - `/v1/images/*`，包含 generations / edits / variations relay
 - `/v1/moderations` 与 `/v1/realtime/sessions`
 - `/v1/assistants`、`/v1/threads`、`/v1/conversations`，以及它们的嵌套资源流
 - `/v1/vector_stores`，包含 search / files / file batch flows
-- `/v1/batches` 与 `/v1/fine_tuning/jobs`
-- `/v1/webhooks`、`/v1/evals`、`/v1/videos`，以及 video content / remix relay
+- `/v1/batches` 与 `/v1/fine_tuning/jobs`，并覆盖 events / checkpoints relay
+- `/v1/webhooks`、`/v1/evals`、`/v1/videos`，并覆盖 eval list / retrieve / update / delete / runs，以及 video characters / extend / content / remix relay
 
 `runtime_key` 支持：
 
@@ -417,7 +417,7 @@ pnpm --dir console build
 - `/v1/embeddings`
 - chat / responses 的 SSE streaming
 - 面向内嵌与库模式的显式 stateless runtime 配置
-- 在配置 upstream runtime 时，stateless 模式可对 files、uploads、audio、images、moderations、realtime sessions、assistants、threads、conversations、vector stores、batches、fine-tuning jobs、webhooks、evals、videos 执行 relay
+- 在配置 upstream runtime 时，stateless 模式可对 files、uploads、audio（含 voices / voice consents）、images、moderations、realtime sessions、assistants、threads、conversations、vector stores、batches、fine-tuning jobs（含 events / checkpoints）、webhooks、evals（含 runs）、videos（含 characters / extend）执行 relay
 
 控制面能力包括：
 

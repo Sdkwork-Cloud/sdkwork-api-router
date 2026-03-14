@@ -27,12 +27,14 @@ use sdkwork_api_app_gateway::compact_response;
 use sdkwork_api_app_gateway::complete_upload;
 use sdkwork_api_app_gateway::count_response_input_tokens;
 use sdkwork_api_app_gateway::create_assistant;
+use sdkwork_api_app_gateway::create_audio_voice_consent;
 use sdkwork_api_app_gateway::create_batch;
 use sdkwork_api_app_gateway::create_chat_completion;
 use sdkwork_api_app_gateway::create_completion;
 use sdkwork_api_app_gateway::create_conversation;
 use sdkwork_api_app_gateway::create_conversation_items;
 use sdkwork_api_app_gateway::create_eval;
+use sdkwork_api_app_gateway::create_eval_run;
 use sdkwork_api_app_gateway::create_file;
 use sdkwork_api_app_gateway::create_fine_tuning_job;
 use sdkwork_api_app_gateway::create_image_edit;
@@ -58,6 +60,7 @@ use sdkwork_api_app_gateway::delete_assistant;
 use sdkwork_api_app_gateway::delete_chat_completion;
 use sdkwork_api_app_gateway::delete_conversation;
 use sdkwork_api_app_gateway::delete_conversation_item;
+use sdkwork_api_app_gateway::delete_eval;
 use sdkwork_api_app_gateway::delete_file;
 use sdkwork_api_app_gateway::delete_model;
 use sdkwork_api_app_gateway::delete_response;
@@ -67,12 +70,15 @@ use sdkwork_api_app_gateway::delete_vector_store;
 use sdkwork_api_app_gateway::delete_vector_store_file;
 use sdkwork_api_app_gateway::delete_video;
 use sdkwork_api_app_gateway::delete_webhook;
+use sdkwork_api_app_gateway::extend_video;
 use sdkwork_api_app_gateway::file_content;
 use sdkwork_api_app_gateway::get_assistant;
 use sdkwork_api_app_gateway::get_batch;
 use sdkwork_api_app_gateway::get_chat_completion;
 use sdkwork_api_app_gateway::get_conversation;
 use sdkwork_api_app_gateway::get_conversation_item;
+use sdkwork_api_app_gateway::get_eval;
+use sdkwork_api_app_gateway::get_eval_run;
 use sdkwork_api_app_gateway::get_file;
 use sdkwork_api_app_gateway::get_fine_tuning_job;
 use sdkwork_api_app_gateway::get_model;
@@ -86,14 +92,20 @@ use sdkwork_api_app_gateway::get_vector_store;
 use sdkwork_api_app_gateway::get_vector_store_file;
 use sdkwork_api_app_gateway::get_vector_store_file_batch;
 use sdkwork_api_app_gateway::get_video;
+use sdkwork_api_app_gateway::get_video_character;
 use sdkwork_api_app_gateway::get_webhook;
 use sdkwork_api_app_gateway::list_assistants;
+use sdkwork_api_app_gateway::list_audio_voices;
 use sdkwork_api_app_gateway::list_batches;
 use sdkwork_api_app_gateway::list_chat_completion_messages;
 use sdkwork_api_app_gateway::list_chat_completions;
 use sdkwork_api_app_gateway::list_conversation_items;
 use sdkwork_api_app_gateway::list_conversations;
+use sdkwork_api_app_gateway::list_eval_runs;
+use sdkwork_api_app_gateway::list_evals;
 use sdkwork_api_app_gateway::list_files;
+use sdkwork_api_app_gateway::list_fine_tuning_job_checkpoints;
+use sdkwork_api_app_gateway::list_fine_tuning_job_events;
 use sdkwork_api_app_gateway::list_fine_tuning_jobs;
 use sdkwork_api_app_gateway::list_models;
 use sdkwork_api_app_gateway::list_response_input_items;
@@ -103,6 +115,7 @@ use sdkwork_api_app_gateway::list_thread_runs;
 use sdkwork_api_app_gateway::list_vector_store_file_batch_files;
 use sdkwork_api_app_gateway::list_vector_store_files;
 use sdkwork_api_app_gateway::list_vector_stores;
+use sdkwork_api_app_gateway::list_video_characters;
 use sdkwork_api_app_gateway::list_videos;
 use sdkwork_api_app_gateway::list_webhooks;
 use sdkwork_api_app_gateway::remix_video;
@@ -111,17 +124,20 @@ use sdkwork_api_app_gateway::submit_thread_run_tool_outputs;
 use sdkwork_api_app_gateway::update_assistant;
 use sdkwork_api_app_gateway::update_chat_completion;
 use sdkwork_api_app_gateway::update_conversation;
+use sdkwork_api_app_gateway::update_eval;
 use sdkwork_api_app_gateway::update_thread;
 use sdkwork_api_app_gateway::update_thread_message;
 use sdkwork_api_app_gateway::update_thread_run;
 use sdkwork_api_app_gateway::update_vector_store;
+use sdkwork_api_app_gateway::update_video_character;
 use sdkwork_api_app_gateway::update_webhook;
 use sdkwork_api_app_gateway::video_content;
 use sdkwork_api_app_gateway::{
     create_embedding, create_response, delete_model_from_store,
     execute_json_provider_request_with_runtime, execute_stream_provider_request_with_runtime,
     list_models_from_store, planned_execution_provider_id_for_route, relay_assistant_from_store,
-    relay_batch_from_store, relay_cancel_batch_from_store, relay_cancel_fine_tuning_job_from_store,
+    relay_audio_voice_consent_from_store, relay_audio_voices_from_store, relay_batch_from_store,
+    relay_cancel_batch_from_store, relay_cancel_fine_tuning_job_from_store,
     relay_cancel_response_from_store, relay_cancel_thread_run_from_store,
     relay_cancel_upload_from_store, relay_cancel_vector_store_file_batch_from_store,
     relay_chat_completion_from_store, relay_chat_completion_stream_from_store,
@@ -130,28 +146,33 @@ use sdkwork_api_app_gateway::{
     relay_conversation_items_from_store, relay_count_response_input_tokens_from_store,
     relay_delete_assistant_from_store, relay_delete_chat_completion_from_store,
     relay_delete_conversation_from_store, relay_delete_conversation_item_from_store,
-    relay_delete_file_from_store, relay_delete_response_from_store, relay_delete_thread_from_store,
-    relay_delete_thread_message_from_store, relay_delete_vector_store_file_from_store,
-    relay_delete_vector_store_from_store, relay_delete_video_from_store,
-    relay_delete_webhook_from_store, relay_embedding_from_store, relay_eval_from_store,
+    relay_delete_eval_from_store, relay_delete_file_from_store, relay_delete_response_from_store,
+    relay_delete_thread_from_store, relay_delete_thread_message_from_store,
+    relay_delete_vector_store_file_from_store, relay_delete_vector_store_from_store,
+    relay_delete_video_from_store, relay_delete_webhook_from_store, relay_embedding_from_store,
+    relay_eval_from_store, relay_eval_run_from_store, relay_extend_video_from_store,
     relay_file_content_from_store, relay_file_from_store, relay_fine_tuning_job_from_store,
     relay_get_assistant_from_store, relay_get_batch_from_store,
     relay_get_chat_completion_from_store, relay_get_conversation_from_store,
-    relay_get_conversation_item_from_store, relay_get_file_from_store,
-    relay_get_fine_tuning_job_from_store, relay_get_response_from_store,
-    relay_get_thread_from_store, relay_get_thread_message_from_store,
-    relay_get_thread_run_from_store, relay_get_thread_run_step_from_store,
-    relay_get_vector_store_file_batch_from_store, relay_get_vector_store_file_from_store,
-    relay_get_vector_store_from_store, relay_get_video_from_store, relay_get_webhook_from_store,
+    relay_get_conversation_item_from_store, relay_get_eval_from_store,
+    relay_get_eval_run_from_store, relay_get_file_from_store, relay_get_fine_tuning_job_from_store,
+    relay_get_response_from_store, relay_get_thread_from_store,
+    relay_get_thread_message_from_store, relay_get_thread_run_from_store,
+    relay_get_thread_run_step_from_store, relay_get_vector_store_file_batch_from_store,
+    relay_get_vector_store_file_from_store, relay_get_vector_store_from_store,
+    relay_get_video_character_from_store, relay_get_video_from_store, relay_get_webhook_from_store,
     relay_image_edit_from_store, relay_image_generation_from_store,
     relay_image_variation_from_store, relay_list_assistants_from_store,
     relay_list_batches_from_store, relay_list_chat_completion_messages_from_store,
     relay_list_chat_completions_from_store, relay_list_conversation_items_from_store,
-    relay_list_conversations_from_store, relay_list_files_from_store,
-    relay_list_fine_tuning_jobs_from_store, relay_list_response_input_items_from_store,
-    relay_list_thread_messages_from_store, relay_list_thread_run_steps_from_store,
-    relay_list_thread_runs_from_store, relay_list_vector_store_file_batch_files_from_store,
-    relay_list_vector_store_files_from_store, relay_list_vector_stores_from_store,
+    relay_list_conversations_from_store, relay_list_eval_runs_from_store,
+    relay_list_evals_from_store, relay_list_files_from_store,
+    relay_list_fine_tuning_job_checkpoints_from_store,
+    relay_list_fine_tuning_job_events_from_store, relay_list_fine_tuning_jobs_from_store,
+    relay_list_response_input_items_from_store, relay_list_thread_messages_from_store,
+    relay_list_thread_run_steps_from_store, relay_list_thread_runs_from_store,
+    relay_list_vector_store_file_batch_files_from_store, relay_list_vector_store_files_from_store,
+    relay_list_vector_stores_from_store, relay_list_video_characters_from_store,
     relay_list_videos_from_store, relay_list_webhooks_from_store, relay_moderation_from_store,
     relay_realtime_session_from_store, relay_remix_video_from_store, relay_response_from_store,
     relay_response_stream_from_store, relay_search_vector_store_from_store,
@@ -159,12 +180,14 @@ use sdkwork_api_app_gateway::{
     relay_thread_and_run_from_store, relay_thread_from_store, relay_thread_messages_from_store,
     relay_thread_run_from_store, relay_transcription_from_store, relay_translation_from_store,
     relay_update_assistant_from_store, relay_update_chat_completion_from_store,
-    relay_update_conversation_from_store, relay_update_thread_from_store,
-    relay_update_thread_message_from_store, relay_update_thread_run_from_store,
-    relay_update_vector_store_from_store, relay_update_webhook_from_store, relay_upload_from_store,
-    relay_upload_part_from_store, relay_vector_store_file_batch_from_store,
-    relay_vector_store_file_from_store, relay_vector_store_from_store,
-    relay_video_content_from_store, relay_video_from_store, relay_webhook_from_store,
+    relay_update_conversation_from_store, relay_update_eval_from_store,
+    relay_update_thread_from_store, relay_update_thread_message_from_store,
+    relay_update_thread_run_from_store, relay_update_vector_store_from_store,
+    relay_update_video_character_from_store, relay_update_webhook_from_store,
+    relay_upload_from_store, relay_upload_part_from_store,
+    relay_vector_store_file_batch_from_store, relay_vector_store_file_from_store,
+    relay_vector_store_from_store, relay_video_content_from_store, relay_video_from_store,
+    relay_webhook_from_store,
 };
 use sdkwork_api_app_identity::{
     resolve_gateway_request_context, GatewayRequestContext as IdentityGatewayRequestContext,
@@ -173,6 +196,7 @@ use sdkwork_api_app_usage::persist_usage_record;
 use sdkwork_api_contract_openai::assistants::{CreateAssistantRequest, UpdateAssistantRequest};
 use sdkwork_api_contract_openai::audio::{
     CreateSpeechRequest, CreateTranscriptionRequest, CreateTranslationRequest,
+    CreateVoiceConsentRequest,
 };
 use sdkwork_api_contract_openai::batches::CreateBatchRequest;
 use sdkwork_api_contract_openai::chat_completions::{
@@ -184,7 +208,9 @@ use sdkwork_api_contract_openai::conversations::{
 };
 use sdkwork_api_contract_openai::embeddings::CreateEmbeddingRequest;
 use sdkwork_api_contract_openai::errors::OpenAiErrorResponse;
-use sdkwork_api_contract_openai::evals::CreateEvalRequest;
+use sdkwork_api_contract_openai::evals::{
+    CreateEvalRequest, CreateEvalRunRequest, UpdateEvalRequest,
+};
 use sdkwork_api_contract_openai::files::CreateFileRequest;
 use sdkwork_api_contract_openai::fine_tuning::CreateFineTuningJobRequest;
 use sdkwork_api_contract_openai::images::{
@@ -210,7 +236,9 @@ use sdkwork_api_contract_openai::vector_stores::{
     CreateVectorStoreFileBatchRequest, CreateVectorStoreFileRequest, CreateVectorStoreRequest,
     SearchVectorStoreRequest, UpdateVectorStoreRequest,
 };
-use sdkwork_api_contract_openai::videos::{CreateVideoRequest, RemixVideoRequest};
+use sdkwork_api_contract_openai::videos::{
+    CreateVideoRequest, ExtendVideoRequest, RemixVideoRequest, UpdateVideoCharacterRequest,
+};
 use sdkwork_api_contract_openai::webhooks::{CreateWebhookRequest, UpdateWebhookRequest};
 use sdkwork_api_observability::{observe_http_metrics, observe_http_tracing, HttpMetricsRegistry};
 use sdkwork_api_provider_core::{ProviderRequest, ProviderStreamOutput};
@@ -569,6 +597,11 @@ pub fn gateway_router_with_stateless_config(config: StatelessGatewayConfig) -> R
         .route("/v1/audio/transcriptions", post(transcriptions_handler))
         .route("/v1/audio/translations", post(translations_handler))
         .route("/v1/audio/speech", post(audio_speech_handler))
+        .route("/v1/audio/voices", get(audio_voices_handler))
+        .route(
+            "/v1/audio/voice_consents",
+            post(audio_voice_consents_handler),
+        )
         .route("/v1/files", get(files_list_handler).post(files_handler))
         .route(
             "/v1/files/{file_id}",
@@ -582,6 +615,15 @@ pub fn gateway_router_with_stateless_config(config: StatelessGatewayConfig) -> R
         )
         .route("/v1/videos/{video_id}/content", get(video_content_handler))
         .route("/v1/videos/{video_id}/remix", post(video_remix_handler))
+        .route(
+            "/v1/videos/{video_id}/characters",
+            get(video_characters_list_handler),
+        )
+        .route(
+            "/v1/videos/{video_id}/characters/{character_id}",
+            get(video_character_retrieve_handler).post(video_character_update_handler),
+        )
+        .route("/v1/videos/{video_id}/extend", post(video_extend_handler))
         .route("/v1/uploads", post(uploads_handler))
         .route("/v1/uploads/{upload_id}/parts", post(upload_parts_handler))
         .route(
@@ -605,6 +647,14 @@ pub fn gateway_router_with_stateless_config(config: StatelessGatewayConfig) -> R
             post(fine_tuning_job_cancel_handler),
         )
         .route(
+            "/v1/fine_tuning/jobs/{fine_tuning_job_id}/events",
+            get(fine_tuning_job_events_handler),
+        )
+        .route(
+            "/v1/fine_tuning/jobs/{fine_tuning_job_id}/checkpoints",
+            get(fine_tuning_job_checkpoints_handler),
+        )
+        .route(
             "/v1/assistants",
             get(assistants_list_handler).post(assistants_handler),
         )
@@ -625,7 +675,21 @@ pub fn gateway_router_with_stateless_config(config: StatelessGatewayConfig) -> R
                 .delete(webhook_delete_handler),
         )
         .route("/v1/realtime/sessions", post(realtime_sessions_handler))
-        .route("/v1/evals", post(evals_handler))
+        .route("/v1/evals", get(evals_list_handler).post(evals_handler))
+        .route(
+            "/v1/evals/{eval_id}",
+            get(eval_retrieve_handler)
+                .post(eval_update_handler)
+                .delete(eval_delete_handler),
+        )
+        .route(
+            "/v1/evals/{eval_id}/runs",
+            get(eval_runs_list_handler).post(eval_runs_handler),
+        )
+        .route(
+            "/v1/evals/{eval_id}/runs/{run_id}",
+            get(eval_run_retrieve_handler),
+        )
         .route(
             "/v1/batches",
             get(batches_list_handler).post(batches_handler),
@@ -861,6 +925,11 @@ pub fn gateway_router_with_store_and_secret_manager(
             post(translations_with_state_handler),
         )
         .route("/v1/audio/speech", post(audio_speech_with_state_handler))
+        .route("/v1/audio/voices", get(audio_voices_with_state_handler))
+        .route(
+            "/v1/audio/voice_consents",
+            post(audio_voice_consents_with_state_handler),
+        )
         .route(
             "/v1/files",
             get(files_list_with_state_handler).post(files_with_state_handler),
@@ -889,6 +958,19 @@ pub fn gateway_router_with_store_and_secret_manager(
             "/v1/videos/{video_id}/remix",
             post(video_remix_with_state_handler),
         )
+        .route(
+            "/v1/videos/{video_id}/characters",
+            get(video_characters_list_with_state_handler),
+        )
+        .route(
+            "/v1/videos/{video_id}/characters/{character_id}",
+            get(video_character_retrieve_with_state_handler)
+                .post(video_character_update_with_state_handler),
+        )
+        .route(
+            "/v1/videos/{video_id}/extend",
+            post(video_extend_with_state_handler),
+        )
         .route("/v1/uploads", post(uploads_with_state_handler))
         .route(
             "/v1/uploads/{upload_id}/parts",
@@ -915,6 +997,14 @@ pub fn gateway_router_with_store_and_secret_manager(
             post(fine_tuning_job_cancel_with_state_handler),
         )
         .route(
+            "/v1/fine_tuning/jobs/{fine_tuning_job_id}/events",
+            get(fine_tuning_job_events_with_state_handler),
+        )
+        .route(
+            "/v1/fine_tuning/jobs/{fine_tuning_job_id}/checkpoints",
+            get(fine_tuning_job_checkpoints_with_state_handler),
+        )
+        .route(
             "/v1/assistants",
             get(assistants_list_with_state_handler).post(assistants_with_state_handler),
         )
@@ -938,7 +1028,24 @@ pub fn gateway_router_with_store_and_secret_manager(
             "/v1/realtime/sessions",
             post(realtime_sessions_with_state_handler),
         )
-        .route("/v1/evals", post(evals_with_state_handler))
+        .route(
+            "/v1/evals",
+            get(evals_list_with_state_handler).post(evals_with_state_handler),
+        )
+        .route(
+            "/v1/evals/{eval_id}",
+            get(eval_retrieve_with_state_handler)
+                .post(eval_update_with_state_handler)
+                .delete(eval_delete_with_state_handler),
+        )
+        .route(
+            "/v1/evals/{eval_id}/runs",
+            get(eval_runs_list_with_state_handler).post(eval_runs_with_state_handler),
+        )
+        .route(
+            "/v1/evals/{eval_id}/runs/{run_id}",
+            get(eval_run_retrieve_with_state_handler),
+        )
         .route(
             "/v1/batches",
             get(batches_list_with_state_handler).post(batches_with_state_handler),
@@ -2718,6 +2825,58 @@ async fn audio_speech_handler(
     )
 }
 
+async fn audio_voices_handler(request_context: StatelessGatewayRequest) -> Response {
+    match relay_stateless_json_request(&request_context, ProviderRequest::AudioVoicesList).await {
+        Ok(Some(response)) => return Json(response).into_response(),
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream audio voices list",
+            )
+                .into_response();
+        }
+    }
+
+    Json(
+        list_audio_voices(request_context.tenant_id(), request_context.project_id())
+            .expect("audio voices list"),
+    )
+    .into_response()
+}
+
+async fn audio_voice_consents_handler(
+    request_context: StatelessGatewayRequest,
+    ExtractJson(request): ExtractJson<CreateVoiceConsentRequest>,
+) -> Response {
+    match relay_stateless_json_request(
+        &request_context,
+        ProviderRequest::AudioVoiceConsents(&request),
+    )
+    .await
+    {
+        Ok(Some(response)) => return Json(response).into_response(),
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream audio voice consent",
+            )
+                .into_response();
+        }
+    }
+
+    Json(
+        create_audio_voice_consent(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &request,
+        )
+        .expect("audio voice consent"),
+    )
+    .into_response()
+}
+
 async fn files_handler(request_context: StatelessGatewayRequest, multipart: Multipart) -> Response {
     match parse_file_request(multipart).await {
         Ok(request) => {
@@ -3017,6 +3176,140 @@ async fn video_remix_handler(
     .into_response()
 }
 
+async fn video_characters_list_handler(
+    request_context: StatelessGatewayRequest,
+    Path(video_id): Path<String>,
+) -> Response {
+    match relay_stateless_json_request(
+        &request_context,
+        ProviderRequest::VideoCharactersList(&video_id),
+    )
+    .await
+    {
+        Ok(Some(response)) => return Json(response).into_response(),
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream video characters list",
+            )
+                .into_response();
+        }
+    }
+
+    Json(
+        list_video_characters(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &video_id,
+        )
+        .expect("video characters list"),
+    )
+    .into_response()
+}
+
+async fn video_character_retrieve_handler(
+    request_context: StatelessGatewayRequest,
+    Path((video_id, character_id)): Path<(String, String)>,
+) -> Response {
+    match relay_stateless_json_request(
+        &request_context,
+        ProviderRequest::VideoCharactersRetrieve(&video_id, &character_id),
+    )
+    .await
+    {
+        Ok(Some(response)) => return Json(response).into_response(),
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream video character retrieve",
+            )
+                .into_response();
+        }
+    }
+
+    Json(
+        get_video_character(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &video_id,
+            &character_id,
+        )
+        .expect("video character retrieve"),
+    )
+    .into_response()
+}
+
+async fn video_character_update_handler(
+    request_context: StatelessGatewayRequest,
+    Path((video_id, character_id)): Path<(String, String)>,
+    ExtractJson(request): ExtractJson<UpdateVideoCharacterRequest>,
+) -> Response {
+    match relay_stateless_json_request(
+        &request_context,
+        ProviderRequest::VideoCharactersUpdate(&video_id, &character_id, &request),
+    )
+    .await
+    {
+        Ok(Some(response)) => return Json(response).into_response(),
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream video character update",
+            )
+                .into_response();
+        }
+    }
+
+    Json(
+        update_video_character(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &video_id,
+            &character_id,
+            &request,
+        )
+        .expect("video character update"),
+    )
+    .into_response()
+}
+
+async fn video_extend_handler(
+    request_context: StatelessGatewayRequest,
+    Path(video_id): Path<String>,
+    ExtractJson(request): ExtractJson<ExtendVideoRequest>,
+) -> Response {
+    match relay_stateless_json_request(
+        &request_context,
+        ProviderRequest::VideosExtend(&video_id, &request),
+    )
+    .await
+    {
+        Ok(Some(response)) => return Json(response).into_response(),
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream video extend",
+            )
+                .into_response();
+        }
+    }
+
+    Json(
+        extend_video(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &video_id,
+            &request.prompt,
+        )
+        .expect("video extend"),
+    )
+    .into_response()
+}
+
 async fn uploads_handler(
     request_context: StatelessGatewayRequest,
     ExtractJson(request): ExtractJson<CreateUploadRequest>,
@@ -3252,6 +3545,70 @@ async fn fine_tuning_job_cancel_handler(
             &fine_tuning_job_id,
         )
         .expect("fine tuning cancel"),
+    )
+    .into_response()
+}
+
+async fn fine_tuning_job_events_handler(
+    request_context: StatelessGatewayRequest,
+    Path(fine_tuning_job_id): Path<String>,
+) -> Response {
+    match relay_stateless_json_request(
+        &request_context,
+        ProviderRequest::FineTuningJobsEvents(&fine_tuning_job_id),
+    )
+    .await
+    {
+        Ok(Some(response)) => return Json(response).into_response(),
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream fine tuning job events",
+            )
+                .into_response();
+        }
+    }
+
+    Json(
+        list_fine_tuning_job_events(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &fine_tuning_job_id,
+        )
+        .expect("fine tuning job events"),
+    )
+    .into_response()
+}
+
+async fn fine_tuning_job_checkpoints_handler(
+    request_context: StatelessGatewayRequest,
+    Path(fine_tuning_job_id): Path<String>,
+) -> Response {
+    match relay_stateless_json_request(
+        &request_context,
+        ProviderRequest::FineTuningJobsCheckpoints(&fine_tuning_job_id),
+    )
+    .await
+    {
+        Ok(Some(response)) => return Json(response).into_response(),
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream fine tuning job checkpoints",
+            )
+                .into_response();
+        }
+    }
+
+    Json(
+        list_fine_tuning_job_checkpoints(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &fine_tuning_job_id,
+        )
+        .expect("fine tuning job checkpoints"),
     )
     .into_response()
 }
@@ -3609,6 +3966,211 @@ async fn evals_handler(
             &request.name,
         )
         .expect("eval"),
+    )
+    .into_response()
+}
+
+async fn evals_list_handler(request_context: StatelessGatewayRequest) -> Response {
+    match relay_stateless_json_request(&request_context, ProviderRequest::EvalsList).await {
+        Ok(Some(response)) => return Json(response).into_response(),
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream evals list",
+            )
+                .into_response();
+        }
+    }
+
+    Json(list_evals(request_context.tenant_id(), request_context.project_id()).expect("eval list"))
+        .into_response()
+}
+
+async fn eval_retrieve_handler(
+    request_context: StatelessGatewayRequest,
+    Path(eval_id): Path<String>,
+) -> Response {
+    match relay_stateless_json_request(&request_context, ProviderRequest::EvalsRetrieve(&eval_id))
+        .await
+    {
+        Ok(Some(response)) => return Json(response).into_response(),
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream eval retrieve",
+            )
+                .into_response();
+        }
+    }
+
+    Json(
+        get_eval(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &eval_id,
+        )
+        .expect("eval retrieve"),
+    )
+    .into_response()
+}
+
+async fn eval_update_handler(
+    request_context: StatelessGatewayRequest,
+    Path(eval_id): Path<String>,
+    ExtractJson(request): ExtractJson<UpdateEvalRequest>,
+) -> Response {
+    match relay_stateless_json_request(
+        &request_context,
+        ProviderRequest::EvalsUpdate(&eval_id, &request),
+    )
+    .await
+    {
+        Ok(Some(response)) => return Json(response).into_response(),
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream eval update",
+            )
+                .into_response();
+        }
+    }
+
+    Json(
+        update_eval(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &eval_id,
+            &request,
+        )
+        .expect("eval update"),
+    )
+    .into_response()
+}
+
+async fn eval_delete_handler(
+    request_context: StatelessGatewayRequest,
+    Path(eval_id): Path<String>,
+) -> Response {
+    match relay_stateless_json_request(&request_context, ProviderRequest::EvalsDelete(&eval_id))
+        .await
+    {
+        Ok(Some(response)) => return Json(response).into_response(),
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream eval delete",
+            )
+                .into_response();
+        }
+    }
+
+    Json(
+        delete_eval(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &eval_id,
+        )
+        .expect("eval delete"),
+    )
+    .into_response()
+}
+
+async fn eval_runs_list_handler(
+    request_context: StatelessGatewayRequest,
+    Path(eval_id): Path<String>,
+) -> Response {
+    match relay_stateless_json_request(&request_context, ProviderRequest::EvalRunsList(&eval_id))
+        .await
+    {
+        Ok(Some(response)) => return Json(response).into_response(),
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream eval runs list",
+            )
+                .into_response();
+        }
+    }
+
+    Json(
+        list_eval_runs(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &eval_id,
+        )
+        .expect("eval runs list"),
+    )
+    .into_response()
+}
+
+async fn eval_runs_handler(
+    request_context: StatelessGatewayRequest,
+    Path(eval_id): Path<String>,
+    ExtractJson(request): ExtractJson<CreateEvalRunRequest>,
+) -> Response {
+    match relay_stateless_json_request(
+        &request_context,
+        ProviderRequest::EvalRuns(&eval_id, &request),
+    )
+    .await
+    {
+        Ok(Some(response)) => return Json(response).into_response(),
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream eval run create",
+            )
+                .into_response();
+        }
+    }
+
+    Json(
+        create_eval_run(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &eval_id,
+            &request,
+        )
+        .expect("eval run create"),
+    )
+    .into_response()
+}
+
+async fn eval_run_retrieve_handler(
+    request_context: StatelessGatewayRequest,
+    Path((eval_id, run_id)): Path<(String, String)>,
+) -> Response {
+    match relay_stateless_json_request(
+        &request_context,
+        ProviderRequest::EvalRunsRetrieve(&eval_id, &run_id),
+    )
+    .await
+    {
+        Ok(Some(response)) => return Json(response).into_response(),
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream eval run retrieve",
+            )
+                .into_response();
+        }
+    }
+
+    Json(
+        get_eval_run(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &eval_id,
+            &run_id,
+        )
+        .expect("eval run retrieve"),
     )
     .into_response()
 }
@@ -8120,6 +8682,152 @@ async fn audio_speech_with_state_handler(
     )
 }
 
+async fn audio_voices_with_state_handler(
+    request_context: AuthenticatedGatewayRequest,
+    State(state): State<GatewayApiState>,
+) -> Response {
+    match relay_audio_voices_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        request_context.tenant_id(),
+        request_context.project_id(),
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage_for_project(
+                state.store.as_ref(),
+                request_context.tenant_id(),
+                request_context.project_id(),
+                "audio",
+                "voices",
+                5,
+                0.005,
+            )
+            .await
+            .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream audio voices list",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage_for_project(
+        state.store.as_ref(),
+        request_context.tenant_id(),
+        request_context.project_id(),
+        "audio",
+        "voices",
+        5,
+        0.005,
+    )
+    .await
+    .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(
+        list_audio_voices(request_context.tenant_id(), request_context.project_id())
+            .expect("audio voices list"),
+    )
+    .into_response()
+}
+
+async fn audio_voice_consents_with_state_handler(
+    request_context: AuthenticatedGatewayRequest,
+    State(state): State<GatewayApiState>,
+    ExtractJson(request): ExtractJson<CreateVoiceConsentRequest>,
+) -> Response {
+    match relay_audio_voice_consent_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &request,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage_for_project(
+                state.store.as_ref(),
+                request_context.tenant_id(),
+                request_context.project_id(),
+                "audio",
+                &request.voice,
+                5,
+                0.005,
+            )
+            .await
+            .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream audio voice consent",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage_for_project(
+        state.store.as_ref(),
+        request_context.tenant_id(),
+        request_context.project_id(),
+        "audio",
+        &request.voice,
+        5,
+        0.005,
+    )
+    .await
+    .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(
+        create_audio_voice_consent(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &request,
+        )
+        .expect("audio voice consent"),
+    )
+    .into_response()
+}
+
 async fn files_with_state_handler(
     request_context: AuthenticatedGatewayRequest,
     State(state): State<GatewayApiState>,
@@ -8942,6 +9650,320 @@ async fn video_remix_with_state_handler(
     .into_response()
 }
 
+async fn video_characters_list_with_state_handler(
+    request_context: AuthenticatedGatewayRequest,
+    State(state): State<GatewayApiState>,
+    Path(video_id): Path<String>,
+) -> Response {
+    match relay_list_video_characters_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &video_id,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage_for_project(
+                state.store.as_ref(),
+                request_context.tenant_id(),
+                request_context.project_id(),
+                "videos",
+                &video_id,
+                60,
+                0.06,
+            )
+            .await
+            .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream video characters list",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage_for_project(
+        state.store.as_ref(),
+        request_context.tenant_id(),
+        request_context.project_id(),
+        "videos",
+        &video_id,
+        60,
+        0.06,
+    )
+    .await
+    .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(
+        list_video_characters(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &video_id,
+        )
+        .expect("video characters list"),
+    )
+    .into_response()
+}
+
+async fn video_character_retrieve_with_state_handler(
+    request_context: AuthenticatedGatewayRequest,
+    State(state): State<GatewayApiState>,
+    Path((video_id, character_id)): Path<(String, String)>,
+) -> Response {
+    match relay_get_video_character_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &video_id,
+        &character_id,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage_for_project(
+                state.store.as_ref(),
+                request_context.tenant_id(),
+                request_context.project_id(),
+                "videos",
+                &video_id,
+                60,
+                0.06,
+            )
+            .await
+            .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream video character retrieve",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage_for_project(
+        state.store.as_ref(),
+        request_context.tenant_id(),
+        request_context.project_id(),
+        "videos",
+        &video_id,
+        60,
+        0.06,
+    )
+    .await
+    .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(
+        get_video_character(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &video_id,
+            &character_id,
+        )
+        .expect("video character retrieve"),
+    )
+    .into_response()
+}
+
+async fn video_character_update_with_state_handler(
+    request_context: AuthenticatedGatewayRequest,
+    State(state): State<GatewayApiState>,
+    Path((video_id, character_id)): Path<(String, String)>,
+    ExtractJson(request): ExtractJson<UpdateVideoCharacterRequest>,
+) -> Response {
+    match relay_update_video_character_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &video_id,
+        &character_id,
+        &request,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage_for_project(
+                state.store.as_ref(),
+                request_context.tenant_id(),
+                request_context.project_id(),
+                "videos",
+                &video_id,
+                60,
+                0.06,
+            )
+            .await
+            .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream video character update",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage_for_project(
+        state.store.as_ref(),
+        request_context.tenant_id(),
+        request_context.project_id(),
+        "videos",
+        &video_id,
+        60,
+        0.06,
+    )
+    .await
+    .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(
+        update_video_character(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &video_id,
+            &character_id,
+            &request,
+        )
+        .expect("video character update"),
+    )
+    .into_response()
+}
+
+async fn video_extend_with_state_handler(
+    request_context: AuthenticatedGatewayRequest,
+    State(state): State<GatewayApiState>,
+    Path(video_id): Path<String>,
+    ExtractJson(request): ExtractJson<ExtendVideoRequest>,
+) -> Response {
+    match relay_extend_video_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &video_id,
+        &request,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage_for_project(
+                state.store.as_ref(),
+                request_context.tenant_id(),
+                request_context.project_id(),
+                "videos",
+                &video_id,
+                60,
+                0.06,
+            )
+            .await
+            .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream video extend",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage_for_project(
+        state.store.as_ref(),
+        request_context.tenant_id(),
+        request_context.project_id(),
+        "videos",
+        &video_id,
+        60,
+        0.06,
+    )
+    .await
+    .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(
+        extend_video(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &video_id,
+            &request.prompt,
+        )
+        .expect("video extend"),
+    )
+    .into_response()
+}
+
 async fn uploads_with_state_handler(
     request_context: AuthenticatedGatewayRequest,
     State(state): State<GatewayApiState>,
@@ -9549,6 +10571,158 @@ async fn fine_tuning_job_cancel_with_state_handler(
             &fine_tuning_job_id,
         )
         .expect("fine tuning cancel"),
+    )
+    .into_response()
+}
+
+async fn fine_tuning_job_events_with_state_handler(
+    request_context: AuthenticatedGatewayRequest,
+    State(state): State<GatewayApiState>,
+    Path(fine_tuning_job_id): Path<String>,
+) -> Response {
+    match relay_list_fine_tuning_job_events_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &fine_tuning_job_id,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage_for_project(
+                state.store.as_ref(),
+                request_context.tenant_id(),
+                request_context.project_id(),
+                "fine_tuning",
+                &fine_tuning_job_id,
+                20,
+                0.02,
+            )
+            .await
+            .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream fine tuning job events",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage_for_project(
+        state.store.as_ref(),
+        request_context.tenant_id(),
+        request_context.project_id(),
+        "fine_tuning",
+        &fine_tuning_job_id,
+        20,
+        0.02,
+    )
+    .await
+    .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(
+        list_fine_tuning_job_events(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &fine_tuning_job_id,
+        )
+        .expect("fine tuning job events"),
+    )
+    .into_response()
+}
+
+async fn fine_tuning_job_checkpoints_with_state_handler(
+    request_context: AuthenticatedGatewayRequest,
+    State(state): State<GatewayApiState>,
+    Path(fine_tuning_job_id): Path<String>,
+) -> Response {
+    match relay_list_fine_tuning_job_checkpoints_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &fine_tuning_job_id,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage_for_project(
+                state.store.as_ref(),
+                request_context.tenant_id(),
+                request_context.project_id(),
+                "fine_tuning",
+                &fine_tuning_job_id,
+                20,
+                0.02,
+            )
+            .await
+            .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream fine tuning job checkpoints",
+            )
+                .into_response();
+        }
+    }
+
+    if record_gateway_usage_for_project(
+        state.store.as_ref(),
+        request_context.tenant_id(),
+        request_context.project_id(),
+        "fine_tuning",
+        &fine_tuning_job_id,
+        20,
+        0.02,
+    )
+    .await
+    .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(
+        list_fine_tuning_job_checkpoints(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &fine_tuning_job_id,
+        )
+        .expect("fine tuning job checkpoints"),
     )
     .into_response()
 }
@@ -10464,6 +11638,257 @@ async fn evals_with_state_handler(
             &request.name,
         )
         .expect("eval"),
+    )
+    .into_response()
+}
+
+async fn evals_list_with_state_handler(
+    request_context: AuthenticatedGatewayRequest,
+    State(state): State<GatewayApiState>,
+) -> Response {
+    match relay_list_evals_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        request_context.tenant_id(),
+        request_context.project_id(),
+    )
+    .await
+    {
+        Ok(Some(response)) => return Json(response).into_response(),
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream evals list",
+            )
+                .into_response();
+        }
+    }
+
+    Json(list_evals(request_context.tenant_id(), request_context.project_id()).expect("eval list"))
+        .into_response()
+}
+
+async fn eval_retrieve_with_state_handler(
+    request_context: AuthenticatedGatewayRequest,
+    State(state): State<GatewayApiState>,
+    Path(eval_id): Path<String>,
+) -> Response {
+    match relay_get_eval_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &eval_id,
+    )
+    .await
+    {
+        Ok(Some(response)) => return Json(response).into_response(),
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream eval retrieve",
+            )
+                .into_response();
+        }
+    }
+
+    Json(
+        get_eval(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &eval_id,
+        )
+        .expect("eval retrieve"),
+    )
+    .into_response()
+}
+
+async fn eval_update_with_state_handler(
+    request_context: AuthenticatedGatewayRequest,
+    State(state): State<GatewayApiState>,
+    Path(eval_id): Path<String>,
+    ExtractJson(request): ExtractJson<UpdateEvalRequest>,
+) -> Response {
+    match relay_update_eval_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &eval_id,
+        &request,
+    )
+    .await
+    {
+        Ok(Some(response)) => return Json(response).into_response(),
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream eval update",
+            )
+                .into_response();
+        }
+    }
+
+    Json(
+        update_eval(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &eval_id,
+            &request,
+        )
+        .expect("eval update"),
+    )
+    .into_response()
+}
+
+async fn eval_delete_with_state_handler(
+    request_context: AuthenticatedGatewayRequest,
+    State(state): State<GatewayApiState>,
+    Path(eval_id): Path<String>,
+) -> Response {
+    match relay_delete_eval_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &eval_id,
+    )
+    .await
+    {
+        Ok(Some(response)) => return Json(response).into_response(),
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream eval delete",
+            )
+                .into_response();
+        }
+    }
+
+    Json(
+        delete_eval(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &eval_id,
+        )
+        .expect("eval delete"),
+    )
+    .into_response()
+}
+
+async fn eval_runs_list_with_state_handler(
+    request_context: AuthenticatedGatewayRequest,
+    State(state): State<GatewayApiState>,
+    Path(eval_id): Path<String>,
+) -> Response {
+    match relay_list_eval_runs_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &eval_id,
+    )
+    .await
+    {
+        Ok(Some(response)) => return Json(response).into_response(),
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream eval runs list",
+            )
+                .into_response();
+        }
+    }
+
+    Json(
+        list_eval_runs(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &eval_id,
+        )
+        .expect("eval runs list"),
+    )
+    .into_response()
+}
+
+async fn eval_runs_with_state_handler(
+    request_context: AuthenticatedGatewayRequest,
+    State(state): State<GatewayApiState>,
+    Path(eval_id): Path<String>,
+    ExtractJson(request): ExtractJson<CreateEvalRunRequest>,
+) -> Response {
+    match relay_eval_run_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &eval_id,
+        &request,
+    )
+    .await
+    {
+        Ok(Some(response)) => return Json(response).into_response(),
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream eval run create",
+            )
+                .into_response();
+        }
+    }
+
+    Json(
+        create_eval_run(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &eval_id,
+            &request,
+        )
+        .expect("eval run create"),
+    )
+    .into_response()
+}
+
+async fn eval_run_retrieve_with_state_handler(
+    request_context: AuthenticatedGatewayRequest,
+    State(state): State<GatewayApiState>,
+    Path((eval_id, run_id)): Path<(String, String)>,
+) -> Response {
+    match relay_get_eval_run_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &eval_id,
+        &run_id,
+    )
+    .await
+    {
+        Ok(Some(response)) => return Json(response).into_response(),
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "failed to relay upstream eval run retrieve",
+            )
+                .into_response();
+        }
+    }
+
+    Json(
+        get_eval_run(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &eval_id,
+            &run_id,
+        )
+        .expect("eval run retrieve"),
     )
     .into_response()
 }

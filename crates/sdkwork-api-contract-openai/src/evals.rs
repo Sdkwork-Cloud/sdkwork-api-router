@@ -48,3 +48,100 @@ impl EvalObject {
         }
     }
 }
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ListEvalsResponse {
+    pub object: &'static str,
+    pub data: Vec<EvalObject>,
+}
+
+impl ListEvalsResponse {
+    pub fn new(data: Vec<EvalObject>) -> Self {
+        Self {
+            object: "list",
+            data,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateEvalRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+impl UpdateEvalRequest {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: Some(name.into()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DeleteEvalResponse {
+    pub id: String,
+    pub object: &'static str,
+    pub deleted: bool,
+}
+
+impl DeleteEvalResponse {
+    pub fn deleted(id: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            object: "eval.deleted",
+            deleted: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateEvalRunRequest {
+    pub name: String,
+}
+
+impl CreateEvalRunRequest {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self { name: name.into() }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct EvalRunObject {
+    pub id: String,
+    pub object: &'static str,
+    pub status: &'static str,
+}
+
+impl EvalRunObject {
+    pub fn queued(id: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            object: "eval.run",
+            status: "queued",
+        }
+    }
+
+    pub fn completed(id: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            object: "eval.run",
+            status: "completed",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ListEvalRunsResponse {
+    pub object: &'static str,
+    pub data: Vec<EvalRunObject>,
+}
+
+impl ListEvalRunsResponse {
+    pub fn new(data: Vec<EvalRunObject>) -> Self {
+        Self {
+            object: "list",
+            data,
+        }
+    }
+}

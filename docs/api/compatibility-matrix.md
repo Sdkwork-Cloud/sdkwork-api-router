@@ -25,7 +25,7 @@ The table below reflects the current runtime truth as of 2026-03-14.
 | `/v1/embeddings` | `relay` | `relay` | Uses catalog, credential, and provider state in stateful mode; stateless mode relays embeddings to its configured upstream runtime or falls back locally |
 | `/v1/files` | `relay` | `relay` | Stateful mode relays multipart upload, metadata, and binary content; stateless mode relays the same surface through its configured upstream runtime or falls back locally |
 | `/v1/uploads` | `relay` | `relay` | Upload creation, part upload, completion, and cancel relay in stateful mode; stateless mode relays the same upload surface through its configured upstream runtime or falls back locally |
-| `/v1/audio/*` | `relay` | `relay` | Speech can relay binary or event-stream output; stateless mode also relays transcription and translation flows through its configured upstream runtime or falls back locally |
+| `/v1/audio/*` | `relay` | `relay` | Speech can relay binary or event-stream output; both modes now also cover transcription, translation, voices listing, and voice consent flows through the configured upstream runtime or local compatible fallback |
 | `/v1/images/*` | `relay` | `relay` | Generations, edits, and variations relay in stateful mode; stateless mode relays the same image operations through its configured upstream runtime or falls back locally |
 | `/v1/moderations` | `relay` | `relay` | Stateful mode relays provider moderation calls; stateless mode relays moderation through its configured upstream runtime or falls back locally |
 | `/v1/realtime/sessions` | `relay` | `relay` | Compatible request/response contract is present in both modes; stateless mode now relays realtime session creation through its configured upstream runtime or falls back locally |
@@ -34,10 +34,10 @@ The table below reflects the current runtime truth as of 2026-03-14.
 | `/v1/conversations` | `relay` | `relay` | Includes conversation items CRUD-compatible flows; stateless mode relays the same conversation and item flows through its configured upstream runtime or falls back locally |
 | `/v1/vector_stores` | `relay` | `relay` | Includes search, files, and file batch flows; stateless mode relays the same vector store surface through its configured upstream runtime or falls back locally |
 | `/v1/batches` | `relay` | `relay` | Create, list, retrieve, and cancel are wired in stateful mode; stateless mode relays the same batch operations through its configured upstream runtime or falls back locally |
-| `/v1/fine_tuning/jobs` | `relay` | `relay` | Create, list, retrieve, and cancel are relay-capable; stateless mode relays the same fine-tuning job surface through its configured upstream runtime or falls back locally |
+| `/v1/fine_tuning/jobs` | `relay` | `relay` | Create, list, retrieve, cancel, events, and checkpoints are relay-capable; stateless mode relays the same fine-tuning job surface through its configured upstream runtime or falls back locally |
 | `/v1/webhooks` | `relay` | `relay` | CRUD-compatible relay path when upstream supports the same contract; stateless mode relays the same webhook surface through its configured upstream runtime or falls back locally |
-| `/v1/evals` | `relay` | `relay` | Stateful mode relays eval creation/listing-compatible flow; stateless mode relays eval creation through its configured upstream runtime or falls back locally |
-| `/v1/videos` | `relay` | `relay` | Create, list, retrieve, content, delete, and remix relay in stateful mode; stateless mode relays the same video surface through its configured upstream runtime or falls back locally |
+| `/v1/evals` | `relay` | `relay` | Create, list, retrieve, update, delete, run list, run create, and run retrieve are relay-capable in both modes, with stateless mode using its configured upstream runtime or compatible local fallback |
+| `/v1/videos` | `relay` | `relay` | Create, list, retrieve, content, delete, remix, characters list, character retrieve or update, and extend relay in both modes, with stateless mode using its configured upstream runtime or compatible local fallback |
 
 ## Control Plane
 

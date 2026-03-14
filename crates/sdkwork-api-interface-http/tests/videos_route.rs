@@ -130,6 +130,86 @@ async fn video_remix_route_returns_ok() {
 
 #[serial(extension_env)]
 #[tokio::test]
+async fn video_characters_list_route_returns_ok() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/videos/video_1/characters")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[serial(extension_env)]
+#[tokio::test]
+async fn video_character_retrieve_route_returns_ok() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/videos/video_1/characters/char_1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[serial(extension_env)]
+#[tokio::test]
+async fn video_character_update_route_returns_ok() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/videos/video_1/characters/char_1")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"name\":\"Hero\",\"prompt\":\"Add a red jacket\"}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[serial(extension_env)]
+#[tokio::test]
+async fn video_extend_route_returns_ok() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/videos/video_1/extend")
+                .header("content-type", "application/json")
+                .body(Body::from("{\"prompt\":\"Extend the ending\"}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[serial(extension_env)]
+#[tokio::test]
 async fn stateless_videos_routes_relay_to_openai_compatible_provider() {
     let upstream_state = UpstreamCaptureState::default();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -150,6 +230,19 @@ async fn stateless_videos_routes_relay_to_openai_compatible_provider() {
         .route(
             "/v1/videos/video_1/remix",
             post(upstream_video_remix_handler),
+        )
+        .route(
+            "/v1/videos/video_1/characters",
+            get(upstream_video_characters_list_handler),
+        )
+        .route(
+            "/v1/videos/video_1/characters/char_1",
+            get(upstream_video_character_retrieve_handler)
+                .post(upstream_video_character_update_handler),
+        )
+        .route(
+            "/v1/videos/video_1/extend",
+            post(upstream_video_extend_handler),
         )
         .with_state(upstream_state.clone());
 
@@ -248,6 +341,70 @@ async fn stateless_videos_routes_relay_to_openai_compatible_provider() {
     let remix_json = read_json(remix_response).await;
     assert_eq!(remix_json["data"][0]["id"], "video_1_remix");
 
+    let characters_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/videos/video_1/characters")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(characters_response.status(), StatusCode::OK);
+    let characters_json = read_json(characters_response).await;
+    assert_eq!(characters_json["data"][0]["id"], "char_1");
+
+    let character_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/videos/video_1/characters/char_1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(character_response.status(), StatusCode::OK);
+    let character_json = read_json(character_response).await;
+    assert_eq!(character_json["id"], "char_1");
+
+    let character_update_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/videos/video_1/characters/char_1")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"name\":\"Hero\",\"prompt\":\"Add a red jacket\"}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(character_update_response.status(), StatusCode::OK);
+    let character_update_json = read_json(character_update_response).await;
+    assert_eq!(character_update_json["name"], "Hero");
+
+    let extend_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/videos/video_1/extend")
+                .header("content-type", "application/json")
+                .body(Body::from("{\"prompt\":\"Extend the ending\"}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(extend_response.status(), StatusCode::OK);
+    let extend_json = read_json(extend_response).await;
+    assert_eq!(extend_json["data"][0]["id"], "video_1_extended");
+
     let delete_response = app
         .oneshot(
             Request::builder()
@@ -314,6 +471,19 @@ async fn stateful_videos_routes_relay_to_openai_compatible_provider() {
         .route(
             "/v1/videos/video_1/remix",
             post(upstream_video_remix_handler),
+        )
+        .route(
+            "/v1/videos/video_1/characters",
+            get(upstream_video_characters_list_handler),
+        )
+        .route(
+            "/v1/videos/video_1/characters/char_1",
+            get(upstream_video_character_retrieve_handler)
+                .post(upstream_video_character_update_handler),
+        )
+        .route(
+            "/v1/videos/video_1/extend",
+            post(upstream_video_extend_handler),
         )
         .with_state(upstream_state.clone());
 
@@ -477,6 +647,74 @@ async fn stateful_videos_routes_relay_to_openai_compatible_provider() {
     assert_eq!(remix_response.status(), StatusCode::OK);
     let remix_json = read_json(remix_response).await;
     assert_eq!(remix_json["data"][0]["id"], "video_1_remix");
+
+    let characters_response = gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/videos/video_1/characters")
+                .header("authorization", format!("Bearer {api_key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(characters_response.status(), StatusCode::OK);
+    let characters_json = read_json(characters_response).await;
+    assert_eq!(characters_json["data"][0]["id"], "char_1");
+
+    let character_response = gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/videos/video_1/characters/char_1")
+                .header("authorization", format!("Bearer {api_key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(character_response.status(), StatusCode::OK);
+    let character_json = read_json(character_response).await;
+    assert_eq!(character_json["id"], "char_1");
+
+    let character_update_response = gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/videos/video_1/characters/char_1")
+                .header("authorization", format!("Bearer {api_key}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"name\":\"Hero\",\"prompt\":\"Add a red jacket\"}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(character_update_response.status(), StatusCode::OK);
+    let character_update_json = read_json(character_update_response).await;
+    assert_eq!(character_update_json["name"], "Hero");
+
+    let extend_response = gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/videos/video_1/extend")
+                .header("authorization", format!("Bearer {api_key}"))
+                .header("content-type", "application/json")
+                .body(Body::from("{\"prompt\":\"Extend the ending\"}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(extend_response.status(), StatusCode::OK);
+    let extend_json = read_json(extend_response).await;
+    assert_eq!(extend_json["data"][0]["id"], "video_1_extended");
 
     let delete_response = gateway_app
         .oneshot(
@@ -768,6 +1006,84 @@ async fn upstream_video_remix_handler(
                 "id":"video_1_remix",
                 "object":"video",
                 "url":"https://example.com/video-remix.mp4"
+            }]
+        })),
+    )
+}
+
+async fn upstream_video_characters_list_handler(
+    State(state): State<UpstreamCaptureState>,
+    headers: axum::http::HeaderMap,
+) -> (StatusCode, Json<Value>) {
+    *state.authorization.lock().unwrap() = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "object":"list",
+            "data":[{
+                "id":"char_1",
+                "object":"video.character",
+                "name":"Hero"
+            }]
+        })),
+    )
+}
+
+async fn upstream_video_character_retrieve_handler(
+    State(state): State<UpstreamCaptureState>,
+    headers: axum::http::HeaderMap,
+) -> (StatusCode, Json<Value>) {
+    *state.authorization.lock().unwrap() = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "id":"char_1",
+            "object":"video.character",
+            "name":"Hero"
+        })),
+    )
+}
+
+async fn upstream_video_character_update_handler(
+    State(state): State<UpstreamCaptureState>,
+    headers: axum::http::HeaderMap,
+) -> (StatusCode, Json<Value>) {
+    *state.authorization.lock().unwrap() = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "id":"char_1",
+            "object":"video.character",
+            "name":"Hero"
+        })),
+    )
+}
+
+async fn upstream_video_extend_handler(
+    State(state): State<UpstreamCaptureState>,
+    headers: axum::http::HeaderMap,
+) -> (StatusCode, Json<Value>) {
+    *state.authorization.lock().unwrap() = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "object":"list",
+            "data":[{
+                "id":"video_1_extended",
+                "object":"video",
+                "url":"https://example.com/video-extended.mp4"
             }]
         })),
     )

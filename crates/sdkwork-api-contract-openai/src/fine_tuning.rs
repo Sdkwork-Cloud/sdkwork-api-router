@@ -54,3 +54,73 @@ impl ListFineTuningJobsResponse {
         }
     }
 }
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FineTuningJobEventObject {
+    pub id: String,
+    pub object: &'static str,
+    pub level: String,
+    pub message: String,
+}
+
+impl FineTuningJobEventObject {
+    pub fn new(
+        id: impl Into<String>,
+        level: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            object: "fine_tuning.job.event",
+            level: level.into(),
+            message: message.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ListFineTuningJobEventsResponse {
+    pub object: &'static str,
+    pub data: Vec<FineTuningJobEventObject>,
+}
+
+impl ListFineTuningJobEventsResponse {
+    pub fn new(data: Vec<FineTuningJobEventObject>) -> Self {
+        Self {
+            object: "list",
+            data,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FineTuningJobCheckpointObject {
+    pub id: String,
+    pub object: &'static str,
+    pub fine_tuned_model_checkpoint: String,
+}
+
+impl FineTuningJobCheckpointObject {
+    pub fn new(id: impl Into<String>, fine_tuned_model_checkpoint: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            object: "fine_tuning.job.checkpoint",
+            fine_tuned_model_checkpoint: fine_tuned_model_checkpoint.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ListFineTuningJobCheckpointsResponse {
+    pub object: &'static str,
+    pub data: Vec<FineTuningJobCheckpointObject>,
+}
+
+impl ListFineTuningJobCheckpointsResponse {
+    pub fn new(data: Vec<FineTuningJobCheckpointObject>) -> Self {
+        Self {
+            object: "list",
+            data,
+        }
+    }
+}

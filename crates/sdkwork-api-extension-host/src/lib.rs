@@ -2080,6 +2080,12 @@ fn provider_invocation_from_request(
         ProviderRequest::AudioSpeech(body) => {
             invocation_with_body!("audio.speech.create", [], body, true)
         }
+        ProviderRequest::AudioVoicesList => {
+            invocation_without_body!("audio.voices.list", [], false)
+        }
+        ProviderRequest::AudioVoiceConsents(body) => {
+            invocation_with_body!("audio.voice_consents.create", [], body, false)
+        }
         ProviderRequest::Files(body) => invocation_with_body!("files.create", [], body, false),
         ProviderRequest::FilesList => invocation_without_body!("files.list", [], false),
         ProviderRequest::FilesRetrieve(file_id) => {
@@ -2113,6 +2119,12 @@ fn provider_invocation_from_request(
         ProviderRequest::FineTuningJobsCancel(job_id) => {
             invocation_without_body!("fine_tuning.jobs.cancel", [job_id], false)
         }
+        ProviderRequest::FineTuningJobsEvents(job_id) => {
+            invocation_without_body!("fine_tuning.jobs.events.list", [job_id], false)
+        }
+        ProviderRequest::FineTuningJobsCheckpoints(job_id) => {
+            invocation_without_body!("fine_tuning.jobs.checkpoints.list", [job_id], false)
+        }
         ProviderRequest::Assistants(body) => {
             invocation_with_body!("assistants.create", [], body, false)
         }
@@ -2132,6 +2144,25 @@ fn provider_invocation_from_request(
             invocation_with_body!("realtime.sessions.create", [], body, false)
         }
         ProviderRequest::Evals(body) => invocation_with_body!("evals.create", [], body, false),
+        ProviderRequest::EvalsList => invocation_without_body!("evals.list", [], false),
+        ProviderRequest::EvalsRetrieve(eval_id) => {
+            invocation_without_body!("evals.retrieve", [eval_id], false)
+        }
+        ProviderRequest::EvalsUpdate(eval_id, body) => {
+            invocation_with_body!("evals.update", [eval_id], body, false)
+        }
+        ProviderRequest::EvalsDelete(eval_id) => {
+            invocation_without_body!("evals.delete", [eval_id], false)
+        }
+        ProviderRequest::EvalRunsList(eval_id) => {
+            invocation_without_body!("evals.runs.list", [eval_id], false)
+        }
+        ProviderRequest::EvalRuns(eval_id, body) => {
+            invocation_with_body!("evals.runs.create", [eval_id], body, false)
+        }
+        ProviderRequest::EvalRunsRetrieve(eval_id, run_id) => {
+            invocation_without_body!("evals.runs.retrieve", [eval_id, run_id], false)
+        }
         ProviderRequest::Batches(body) => invocation_with_body!("batches.create", [], body, false),
         ProviderRequest::BatchesList => invocation_without_body!("batches.list", [], false),
         ProviderRequest::BatchesRetrieve(batch_id) => {
@@ -2220,6 +2251,27 @@ fn provider_invocation_from_request(
         }
         ProviderRequest::VideosRemix(video_id, body) => {
             invocation_with_body!("videos.remix", [video_id], body, false)
+        }
+        ProviderRequest::VideoCharactersList(video_id) => {
+            invocation_without_body!("videos.characters.list", [video_id], false)
+        }
+        ProviderRequest::VideoCharactersRetrieve(video_id, character_id) => {
+            invocation_without_body!(
+                "videos.characters.retrieve",
+                [video_id, character_id],
+                false
+            )
+        }
+        ProviderRequest::VideoCharactersUpdate(video_id, character_id, body) => {
+            invocation_with_body!(
+                "videos.characters.update",
+                [video_id, character_id],
+                body,
+                false
+            )
+        }
+        ProviderRequest::VideosExtend(video_id, body) => {
+            invocation_with_body!("videos.extend", [video_id], body, false)
         }
         ProviderRequest::Webhooks(body) => {
             invocation_with_body!("webhooks.create", [], body, false)

@@ -28,6 +28,36 @@ impl RemixVideoRequest {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExtendVideoRequest {
+    pub prompt: String,
+}
+
+impl ExtendVideoRequest {
+    pub fn new(prompt: impl Into<String>) -> Self {
+        Self {
+            prompt: prompt.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateVideoCharacterRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+}
+
+impl UpdateVideoCharacterRequest {
+    pub fn new(name: impl Into<String>, prompt: impl Into<String>) -> Self {
+        Self {
+            name: Some(name.into()),
+            prompt: Some(prompt.into()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct VideoObject {
     pub id: String,
@@ -53,6 +83,38 @@ pub struct VideosResponse {
 
 impl VideosResponse {
     pub fn new(data: Vec<VideoObject>) -> Self {
+        Self {
+            object: "list",
+            data,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct VideoCharacterObject {
+    pub id: String,
+    pub object: &'static str,
+    pub name: String,
+}
+
+impl VideoCharacterObject {
+    pub fn new(id: impl Into<String>, name: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            object: "video.character",
+            name: name.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct VideoCharactersResponse {
+    pub object: &'static str,
+    pub data: Vec<VideoCharacterObject>,
+}
+
+impl VideoCharactersResponse {
+    pub fn new(data: Vec<VideoCharacterObject>) -> Self {
         Self {
             object: "list",
             data,
