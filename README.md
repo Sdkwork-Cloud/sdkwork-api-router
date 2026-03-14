@@ -1,8 +1,8 @@
 # sdkwork-api-server
 
-[Chinese Guide](./README.zh-CN.md)
+[中文文档](./README.zh-CN.md)
 
-SDKWork API Server is an Axum-based OpenAI-compatible gateway, control plane, and public self-service portal built with Rust, React, pnpm, and Tauri.
+SDKWork API Server is an Axum-based OpenAI-compatible gateway, control plane, extension host, and public self-service portal built with Rust, React, pnpm, and Tauri.
 
 The repository is organized around four runtime surfaces:
 
@@ -11,15 +11,16 @@ The repository is organized around four runtime surfaces:
 - `admin-api-service`
   - operator-only `/admin/*` control plane
 - `portal-api-service`
-  - public `/portal/*` self-service registration, login, workspace inspection, and API key issuance
+  - public `/portal/*` registration, login, workspace inspection, and API key issuance
 - `console/`
   - browser-accessible React shell that also runs inside the Tauri desktop host
 
-## What Is Implemented
+## Current State
 
-Backend:
+What is already live:
 
-- OpenAI-compatible gateway routes with stateful and stateless execution paths
+- OpenAI-compatible gateway routing for the current `/v1/*` surface documented in [docs/api/compatibility-matrix.md](./docs/api/compatibility-matrix.md)
+- stateful and stateless execution paths
 - admin APIs for tenants, projects, API keys, channels, proxy providers, credentials, models, routing, usage, billing, and extensions
 - public portal APIs:
   - `POST /portal/auth/register`
@@ -28,27 +29,56 @@ Backend:
   - `GET /portal/workspace`
   - `GET /portal/api-keys`
   - `POST /portal/api-keys`
-- shared SQLite and PostgreSQL persistence through one storage contract
-- isolated portal JWT and admin JWT boundaries
-- Prometheus-compatible metrics and HTTP tracing
-
-Frontend:
-
-- package-bounded portal SDK, portal auth, and portal dashboard modules
-- package-bounded admin-facing console modules
+- SQLite and PostgreSQL persistence through one shared storage contract
+- encrypted secret persistence with:
+  - `database_encrypted`
+  - `local_encrypted_file`
+  - `os_keyring`
+- extension runtime support for:
+  - `builtin`
+  - `connector`
+  - `native_dynamic`
+- React console packages for:
+  - portal SDK
+  - portal auth
+  - portal dashboard
+  - admin workspace
+  - channel management
+  - routing
+  - runtime inspection
+  - usage and billing
 - browser and Tauri-friendly hash routes:
   - `#/portal/register`
   - `#/portal/login`
   - `#/portal/dashboard`
   - `#/admin`
 
-Architecture:
+## Supported Platforms
 
-- controller or interface layer under `crates/sdkwork-api-interface-*`
-- app or service layer under `crates/sdkwork-api-app-*`
-- repository or storage layer under `crates/sdkwork-api-storage-*`
-- shared React shell composition in `console/src/`
-- reusable frontend business packages in `console/packages/`
+This repository is intended to run on:
+
+- Windows
+- Linux
+- macOS
+
+The Rust services are cross-platform. The React console runs in any modern browser on all three platforms. The Tauri desktop shell is optional and uses the same frontend routes as the browser console.
+
+## Prerequisites
+
+Required:
+
+- Rust stable with Cargo
+- Node.js 20+
+- pnpm 10+
+
+Optional:
+
+- PostgreSQL 15+ for PostgreSQL-backed deployments
+- Tauri CLI for desktop development:
+
+```bash
+cargo install tauri-cli
+```
 
 ## Repository Layout
 
@@ -66,55 +96,35 @@ Architecture:
 `-- README.zh-CN.md              # Chinese operational guide
 ```
 
-## Supported Platforms
-
-This repository is intended to run on:
-
-- Windows
-- Linux
-- macOS
-
-The Rust services are cross-platform. The React console runs in a normal browser on all three platforms. The Tauri shell is optional and uses the same frontend routes, so desktop mode still keeps the browser UI reachable.
-
-## Prerequisites
-
-Required:
-
-- Rust stable with Cargo
-- Node.js 20+
-- pnpm 10+
-
-Optional:
-
-- PostgreSQL 15+ for PostgreSQL-backed deployments
-- Tauri CLI for desktop development:
-  - `cargo install tauri-cli`
-
 ## Default Ports
 
 | Surface | Default Bind | Purpose |
 |---|---|---|
 | gateway | `127.0.0.1:8080` | OpenAI-compatible `/v1/*` traffic |
 | admin | `127.0.0.1:8081` | operator control plane |
-| portal | `127.0.0.1:8082` | public self-service auth and API key lifecycle |
+| portal | `127.0.0.1:8082` | public auth, workspace, and API key lifecycle |
 | console | `127.0.0.1:5173` | browser and Tauri frontend dev server |
 
-## Preferred Startup Paths
+## Recommended Startup Commands
 
-Use the helper scripts below as the recommended entry points.
+Use the unified workspace launcher first. Keep the lower-level helpers for partial startup or debugging.
 
 | Workflow | Windows | Linux / macOS |
 |---|---|---|
-| start backend services | `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev\start-servers.ps1` | `node scripts/dev/start-stack.mjs` |
-| start browser console | `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev\start-console.ps1` | `node scripts/dev/start-console.mjs` |
-| start Tauri and keep browser access | `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev\start-console.ps1 -Tauri` | `node scripts/dev/start-console.mjs --tauri` |
+| full stack in browser mode | `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev\start-workspace.ps1` | `node scripts/dev/start-workspace.mjs` |
+| full stack in desktop mode and keep browser access | `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev\start-workspace.ps1 -Tauri` | `node scripts/dev/start-workspace.mjs --tauri` |
+| full stack dry run | `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev\start-workspace.ps1 -DryRun` | `node scripts/dev/start-workspace.mjs --dry-run` |
+| backend services only | `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev\start-servers.ps1` | `node scripts/dev/start-stack.mjs` |
+| browser console only | `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev\start-console.ps1` | `node scripts/dev/start-console.mjs` |
+| Tauri only | `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev\start-console.ps1 -Tauri` | `node scripts/dev/start-console.mjs --tauri` |
 | preview production console build | `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev\start-console.ps1 -Preview` | `node scripts/dev/start-console.mjs --preview` |
 
 Notes:
 
-- Windows service startup opens separate PowerShell windows for `admin-api-service`, `gateway-service`, and `portal-api-service`
-- the Node-based helpers are portable and work on Windows, Linux, and macOS
-- Tauri dev mode still exposes the browser UI on `http://127.0.0.1:5173`
+- `start-workspace` launches backend services and the console together
+- `start-workspace --tauri` keeps the browser UI reachable at `http://127.0.0.1:5173`
+- `start-servers.ps1` still opens separate PowerShell windows on Windows for backend-only workflows
+- the Node-based launchers are the portable path for Windows, Linux, and macOS
 
 ## Quick Start With SQLite
 
@@ -122,16 +132,14 @@ This is the fastest end-to-end local setup.
 
 ### Windows
 
-Terminal 1:
-
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev\start-servers.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev\start-workspace.ps1
 ```
 
-Terminal 2:
+### Linux or macOS
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev\start-console.ps1
+```bash
+node scripts/dev/start-workspace.mjs
 ```
 
 Open:
@@ -141,25 +149,33 @@ Open:
 - `http://127.0.0.1:5173/#/portal/dashboard`
 - `http://127.0.0.1:5173/#/admin`
 
+If you prefer separate terminals or windows for backend and frontend, use the lower-level `start-stack`, `start-servers`, and `start-console` helpers instead.
+
+## Desktop Mode With Browser Access
+
+If you want the Tauri host and a normal browser open at the same time, use the unified launcher in desktop mode.
+
+### Windows
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev\start-workspace.ps1 -Tauri
+```
+
 ### Linux or macOS
 
-Terminal 1:
-
 ```bash
-node scripts/dev/start-stack.mjs
+node scripts/dev/start-workspace.mjs --tauri
 ```
 
-Terminal 2:
+Why this works:
 
-```bash
-node scripts/dev/start-console.mjs
-```
-
-Open the same browser URLs listed above.
+- `tauri dev` uses the Vite dev server as the frontend source
+- the same Vite URL remains accessible from a normal browser
+- portal registration, login, dashboard, and admin routes are identical in browser and Tauri
 
 ## Public Portal Walkthrough
 
-Once backend services and the console are running:
+Once the backend services and the console are running:
 
 1. open `http://127.0.0.1:5173/#/portal/register`
 2. register a portal account
@@ -177,132 +193,117 @@ curl http://127.0.0.1:8080/v1/models \
 
 The portal list endpoint intentionally does not return plaintext keys again. Plaintext values are returned only at creation time.
 
-## Browser and Tauri Together
-
-If you want the desktop host and a normal browser open at the same time, use the Tauri startup helper.
-
-### Windows
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev\start-console.ps1 -Tauri
-```
-
-### Linux or macOS
-
-```bash
-node scripts/dev/start-console.mjs --tauri
-```
-
-Why this works:
-
-- `tauri dev` uses the Vite dev server as its frontend source
-- the same Vite URL remains accessible from a normal browser
-- portal registration, login, dashboard, and admin routes are the same in browser and Tauri
-
-Open both if you want:
-
-- desktop shell through Tauri
-- browser on `http://127.0.0.1:5173/#/portal/dashboard`
-
 ## PostgreSQL Startup
 
-To use PostgreSQL, point the services at the same PostgreSQL connection string.
+To use PostgreSQL, point the full stack at the same database URL.
 
 ### Windows
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev\start-servers.ps1 `
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev\start-workspace.ps1 `
   -DatabaseUrl "postgres://postgres:postgres@127.0.0.1:5432/sdkwork_api_server"
 ```
 
 ### Linux or macOS
 
 ```bash
-node scripts/dev/start-stack.mjs \
+node scripts/dev/start-workspace.mjs \
   --database-url "postgres://postgres:postgres@127.0.0.1:5432/sdkwork_api_server"
 ```
 
 SQLite and PostgreSQL migrations are applied automatically at startup.
 
-## Raw Command Fallback
+## Partial Startup Helpers
 
-If you prefer to avoid helper scripts, these are the direct commands.
+Use these when you want more control than the unified launcher provides.
 
-### Windows PowerShell
+### Backend Services Only
 
-Admin:
+Windows:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev\start-servers.ps1
+```
+
+Linux or macOS:
+
+```bash
+node scripts/dev/start-stack.mjs
+```
+
+### Console Only
+
+Windows:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev\start-console.ps1
+```
+
+Linux or macOS:
+
+```bash
+node scripts/dev/start-console.mjs
+```
+
+### Raw Command Fallback
+
+If you prefer not to use helper scripts, these are the direct commands.
+
+Windows PowerShell:
 
 ```powershell
 $env:SDKWORK_DATABASE_URL="sqlite://sdkwork-api-server.db"
 cargo run -p admin-api-service
 ```
 
-Gateway:
-
 ```powershell
 $env:SDKWORK_DATABASE_URL="sqlite://sdkwork-api-server.db"
 cargo run -p gateway-service
 ```
-
-Portal:
 
 ```powershell
 $env:SDKWORK_DATABASE_URL="sqlite://sdkwork-api-server.db"
 cargo run -p portal-api-service
 ```
 
-Browser console:
-
 ```powershell
 pnpm --dir console install
 pnpm --dir console dev
 ```
 
-Tauri:
-
 ```powershell
 pnpm --dir console tauri:dev
 ```
 
-### Linux or macOS
-
-Admin:
+Linux or macOS:
 
 ```bash
 export SDKWORK_DATABASE_URL="sqlite://sdkwork-api-server.db"
 cargo run -p admin-api-service
 ```
 
-Gateway:
-
 ```bash
 export SDKWORK_DATABASE_URL="sqlite://sdkwork-api-server.db"
 cargo run -p gateway-service
 ```
-
-Portal:
 
 ```bash
 export SDKWORK_DATABASE_URL="sqlite://sdkwork-api-server.db"
 cargo run -p portal-api-service
 ```
 
-Browser console:
-
 ```bash
 pnpm --dir console install
 pnpm --dir console dev
 ```
 
-Tauri:
-
 ```bash
 pnpm --dir console tauri:dev
 ```
 
-## Browser Console
+## Browser Console Workspace
 
-Install dependencies:
+Install frontend dependencies:
 
 ```bash
 pnpm --dir console install
@@ -326,7 +327,7 @@ Build production assets:
 pnpm --dir console build
 ```
 
-Preview the production build locally:
+Preview the production build:
 
 ```bash
 pnpm --dir console preview
@@ -344,16 +345,7 @@ Override them if needed:
 - `SDKWORK_PORTAL_PROXY_TARGET`
 - `SDKWORK_GATEWAY_PROXY_TARGET`
 
-Example:
-
-```powershell
-$env:SDKWORK_ADMIN_PROXY_TARGET="http://127.0.0.1:18081"
-$env:SDKWORK_PORTAL_PROXY_TARGET="http://127.0.0.1:18082"
-$env:SDKWORK_GATEWAY_PROXY_TARGET="http://127.0.0.1:18080"
-pnpm --dir console dev
-```
-
-## Service Health and Metrics
+## Health and Metrics
 
 Health endpoints:
 
@@ -402,30 +394,67 @@ Supported secret backends:
 - `local_encrypted_file`
 - `os_keyring`
 
-## What Is Still Intentionally Missing
+## Extension and Package Conventions
+
+The extension architecture distinguishes three names:
+
+- runtime ID
+  - `sdkwork.provider.openrouter`
+  - `sdkwork.channel.openai`
+- distribution package name
+  - `sdkwork-provider-openrouter`
+  - `sdkwork-channel-openai`
+- Rust crate name
+  - `sdkwork-api-ext-provider-openrouter`
+  - `sdkwork-api-ext-channel-openai`
+
+This keeps channel and proxy-provider concerns explicit while allowing config-driven loading, runtime discovery, and future external packaging.
+
+## Architecture Summary
+
+Backend layering:
+
+- interface or controller crates under `crates/sdkwork-api-interface-*`
+- app or service crates under `crates/sdkwork-api-app-*`
+- repository or storage crates under `crates/sdkwork-api-storage-*`
+
+Frontend layering:
+
+- root shell composition in `console/src/`
+- reusable business packages in `console/packages/`
+- public portal split into:
+  - `sdkwork-api-portal-sdk`
+  - `sdkwork-api-portal-auth`
+  - `sdkwork-api-portal-user`
+
+## Intentionally Missing For Now
 
 The current system is usable end-to-end, but these areas remain roadmap work:
 
 - multi-user portal workspaces and invitations
 - password reset and email delivery
 - OAuth or SSO
-- standalone MySQL or libsql service startup
+- standalone MySQL or libsql deployment flows
+- hot reload for discovered external extensions
 
-## Additional Reference Docs
+## Reference Docs
 
-Gateway compatibility and API surface coverage:
+Operational and architectural detail:
 
-- `docs/api/compatibility-matrix.md`
-
-Runtime topology and deployment notes:
-
-- `docs/architecture/runtime-modes.md`
+- [docs/api/compatibility-matrix.md](./docs/api/compatibility-matrix.md)
+- [docs/architecture/runtime-modes.md](./docs/architecture/runtime-modes.md)
+- [docs/plans/2026-03-14-public-portal-cross-platform-design.md](./docs/plans/2026-03-14-public-portal-cross-platform-design.md)
+- [docs/plans/2026-03-14-unified-workspace-launch-design.md](./docs/plans/2026-03-14-unified-workspace-launch-design.md)
 
 ## Verification Commands
 
-Current project-level verification baseline:
+Fresh verification baseline:
 
 ```bash
+node --check scripts/dev/workspace-launch-lib.mjs
+node --check scripts/dev/start-workspace.mjs
+node --test scripts/dev/tests/start-workspace.test.mjs
+node scripts/dev/start-workspace.mjs --dry-run
 cargo fmt --all --check
 cargo test --workspace -q -j 1
 pnpm --dir console -r typecheck
