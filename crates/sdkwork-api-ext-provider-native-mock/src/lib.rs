@@ -36,6 +36,14 @@ fn manifest_json() -> &'static CString {
                 .with_capability(CapabilityDescriptor::new(
                     "chat.completions.stream",
                     CompatibilityLevel::Native,
+                ))
+                .with_capability(CapabilityDescriptor::new(
+                    "responses.create",
+                    CompatibilityLevel::Native,
+                ))
+                .with_capability(CapabilityDescriptor::new(
+                    "responses.stream",
+                    CompatibilityLevel::Native,
                 )),
             )
             .expect("manifest json"),
@@ -54,8 +62,14 @@ pub extern "C" fn sdkwork_extension_manifest_json() -> *const c_char {
     manifest_json().as_ptr()
 }
 
+/// # Safety
+///
+/// `payload` must be a valid null-terminated UTF-8 JSON string for the duration
+/// of this call.
 #[no_mangle]
-pub extern "C" fn sdkwork_extension_provider_execute_json(payload: *const c_char) -> *mut c_char {
+pub unsafe extern "C" fn sdkwork_extension_provider_execute_json(
+    payload: *const c_char,
+) -> *mut c_char {
     let invocation = unsafe { from_raw_c_str(payload) }
         .and_then(|payload| serde_json::from_str::<ProviderInvocation>(&payload).ok());
 
@@ -68,6 +82,17 @@ pub extern "C" fn sdkwork_extension_provider_execute_json(payload: *const c_char
                 "object": "chat.completion",
                 "model": invocation.body["model"],
                 "choices": [],
+                "provider": "native_dynamic"
+            }))
+        }
+        Some(invocation)
+            if invocation.operation == "responses.create" && !invocation.expects_stream =>
+        {
+            ProviderInvocationResult::json(serde_json::json!({
+                "id": "resp_native_dynamic",
+                "object": "response",
+                "model": invocation.body["model"],
+                "output": [],
                 "provider": "native_dynamic"
             }))
         }
@@ -84,8 +109,13 @@ pub extern "C" fn sdkwork_extension_provider_execute_json(payload: *const c_char
     into_raw_c_string(serde_json::to_string(&result).expect("result json"))
 }
 
+/// # Safety
+///
+/// `payload` must be a valid null-terminated UTF-8 JSON string and `writer`
+/// must point to a valid host-owned callback table for the duration of this
+/// call.
 #[no_mangle]
-pub extern "C" fn sdkwork_extension_provider_execute_stream_json(
+pub unsafe extern "C" fn sdkwork_extension_provider_execute_stream_json(
     payload: *const c_char,
     writer: *const ProviderStreamWriter,
 ) -> *mut c_char {
@@ -129,6 +159,34 @@ pub extern "C" fn sdkwork_extension_provider_execute_stream_json(
                 ProviderStreamInvocationResult::streamed(content_type)
             }
         }
+        (Some(invocation), Some(writer))
+            if invocation.operation == "responses.create" && invocation.expects_stream =>
+        {
+            let content_type = "text/event-stream";
+            let chunk = serde_json::json!({
+                "id": "resp_native_dynamic_stream",
+                "type": "response.output_text.delta",
+                "response_id": "resp_native_dynamic_stream",
+                "delta": "hello from native dynamic"
+            })
+            .to_string();
+            let first_frame = format!("data: {chunk}\n\n");
+            let done_frame = "data: [DONE]\n\n";
+
+            if !writer.set_content_type(content_type) {
+                ProviderStreamInvocationResult::error(
+                    "host stream receiver closed before content type was set",
+                )
+            } else if !writer.write_chunk(first_frame.as_bytes())
+                || !writer.write_chunk(done_frame.as_bytes())
+            {
+                ProviderStreamInvocationResult::error(
+                    "host stream receiver closed before all chunks were written",
+                )
+            } else {
+                ProviderStreamInvocationResult::streamed(content_type)
+            }
+        }
         (Some(invocation), Some(_)) => ProviderStreamInvocationResult::unsupported(format!(
             "stream operation {} is not implemented in the fixture",
             invocation.operation
@@ -140,7 +198,11 @@ pub extern "C" fn sdkwork_extension_provider_execute_stream_json(
     into_raw_c_string(serde_json::to_string(&result).expect("result json"))
 }
 
+/// # Safety
+///
+/// `ptr` must be a pointer previously returned by this library through one of
+/// its string-returning ABI functions and must not be freed more than once.
 #[no_mangle]
-pub extern "C" fn sdkwork_extension_free_string(ptr: *mut c_char) {
+pub unsafe extern "C" fn sdkwork_extension_free_string(ptr: *mut c_char) {
     unsafe { free_raw_c_string(ptr) }
 }

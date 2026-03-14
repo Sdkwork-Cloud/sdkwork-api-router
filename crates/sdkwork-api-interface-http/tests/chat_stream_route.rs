@@ -513,6 +513,14 @@ fn native_dynamic_manifest(library_path: &Path) -> sdkwork_api_extension_core::E
         "chat.completions.stream",
         sdkwork_api_extension_core::CompatibilityLevel::Native,
     ))
+    .with_capability(sdkwork_api_extension_core::CapabilityDescriptor::new(
+        "responses.create",
+        sdkwork_api_extension_core::CompatibilityLevel::Native,
+    ))
+    .with_capability(sdkwork_api_extension_core::CapabilityDescriptor::new(
+        "responses.stream",
+        sdkwork_api_extension_core::CompatibilityLevel::Native,
+    ))
 }
 
 fn sign_native_dynamic_package(

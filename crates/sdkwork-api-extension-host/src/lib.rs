@@ -1184,12 +1184,7 @@ fn load_native_dynamic_runtime(
     entrypoint: &Path,
 ) -> Result<(Arc<NativeDynamicRuntime>, ExtensionManifest), ExtensionHostError> {
     unsafe {
-        let library = Library::new(entrypoint).map_err(|error| {
-            ExtensionHostError::NativeDynamicLibraryLoadFailed {
-                entrypoint: entrypoint.display().to_string(),
-                message: error.to_string(),
-            }
-        })?;
+        let library = load_native_dynamic_library(entrypoint)?;
         let abi_version = load_native_dynamic_symbol::<AbiVersionFn>(
             &library,
             SDKWORK_EXTENSION_ABI_VERSION_SYMBOL,
@@ -1247,6 +1242,62 @@ fn load_native_dynamic_runtime(
             manifest,
         ))
     }
+}
+
+#[cfg(windows)]
+fn load_native_dynamic_library(entrypoint: &Path) -> Result<Library, ExtensionHostError> {
+    static WINDOWS_LIBRARY_LOAD_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    let lock = WINDOWS_LIBRARY_LOAD_LOCK.get_or_init(|| Mutex::new(()));
+    let _guard = lock.lock().expect("windows library load lock");
+
+    if let Some(parent) = entrypoint.parent() {
+        prepend_library_directory_to_path(parent, entrypoint)?;
+    }
+
+    unsafe {
+        Library::new(entrypoint).map_err(|error| {
+            ExtensionHostError::NativeDynamicLibraryLoadFailed {
+                entrypoint: entrypoint.display().to_string(),
+                message: error.to_string(),
+            }
+        })
+    }
+}
+
+#[cfg(not(windows))]
+fn load_native_dynamic_library(entrypoint: &Path) -> Result<Library, ExtensionHostError> {
+    unsafe {
+        Library::new(entrypoint).map_err(|error| {
+            ExtensionHostError::NativeDynamicLibraryLoadFailed {
+                entrypoint: entrypoint.display().to_string(),
+                message: error.to_string(),
+            }
+        })
+    }
+}
+
+#[cfg(windows)]
+fn prepend_library_directory_to_path(
+    directory: &Path,
+    entrypoint: &Path,
+) -> Result<(), ExtensionHostError> {
+    let mut paths = std::env::var_os("PATH")
+        .map(|value| std::env::split_paths(&value).collect::<Vec<_>>())
+        .unwrap_or_default();
+
+    if paths.iter().any(|path| path == directory) {
+        return Ok(());
+    }
+
+    paths.insert(0, directory.to_path_buf());
+    let joined = std::env::join_paths(paths).map_err(|error| {
+        ExtensionHostError::NativeDynamicLibraryLoadFailed {
+            entrypoint: entrypoint.display().to_string(),
+            message: format!("failed to extend PATH for native dynamic library: {error}"),
+        }
+    })?;
+    std::env::set_var("PATH", joined);
+    Ok(())
 }
 
 unsafe fn load_native_dynamic_symbol<T: Copy>(

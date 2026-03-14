@@ -67,6 +67,29 @@ async fn executes_native_dynamic_chat_stream_request() {
     assert!(body.contains("[DONE]"));
 }
 
+#[tokio::test]
+async fn executes_native_dynamic_responses_stream_request() {
+    let library_path = native_dynamic_fixture_library_path();
+    let adapter = load_native_dynamic_provider_adapter(&library_path, "https://example.com/v1")
+        .expect("native dynamic provider adapter");
+    let request = sdkwork_api_contract_openai::responses::CreateResponseRequest {
+        model: "gpt-4.1".to_owned(),
+        input: serde_json::Value::String("hello".to_owned()),
+        stream: Some(true),
+    };
+
+    let output = adapter
+        .execute("sk-native", ProviderRequest::ResponsesStream(&request))
+        .await
+        .expect("native dynamic response stream output");
+    let stream = output.into_stream().expect("stream output");
+    assert_eq!(stream.content_type(), "text/event-stream");
+
+    let body = read_provider_stream(stream).await;
+    assert!(body.contains("resp_native_dynamic_stream"));
+    assert!(body.contains("[DONE]"));
+}
+
 async fn read_provider_stream(stream: ProviderStreamOutput) -> String {
     let bytes = axum::body::to_bytes(Body::from_stream(stream.into_body_stream()), usize::MAX)
         .await

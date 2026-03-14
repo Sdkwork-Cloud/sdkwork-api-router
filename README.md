@@ -125,7 +125,7 @@ Known gaps:
   - trusted-signer verification is enforced for signed packages
   - unsigned connector packages can be allowed or blocked by policy
   - native dynamic packages are intended to run only when explicitly enabled and signed by a trusted publisher
-- native dynamic execution now supports JSON-capable provider operations plus chat/SSE stream relay; generic binary streams and hot reload are not implemented yet
+- native dynamic execution now supports JSON-capable provider operations plus chat and responses SSE relay; generic binary streams and hot reload are not implemented yet
 - only stateful gateway execution paths relay upstream responses; the stateless demo router still emits local stub payloads
 - broader API families are now wired as either `relay` or `emulated`; see `docs/api/compatibility-matrix.md` for the execution-truth matrix
 - routing policies now support deterministic priority-based selection with ordered provider fallback and optional defaults
