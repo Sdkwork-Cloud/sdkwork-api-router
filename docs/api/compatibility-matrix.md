@@ -81,6 +81,13 @@ Admin APIs are SDKWork-owned control-plane surfaces and therefore classify as `n
 | `/health` | `native` | Basic liveness endpoint exposed by gateway and admin services |
 | `/metrics` | `native` | Prometheus-compatible HTTP request counters and duration summaries exposed by gateway and admin services |
 
+## Operational Conventions
+
+| Convention | Level | Notes |
+|---|---|---|
+| `x-request-id` | `native` | Gateway and admin routers preserve a caller-supplied request ID or generate one automatically and return it on the response |
+| HTTP request tracing | `native` | Standalone binaries initialize structured request logs with service, request ID, method, route, status, and duration fields |
+
 ## Current Built-In Extension IDs
 
 | Extension ID | Kind | Runtime | Notes |

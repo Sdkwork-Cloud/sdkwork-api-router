@@ -52,6 +52,13 @@ async fn admin_routes_require_valid_bearer_token() {
         .unwrap();
 
     assert_eq!(login.status(), StatusCode::OK);
+    let login_request_id = login
+        .headers()
+        .get("x-request-id")
+        .and_then(|value| value.to_str().ok())
+        .unwrap()
+        .to_owned();
+    assert!(login_request_id.starts_with("sdkw-"));
     let login_json = read_json(login).await;
     let token = login_json["token"].as_str().unwrap().to_owned();
 
@@ -61,6 +68,7 @@ async fn admin_routes_require_valid_bearer_token() {
                 .method("GET")
                 .uri("/admin/projects")
                 .header("authorization", format!("Bearer {token}"))
+                .header("x-request-id", "admin-caller-id")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -68,6 +76,14 @@ async fn admin_routes_require_valid_bearer_token() {
         .unwrap();
 
     assert_eq!(authorized.status(), StatusCode::OK);
+    assert_eq!(
+        authorized
+            .headers()
+            .get("x-request-id")
+            .and_then(|value| value.to_str().ok())
+            .unwrap(),
+        "admin-caller-id"
+    );
 }
 
 #[tokio::test]

@@ -16,6 +16,34 @@ async fn health_route_returns_ok_and_metrics_capture_it() {
         .await
         .unwrap();
     assert_eq!(health.status(), StatusCode::OK);
+    let generated_request_id = health
+        .headers()
+        .get("x-request-id")
+        .and_then(|value| value.to_str().ok())
+        .unwrap()
+        .to_owned();
+    assert!(generated_request_id.starts_with("sdkw-"));
+
+    let preserved = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/health")
+                .header("x-request-id", "gateway-caller-id")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(preserved.status(), StatusCode::OK);
+    assert_eq!(
+        preserved
+            .headers()
+            .get("x-request-id")
+            .and_then(|value| value.to_str().ok())
+            .unwrap(),
+        "gateway-caller-id"
+    );
 
     let metrics = app
         .oneshot(
@@ -32,6 +60,6 @@ async fn health_route_returns_ok_and_metrics_capture_it() {
     let body = String::from_utf8(bytes.to_vec()).unwrap();
     assert!(body.contains("sdkwork_service_info{service=\"gateway\"} 1"));
     assert!(body.contains(
-        "sdkwork_http_requests_total{service=\"gateway\",method=\"GET\",route=\"/health\",status=\"200\"} 1"
+        "sdkwork_http_requests_total{service=\"gateway\",method=\"GET\",route=\"/health\",status=\"200\"} 2"
     ));
 }

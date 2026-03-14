@@ -16,6 +16,7 @@ use sdkwork_api_app_billing::{
 use sdkwork_api_app_catalog::{
     list_channels, list_model_entries, list_providers, persist_channel,
     persist_model_with_metadata, persist_provider_with_bindings_and_extension_id,
+    PersistProviderWithBindingsRequest,
 };
 use sdkwork_api_app_credential::CredentialSecretManager;
 use sdkwork_api_app_credential::{list_credentials, persist_credential_with_secret_and_manager};
@@ -49,7 +50,7 @@ use sdkwork_api_domain_routing::{
 use sdkwork_api_domain_tenant::{Project, Tenant};
 use sdkwork_api_domain_usage::{UsageRecord, UsageSummary};
 use sdkwork_api_extension_core::{ExtensionInstallation, ExtensionInstance, ExtensionRuntime};
-use sdkwork_api_observability::{observe_http_metrics, HttpMetricsRegistry};
+use sdkwork_api_observability::{observe_http_metrics, observe_http_tracing, HttpMetricsRegistry};
 use sdkwork_api_storage_core::AdminStore;
 use sdkwork_api_storage_sqlite::SqliteAdminStore;
 use serde::{Deserialize, Serialize};
@@ -318,6 +319,7 @@ struct RoutingSimulationResponse {
 }
 
 pub fn admin_router() -> Router {
+    let service_name: Arc<str> = Arc::from("admin");
     let metrics = Arc::new(HttpMetricsRegistry::new("admin"));
     Router::new()
         .route(
@@ -392,6 +394,10 @@ pub fn admin_router() -> Router {
             metrics,
             observe_http_metrics,
         ))
+        .layer(axum::middleware::from_fn_with_state(
+            service_name,
+            observe_http_tracing,
+        ))
 }
 
 pub fn admin_router_with_pool(pool: SqlitePool) -> Router {
@@ -441,6 +447,7 @@ pub fn admin_router_with_store_and_secret_manager_and_jwt_secret(
     secret_manager: CredentialSecretManager,
     jwt_signing_secret: impl Into<String>,
 ) -> Router {
+    let service_name: Arc<str> = Arc::from("admin");
     let metrics = Arc::new(HttpMetricsRegistry::new("admin"));
     let state = AdminApiState::with_store_and_secret_manager_and_jwt_secret(
         store,
@@ -538,6 +545,10 @@ pub fn admin_router_with_store_and_secret_manager_and_jwt_secret(
             metrics,
             observe_http_metrics,
         ))
+        .layer(axum::middleware::from_fn_with_state(
+            service_name,
+            observe_http_tracing,
+        ))
         .with_state(state)
 }
 
@@ -601,13 +612,15 @@ async fn create_provider_handler(
     let bindings = provider_bindings_from_request(&request);
     let provider = persist_provider_with_bindings_and_extension_id(
         state.store.as_ref(),
-        &request.id,
-        primary_channel_id,
-        &request.adapter_kind,
-        request.extension_id.as_deref(),
-        &request.base_url,
-        &request.display_name,
-        &bindings,
+        PersistProviderWithBindingsRequest {
+            id: &request.id,
+            channel_id: primary_channel_id,
+            adapter_kind: &request.adapter_kind,
+            extension_id: request.extension_id.as_deref(),
+            base_url: &request.base_url,
+            display_name: &request.display_name,
+            channel_bindings: &bindings,
+        },
     )
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;

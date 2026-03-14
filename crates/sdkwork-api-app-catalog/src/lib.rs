@@ -98,6 +98,17 @@ pub fn create_provider_with_bindings_and_extension_id(
     Ok(provider)
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct PersistProviderWithBindingsRequest<'a> {
+    pub id: &'a str,
+    pub channel_id: &'a str,
+    pub adapter_kind: &'a str,
+    pub extension_id: Option<&'a str>,
+    pub base_url: &'a str,
+    pub display_name: &'a str,
+    pub channel_bindings: &'a [ProviderChannelBinding],
+}
+
 pub async fn persist_provider(
     store: &dyn AdminStore,
     id: &str,
@@ -128,35 +139,31 @@ pub async fn persist_provider_with_bindings(
 ) -> Result<ProxyProvider> {
     persist_provider_with_bindings_and_extension_id(
         store,
-        id,
-        channel_id,
-        adapter_kind,
-        None,
-        base_url,
-        display_name,
-        channel_bindings,
+        PersistProviderWithBindingsRequest {
+            id,
+            channel_id,
+            adapter_kind,
+            extension_id: None,
+            base_url,
+            display_name,
+            channel_bindings,
+        },
     )
     .await
 }
 
 pub async fn persist_provider_with_bindings_and_extension_id(
     store: &dyn AdminStore,
-    id: &str,
-    channel_id: &str,
-    adapter_kind: &str,
-    extension_id: Option<&str>,
-    base_url: &str,
-    display_name: &str,
-    channel_bindings: &[ProviderChannelBinding],
+    request: PersistProviderWithBindingsRequest<'_>,
 ) -> Result<ProxyProvider> {
     let provider = create_provider_with_bindings_and_extension_id(
-        id,
-        channel_id,
-        adapter_kind,
-        extension_id,
-        base_url,
-        display_name,
-        channel_bindings,
+        request.id,
+        request.channel_id,
+        request.adapter_kind,
+        request.extension_id,
+        request.base_url,
+        request.display_name,
+        request.channel_bindings,
     )?;
     store.insert_provider(&provider).await
 }

@@ -4,6 +4,7 @@ use sdkwork_api_app_credential::CredentialSecretManager;
 use sdkwork_api_app_extension::start_provider_health_snapshot_supervision;
 use sdkwork_api_config::StandaloneConfig;
 use sdkwork_api_interface_http::gateway_router_with_store_and_secret_manager;
+use sdkwork_api_observability::init_tracing;
 use sdkwork_api_storage_core::{AdminStore, StorageDialect};
 use sdkwork_api_storage_postgres::{run_migrations as run_postgres_migrations, PostgresAdminStore};
 use sdkwork_api_storage_sqlite::{run_migrations, SqliteAdminStore};
@@ -11,6 +12,7 @@ use tokio::net::TcpListener;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    init_tracing("gateway-service");
     let config = StandaloneConfig::from_env()?;
     let store: Arc<dyn AdminStore> = match config.storage_dialect() {
         Some(StorageDialect::Sqlite) => {

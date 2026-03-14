@@ -218,7 +218,7 @@ use sdkwork_api_contract_openai::vector_stores::{
 };
 use sdkwork_api_contract_openai::videos::{CreateVideoRequest, RemixVideoRequest};
 use sdkwork_api_contract_openai::webhooks::{CreateWebhookRequest, UpdateWebhookRequest};
-use sdkwork_api_observability::{observe_http_metrics, HttpMetricsRegistry};
+use sdkwork_api_observability::{observe_http_metrics, observe_http_tracing, HttpMetricsRegistry};
 use sdkwork_api_provider_core::ProviderStreamOutput;
 use sdkwork_api_storage_core::AdminStore;
 use sdkwork_api_storage_sqlite::SqliteAdminStore;
@@ -306,6 +306,7 @@ impl FromRequestParts<GatewayApiState> for AuthenticatedGatewayRequest {
 }
 
 pub fn gateway_router() -> Router {
+    let service_name: Arc<str> = Arc::from("gateway");
     let metrics = Arc::new(HttpMetricsRegistry::new("gateway"));
     Router::new()
         .route(
@@ -538,6 +539,10 @@ pub fn gateway_router() -> Router {
             metrics,
             observe_http_metrics,
         ))
+        .layer(axum::middleware::from_fn_with_state(
+            service_name,
+            observe_http_tracing,
+        ))
 }
 
 pub fn gateway_router_with_pool(pool: SqlitePool) -> Router {
@@ -575,6 +580,7 @@ pub fn gateway_router_with_store_and_secret_manager(
     store: Arc<dyn AdminStore>,
     secret_manager: CredentialSecretManager,
 ) -> Router {
+    let service_name: Arc<str> = Arc::from("gateway");
     let metrics = Arc::new(HttpMetricsRegistry::new("gateway"));
     Router::new()
         .route(
@@ -852,6 +858,10 @@ pub fn gateway_router_with_store_and_secret_manager(
         .layer(axum::middleware::from_fn_with_state(
             metrics,
             observe_http_metrics,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            service_name,
+            observe_http_tracing,
         ))
         .with_state(GatewayApiState::with_store_and_secret_manager(
             store,

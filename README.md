@@ -52,6 +52,7 @@ Backend:
 - `admin-api-service` on `127.0.0.1:8081` by default
 - `gateway-service` on `127.0.0.1:8080` by default
 - Prometheus-compatible `/metrics` endpoints on both services
+- shared `x-request-id` propagation and structured HTTP request tracing on both services
 
 Frontend:
 
@@ -130,6 +131,14 @@ Admin metrics:
 curl http://127.0.0.1:8081/metrics
 ```
 
+Request correlation header example:
+
+```bash
+curl -i -H "x-request-id: demo-request-1" http://127.0.0.1:8080/health
+```
+
+Both services preserve a caller-supplied `x-request-id` or generate one automatically when the header is missing. The same ID is returned on the response and emitted in the standalone HTTP request logs.
+
 ## Quick Start With PostgreSQL
 
 Set `SDKWORK_DATABASE_URL` to a PostgreSQL connection string for both standalone services.
@@ -172,6 +181,8 @@ Recommended standalone startup sequence:
 4. configure channels, providers, credentials, models, and routing through the admin API
 5. issue a gateway API key
 6. call the `/v1/*` gateway routes with the issued key
+
+Both standalone binaries initialize a shared tracing subscriber at startup, so every HTTP request is logged with `service`, `request_id`, `method`, `route`, `status`, and `duration_ms`.
 
 ## Console Web Startup
 
@@ -345,6 +356,7 @@ Control-plane features include:
 - usage records and usage summaries
 - billing ledger entries, billing summaries, and quota policies
 - Prometheus-compatible HTTP metrics for gateway and admin services
+- `x-request-id` response propagation and structured HTTP request tracing for gateway and admin services
 
 For the up-to-date execution-truth matrix, see:
 
