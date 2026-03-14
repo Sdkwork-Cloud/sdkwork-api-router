@@ -1,7 +1,10 @@
 use sdkwork_api_domain_billing::QuotaPolicy;
 use sdkwork_api_domain_catalog::{Channel, ModelCatalogEntry, ProxyProvider};
 use sdkwork_api_domain_credential::UpstreamCredential;
-use sdkwork_api_domain_routing::{ProviderHealthSnapshot, RoutingPolicy, RoutingStrategy};
+use sdkwork_api_domain_routing::{
+    ProviderHealthSnapshot, RoutingCandidateAssessment, RoutingDecisionLog, RoutingDecisionSource,
+    RoutingPolicy, RoutingStrategy,
+};
 use sdkwork_api_secret_core::encrypt;
 use sdkwork_api_storage_postgres::{run_migrations, PostgresAdminStore};
 
@@ -99,6 +102,72 @@ async fn postgres_store_persists_routing_policies_when_url_is_provided() {
         Some("provider-openai-official")
     );
     assert_eq!(stored.strategy, RoutingStrategy::WeightedRandom);
+}
+
+#[tokio::test]
+async fn postgres_store_round_trips_slo_policy_fields_when_url_is_provided() {
+    let Some(database_url) = std::env::var("SDKWORK_TEST_POSTGRES_URL").ok() else {
+        return;
+    };
+
+    let pool = run_migrations(&database_url).await.unwrap();
+    let store = PostgresAdminStore::new(pool);
+
+    let policy = RoutingPolicy::new("policy-slo", "chat_completion", "gpt-4.1")
+        .with_strategy(RoutingStrategy::SloAware)
+        .with_max_cost(0.35)
+        .with_max_latency_ms(300)
+        .with_require_healthy(true)
+        .with_ordered_provider_ids(vec!["provider-openrouter".to_owned()]);
+
+    store.insert_routing_policy(&policy).await.unwrap();
+
+    let stored = store
+        .list_routing_policies()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|entry| entry.policy_id == "policy-slo")
+        .expect("routing policy");
+    assert_eq!(stored.strategy, RoutingStrategy::SloAware);
+    assert_eq!(stored.max_cost, Some(0.35));
+    assert_eq!(stored.max_latency_ms, Some(300));
+    assert!(stored.require_healthy);
+}
+
+#[tokio::test]
+async fn postgres_store_persists_routing_decision_logs_when_url_is_provided() {
+    let Some(database_url) = std::env::var("SDKWORK_TEST_POSTGRES_URL").ok() else {
+        return;
+    };
+
+    let pool = run_migrations(&database_url).await.unwrap();
+    let store = PostgresAdminStore::new(pool);
+
+    let log = RoutingDecisionLog::new(
+        "decision-postgres",
+        RoutingDecisionSource::Gateway,
+        "chat_completion",
+        "gpt-4.1",
+        "provider-openai-official",
+        "slo_aware",
+        1234,
+    )
+    .with_tenant_id("tenant-1")
+    .with_project_id("project-1")
+    .with_selection_reason(
+        "selected provider-openai-official as the top-ranked SLO-compliant candidate",
+    )
+    .with_slo_state(true, false)
+    .with_assessments(vec![RoutingCandidateAssessment::new(
+        "provider-openai-official",
+    )
+    .with_slo_eligible(true)]);
+
+    store.insert_routing_decision_log(&log).await.unwrap();
+
+    let logs = store.list_routing_decision_logs().await.unwrap();
+    assert!(logs.iter().any(|entry| entry == &log));
 }
 
 #[tokio::test]

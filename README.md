@@ -141,9 +141,10 @@ Known gaps:
 - native dynamic execution now supports JSON-capable provider operations plus chat and responses SSE relay, binary stream passthrough for audio speech plus file and video content, and optional package-runtime lifecycle hooks; hot reload remains future work
 - only stateful gateway execution paths relay upstream responses; the stateless demo router still emits local stub payloads
 - broader API families are now wired as either `relay` or `emulated`; see `docs/api/compatibility-matrix.md` for the execution-truth matrix
-- routing policies now support explicit `deterministic_priority` and `weighted_random` strategies, with runtime-aware candidate assessment, policy order, provider availability, live runtime health, persisted provider health snapshots, and instance-level cost or latency hints
+- routing policies now support explicit `deterministic_priority`, `weighted_random`, and `slo_aware` strategies, with runtime-aware candidate assessment, policy order, provider availability, live runtime health, persisted provider health snapshots, instance-level cost or latency hints, and optional SLO thresholds for `max_cost`, `max_latency_ms`, and `require_healthy`
 - project-scoped quota-aware admission is now active for `/v1/chat/completions`, `/v1/completions`, `/v1/responses`, and `/v1/embeddings`, backed by persisted billing quota policies and OpenAI-compatible `429 insufficient_quota` responses
-- geo affinity and SLO-aware routing are not implemented yet
+- routing decision logs are now persisted for both admin simulations and real gateway selections, including SLO compliance or degraded-fallback evidence
+- geo affinity remains future work
 - SQLite and PostgreSQL are active persistence drivers; MySQL and libsql remain extension boundaries
 
 ## Minimal Upstream Relay Setup
@@ -267,6 +268,8 @@ pnpm --dir console exec vite build
 - `ProviderChannelBinding` now allows one provider to bind to multiple channel ecosystems without losing a primary channel for compatibility.
 - `ModelCatalogEntry` now carries capability and streaming metadata instead of only `external_name + provider_id`.
 - `RoutingPolicy` is now a first-class control-plane aggregate that can steer both admin simulation and real gateway relay using priority, explicit routing strategy, model pattern matching, ordered providers, and optional default provider fallback.
+- `RoutingPolicy` now also carries optional SLO thresholds so `slo_aware` selection can prefer compliant providers before gracefully degrading to the best-ranked fallback.
+- `RoutingDecisionLog` is now a persisted routing audit aggregate that records gateway and admin-simulation decisions with candidate evidence, tenant or project context, and SLO degraded state.
 - The backend is split into domain, application, interface, storage, provider, secret, and runtime crates to preserve controller/service/repository layering without forcing separate deployable processes for every boundary.
 - Standalone and embedded runtime modes share the same Rust crates; Tauri integration consumes the same admin and gateway capabilities through the runtime host boundary.
 - Stateful gateway execution now uses the catalog, routing, credential, and provider layers together to relay OpenAI-compatible upstream requests while still preserving local stub fallbacks for incomplete configuration.

@@ -9401,7 +9401,8 @@ async fn record_gateway_usage_for_project(
     amount: f64,
 ) -> anyhow::Result<()> {
     let provider_id =
-        planned_execution_provider_id_for_route(store, tenant_id, capability, model).await?;
+        planned_execution_provider_id_for_route(store, tenant_id, project_id, capability, model)
+            .await?;
     persist_usage_record(store, project_id, model, &provider_id).await?;
     persist_ledger_entry(store, project_id, units, amount).await?;
     Ok(())

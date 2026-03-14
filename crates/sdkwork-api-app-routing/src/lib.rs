@@ -10,7 +10,7 @@ use sdkwork_api_app_extension::{
 use sdkwork_api_domain_catalog::ProxyProvider;
 use sdkwork_api_domain_routing::{
     select_policy, ProviderHealthSnapshot, RoutingCandidateAssessment, RoutingCandidateHealth,
-    RoutingDecision, RoutingPolicy, RoutingStrategy,
+    RoutingDecision, RoutingDecisionLog, RoutingDecisionSource, RoutingPolicy, RoutingStrategy,
 };
 use sdkwork_api_extension_core::{ExtensionInstallation, ExtensionInstance};
 use sdkwork_api_storage_core::AdminStore;
@@ -33,6 +33,9 @@ pub struct CreateRoutingPolicyInput<'a> {
     pub strategy: Option<RoutingStrategy>,
     pub ordered_provider_ids: &'a [String],
     pub default_provider_id: Option<&'a str>,
+    pub max_cost: Option<f64>,
+    pub max_latency_ms: Option<u64>,
+    pub require_healthy: bool,
 }
 
 pub fn simulate_route(_capability: &str, _model: &str) -> Result<RoutingDecision> {
@@ -68,7 +71,10 @@ pub fn create_routing_policy(input: CreateRoutingPolicyInput<'_>) -> Result<Rout
                 .strategy
                 .unwrap_or(RoutingStrategy::DeterministicPriority),
         )
-        .with_ordered_provider_ids(input.ordered_provider_ids.to_vec());
+        .with_ordered_provider_ids(input.ordered_provider_ids.to_vec())
+        .with_max_cost_option(input.max_cost)
+        .with_max_latency_ms_option(input.max_latency_ms)
+        .with_require_healthy(input.require_healthy);
 
     Ok(match input.default_provider_id {
         Some(default_provider_id) if !default_provider_id.trim().is_empty() => {
@@ -89,6 +95,10 @@ pub async fn list_routing_policies(store: &dyn AdminStore) -> Result<Vec<Routing
     store.list_routing_policies().await
 }
 
+pub async fn list_routing_decision_logs(store: &dyn AdminStore) -> Result<Vec<RoutingDecisionLog>> {
+    store.list_routing_decision_logs().await
+}
+
 pub async fn simulate_route_with_store(
     store: &dyn AdminStore,
     capability: &str,
@@ -104,6 +114,41 @@ pub async fn simulate_route_with_store_seeded(
     selection_seed: u64,
 ) -> Result<RoutingDecision> {
     simulate_route_with_store_inner(store, capability, model, Some(selection_seed)).await
+}
+
+pub async fn select_route_with_store(
+    store: &dyn AdminStore,
+    capability: &str,
+    route_key: &str,
+    decision_source: RoutingDecisionSource,
+    tenant_id: Option<&str>,
+    project_id: Option<&str>,
+    selection_seed: Option<u64>,
+) -> Result<RoutingDecision> {
+    let decision =
+        simulate_route_with_store_inner(store, capability, route_key, selection_seed).await?;
+    let created_at_ms = current_time_millis();
+    let log = RoutingDecisionLog::new(
+        generate_decision_id(created_at_ms),
+        decision_source,
+        capability,
+        route_key,
+        decision.selected_provider_id.clone(),
+        decision
+            .strategy
+            .clone()
+            .unwrap_or_else(|| STRATEGY_STATIC_FALLBACK.to_owned()),
+        created_at_ms,
+    )
+    .with_tenant_id_option(tenant_id.map(ToOwned::to_owned))
+    .with_project_id_option(project_id.map(ToOwned::to_owned))
+    .with_matched_policy_id_option(decision.matched_policy_id.clone())
+    .with_selection_seed_option(selection_seed.or(decision.selection_seed))
+    .with_selection_reason_option(decision.selection_reason.clone())
+    .with_slo_state(decision.slo_applied, decision.slo_degraded)
+    .with_assessments(decision.assessments.clone());
+    store.insert_routing_decision_log(&log).await?;
+    Ok(decision)
 }
 
 async fn simulate_route_with_store_inner(
@@ -187,13 +232,9 @@ async fn simulate_route_with_store_inner(
         .collect::<Vec<_>>();
     assessments.sort_by(compare_assessments);
 
-    let routing_strategy = matched_policy
-        .map(|policy| policy.strategy)
-        .unwrap_or(RoutingStrategy::DeterministicPriority);
-    let (selected_index, decision_strategy, decision_selection_seed, selection_reason) =
-        select_candidate(&mut assessments, routing_strategy, selection_seed);
+    let selection = select_candidate(&mut assessments, matched_policy, selection_seed);
     let selected = assessments
-        .get(selected_index)
+        .get(selection.selected_index)
         .map(|assessment| assessment.provider_id.clone())
         .unwrap_or_else(|| candidate_ids[0].clone());
 
@@ -203,10 +244,11 @@ async fn simulate_route_with_store_inner(
         .collect::<Vec<_>>();
 
     let mut decision = RoutingDecision::new(selected, ranked_candidate_ids)
-        .with_strategy(decision_strategy)
-        .with_selection_reason(selection_reason)
+        .with_strategy(selection.strategy)
+        .with_selection_reason(selection.selection_reason)
+        .with_slo_state(selection.slo_applied, selection.slo_degraded)
         .with_assessments(assessments);
-    if let Some(selection_seed) = decision_selection_seed {
+    if let Some(selection_seed) = selection.selection_seed {
         decision = decision.with_selection_seed(selection_seed);
     }
     Ok(match matched_policy {
@@ -215,11 +257,23 @@ async fn simulate_route_with_store_inner(
     })
 }
 
+struct CandidateSelection {
+    selected_index: usize,
+    strategy: String,
+    selection_seed: Option<u64>,
+    selection_reason: String,
+    slo_applied: bool,
+    slo_degraded: bool,
+}
+
 fn select_candidate(
     assessments: &mut [RoutingCandidateAssessment],
-    routing_strategy: RoutingStrategy,
+    matched_policy: Option<&RoutingPolicy>,
     provided_selection_seed: Option<u64>,
-) -> (usize, &'static str, Option<u64>, String) {
+) -> CandidateSelection {
+    let routing_strategy = matched_policy
+        .map(|policy| policy.strategy)
+        .unwrap_or(RoutingStrategy::DeterministicPriority);
     match routing_strategy {
         RoutingStrategy::DeterministicPriority => {
             let selected_index = 0;
@@ -227,23 +281,132 @@ fn select_candidate(
                 .get(selected_index)
                 .map(selected_assessment_reason)
                 .unwrap_or_else(|| "selected the first available candidate".to_owned());
-            (
+            CandidateSelection {
                 selected_index,
-                STRATEGY_RUNTIME_AWARE,
-                None,
+                strategy: STRATEGY_RUNTIME_AWARE.to_owned(),
+                selection_seed: None,
                 selection_reason,
-            )
+                slo_applied: false,
+                slo_degraded: false,
+            }
         }
         RoutingStrategy::WeightedRandom => {
             let selection_seed = provided_selection_seed.unwrap_or_else(generate_selection_seed);
             let (selected_index, selection_reason) =
                 select_weighted_candidate(assessments, selection_seed);
-            (
+            CandidateSelection {
                 selected_index,
-                RoutingStrategy::WeightedRandom.as_str(),
-                Some(selection_seed),
+                strategy: RoutingStrategy::WeightedRandom.as_str().to_owned(),
+                selection_seed: Some(selection_seed),
                 selection_reason,
-            )
+                slo_applied: false,
+                slo_degraded: false,
+            }
+        }
+        RoutingStrategy::SloAware => select_slo_aware_candidate(assessments, matched_policy),
+    }
+}
+
+fn select_slo_aware_candidate(
+    assessments: &mut [RoutingCandidateAssessment],
+    matched_policy: Option<&RoutingPolicy>,
+) -> CandidateSelection {
+    let Some(policy) = matched_policy else {
+        return CandidateSelection {
+            selected_index: 0,
+            strategy: RoutingStrategy::SloAware.as_str().to_owned(),
+            selection_seed: None,
+            selection_reason: "selected the top-ranked candidate because no routing policy was available for SLO evaluation".to_owned(),
+            slo_applied: false,
+            slo_degraded: false,
+        };
+    };
+
+    let slo_applied =
+        policy.max_cost.is_some() || policy.max_latency_ms.is_some() || policy.require_healthy;
+    if !slo_applied {
+        for assessment in assessments.iter_mut() {
+            assessment.slo_eligible = Some(true);
+        }
+
+        let selection_reason = assessments
+            .first()
+            .map(|assessment| {
+                format!(
+                    "selected {} as the top-ranked candidate because the slo_aware policy had no active SLO thresholds",
+                    assessment.provider_id
+                )
+            })
+            .unwrap_or_else(|| "slo_aware policy had no assessed candidates".to_owned());
+        return CandidateSelection {
+            selected_index: 0,
+            strategy: RoutingStrategy::SloAware.as_str().to_owned(),
+            selection_seed: None,
+            selection_reason,
+            slo_applied: false,
+            slo_degraded: false,
+        };
+    }
+
+    let mut eligible_indices = Vec::new();
+    for (index, assessment) in assessments.iter_mut().enumerate() {
+        let violations = slo_violations_for_candidate(assessment, policy);
+        assessment.slo_violations = violations.clone();
+        assessment.slo_eligible = Some(violations.is_empty());
+        if violations.is_empty() {
+            assessment
+                .reasons
+                .push("eligible for active SLO thresholds".to_owned());
+            eligible_indices.push(index);
+        } else {
+            assessment.reasons.push(format!(
+                "excluded from SLO-aware selection because {}",
+                violations.join(", ")
+            ));
+        }
+    }
+
+    if let Some(&selected_index) = eligible_indices.first() {
+        let provider_id = assessments
+            .get(selected_index)
+            .map(|assessment| assessment.provider_id.clone())
+            .unwrap_or_default();
+        if let Some(assessment) = assessments.get_mut(selected_index) {
+            assessment
+                .reasons
+                .push("selected as the top-ranked SLO-compliant candidate".to_owned());
+        }
+        CandidateSelection {
+            selected_index,
+            strategy: RoutingStrategy::SloAware.as_str().to_owned(),
+            selection_seed: None,
+            selection_reason: format!(
+                "selected {provider_id} as the top-ranked SLO-compliant candidate"
+            ),
+            slo_applied: true,
+            slo_degraded: false,
+        }
+    } else {
+        let selected_index = 0;
+        let provider_id = assessments
+            .get(selected_index)
+            .map(|assessment| assessment.provider_id.clone())
+            .unwrap_or_default();
+        if let Some(assessment) = assessments.get_mut(selected_index) {
+            assessment.reasons.push(
+                "selected as a degraded fallback because no candidate satisfied the active SLO thresholds"
+                    .to_owned(),
+            );
+        }
+        CandidateSelection {
+            selected_index,
+            strategy: RoutingStrategy::SloAware.as_str().to_owned(),
+            selection_seed: None,
+            selection_reason: format!(
+                "degraded to {provider_id} because no candidate satisfied the active SLO thresholds"
+            ),
+            slo_applied: true,
+            slo_degraded: true,
         }
     }
 }
@@ -358,6 +521,58 @@ fn generate_selection_seed() -> u64 {
             (nanos ^ u128::from(std::process::id())) as u64
         })
         .unwrap_or_else(|_| u64::from(std::process::id()))
+}
+
+fn current_time_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or(0)
+}
+
+fn generate_decision_id(created_at_ms: u64) -> String {
+    format!("route-dec-{}-{}", created_at_ms, generate_selection_seed())
+}
+
+fn slo_violations_for_candidate(
+    assessment: &RoutingCandidateAssessment,
+    policy: &RoutingPolicy,
+) -> Vec<String> {
+    let mut violations = Vec::new();
+
+    if !assessment.available {
+        violations.push("candidate is unavailable".to_owned());
+    }
+
+    if policy.require_healthy && assessment.health != RoutingCandidateHealth::Healthy {
+        violations.push("health requirement not satisfied".to_owned());
+    }
+
+    if let Some(max_cost) = policy.max_cost {
+        match assessment.cost {
+            Some(cost) if cost > max_cost => {
+                violations.push(format!("cost {cost} exceeds max_cost {max_cost}"));
+            }
+            Some(_) => {}
+            None => violations.push("cost evidence missing for required SLO threshold".to_owned()),
+        }
+    }
+
+    if let Some(max_latency_ms) = policy.max_latency_ms {
+        match assessment.latency_ms {
+            Some(latency_ms) if latency_ms > max_latency_ms => {
+                violations.push(format!(
+                    "latency {latency_ms}ms exceeds max_latency_ms {max_latency_ms}"
+                ));
+            }
+            Some(_) => {}
+            None => {
+                violations.push("latency evidence missing for required SLO threshold".to_owned())
+            }
+        }
+    }
+
+    violations
 }
 
 fn assess_candidate(

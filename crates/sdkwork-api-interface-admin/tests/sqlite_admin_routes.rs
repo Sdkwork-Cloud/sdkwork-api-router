@@ -370,7 +370,7 @@ async fn create_and_list_routing_policies() {
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    "{\"policy_id\":\"policy-gpt-4-1\",\"capability\":\"chat_completion\",\"model_pattern\":\"gpt-4.1\",\"enabled\":true,\"priority\":100,\"strategy\":\"weighted_random\",\"ordered_provider_ids\":[\"provider-openrouter\",\"provider-openai-official\"],\"default_provider_id\":\"provider-openai-official\"}",
+                    "{\"policy_id\":\"policy-gpt-4-1\",\"capability\":\"chat_completion\",\"model_pattern\":\"gpt-4.1\",\"enabled\":true,\"priority\":100,\"strategy\":\"slo_aware\",\"ordered_provider_ids\":[\"provider-openrouter\",\"provider-openai-official\"],\"default_provider_id\":\"provider-openai-official\",\"max_cost\":0.25,\"max_latency_ms\":200,\"require_healthy\":true}",
                 ))
                 .unwrap(),
         )
@@ -381,7 +381,10 @@ async fn create_and_list_routing_policies() {
     let created_json = read_json(create).await;
     assert_eq!(created_json["policy_id"], "policy-gpt-4-1");
     assert_eq!(created_json["priority"], 100);
-    assert_eq!(created_json["strategy"], "weighted_random");
+    assert_eq!(created_json["strategy"], "slo_aware");
+    assert_eq!(created_json["max_cost"], 0.25);
+    assert_eq!(created_json["max_latency_ms"], 200);
+    assert_eq!(created_json["require_healthy"], true);
 
     let list = app
         .oneshot(
@@ -406,7 +409,72 @@ async fn create_and_list_routing_policies() {
         list_json[0]["default_provider_id"],
         "provider-openai-official"
     );
-    assert_eq!(list_json[0]["strategy"], "weighted_random");
+    assert_eq!(list_json[0]["strategy"], "slo_aware");
+    assert_eq!(list_json[0]["max_cost"], 0.25);
+    assert_eq!(list_json[0]["max_latency_ms"], 200);
+    assert_eq!(list_json[0]["require_healthy"], true);
+}
+
+#[serial(extension_env)]
+#[tokio::test]
+async fn routing_simulation_persists_decision_log_and_lists_it() {
+    let pool = memory_pool().await;
+    let app = sdkwork_api_interface_admin::admin_router_with_pool(pool);
+    let token = login_token(app.clone()).await;
+
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/models")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"external_name\":\"gpt-4.1\",\"provider_id\":\"provider-openrouter\"}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let simulation = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/routing/simulations")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"capability\":\"chat_completion\",\"model\":\"gpt-4.1\",\"selection_seed\":7}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(simulation.status(), StatusCode::OK);
+
+    let logs = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/admin/routing/decision-logs")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(logs.status(), StatusCode::OK);
+    let logs_json = read_json(logs).await;
+    assert_eq!(logs_json.as_array().unwrap().len(), 1);
+    assert_eq!(logs_json[0]["decision_source"], "admin_simulation");
+    assert_eq!(logs_json[0]["capability"], "chat_completion");
+    assert_eq!(logs_json[0]["route_key"], "gpt-4.1");
+    assert_eq!(logs_json[0]["selection_seed"], 7);
 }
 
 #[serial(extension_env)]

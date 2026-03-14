@@ -1,7 +1,7 @@
 use anyhow::Result;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use sdkwork_api_app_credential::{resolve_provider_secret_with_manager, CredentialSecretManager};
-use sdkwork_api_app_routing::simulate_route_with_store;
+use sdkwork_api_app_routing::select_route_with_store;
 use sdkwork_api_contract_openai::assistants::{
     AssistantObject, CreateAssistantRequest, DeleteAssistantResponse, ListAssistantsResponse,
     UpdateAssistantRequest,
@@ -72,6 +72,7 @@ use sdkwork_api_contract_openai::webhooks::{
     WebhookObject,
 };
 use sdkwork_api_domain_catalog::ProxyProvider;
+use sdkwork_api_domain_routing::{RoutingDecision, RoutingDecisionSource};
 use sdkwork_api_extension_core::{
     ExtensionKind, ExtensionManifest, ExtensionProtocol, ExtensionRuntime,
 };
@@ -86,6 +87,8 @@ use sdkwork_api_provider_openai::OpenAiProviderAdapter;
 use sdkwork_api_provider_openrouter::OpenRouterProviderAdapter;
 use sdkwork_api_storage_core::AdminStore;
 use serde_json::Value;
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 
 pub const LOCAL_PROVIDER_ID: &str = "sdkwork.local";
 
@@ -295,13 +298,97 @@ async fn provider_execution_descriptor_for_provider(
     })
 }
 
+static ROUTING_DECISION_CACHE: OnceLock<Mutex<HashMap<String, RoutingDecision>>> = OnceLock::new();
+
+fn routing_decision_cache() -> &'static Mutex<HashMap<String, RoutingDecision>> {
+    ROUTING_DECISION_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn routing_decision_cache_key(
+    tenant_id: &str,
+    project_id: Option<&str>,
+    capability: &str,
+    route_key: &str,
+) -> String {
+    format!(
+        "{tenant_id}|{}|{capability}|{route_key}",
+        project_id.unwrap_or_default()
+    )
+}
+
+fn cache_routing_decision(
+    tenant_id: &str,
+    project_id: Option<&str>,
+    capability: &str,
+    route_key: &str,
+    decision: &RoutingDecision,
+) {
+    let key = routing_decision_cache_key(tenant_id, project_id, capability, route_key);
+    let mut cache = match routing_decision_cache().lock() {
+        Ok(cache) => cache,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    cache.insert(key, decision.clone());
+}
+
+fn take_cached_routing_decision(
+    tenant_id: &str,
+    project_id: Option<&str>,
+    capability: &str,
+    route_key: &str,
+) -> Option<RoutingDecision> {
+    let key = routing_decision_cache_key(tenant_id, project_id, capability, route_key);
+    let mut cache = match routing_decision_cache().lock() {
+        Ok(cache) => cache,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    cache.remove(&key)
+}
+
+async fn select_gateway_route(
+    store: &dyn AdminStore,
+    tenant_id: &str,
+    project_id: Option<&str>,
+    capability: &str,
+    route_key: &str,
+) -> Result<RoutingDecision> {
+    let decision = select_route_with_store(
+        store,
+        capability,
+        route_key,
+        RoutingDecisionSource::Gateway,
+        Some(tenant_id),
+        project_id,
+        None,
+    )
+    .await?;
+    cache_routing_decision(tenant_id, project_id, capability, route_key, &decision);
+    Ok(decision)
+}
+
 pub async fn planned_execution_provider_id_for_route(
     store: &dyn AdminStore,
     tenant_id: &str,
+    project_id: &str,
     capability: &str,
     route_key: &str,
 ) -> Result<String> {
-    let decision = simulate_route_with_store(store, capability, route_key).await?;
+    let decision =
+        match take_cached_routing_decision(tenant_id, Some(project_id), capability, route_key) {
+            Some(decision) => decision,
+            None => {
+                select_route_with_store(
+                    store,
+                    capability,
+                    route_key,
+                    RoutingDecisionSource::Gateway,
+                    Some(tenant_id),
+                    Some(project_id),
+                    None,
+                )
+                .await?
+            }
+        };
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(LOCAL_PROVIDER_ID.to_owned());
     };
@@ -330,7 +417,16 @@ async fn resolve_non_model_provider(
     capability: &str,
     route_key: &str,
 ) -> Result<Option<(String, String, String)>> {
-    let decision = simulate_route_with_store(store, capability, route_key).await?;
+    let decision = select_route_with_store(
+        store,
+        capability,
+        route_key,
+        RoutingDecisionSource::Gateway,
+        Some(tenant_id),
+        None,
+        None,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -360,7 +456,14 @@ pub async fn relay_chat_completion_from_store(
     _project_id: &str,
     request: &CreateChatCompletionRequest,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "chat_completion", &request.model).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "chat_completion",
+        &request.model,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -386,7 +489,14 @@ pub async fn relay_list_chat_completions_from_store(
     tenant_id: &str,
     _project_id: &str,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "chat_completion", "chat_completions").await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "chat_completion",
+        "chat_completions",
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -413,7 +523,14 @@ pub async fn relay_get_chat_completion_from_store(
     _project_id: &str,
     completion_id: &str,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "chat_completion", completion_id).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "chat_completion",
+        completion_id,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -441,7 +558,14 @@ pub async fn relay_update_chat_completion_from_store(
     completion_id: &str,
     request: &UpdateChatCompletionRequest,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "chat_completion", completion_id).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "chat_completion",
+        completion_id,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -468,7 +592,14 @@ pub async fn relay_delete_chat_completion_from_store(
     _project_id: &str,
     completion_id: &str,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "chat_completion", completion_id).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "chat_completion",
+        completion_id,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -495,7 +626,14 @@ pub async fn relay_list_chat_completion_messages_from_store(
     _project_id: &str,
     completion_id: &str,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "chat_completion", completion_id).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "chat_completion",
+        completion_id,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -522,7 +660,14 @@ pub async fn relay_chat_completion_stream_from_store(
     _project_id: &str,
     request: &CreateChatCompletionRequest,
 ) -> Result<Option<ProviderStreamOutput>> {
-    let decision = simulate_route_with_store(store, "chat_completion", &request.model).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "chat_completion",
+        &request.model,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -1239,7 +1384,14 @@ pub async fn relay_response_from_store(
     _project_id: &str,
     request: &CreateResponseRequest,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "responses", &request.model).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "responses",
+        &request.model,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -1266,7 +1418,14 @@ pub async fn relay_response_stream_from_store(
     _project_id: &str,
     request: &CreateResponseRequest,
 ) -> Result<Option<ProviderStreamOutput>> {
-    let decision = simulate_route_with_store(store, "responses", &request.model).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "responses",
+        &request.model,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -1293,7 +1452,14 @@ pub async fn relay_count_response_input_tokens_from_store(
     _project_id: &str,
     request: &CountResponseInputTokensRequest,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "responses", &request.model).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "responses",
+        &request.model,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -1320,7 +1486,14 @@ pub async fn relay_get_response_from_store(
     _project_id: &str,
     response_id: &str,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "responses", response_id).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "responses",
+        response_id,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -1347,7 +1520,14 @@ pub async fn relay_cancel_response_from_store(
     _project_id: &str,
     response_id: &str,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "responses", response_id).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "responses",
+        response_id,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -1374,7 +1554,14 @@ pub async fn relay_delete_response_from_store(
     _project_id: &str,
     response_id: &str,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "responses", response_id).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "responses",
+        response_id,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -1401,7 +1588,14 @@ pub async fn relay_compact_response_from_store(
     _project_id: &str,
     request: &CompactResponseRequest,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "responses", &request.model).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "responses",
+        &request.model,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -1428,7 +1622,14 @@ pub async fn relay_list_response_input_items_from_store(
     _project_id: &str,
     response_id: &str,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "responses", response_id).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "responses",
+        response_id,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -1455,7 +1656,14 @@ pub async fn relay_completion_from_store(
     _project_id: &str,
     request: &CreateCompletionRequest,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "completions", &request.model).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "completions",
+        &request.model,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -1482,7 +1690,14 @@ pub async fn relay_embedding_from_store(
     _project_id: &str,
     request: &CreateEmbeddingRequest,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "embeddings", &request.model).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "embeddings",
+        &request.model,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -1509,7 +1724,14 @@ pub async fn relay_moderation_from_store(
     _project_id: &str,
     request: &CreateModerationRequest,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "moderations", &request.model).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "moderations",
+        &request.model,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -1536,7 +1758,14 @@ pub async fn relay_image_generation_from_store(
     _project_id: &str,
     request: &CreateImageRequest,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "images", &request.model).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "images",
+        &request.model,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -1563,7 +1792,14 @@ pub async fn relay_image_edit_from_store(
     _project_id: &str,
     request: &CreateImageEditRequest,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "images", request.model_or_default()).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "images",
+        request.model_or_default(),
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -1590,7 +1826,14 @@ pub async fn relay_image_variation_from_store(
     _project_id: &str,
     request: &CreateImageVariationRequest,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "images", request.model_or_default()).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "images",
+        request.model_or_default(),
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -1617,7 +1860,14 @@ pub async fn relay_transcription_from_store(
     _project_id: &str,
     request: &CreateTranscriptionRequest,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "audio_transcriptions", &request.model).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "audio_transcriptions",
+        &request.model,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -1644,7 +1894,14 @@ pub async fn relay_translation_from_store(
     _project_id: &str,
     request: &CreateTranslationRequest,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "audio_translations", &request.model).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "audio_translations",
+        &request.model,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -1671,7 +1928,14 @@ pub async fn relay_speech_from_store(
     _project_id: &str,
     request: &CreateSpeechRequest,
 ) -> Result<Option<ProviderStreamOutput>> {
-    let decision = simulate_route_with_store(store, "audio_speech", &request.model).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "audio_speech",
+        &request.model,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -1698,7 +1962,14 @@ pub async fn relay_file_from_store(
     _project_id: &str,
     request: &CreateFileRequest,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "files", &request.purpose).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "files",
+        &request.purpose,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -1724,7 +1995,8 @@ pub async fn relay_list_files_from_store(
     tenant_id: &str,
     _project_id: &str,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "files", "files").await?;
+    let decision =
+        select_gateway_route(store, tenant_id, Some(_project_id), "files", "files").await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -1751,7 +2023,8 @@ pub async fn relay_get_file_from_store(
     _project_id: &str,
     file_id: &str,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "files", file_id).await?;
+    let decision =
+        select_gateway_route(store, tenant_id, Some(_project_id), "files", file_id).await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -1778,7 +2051,8 @@ pub async fn relay_delete_file_from_store(
     _project_id: &str,
     file_id: &str,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "files", file_id).await?;
+    let decision =
+        select_gateway_route(store, tenant_id, Some(_project_id), "files", file_id).await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -1805,7 +2079,8 @@ pub async fn relay_file_content_from_store(
     _project_id: &str,
     file_id: &str,
 ) -> Result<Option<ProviderStreamOutput>> {
-    let decision = simulate_route_with_store(store, "files", file_id).await?;
+    let decision =
+        select_gateway_route(store, tenant_id, Some(_project_id), "files", file_id).await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -1832,7 +2107,14 @@ pub async fn relay_upload_from_store(
     _project_id: &str,
     request: &CreateUploadRequest,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "uploads", &request.purpose).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "uploads",
+        &request.purpose,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -1859,7 +2141,14 @@ pub async fn relay_upload_part_from_store(
     _project_id: &str,
     request: &AddUploadPartRequest,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "uploads", &request.upload_id).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "uploads",
+        &request.upload_id,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -1886,7 +2175,14 @@ pub async fn relay_complete_upload_from_store(
     _project_id: &str,
     request: &CompleteUploadRequest,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "uploads", &request.upload_id).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "uploads",
+        &request.upload_id,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -1913,7 +2209,8 @@ pub async fn relay_cancel_upload_from_store(
     _project_id: &str,
     upload_id: &str,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "uploads", upload_id).await?;
+    let decision =
+        select_gateway_route(store, tenant_id, Some(_project_id), "uploads", upload_id).await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -1940,7 +2237,14 @@ pub async fn relay_fine_tuning_job_from_store(
     _project_id: &str,
     request: &CreateFineTuningJobRequest,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "fine_tuning", &request.model).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "fine_tuning",
+        &request.model,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -1966,7 +2270,8 @@ pub async fn relay_list_fine_tuning_jobs_from_store(
     tenant_id: &str,
     _project_id: &str,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "fine_tuning", "jobs").await?;
+    let decision =
+        select_gateway_route(store, tenant_id, Some(_project_id), "fine_tuning", "jobs").await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -1993,7 +2298,8 @@ pub async fn relay_get_fine_tuning_job_from_store(
     _project_id: &str,
     job_id: &str,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "fine_tuning", job_id).await?;
+    let decision =
+        select_gateway_route(store, tenant_id, Some(_project_id), "fine_tuning", job_id).await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -2020,7 +2326,8 @@ pub async fn relay_cancel_fine_tuning_job_from_store(
     _project_id: &str,
     job_id: &str,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "fine_tuning", job_id).await?;
+    let decision =
+        select_gateway_route(store, tenant_id, Some(_project_id), "fine_tuning", job_id).await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -2047,7 +2354,14 @@ pub async fn relay_assistant_from_store(
     _project_id: &str,
     request: &CreateAssistantRequest,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "assistants", &request.model).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "assistants",
+        &request.model,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -2073,7 +2387,14 @@ pub async fn relay_list_assistants_from_store(
     tenant_id: &str,
     _project_id: &str,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "assistants", "assistants").await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "assistants",
+        "assistants",
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -2100,7 +2421,14 @@ pub async fn relay_get_assistant_from_store(
     _project_id: &str,
     assistant_id: &str,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "assistants", assistant_id).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "assistants",
+        assistant_id,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -2128,7 +2456,14 @@ pub async fn relay_update_assistant_from_store(
     assistant_id: &str,
     request: &UpdateAssistantRequest,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "assistants", assistant_id).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "assistants",
+        assistant_id,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -2155,7 +2490,14 @@ pub async fn relay_delete_assistant_from_store(
     _project_id: &str,
     assistant_id: &str,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "assistants", assistant_id).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "assistants",
+        assistant_id,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -2182,7 +2524,14 @@ pub async fn relay_webhook_from_store(
     _project_id: &str,
     request: &CreateWebhookRequest,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "webhooks", &request.url).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "webhooks",
+        &request.url,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -2208,7 +2557,8 @@ pub async fn relay_list_webhooks_from_store(
     tenant_id: &str,
     _project_id: &str,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "webhooks", "webhooks").await?;
+    let decision =
+        select_gateway_route(store, tenant_id, Some(_project_id), "webhooks", "webhooks").await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -2235,7 +2585,8 @@ pub async fn relay_get_webhook_from_store(
     _project_id: &str,
     webhook_id: &str,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "webhooks", webhook_id).await?;
+    let decision =
+        select_gateway_route(store, tenant_id, Some(_project_id), "webhooks", webhook_id).await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -2263,7 +2614,8 @@ pub async fn relay_update_webhook_from_store(
     webhook_id: &str,
     request: &UpdateWebhookRequest,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "webhooks", webhook_id).await?;
+    let decision =
+        select_gateway_route(store, tenant_id, Some(_project_id), "webhooks", webhook_id).await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -2290,7 +2642,8 @@ pub async fn relay_delete_webhook_from_store(
     _project_id: &str,
     webhook_id: &str,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "webhooks", webhook_id).await?;
+    let decision =
+        select_gateway_route(store, tenant_id, Some(_project_id), "webhooks", webhook_id).await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -2317,7 +2670,14 @@ pub async fn relay_realtime_session_from_store(
     _project_id: &str,
     request: &CreateRealtimeSessionRequest,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "realtime_sessions", &request.model).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "realtime_sessions",
+        &request.model,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -2344,7 +2704,8 @@ pub async fn relay_eval_from_store(
     _project_id: &str,
     request: &CreateEvalRequest,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "evals", &request.name).await?;
+    let decision =
+        select_gateway_route(store, tenant_id, Some(_project_id), "evals", &request.name).await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -2371,7 +2732,14 @@ pub async fn relay_batch_from_store(
     _project_id: &str,
     request: &CreateBatchRequest,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "batches", &request.endpoint).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "batches",
+        &request.endpoint,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -2397,7 +2765,8 @@ pub async fn relay_list_batches_from_store(
     tenant_id: &str,
     _project_id: &str,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "batches", "batches").await?;
+    let decision =
+        select_gateway_route(store, tenant_id, Some(_project_id), "batches", "batches").await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -2424,7 +2793,8 @@ pub async fn relay_get_batch_from_store(
     _project_id: &str,
     batch_id: &str,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "batches", batch_id).await?;
+    let decision =
+        select_gateway_route(store, tenant_id, Some(_project_id), "batches", batch_id).await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -2451,7 +2821,8 @@ pub async fn relay_cancel_batch_from_store(
     _project_id: &str,
     batch_id: &str,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "batches", batch_id).await?;
+    let decision =
+        select_gateway_route(store, tenant_id, Some(_project_id), "batches", batch_id).await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -2478,7 +2849,14 @@ pub async fn relay_vector_store_from_store(
     _project_id: &str,
     request: &CreateVectorStoreRequest,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "vector_stores", &request.name).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "vector_stores",
+        &request.name,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -2504,7 +2882,14 @@ pub async fn relay_list_vector_stores_from_store(
     tenant_id: &str,
     _project_id: &str,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "vector_stores", "vector_stores").await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "vector_stores",
+        "vector_stores",
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -2531,7 +2916,14 @@ pub async fn relay_get_vector_store_from_store(
     _project_id: &str,
     vector_store_id: &str,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "vector_stores", vector_store_id).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "vector_stores",
+        vector_store_id,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -2559,7 +2951,14 @@ pub async fn relay_update_vector_store_from_store(
     vector_store_id: &str,
     request: &UpdateVectorStoreRequest,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "vector_stores", vector_store_id).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "vector_stores",
+        vector_store_id,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -2586,7 +2985,14 @@ pub async fn relay_delete_vector_store_from_store(
     _project_id: &str,
     vector_store_id: &str,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "vector_stores", vector_store_id).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "vector_stores",
+        vector_store_id,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -2614,7 +3020,14 @@ pub async fn relay_search_vector_store_from_store(
     vector_store_id: &str,
     request: &SearchVectorStoreRequest,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "vector_store_search", vector_store_id).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "vector_store_search",
+        vector_store_id,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -2642,7 +3055,14 @@ pub async fn relay_vector_store_file_from_store(
     vector_store_id: &str,
     request: &CreateVectorStoreFileRequest,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "vector_store_files", vector_store_id).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "vector_store_files",
+        vector_store_id,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -2669,7 +3089,14 @@ pub async fn relay_list_vector_store_files_from_store(
     _project_id: &str,
     vector_store_id: &str,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "vector_store_files", vector_store_id).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "vector_store_files",
+        vector_store_id,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -2697,7 +3124,14 @@ pub async fn relay_get_vector_store_file_from_store(
     vector_store_id: &str,
     file_id: &str,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "vector_store_files", vector_store_id).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "vector_store_files",
+        vector_store_id,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -2725,7 +3159,14 @@ pub async fn relay_delete_vector_store_file_from_store(
     vector_store_id: &str,
     file_id: &str,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "vector_store_files", vector_store_id).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "vector_store_files",
+        vector_store_id,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -2753,8 +3194,14 @@ pub async fn relay_vector_store_file_batch_from_store(
     vector_store_id: &str,
     request: &CreateVectorStoreFileBatchRequest,
 ) -> Result<Option<Value>> {
-    let decision =
-        simulate_route_with_store(store, "vector_store_file_batches", vector_store_id).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "vector_store_file_batches",
+        vector_store_id,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -2782,8 +3229,14 @@ pub async fn relay_get_vector_store_file_batch_from_store(
     vector_store_id: &str,
     batch_id: &str,
 ) -> Result<Option<Value>> {
-    let decision =
-        simulate_route_with_store(store, "vector_store_file_batches", vector_store_id).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "vector_store_file_batches",
+        vector_store_id,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -2811,8 +3264,14 @@ pub async fn relay_cancel_vector_store_file_batch_from_store(
     vector_store_id: &str,
     batch_id: &str,
 ) -> Result<Option<Value>> {
-    let decision =
-        simulate_route_with_store(store, "vector_store_file_batches", vector_store_id).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "vector_store_file_batches",
+        vector_store_id,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -2840,8 +3299,14 @@ pub async fn relay_list_vector_store_file_batch_files_from_store(
     vector_store_id: &str,
     batch_id: &str,
 ) -> Result<Option<Value>> {
-    let decision =
-        simulate_route_with_store(store, "vector_store_file_batches", vector_store_id).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "vector_store_file_batches",
+        vector_store_id,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -2868,7 +3333,14 @@ pub async fn relay_video_from_store(
     _project_id: &str,
     request: &CreateVideoRequest,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "videos", &request.model).await?;
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(_project_id),
+        "videos",
+        &request.model,
+    )
+    .await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -2894,7 +3366,8 @@ pub async fn relay_list_videos_from_store(
     tenant_id: &str,
     _project_id: &str,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "videos", "videos").await?;
+    let decision =
+        select_gateway_route(store, tenant_id, Some(_project_id), "videos", "videos").await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -2921,7 +3394,8 @@ pub async fn relay_get_video_from_store(
     _project_id: &str,
     video_id: &str,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "videos", video_id).await?;
+    let decision =
+        select_gateway_route(store, tenant_id, Some(_project_id), "videos", video_id).await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -2948,7 +3422,8 @@ pub async fn relay_delete_video_from_store(
     _project_id: &str,
     video_id: &str,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "videos", video_id).await?;
+    let decision =
+        select_gateway_route(store, tenant_id, Some(_project_id), "videos", video_id).await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -2975,7 +3450,8 @@ pub async fn relay_video_content_from_store(
     _project_id: &str,
     video_id: &str,
 ) -> Result<Option<ProviderStreamOutput>> {
-    let decision = simulate_route_with_store(store, "videos", video_id).await?;
+    let decision =
+        select_gateway_route(store, tenant_id, Some(_project_id), "videos", video_id).await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -3003,7 +3479,8 @@ pub async fn relay_remix_video_from_store(
     video_id: &str,
     request: &RemixVideoRequest,
 ) -> Result<Option<Value>> {
-    let decision = simulate_route_with_store(store, "videos", video_id).await?;
+    let decision =
+        select_gateway_route(store, tenant_id, Some(_project_id), "videos", video_id).await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };

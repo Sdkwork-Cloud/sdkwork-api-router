@@ -4,7 +4,7 @@ use sdkwork_api_domain_billing::{LedgerEntry, QuotaPolicy};
 use sdkwork_api_domain_catalog::{Channel, ModelCatalogEntry, ProxyProvider};
 use sdkwork_api_domain_credential::UpstreamCredential;
 use sdkwork_api_domain_identity::GatewayApiKeyRecord;
-use sdkwork_api_domain_routing::{ProviderHealthSnapshot, RoutingPolicy};
+use sdkwork_api_domain_routing::{ProviderHealthSnapshot, RoutingDecisionLog, RoutingPolicy};
 use sdkwork_api_domain_tenant::{Project, Tenant};
 use sdkwork_api_domain_usage::UsageRecord;
 use sdkwork_api_extension_core::{ExtensionInstallation, ExtensionInstance};
@@ -75,6 +75,11 @@ pub trait AdminStore: Send + Sync {
 
     async fn insert_routing_policy(&self, policy: &RoutingPolicy) -> Result<RoutingPolicy>;
     async fn list_routing_policies(&self) -> Result<Vec<RoutingPolicy>>;
+    async fn insert_routing_decision_log(
+        &self,
+        log: &RoutingDecisionLog,
+    ) -> Result<RoutingDecisionLog>;
+    async fn list_routing_decision_logs(&self) -> Result<Vec<RoutingDecisionLog>>;
     async fn insert_provider_health_snapshot(
         &self,
         snapshot: &ProviderHealthSnapshot,

@@ -8,7 +8,10 @@ use sdkwork_api_domain_catalog::{
 };
 use sdkwork_api_domain_credential::UpstreamCredential;
 use sdkwork_api_domain_identity::GatewayApiKeyRecord;
-use sdkwork_api_domain_routing::{ProviderHealthSnapshot, RoutingPolicy, RoutingStrategy};
+use sdkwork_api_domain_routing::{
+    ProviderHealthSnapshot, RoutingCandidateAssessment, RoutingDecisionLog, RoutingDecisionSource,
+    RoutingPolicy, RoutingStrategy,
+};
 use sdkwork_api_domain_tenant::{Project, Tenant};
 use sdkwork_api_domain_usage::UsageRecord;
 use sdkwork_api_extension_core::{ExtensionInstallation, ExtensionInstance, ExtensionRuntime};
@@ -182,12 +185,48 @@ pub async fn run_migrations(url: &str) -> Result<SqlitePool> {
         "strategy TEXT NOT NULL DEFAULT 'deterministic_priority'",
     )
     .await?;
+    ensure_sqlite_column(&pool, "routing_policies", "max_cost", "max_cost REAL").await?;
+    ensure_sqlite_column(
+        &pool,
+        "routing_policies",
+        "max_latency_ms",
+        "max_latency_ms INTEGER",
+    )
+    .await?;
+    ensure_sqlite_column(
+        &pool,
+        "routing_policies",
+        "require_healthy",
+        "require_healthy INTEGER NOT NULL DEFAULT 0",
+    )
+    .await?;
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS routing_policy_providers (
             policy_id TEXT NOT NULL,
             provider_id TEXT NOT NULL,
             position INTEGER NOT NULL,
             PRIMARY KEY (policy_id, provider_id)
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS routing_decision_logs (
+            decision_id TEXT PRIMARY KEY NOT NULL,
+            decision_source TEXT NOT NULL,
+            tenant_id TEXT,
+            project_id TEXT,
+            capability TEXT NOT NULL,
+            route_key TEXT NOT NULL,
+            selected_provider_id TEXT NOT NULL,
+            matched_policy_id TEXT,
+            strategy TEXT NOT NULL,
+            selection_seed INTEGER,
+            selection_reason TEXT,
+            slo_applied INTEGER NOT NULL DEFAULT 0,
+            slo_degraded INTEGER NOT NULL DEFAULT 0,
+            created_at_ms INTEGER NOT NULL,
+            assessments_json TEXT NOT NULL DEFAULT '[]'
         )",
     )
     .execute(&pool)
@@ -367,6 +406,14 @@ fn encode_extension_config(config: &Value) -> Result<String> {
 
 fn decode_extension_config(config_json: &str) -> Result<Value> {
     Ok(serde_json::from_str(config_json)?)
+}
+
+fn encode_routing_assessments(assessments: &[RoutingCandidateAssessment]) -> Result<String> {
+    Ok(serde_json::to_string(assessments)?)
+}
+
+fn decode_routing_assessments(assessments_json: &str) -> Result<Vec<RoutingCandidateAssessment>> {
+    Ok(serde_json::from_str(assessments_json)?)
 }
 
 #[derive(Debug, Clone)]
@@ -700,8 +747,8 @@ impl SqliteAdminStore {
 
     pub async fn insert_routing_policy(&self, policy: &RoutingPolicy) -> Result<RoutingPolicy> {
         sqlx::query(
-            "INSERT INTO routing_policies (policy_id, capability, model_pattern, enabled, priority, strategy, default_provider_id) VALUES (?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(policy_id) DO UPDATE SET capability = excluded.capability, model_pattern = excluded.model_pattern, enabled = excluded.enabled, priority = excluded.priority, strategy = excluded.strategy, default_provider_id = excluded.default_provider_id",
+            "INSERT INTO routing_policies (policy_id, capability, model_pattern, enabled, priority, strategy, default_provider_id, max_cost, max_latency_ms, require_healthy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(policy_id) DO UPDATE SET capability = excluded.capability, model_pattern = excluded.model_pattern, enabled = excluded.enabled, priority = excluded.priority, strategy = excluded.strategy, default_provider_id = excluded.default_provider_id, max_cost = excluded.max_cost, max_latency_ms = excluded.max_latency_ms, require_healthy = excluded.require_healthy",
         )
         .bind(&policy.policy_id)
         .bind(&policy.capability)
@@ -710,6 +757,9 @@ impl SqliteAdminStore {
         .bind(i64::from(policy.priority))
         .bind(policy.strategy.as_str())
         .bind(&policy.default_provider_id)
+        .bind(policy.max_cost)
+        .bind(policy.max_latency_ms.map(i64::try_from).transpose()?)
+        .bind(if policy.require_healthy { 1_i64 } else { 0_i64 })
         .execute(&self.pool)
         .await?;
 
@@ -734,8 +784,22 @@ impl SqliteAdminStore {
     }
 
     pub async fn list_routing_policies(&self) -> Result<Vec<RoutingPolicy>> {
-        let rows = sqlx::query_as::<_, (String, String, String, i64, i64, String, Option<String>)>(
-            "SELECT policy_id, capability, model_pattern, enabled, priority, strategy, default_provider_id
+        let rows = sqlx::query_as::<
+            _,
+            (
+                String,
+                String,
+                String,
+                i64,
+                i64,
+                String,
+                Option<String>,
+                Option<f64>,
+                Option<i64>,
+                i64,
+            ),
+        >(
+            "SELECT policy_id, capability, model_pattern, enabled, priority, strategy, default_provider_id, max_cost, max_latency_ms, require_healthy
              FROM routing_policies
              ORDER BY priority DESC, policy_id",
         )
@@ -751,6 +815,9 @@ impl SqliteAdminStore {
             priority,
             strategy,
             default_provider_id,
+            max_cost,
+            max_latency_ms,
+            require_healthy,
         ) in rows
         {
             policies.push(
@@ -764,10 +831,112 @@ impl SqliteAdminStore {
                     .with_ordered_provider_ids(
                         load_routing_policy_provider_ids(&self.pool, &policy_id).await?,
                     )
-                    .with_default_provider_id_option(default_provider_id),
+                    .with_default_provider_id_option(default_provider_id)
+                    .with_max_cost_option(max_cost)
+                    .with_max_latency_ms_option(max_latency_ms.map(u64::try_from).transpose()?)
+                    .with_require_healthy(require_healthy != 0),
             );
         }
         Ok(policies)
+    }
+
+    pub async fn insert_routing_decision_log(
+        &self,
+        log: &RoutingDecisionLog,
+    ) -> Result<RoutingDecisionLog> {
+        sqlx::query(
+            "INSERT INTO routing_decision_logs (decision_id, decision_source, tenant_id, project_id, capability, route_key, selected_provider_id, matched_policy_id, strategy, selection_seed, selection_reason, slo_applied, slo_degraded, created_at_ms, assessments_json)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(decision_id) DO UPDATE SET decision_source = excluded.decision_source, tenant_id = excluded.tenant_id, project_id = excluded.project_id, capability = excluded.capability, route_key = excluded.route_key, selected_provider_id = excluded.selected_provider_id, matched_policy_id = excluded.matched_policy_id, strategy = excluded.strategy, selection_seed = excluded.selection_seed, selection_reason = excluded.selection_reason, slo_applied = excluded.slo_applied, slo_degraded = excluded.slo_degraded, created_at_ms = excluded.created_at_ms, assessments_json = excluded.assessments_json",
+        )
+        .bind(&log.decision_id)
+        .bind(log.decision_source.as_str())
+        .bind(&log.tenant_id)
+        .bind(&log.project_id)
+        .bind(&log.capability)
+        .bind(&log.route_key)
+        .bind(&log.selected_provider_id)
+        .bind(&log.matched_policy_id)
+        .bind(&log.strategy)
+        .bind(log.selection_seed.map(i64::try_from).transpose()?)
+        .bind(&log.selection_reason)
+        .bind(if log.slo_applied { 1_i64 } else { 0_i64 })
+        .bind(if log.slo_degraded { 1_i64 } else { 0_i64 })
+        .bind(i64::try_from(log.created_at_ms)?)
+        .bind(encode_routing_assessments(&log.assessments)?)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(log.clone())
+    }
+
+    pub async fn list_routing_decision_logs(&self) -> Result<Vec<RoutingDecisionLog>> {
+        let rows = sqlx::query_as::<
+            _,
+            (
+                String,
+                String,
+                Option<String>,
+                Option<String>,
+                String,
+                String,
+                String,
+                Option<String>,
+                String,
+                Option<i64>,
+                Option<String>,
+                i64,
+                i64,
+                i64,
+                String,
+            ),
+        >(
+            "SELECT decision_id, decision_source, tenant_id, project_id, capability, route_key, selected_provider_id, matched_policy_id, strategy, selection_seed, selection_reason, slo_applied, slo_degraded, created_at_ms, assessments_json
+             FROM routing_decision_logs
+             ORDER BY created_at_ms DESC, decision_id DESC",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter()
+            .map(
+                |(
+                    decision_id,
+                    decision_source,
+                    tenant_id,
+                    project_id,
+                    capability,
+                    route_key,
+                    selected_provider_id,
+                    matched_policy_id,
+                    strategy,
+                    selection_seed,
+                    selection_reason,
+                    slo_applied,
+                    slo_degraded,
+                    created_at_ms,
+                    assessments_json,
+                )| {
+                    Ok(RoutingDecisionLog::new(
+                        decision_id,
+                        RoutingDecisionSource::from_str(&decision_source)
+                            .unwrap_or(RoutingDecisionSource::Gateway),
+                        capability,
+                        route_key,
+                        selected_provider_id,
+                        strategy,
+                        u64::try_from(created_at_ms)?,
+                    )
+                    .with_tenant_id_option(tenant_id)
+                    .with_project_id_option(project_id)
+                    .with_matched_policy_id_option(matched_policy_id)
+                    .with_selection_seed_option(selection_seed.map(u64::try_from).transpose()?)
+                    .with_selection_reason_option(selection_reason)
+                    .with_slo_state(slo_applied != 0, slo_degraded != 0)
+                    .with_assessments(decode_routing_assessments(&assessments_json)?))
+                },
+            )
+            .collect()
     }
 
     pub async fn insert_provider_health_snapshot(
@@ -1232,6 +1401,17 @@ impl AdminStore for SqliteAdminStore {
 
     async fn list_routing_policies(&self) -> Result<Vec<RoutingPolicy>> {
         SqliteAdminStore::list_routing_policies(self).await
+    }
+
+    async fn insert_routing_decision_log(
+        &self,
+        log: &RoutingDecisionLog,
+    ) -> Result<RoutingDecisionLog> {
+        SqliteAdminStore::insert_routing_decision_log(self, log).await
+    }
+
+    async fn list_routing_decision_logs(&self) -> Result<Vec<RoutingDecisionLog>> {
+        SqliteAdminStore::list_routing_decision_logs(self).await
     }
 
     async fn insert_provider_health_snapshot(

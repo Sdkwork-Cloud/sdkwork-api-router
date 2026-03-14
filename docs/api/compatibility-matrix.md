@@ -58,7 +58,8 @@ Admin APIs are SDKWork-owned control-plane surfaces and therefore classify as `n
 | `/admin/extensions/instances` | `native` | Stores mounted extension instances with runtime config |
 | `/admin/extensions/runtime-statuses` | `native` | Lists normalized runtime status for active connector and native dynamic runtimes currently tracked by the host |
 | `/admin/routing/health-snapshots` | `native` | Lists persisted provider health snapshots captured from live runtime status for admin observability and routing fallback |
-| `/admin/routing/simulations` | `native` | Catalog-backed routing decision preview with candidate assessment, runtime health, selection reasons, and reproducible `selection_seed` for weighted policies |
+| `/admin/routing/decision-logs` | `native` | Lists persisted gateway and admin-simulation routing decisions, including SLO degraded state and per-candidate evidence |
+| `/admin/routing/simulations` | `native` | Catalog-backed routing decision preview with candidate assessment, runtime health, selection reasons, SLO compliance metadata, and persisted audit logging |
 | `/admin/usage/records` | `native` | Lists gateway-recorded usage |
 | `/admin/billing/ledger` | `native` | Lists gateway-booked billing entries |
 | `/admin/billing/quota-policies` | `native` | Creates and lists project-scoped hard quota policies used by stateful admission control |

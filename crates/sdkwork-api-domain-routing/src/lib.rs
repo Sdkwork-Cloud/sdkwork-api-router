@@ -17,6 +17,7 @@ pub enum RoutingStrategy {
     #[default]
     DeterministicPriority,
     WeightedRandom,
+    SloAware,
 }
 
 impl RoutingStrategy {
@@ -24,6 +25,7 @@ impl RoutingStrategy {
         match self {
             Self::DeterministicPriority => "deterministic_priority",
             Self::WeightedRandom => "weighted_random",
+            Self::SloAware => "slo_aware",
         }
     }
 }
@@ -35,6 +37,7 @@ impl FromStr for RoutingStrategy {
         match value {
             "deterministic_priority" => Ok(Self::DeterministicPriority),
             "weighted_random" => Ok(Self::WeightedRandom),
+            "slo_aware" => Ok(Self::SloAware),
             _ => Err(format!("unsupported routing strategy: {value}")),
         }
     }
@@ -52,6 +55,10 @@ pub struct RoutingCandidateAssessment {
     pub cost: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latency_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slo_eligible: Option<bool>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub slo_violations: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reasons: Vec<String>,
 }
@@ -66,6 +73,8 @@ impl RoutingCandidateAssessment {
             weight: None,
             cost: None,
             latency_ms: None,
+            slo_eligible: None,
+            slo_violations: Vec::new(),
             reasons: Vec::new(),
         }
     }
@@ -100,6 +109,16 @@ impl RoutingCandidateAssessment {
         self
     }
 
+    pub fn with_slo_eligible(mut self, slo_eligible: bool) -> Self {
+        self.slo_eligible = Some(slo_eligible);
+        self
+    }
+
+    pub fn with_slo_violation(mut self, slo_violation: impl Into<String>) -> Self {
+        self.slo_violations.push(slo_violation.into());
+        self
+    }
+
     pub fn with_reason(mut self, reason: impl Into<String>) -> Self {
         self.reasons.push(reason.into());
         self
@@ -118,6 +137,10 @@ pub struct RoutingDecision {
     pub selection_seed: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selection_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub slo_applied: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub slo_degraded: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub assessments: Vec<RoutingCandidateAssessment>,
 }
@@ -131,6 +154,8 @@ impl RoutingDecision {
             strategy: None,
             selection_seed: None,
             selection_reason: None,
+            slo_applied: false,
+            slo_degraded: false,
             assessments: Vec::new(),
         }
     }
@@ -152,6 +177,158 @@ impl RoutingDecision {
 
     pub fn with_selection_reason(mut self, selection_reason: impl Into<String>) -> Self {
         self.selection_reason = Some(selection_reason.into());
+        self
+    }
+
+    pub fn with_slo_state(mut self, slo_applied: bool, slo_degraded: bool) -> Self {
+        self.slo_applied = slo_applied;
+        self.slo_degraded = slo_degraded;
+        self
+    }
+
+    pub fn with_assessments(mut self, assessments: Vec<RoutingCandidateAssessment>) -> Self {
+        self.assessments = assessments;
+        self
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RoutingDecisionSource {
+    Gateway,
+    AdminSimulation,
+}
+
+impl RoutingDecisionSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Gateway => "gateway",
+            Self::AdminSimulation => "admin_simulation",
+        }
+    }
+}
+
+impl FromStr for RoutingDecisionSource {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "gateway" => Ok(Self::Gateway),
+            "admin_simulation" => Ok(Self::AdminSimulation),
+            _ => Err(format!("unsupported routing decision source: {value}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RoutingDecisionLog {
+    pub decision_id: String,
+    pub decision_source: RoutingDecisionSource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    pub capability: String,
+    pub route_key: String,
+    pub selected_provider_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matched_policy_id: Option<String>,
+    pub strategy: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection_seed: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub slo_applied: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub slo_degraded: bool,
+    pub created_at_ms: u64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub assessments: Vec<RoutingCandidateAssessment>,
+}
+
+impl RoutingDecisionLog {
+    pub fn new(
+        decision_id: impl Into<String>,
+        decision_source: RoutingDecisionSource,
+        capability: impl Into<String>,
+        route_key: impl Into<String>,
+        selected_provider_id: impl Into<String>,
+        strategy: impl Into<String>,
+        created_at_ms: u64,
+    ) -> Self {
+        Self {
+            decision_id: decision_id.into(),
+            decision_source,
+            tenant_id: None,
+            project_id: None,
+            capability: capability.into(),
+            route_key: route_key.into(),
+            selected_provider_id: selected_provider_id.into(),
+            matched_policy_id: None,
+            strategy: strategy.into(),
+            selection_seed: None,
+            selection_reason: None,
+            slo_applied: false,
+            slo_degraded: false,
+            created_at_ms,
+            assessments: Vec::new(),
+        }
+    }
+
+    pub fn with_tenant_id(mut self, tenant_id: impl Into<String>) -> Self {
+        self.tenant_id = Some(tenant_id.into());
+        self
+    }
+
+    pub fn with_tenant_id_option(mut self, tenant_id: Option<String>) -> Self {
+        self.tenant_id = tenant_id;
+        self
+    }
+
+    pub fn with_project_id(mut self, project_id: impl Into<String>) -> Self {
+        self.project_id = Some(project_id.into());
+        self
+    }
+
+    pub fn with_project_id_option(mut self, project_id: Option<String>) -> Self {
+        self.project_id = project_id;
+        self
+    }
+
+    pub fn with_matched_policy_id(mut self, matched_policy_id: impl Into<String>) -> Self {
+        self.matched_policy_id = Some(matched_policy_id.into());
+        self
+    }
+
+    pub fn with_matched_policy_id_option(mut self, matched_policy_id: Option<String>) -> Self {
+        self.matched_policy_id = matched_policy_id;
+        self
+    }
+
+    pub fn with_selection_seed(mut self, selection_seed: u64) -> Self {
+        self.selection_seed = Some(selection_seed);
+        self
+    }
+
+    pub fn with_selection_seed_option(mut self, selection_seed: Option<u64>) -> Self {
+        self.selection_seed = selection_seed;
+        self
+    }
+
+    pub fn with_selection_reason(mut self, selection_reason: impl Into<String>) -> Self {
+        self.selection_reason = Some(selection_reason.into());
+        self
+    }
+
+    pub fn with_selection_reason_option(mut self, selection_reason: Option<String>) -> Self {
+        self.selection_reason = selection_reason;
+        self
+    }
+
+    pub fn with_slo_state(mut self, slo_applied: bool, slo_degraded: bool) -> Self {
+        self.slo_applied = slo_applied;
+        self.slo_degraded = slo_degraded;
         self
     }
 
@@ -227,7 +404,7 @@ impl ProviderHealthSnapshot {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RoutingPolicy {
     pub policy_id: String,
     pub capability: String,
@@ -242,6 +419,12 @@ pub struct RoutingPolicy {
     pub ordered_provider_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_provider_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_cost: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_latency_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub require_healthy: bool,
 }
 
 impl RoutingPolicy {
@@ -259,6 +442,9 @@ impl RoutingPolicy {
             strategy: RoutingStrategy::DeterministicPriority,
             ordered_provider_ids: Vec::new(),
             default_provider_id: None,
+            max_cost: None,
+            max_latency_ms: None,
+            require_healthy: false,
         }
     }
 
@@ -289,6 +475,31 @@ impl RoutingPolicy {
 
     pub fn with_default_provider_id_option(mut self, default_provider_id: Option<String>) -> Self {
         self.default_provider_id = default_provider_id;
+        self
+    }
+
+    pub fn with_max_cost(mut self, max_cost: f64) -> Self {
+        self.max_cost = Some(max_cost);
+        self
+    }
+
+    pub fn with_max_cost_option(mut self, max_cost: Option<f64>) -> Self {
+        self.max_cost = max_cost;
+        self
+    }
+
+    pub fn with_max_latency_ms(mut self, max_latency_ms: u64) -> Self {
+        self.max_latency_ms = Some(max_latency_ms);
+        self
+    }
+
+    pub fn with_max_latency_ms_option(mut self, max_latency_ms: Option<u64>) -> Self {
+        self.max_latency_ms = max_latency_ms;
+        self
+    }
+
+    pub fn with_require_healthy(mut self, require_healthy: bool) -> Self {
+        self.require_healthy = require_healthy;
         self
     }
 
@@ -353,6 +564,10 @@ pub fn select_policy<'a>(
 
 fn default_enabled() -> bool {
     true
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 fn dedup_preserving_order(values: Vec<String>) -> Vec<String> {

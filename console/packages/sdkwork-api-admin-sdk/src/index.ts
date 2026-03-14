@@ -7,6 +7,7 @@ import type {
   ProjectRecord,
   ProxyProviderRecord,
   QuotaPolicyRecord,
+  RoutingDecisionLog,
   RoutingSimulationResult,
   TenantRecord,
   UsageRecord,
@@ -85,6 +86,10 @@ export function listQuotaPolicies(): Promise<QuotaPolicyRecord[]> {
 
 export function listProviderHealthSnapshots(): Promise<ProviderHealthSnapshot[]> {
   return getJson<ProviderHealthSnapshot[]>('/routing/health-snapshots');
+}
+
+export function listRoutingDecisionLogs(): Promise<RoutingDecisionLog[]> {
+  return getJson<RoutingDecisionLog[]>('/routing/decision-logs');
 }
 
 export function simulateRoute(

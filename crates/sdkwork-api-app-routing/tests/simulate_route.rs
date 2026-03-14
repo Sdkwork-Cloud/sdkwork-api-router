@@ -4,11 +4,13 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use sdkwork_api_app_routing::{
-    persist_routing_policy, simulate_route, simulate_route_with_store,
+    persist_routing_policy, select_route_with_store, simulate_route, simulate_route_with_store,
     simulate_route_with_store_seeded,
 };
 use sdkwork_api_domain_catalog::{Channel, ModelCatalogEntry, ProxyProvider};
-use sdkwork_api_domain_routing::{ProviderHealthSnapshot, RoutingPolicy, RoutingStrategy};
+use sdkwork_api_domain_routing::{
+    ProviderHealthSnapshot, RoutingDecisionSource, RoutingPolicy, RoutingStrategy,
+};
 use sdkwork_api_extension_core::{ExtensionInstallation, ExtensionInstance, ExtensionRuntime};
 use sdkwork_api_extension_host::{
     ensure_connector_runtime_started, load_native_dynamic_provider_adapter,
@@ -452,6 +454,293 @@ async fn route_simulation_can_use_seeded_weighted_random_strategy() {
     assert_eq!(decision.selected_provider_id, "provider-heavy");
     assert_eq!(decision.strategy.as_deref(), Some("weighted_random"));
     assert_eq!(decision.selection_seed, Some(15));
+}
+
+#[serial(routing_runtime)]
+#[tokio::test]
+async fn route_simulation_slo_aware_prefers_eligible_candidate_over_cheaper_violating_candidate() {
+    shutdown_all_connector_runtimes().unwrap();
+    shutdown_all_native_dynamic_runtimes().unwrap();
+
+    let pool = run_migrations("sqlite::memory:").await.unwrap();
+    let store = SqliteAdminStore::new(pool);
+
+    store
+        .insert_channel(&Channel::new("openai", "OpenAI"))
+        .await
+        .unwrap();
+    store
+        .insert_provider(
+            &ProxyProvider::new(
+                "provider-cheap-violating",
+                "openai",
+                "openai",
+                "https://cheap-violating.example/v1",
+                "Cheap Violating Provider",
+            )
+            .with_extension_id("sdkwork.provider.openai.official"),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_provider(
+            &ProxyProvider::new(
+                "provider-compliant",
+                "openai",
+                "openai",
+                "https://compliant.example/v1",
+                "Compliant Provider",
+            )
+            .with_extension_id("sdkwork.provider.openai.official"),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_model(&ModelCatalogEntry::new(
+            "gpt-4.1",
+            "provider-cheap-violating",
+        ))
+        .await
+        .unwrap();
+    store
+        .insert_model(&ModelCatalogEntry::new("gpt-4.1", "provider-compliant"))
+        .await
+        .unwrap();
+    store
+        .insert_extension_installation(
+            &ExtensionInstallation::new(
+                "builtin-openai",
+                "sdkwork.provider.openai.official",
+                ExtensionRuntime::Builtin,
+            )
+            .with_enabled(true),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_extension_instance(
+            &ExtensionInstance::new(
+                "provider-cheap-violating",
+                "builtin-openai",
+                "sdkwork.provider.openai.official",
+            )
+            .with_enabled(true)
+            .with_config(serde_json::json!({
+                "routing": {
+                    "cost": 0.10,
+                    "latency_ms": 450
+                }
+            })),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_extension_instance(
+            &ExtensionInstance::new(
+                "provider-compliant",
+                "builtin-openai",
+                "sdkwork.provider.openai.official",
+            )
+            .with_enabled(true)
+            .with_config(serde_json::json!({
+                "routing": {
+                    "cost": 0.40,
+                    "latency_ms": 120
+                }
+            })),
+        )
+        .await
+        .unwrap();
+
+    let policy = RoutingPolicy::new("policy-slo", "chat_completion", "gpt-4.1")
+        .with_priority(100)
+        .with_strategy(RoutingStrategy::SloAware)
+        .with_max_cost(0.50)
+        .with_max_latency_ms(200)
+        .with_ordered_provider_ids(vec![
+            "provider-cheap-violating".to_owned(),
+            "provider-compliant".to_owned(),
+        ]);
+    persist_routing_policy(&store, &policy).await.unwrap();
+
+    let decision = simulate_route_with_store(&store, "chat_completion", "gpt-4.1")
+        .await
+        .unwrap();
+
+    assert_eq!(decision.selected_provider_id, "provider-compliant");
+    assert_eq!(decision.strategy.as_deref(), Some("slo_aware"));
+    assert!(decision
+        .selection_reason
+        .as_deref()
+        .unwrap()
+        .contains("SLO-compliant"));
+    assert_eq!(decision.assessments.len(), 2);
+    assert_eq!(
+        decision.assessments[0].provider_id,
+        "provider-cheap-violating"
+    );
+    assert_eq!(decision.assessments[0].slo_eligible, Some(false));
+    assert_eq!(decision.assessments[1].provider_id, "provider-compliant");
+    assert_eq!(decision.assessments[1].slo_eligible, Some(true));
+}
+
+#[serial(routing_runtime)]
+#[tokio::test]
+async fn route_simulation_slo_aware_degrades_to_top_ranked_candidate_when_no_candidate_meets_slo() {
+    shutdown_all_connector_runtimes().unwrap();
+    shutdown_all_native_dynamic_runtimes().unwrap();
+
+    let pool = run_migrations("sqlite::memory:").await.unwrap();
+    let store = SqliteAdminStore::new(pool);
+
+    store
+        .insert_channel(&Channel::new("openai", "OpenAI"))
+        .await
+        .unwrap();
+    store
+        .insert_provider(
+            &ProxyProvider::new(
+                "provider-top-ranked",
+                "openai",
+                "openai",
+                "https://top-ranked.example/v1",
+                "Top Ranked Provider",
+            )
+            .with_extension_id("sdkwork.provider.openai.official"),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_provider(
+            &ProxyProvider::new(
+                "provider-second-ranked",
+                "openai",
+                "openai",
+                "https://second-ranked.example/v1",
+                "Second Ranked Provider",
+            )
+            .with_extension_id("sdkwork.provider.openai.official"),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_model(&ModelCatalogEntry::new("gpt-4.1", "provider-top-ranked"))
+        .await
+        .unwrap();
+    store
+        .insert_model(&ModelCatalogEntry::new("gpt-4.1", "provider-second-ranked"))
+        .await
+        .unwrap();
+    store
+        .insert_extension_installation(
+            &ExtensionInstallation::new(
+                "builtin-openai",
+                "sdkwork.provider.openai.official",
+                ExtensionRuntime::Builtin,
+            )
+            .with_enabled(true),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_extension_instance(
+            &ExtensionInstance::new(
+                "provider-top-ranked",
+                "builtin-openai",
+                "sdkwork.provider.openai.official",
+            )
+            .with_enabled(true)
+            .with_config(serde_json::json!({
+                "routing": {
+                    "cost": 0.10,
+                    "latency_ms": 550
+                }
+            })),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_extension_instance(
+            &ExtensionInstance::new(
+                "provider-second-ranked",
+                "builtin-openai",
+                "sdkwork.provider.openai.official",
+            )
+            .with_enabled(true)
+            .with_config(serde_json::json!({
+                "routing": {
+                    "cost": 0.30,
+                    "latency_ms": 600
+                }
+            })),
+        )
+        .await
+        .unwrap();
+
+    let policy = RoutingPolicy::new("policy-slo-degraded", "chat_completion", "gpt-4.1")
+        .with_priority(100)
+        .with_strategy(RoutingStrategy::SloAware)
+        .with_max_latency_ms(200)
+        .with_ordered_provider_ids(vec![
+            "provider-top-ranked".to_owned(),
+            "provider-second-ranked".to_owned(),
+        ]);
+    persist_routing_policy(&store, &policy).await.unwrap();
+
+    let decision = simulate_route_with_store(&store, "chat_completion", "gpt-4.1")
+        .await
+        .unwrap();
+
+    assert_eq!(decision.selected_provider_id, "provider-top-ranked");
+    assert_eq!(decision.strategy.as_deref(), Some("slo_aware"));
+    assert!(decision
+        .selection_reason
+        .as_deref()
+        .unwrap()
+        .contains("degraded"));
+    assert!(decision
+        .assessments
+        .iter()
+        .all(|assessment| assessment.slo_eligible == Some(false)));
+}
+
+#[serial(routing_runtime)]
+#[tokio::test]
+async fn select_route_with_store_persists_routing_decision_log() {
+    shutdown_all_connector_runtimes().unwrap();
+    shutdown_all_native_dynamic_runtimes().unwrap();
+
+    let pool = run_migrations("sqlite::memory:").await.unwrap();
+    let store = SqliteAdminStore::new(pool);
+
+    store
+        .insert_model(&ModelCatalogEntry::new(
+            "gpt-4.1",
+            "provider-openai-official",
+        ))
+        .await
+        .unwrap();
+
+    let decision = select_route_with_store(
+        &store,
+        "chat_completion",
+        "gpt-4.1",
+        RoutingDecisionSource::Gateway,
+        Some("tenant-1"),
+        Some("project-1"),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(decision.selected_provider_id, "provider-openai-official");
+
+    let logs = store.list_routing_decision_logs().await.unwrap();
+    assert_eq!(logs.len(), 1);
+    assert_eq!(logs[0].decision_source, RoutingDecisionSource::Gateway);
+    assert_eq!(logs[0].tenant_id.as_deref(), Some("tenant-1"));
+    assert_eq!(logs[0].project_id.as_deref(), Some("project-1"));
+    assert_eq!(logs[0].route_key, "gpt-4.1");
 }
 
 #[serial(routing_runtime)]

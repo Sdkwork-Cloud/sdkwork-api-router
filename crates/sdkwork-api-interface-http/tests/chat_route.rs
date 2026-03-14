@@ -177,6 +177,7 @@ async fn stateful_chat_route_records_usage_and_billing() {
     assert_eq!(usage_json[0]["model"], "gpt-4.1");
 
     let ledger = admin_app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("GET")
@@ -191,6 +192,26 @@ async fn stateful_chat_route_records_usage_and_billing() {
     assert_eq!(ledger.status(), StatusCode::OK);
     let ledger_json = read_json(ledger).await;
     assert_eq!(ledger_json[0]["project_id"], "project-1");
+
+    let logs = admin_app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/admin/routing/decision-logs")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(logs.status(), StatusCode::OK);
+    let logs_json = read_json(logs).await;
+    assert_eq!(logs_json[0]["decision_source"], "gateway");
+    assert_eq!(logs_json[0]["tenant_id"], "tenant-1");
+    assert_eq!(logs_json[0]["project_id"], "project-1");
+    assert_eq!(logs_json[0]["capability"], "chat_completion");
+    assert_eq!(logs_json[0]["route_key"], "gpt-4.1");
 }
 
 #[derive(Clone, Default)]

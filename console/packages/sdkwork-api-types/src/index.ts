@@ -50,7 +50,9 @@ export interface ModelCatalogRecord {
   provider_id: string;
 }
 
+export type RoutingStrategy = 'deterministic_priority' | 'weighted_random' | 'slo_aware';
 export type RoutingCandidateHealth = 'healthy' | 'unhealthy' | 'unknown';
+export type RoutingDecisionSource = 'gateway' | 'admin_simulation';
 
 export interface RoutingCandidateAssessment {
   provider_id: string;
@@ -60,6 +62,8 @@ export interface RoutingCandidateAssessment {
   weight?: number;
   cost?: number;
   latency_ms?: number;
+  slo_eligible?: boolean;
+  slo_violations: string[];
   reasons: string[];
 }
 
@@ -70,7 +74,41 @@ export interface RoutingSimulationResult {
   strategy?: string;
   selection_seed?: number;
   selection_reason?: string;
+  slo_applied: boolean;
+  slo_degraded: boolean;
   assessments: RoutingCandidateAssessment[];
+}
+
+export interface RoutingDecisionLog {
+  decision_id: string;
+  decision_source: RoutingDecisionSource;
+  tenant_id?: string;
+  project_id?: string;
+  capability: string;
+  route_key: string;
+  selected_provider_id: string;
+  matched_policy_id?: string;
+  strategy: string;
+  selection_seed?: number;
+  selection_reason?: string;
+  slo_applied: boolean;
+  slo_degraded: boolean;
+  created_at_ms: number;
+  assessments: RoutingCandidateAssessment[];
+}
+
+export interface RoutingPolicyRecord {
+  policy_id: string;
+  capability: string;
+  model_pattern: string;
+  enabled: boolean;
+  priority: number;
+  strategy: RoutingStrategy;
+  ordered_provider_ids: string[];
+  default_provider_id?: string;
+  max_cost?: number;
+  max_latency_ms?: number;
+  require_healthy: boolean;
 }
 
 export interface ProviderHealthSnapshot {
