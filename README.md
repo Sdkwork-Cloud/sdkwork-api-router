@@ -11,11 +11,11 @@ Runtime surfaces:
 - `gateway-service`
   - OpenAI-compatible `/v1/*` gateway
 - `admin-api-service`
-  - operator-only `/admin/*` control plane
+  - operator-facing `/admin/*` control plane
 - `portal-api-service`
   - public `/portal/*` self-service API
 - `console/`
-  - browser-accessible React shell that also runs inside Tauri
+  - browser-accessible React console that also runs inside Tauri
 - `docs/`
   - VitePress documentation site with English and Chinese operational guides
 
@@ -26,12 +26,65 @@ Current foundations:
 - browser and Tauri console
 - extension runtime for builtin, connector, and native-dynamic providers
 - public portal registration, login, workspace inspection, and API key issuance
+- local JSON and YAML runtime configuration under `~/.sdkwork/router/`
 
 ## Supported Platforms
 
 - Windows
 - Linux
 - macOS
+
+## Quick Start
+
+The standalone services now support a local config directory with built-in defaults.
+
+Default config root:
+
+- Linux and macOS: `~/.sdkwork/router/`
+- Windows: `%USERPROFILE%\\.sdkwork\\router\\`
+
+Config file discovery order:
+
+1. `config.yaml`
+2. `config.yml`
+3. `config.json`
+
+Config precedence:
+
+1. built-in local defaults
+2. local config file
+3. `SDKWORK_*` environment variables
+
+If no config file exists, the server still starts with local defaults:
+
+- gateway bind: `127.0.0.1:8080`
+- admin bind: `127.0.0.1:8081`
+- portal bind: `127.0.0.1:8082`
+- SQLite database: `~/.sdkwork/router/sdkwork-api-server.db`
+- extension directory: `~/.sdkwork/router/extensions`
+- local secrets file: `~/.sdkwork/router/secrets.json`
+
+Example `config.yaml`:
+
+```yaml
+gateway_bind: "127.0.0.1:8080"
+admin_bind: "127.0.0.1:8081"
+portal_bind: "127.0.0.1:8082"
+database_url: "sqlite://sdkwork-api-server.db"
+secret_backend: "local_encrypted_file"
+secret_local_file: "secrets.json"
+extension_paths:
+  - "extensions"
+enable_connector_extensions: true
+enable_native_dynamic_extensions: false
+```
+
+Relative paths inside config files are resolved relative to the config file directory.
+
+To override the default location:
+
+- `SDKWORK_CONFIG_DIR`
+- `SDKWORK_CONFIG_FILE`
 
 ## Docs
 
@@ -64,6 +117,10 @@ Chinese docs entry points:
 - [安装准备](./docs/zh/getting-started/installation.md)
 - [源码运行](./docs/zh/getting-started/source-development.md)
 - [Release 构建](./docs/zh/getting-started/release-builds.md)
+- [运行模式](./docs/zh/getting-started/runtime-modes.md)
+- [公开门户](./docs/zh/getting-started/public-portal.md)
+- [配置说明](./docs/zh/operations/configuration.md)
+- [健康检查与 Metrics](./docs/zh/operations/health-and-metrics.md)
 
 ## Prerequisites
 
@@ -99,6 +156,22 @@ Open:
 - `http://127.0.0.1:5173/#/portal/dashboard`
 - `http://127.0.0.1:5173/#/admin`
 
+To start with a specific config root:
+
+Windows:
+
+```powershell
+$env:SDKWORK_CONFIG_DIR="$HOME\\.sdkwork\\router"
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev\start-workspace.ps1
+```
+
+Linux or macOS:
+
+```bash
+export SDKWORK_CONFIG_DIR="$HOME/.sdkwork/router"
+node scripts/dev/start-workspace.mjs
+```
+
 Lower-level source helpers:
 
 - backend only:
@@ -133,23 +206,43 @@ Build the Tauri desktop package:
 pnpm --dir console tauri:build
 ```
 
-Run release binaries with SQLite:
+Run release binaries with the default local config root:
 
 Windows:
 
 ```powershell
-$env:SDKWORK_DATABASE_URL="sqlite://sdkwork-api-server.db"
+New-Item -ItemType Directory -Force "$HOME\\.sdkwork\\router" | Out-Null
 .\target\release\admin-api-service.exe
+.\target\release\gateway-service.exe
+.\target\release\portal-api-service.exe
 ```
 
 Linux or macOS:
 
 ```bash
-export SDKWORK_DATABASE_URL="sqlite://sdkwork-api-server.db"
+mkdir -p "$HOME/.sdkwork/router"
 ./target/release/admin-api-service
+./target/release/gateway-service
+./target/release/portal-api-service
 ```
 
-Start `gateway-service` and `portal-api-service` the same way from `target/release/`.
+Run with an explicit config file:
+
+Windows:
+
+```powershell
+$env:SDKWORK_CONFIG_FILE="$HOME\\.sdkwork\\router\\config.yaml"
+.\target\release\gateway-service.exe
+```
+
+Linux or macOS:
+
+```bash
+export SDKWORK_CONFIG_FILE="$HOME/.sdkwork/router/config.yaml"
+./target/release/gateway-service
+```
+
+Environment variables such as `SDKWORK_DATABASE_URL` still override file values.
 
 Detailed release instructions:
 
@@ -168,6 +261,8 @@ Important endpoints:
 
 Important environment variables:
 
+- `SDKWORK_CONFIG_DIR`
+- `SDKWORK_CONFIG_FILE`
 - `SDKWORK_DATABASE_URL`
 - `SDKWORK_GATEWAY_BIND`
 - `SDKWORK_ADMIN_BIND`
@@ -175,6 +270,7 @@ Important environment variables:
 - `SDKWORK_ADMIN_JWT_SIGNING_SECRET`
 - `SDKWORK_PORTAL_JWT_SIGNING_SECRET`
 - `SDKWORK_SECRET_BACKEND`
+- `SDKWORK_SECRET_LOCAL_FILE`
 - `SDKWORK_EXTENSION_PATHS`
 
 Detailed operational docs:

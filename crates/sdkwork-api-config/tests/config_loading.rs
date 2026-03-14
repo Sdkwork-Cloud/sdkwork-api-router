@@ -1,7 +1,13 @@
+use sdkwork_api_config::LocalConfigPaths;
 use sdkwork_api_config::RuntimeMode;
 use sdkwork_api_config::SecretBackendKind;
 use sdkwork_api_config::StandaloneConfig;
 use sdkwork_api_storage_core::StorageDialect;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[test]
 fn defaults_to_server_mode() {
@@ -148,4 +154,141 @@ fn parses_extension_discovery_settings_from_pairs() {
         config.extension_trusted_signers["partner"],
         "c2Vjb25kLXB1YmxpYy1rZXk="
     );
+}
+
+#[test]
+fn local_config_paths_use_sdkwork_router_root() {
+    let paths = LocalConfigPaths::from_home_dir(PathBuf::from("/tmp/sdkwork-user"));
+
+    assert_eq!(
+        paths.root_dir,
+        PathBuf::from("/tmp/sdkwork-user/.sdkwork/router")
+    );
+    assert_eq!(
+        paths.primary_config_yaml,
+        PathBuf::from("/tmp/sdkwork-user/.sdkwork/router/config.yaml")
+    );
+    assert_eq!(
+        paths.fallback_config_json,
+        PathBuf::from("/tmp/sdkwork-user/.sdkwork/router/config.json")
+    );
+    assert_eq!(
+        paths.secret_local_file,
+        PathBuf::from("/tmp/sdkwork-user/.sdkwork/router/secrets.json")
+    );
+    assert_eq!(
+        paths.extensions_dir,
+        PathBuf::from("/tmp/sdkwork-user/.sdkwork/router/extensions")
+    );
+}
+
+#[test]
+fn loads_yaml_config_before_environment_overrides() {
+    let root = temp_config_root("yaml-env-override");
+    fs::write(
+        root.join("config.yaml"),
+        r#"
+gateway_bind: "127.0.0.1:18080"
+admin_bind: "127.0.0.1:18081"
+database_url: "sqlite://router.db"
+secret_local_file: "secrets/custom.json"
+extension_paths:
+  - "extensions/core"
+  - "extensions/partner"
+"#,
+    )
+    .unwrap();
+
+    let config = StandaloneConfig::from_local_root_and_pairs(
+        &root,
+        [("SDKWORK_GATEWAY_BIND", "127.0.0.1:28080")],
+    )
+    .unwrap();
+
+    assert_eq!(config.gateway_bind, "127.0.0.1:28080");
+    assert_eq!(config.admin_bind, "127.0.0.1:18081");
+    assert_eq!(
+        config.database_url,
+        sqlite_url_for(root.join("router.db")).as_str()
+    );
+    assert_eq!(
+        config.secret_local_file,
+        root.join("secrets/custom.json").to_string_lossy()
+    );
+    assert_eq!(
+        config.extension_paths,
+        vec![
+            root.join("extensions/core").to_string_lossy().into_owned(),
+            root.join("extensions/partner")
+                .to_string_lossy()
+                .into_owned(),
+        ]
+    );
+}
+
+#[test]
+fn falls_back_to_json_when_yaml_is_absent() {
+    let root = temp_config_root("json-fallback");
+    fs::write(
+        root.join("config.json"),
+        r#"{
+  "portal_bind": "127.0.0.1:19082",
+  "enable_native_dynamic_extensions": true
+}"#,
+    )
+    .unwrap();
+
+    let config =
+        StandaloneConfig::from_local_root_and_pairs(&root, std::iter::empty::<(&str, &str)>())
+            .unwrap();
+
+    assert_eq!(config.portal_bind, "127.0.0.1:19082");
+    assert!(config.enable_native_dynamic_extensions);
+}
+
+#[test]
+fn exports_resolved_config_back_to_sdkwork_environment_pairs() {
+    let root = temp_config_root("resolved-env");
+    fs::write(
+        root.join("config.yaml"),
+        "admin_bind: \"127.0.0.1:19081\"\n",
+    )
+    .unwrap();
+
+    let config =
+        StandaloneConfig::from_local_root_and_pairs(&root, std::iter::empty::<(&str, &str)>())
+            .unwrap();
+    let pairs = config.resolved_env_pairs();
+    let values = pairs
+        .into_iter()
+        .collect::<std::collections::HashMap<_, _>>();
+
+    assert_eq!(values["SDKWORK_ADMIN_BIND"], "127.0.0.1:19081");
+    assert_eq!(
+        values["SDKWORK_SECRET_LOCAL_FILE"],
+        root.join("secrets.json").to_string_lossy()
+    );
+    assert_eq!(
+        values["SDKWORK_EXTENSION_PATHS"],
+        root.join("extensions").to_string_lossy()
+    );
+}
+
+fn temp_config_root(label: &str) -> PathBuf {
+    let unique = TEMP_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!("sdkwork-config-tests-{label}-{unique}"));
+    if root.exists() {
+        fs::remove_dir_all(&root).unwrap();
+    }
+    fs::create_dir_all(&root).unwrap();
+    root
+}
+
+fn sqlite_url_for(path: impl AsRef<Path>) -> String {
+    let normalized = path.as_ref().to_string_lossy().replace('\\', "/");
+    if normalized.starts_with('/') {
+        format!("sqlite://{normalized}")
+    } else {
+        format!("sqlite:///{normalized}")
+    }
 }

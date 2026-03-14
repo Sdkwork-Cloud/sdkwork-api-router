@@ -1,74 +1,208 @@
 # Configuration
 
-This page summarizes the most important environment variables and runtime configuration choices.
+This page defines the runtime configuration contract for the standalone SDKWork API Server services.
 
-## Bind Addresses
+## Resolution Order
 
+The runtime config merge order is:
+
+1. built-in local defaults
+2. local config file
+3. `SDKWORK_*` environment variables
+
+This means environment variables always win over values from `config.yaml`, `config.yml`, or `config.json`.
+
+## Default Local Config Root
+
+The default local config root is:
+
+- Linux and macOS: `~/.sdkwork/router/`
+- Windows: `%USERPROFILE%\\.sdkwork\\router\\`
+
+The services resolve the following built-in default paths under that root:
+
+- primary YAML config: `config.yaml`
+- fallback YAML config: `config.yml`
+- fallback JSON config: `config.json`
+- default SQLite database: `sdkwork-api-server.db`
+- local encrypted secrets file: `secrets.json`
+- extension directory: `extensions/`
+
+## Config File Discovery
+
+When `SDKWORK_CONFIG_FILE` is not set, the runtime searches in this order:
+
+1. `config.yaml`
+2. `config.yml`
+3. `config.json`
+
+The first existing file wins.
+
+To override the root directory:
+
+- `SDKWORK_CONFIG_DIR`
+
+To override the file directly:
+
+- `SDKWORK_CONFIG_FILE`
+
+If `SDKWORK_CONFIG_FILE` is relative, it is resolved relative to `SDKWORK_CONFIG_DIR` or the default config root.
+
+## Built-In Defaults
+
+If no config file exists, the services still start with these values:
+
+- `gateway_bind`: `127.0.0.1:8080`
+- `admin_bind`: `127.0.0.1:8081`
+- `portal_bind`: `127.0.0.1:8082`
+- `database_url`: `sqlite://<config-root>/sdkwork-api-server.db`
+- `extension_paths`: `["<config-root>/extensions"]`
+- `secret_local_file`: `<config-root>/secrets.json`
+- `enable_connector_extensions`: `true`
+- `enable_native_dynamic_extensions`: `false`
+- `require_signed_connector_extensions`: `false`
+- `require_signed_native_dynamic_extensions`: `true`
+- `runtime_snapshot_interval_secs`: `0`
+- `secret_backend`: `database_encrypted`
+- `secret_keyring_service`: `sdkwork-api-server`
+
+## File Schema
+
+The local config file uses a flat top-level schema matching `StandaloneConfig`.
+
+Supported fields:
+
+- `gateway_bind`
+- `admin_bind`
+- `portal_bind`
+- `database_url`
+- `extension_paths`
+- `enable_connector_extensions`
+- `enable_native_dynamic_extensions`
+- `extension_trusted_signers`
+- `require_signed_connector_extensions`
+- `require_signed_native_dynamic_extensions`
+- `admin_jwt_signing_secret`
+- `portal_jwt_signing_secret`
+- `runtime_snapshot_interval_secs`
+- `secret_backend`
+- `credential_master_key`
+- `secret_local_file`
+- `secret_keyring_service`
+
+## YAML Example
+
+```yaml
+gateway_bind: "127.0.0.1:8080"
+admin_bind: "127.0.0.1:8081"
+portal_bind: "127.0.0.1:8082"
+database_url: "sqlite://sdkwork-api-server.db"
+extension_paths:
+  - "extensions"
+  - "extensions/partner"
+enable_connector_extensions: true
+enable_native_dynamic_extensions: false
+extension_trusted_signers:
+  sdkwork: "ZXhwaWNpdC1wdWJsaWMta2V5"
+  partner: "c2Vjb25kLXB1YmxpYy1rZXk="
+require_signed_connector_extensions: false
+require_signed_native_dynamic_extensions: true
+admin_jwt_signing_secret: "change-me-admin"
+portal_jwt_signing_secret: "change-me-portal"
+runtime_snapshot_interval_secs: 30
+secret_backend: "local_encrypted_file"
+credential_master_key: "change-me-master-key"
+secret_local_file: "secrets.json"
+secret_keyring_service: "sdkwork-api-server"
+```
+
+## JSON Example
+
+```json
+{
+  "gateway_bind": "127.0.0.1:8080",
+  "admin_bind": "127.0.0.1:8081",
+  "portal_bind": "127.0.0.1:8082",
+  "database_url": "postgres://postgres:postgres@127.0.0.1:5432/sdkwork_api_server",
+  "extension_paths": [
+    "extensions"
+  ],
+  "enable_connector_extensions": true,
+  "enable_native_dynamic_extensions": false,
+  "secret_backend": "database_encrypted",
+  "secret_local_file": "secrets.json"
+}
+```
+
+## Path Normalization Rules
+
+When values come from a config file:
+
+- relative `secret_local_file` paths are resolved relative to the config file directory
+- relative `extension_paths` entries are resolved relative to the config file directory
+- relative SQLite file URLs are resolved relative to the config file directory and normalized into absolute SQLite URLs
+
+Example:
+
+- config file: `~/.sdkwork/router/config.yaml`
+- `database_url: "sqlite://router.db"`
+- resolved runtime value: `sqlite://~/.sdkwork/router/router.db`
+
+Environment variables are applied after file loading and are used as-is.
+
+## Environment Variables
+
+The most important runtime environment variables are:
+
+- `SDKWORK_CONFIG_DIR`
+- `SDKWORK_CONFIG_FILE`
+- `SDKWORK_DATABASE_URL`
 - `SDKWORK_GATEWAY_BIND`
 - `SDKWORK_ADMIN_BIND`
 - `SDKWORK_PORTAL_BIND`
-
-## Persistence
-
-- `SDKWORK_DATABASE_URL`
-
-Supported databases:
-
-- SQLite
-- PostgreSQL
-
-Examples:
-
-```bash
-export SDKWORK_DATABASE_URL="sqlite://sdkwork-api-server.db"
-```
-
-```bash
-export SDKWORK_DATABASE_URL="postgres://postgres:postgres@127.0.0.1:5432/sdkwork_api_server"
-```
-
-## Authentication Secrets
-
 - `SDKWORK_ADMIN_JWT_SIGNING_SECRET`
 - `SDKWORK_PORTAL_JWT_SIGNING_SECRET`
-
-## Secret Storage
-
 - `SDKWORK_SECRET_BACKEND`
 - `SDKWORK_CREDENTIAL_MASTER_KEY`
 - `SDKWORK_SECRET_LOCAL_FILE`
 - `SDKWORK_SECRET_KEYRING_SERVICE`
-
-Supported secret backends:
-
-- `database_encrypted`
-- `local_encrypted_file`
-- `os_keyring`
-
-## Extension Runtime
-
 - `SDKWORK_EXTENSION_PATHS`
 - `SDKWORK_EXTENSION_ENABLE_CONNECTOR_EXTENSIONS`
 - `SDKWORK_EXTENSION_ENABLE_NATIVE_DYNAMIC_EXTENSIONS`
 - `SDKWORK_EXTENSION_TRUSTED_SIGNERS`
 - `SDKWORK_EXTENSION_REQUIRE_SIGNATURE_FOR_CONNECTOR_EXTENSIONS`
 - `SDKWORK_EXTENSION_REQUIRE_SIGNATURE_FOR_NATIVE_DYNAMIC_EXTENSIONS`
-
-## Runtime Snapshotting
-
 - `SDKWORK_RUNTIME_SNAPSHOT_INTERVAL_SECS`
 
-## Configuration Strategy
+## Startup Examples
 
-For local development:
+Linux or macOS:
 
-- default to SQLite
-- keep loopback bind addresses
-- use local encrypted secret storage or database-encrypted storage
+```bash
+mkdir -p "$HOME/.sdkwork/router"
+cat > "$HOME/.sdkwork/router/config.yaml" <<'EOF'
+database_url: "sqlite://sdkwork-api-server.db"
+secret_backend: "local_encrypted_file"
+EOF
 
-For shared deployments:
+./target/release/gateway-service
+```
 
-- use PostgreSQL
-- manage signing secrets explicitly
-- use a deliberate secret backend strategy
-- control extension search paths and trusted signers explicitly
+Windows PowerShell:
+
+```powershell
+New-Item -ItemType Directory -Force "$HOME\\.sdkwork\\router" | Out-Null
+@"
+database_url: "sqlite://sdkwork-api-server.db"
+secret_backend: "local_encrypted_file"
+"@ | Set-Content -Encoding UTF8 "$HOME\\.sdkwork\\router\\config.yaml"
+
+.\target\release\gateway-service.exe
+```
+
+Explicit file override:
+
+```bash
+export SDKWORK_CONFIG_FILE="$HOME/.sdkwork/router/config.json"
+./target/release/gateway-service
+```

@@ -12,6 +12,7 @@ use tokio::net::TcpListener;
 async fn main() -> anyhow::Result<()> {
     init_tracing("portal-api-service");
     let config = StandaloneConfig::from_env()?;
+    config.apply_to_process_env();
     let store: Arc<dyn AdminStore> = match config.storage_dialect() {
         Some(StorageDialect::Sqlite) => {
             let pool = run_migrations(&config.database_url).await?;
