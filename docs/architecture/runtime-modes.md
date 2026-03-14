@@ -134,6 +134,7 @@ Routing remains intentionally conservative in this batch:
 - model matching supports exact and glob-style `*` patterns
 - provider selection now considers availability, runtime health, and instance-level `cost`, `latency_ms`, and `weight` hints in addition to ordered preference plus optional default provider
 - provider health now falls back to the latest persisted snapshot when live runtime status is unavailable
-- quota or SLO-aware admission and regional policy dimensions remain future work
+- project-scoped quota-aware admission now rejects over-budget requests for `/v1/chat/completions`, `/v1/completions`, `/v1/responses`, and `/v1/embeddings` before upstream dispatch
+- SLO-aware admission and regional policy dimensions remain future work
 
 The runtime host is still intentionally lightweight, but the core gateway, admin, routing, credential, and provider relay slices now run against the same Rust workspace and can be assembled in-process for embedded mode.

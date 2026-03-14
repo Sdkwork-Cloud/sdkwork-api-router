@@ -1,3 +1,4 @@
+use sdkwork_api_domain_billing::QuotaPolicy;
 use sdkwork_api_domain_catalog::{Channel, ModelCatalogEntry, ProxyProvider};
 use sdkwork_api_domain_credential::UpstreamCredential;
 use sdkwork_api_domain_routing::{ProviderHealthSnapshot, RoutingPolicy, RoutingStrategy};
@@ -126,4 +127,21 @@ async fn postgres_store_persists_provider_health_snapshots_when_url_is_provided(
 
     let snapshots = store.list_provider_health_snapshots().await.unwrap();
     assert!(snapshots.iter().any(|entry| entry == &snapshot));
+}
+
+#[tokio::test]
+async fn postgres_store_persists_quota_policies_when_url_is_provided() {
+    let Some(database_url) = std::env::var("SDKWORK_TEST_POSTGRES_URL").ok() else {
+        return;
+    };
+
+    let pool = run_migrations(&database_url).await.unwrap();
+    let store = PostgresAdminStore::new(pool);
+
+    let policy = QuotaPolicy::new("quota-project-1", "project-1", 1_000).with_enabled(true);
+
+    store.insert_quota_policy(&policy).await.unwrap();
+
+    let policies = store.list_quota_policies().await.unwrap();
+    assert!(policies.iter().any(|entry| entry == &policy));
 }

@@ -1,20 +1,29 @@
 import { useEffect, useState } from 'react';
-import { listLedgerEntries, listUsageRecords } from 'sdkwork-api-admin-sdk';
-import type { LedgerEntry, UsageRecord } from 'sdkwork-api-types';
+import { listLedgerEntries, listQuotaPolicies, listUsageRecords } from 'sdkwork-api-admin-sdk';
+import type { LedgerEntry, QuotaPolicyRecord, UsageRecord } from 'sdkwork-api-types';
 
 interface UsageSnapshot {
   usageRecords: UsageRecord[];
   ledgerEntries: LedgerEntry[];
+  quotaPolicies: QuotaPolicyRecord[];
 }
 
 const emptySnapshot: UsageSnapshot = {
   usageRecords: [],
   ledgerEntries: [],
+  quotaPolicies: [],
 };
 
 function totalLedgerAmount(entries: LedgerEntry[]): string {
   const total = entries.reduce((sum, entry) => sum + entry.amount, 0);
   return total.toFixed(2);
+}
+
+function totalEnabledQuotaUnits(policies: QuotaPolicyRecord[]): string {
+  const total = policies
+    .filter((policy) => policy.enabled)
+    .reduce((sum, policy) => sum + policy.max_units, 0);
+  return total.toLocaleString();
 }
 
 export function RequestExplorerPage() {
@@ -24,14 +33,14 @@ export function RequestExplorerPage() {
   useEffect(() => {
     let cancelled = false;
 
-    void Promise.all([listUsageRecords(), listLedgerEntries()])
-      .then(([usageRecords, ledgerEntries]) => {
+    void Promise.all([listUsageRecords(), listLedgerEntries(), listQuotaPolicies()])
+      .then(([usageRecords, ledgerEntries, quotaPolicies]) => {
         if (cancelled) {
           return;
         }
 
-        setSnapshot({ usageRecords, ledgerEntries });
-        setStatus('Gateway telemetry is streaming from admin usage and billing APIs.');
+        setSnapshot({ usageRecords, ledgerEntries, quotaPolicies });
+        setStatus('Gateway telemetry and quota policies are streaming from admin usage and billing APIs.');
       })
       .catch(() => {
         if (!cancelled) {
@@ -67,6 +76,10 @@ export function RequestExplorerPage() {
           <span className="metric-label">Booked Amount</span>
           <strong>{totalLedgerAmount(snapshot.ledgerEntries)}</strong>
         </article>
+        <article className="metric-card">
+          <span className="metric-label">Enabled Quota Units</span>
+          <strong>{totalEnabledQuotaUnits(snapshot.quotaPolicies)}</strong>
+        </article>
       </div>
 
       <div className="detail-grid">
@@ -98,6 +111,23 @@ export function RequestExplorerPage() {
             ))}
             {!snapshot.ledgerEntries.length && (
               <li className="empty">No billing entries have been booked yet.</li>
+            )}
+          </ul>
+        </article>
+
+        <article className="detail-card">
+          <h3>Quota Policies</h3>
+          <ul className="compact-list">
+            {snapshot.quotaPolicies.map((policy) => (
+              <li key={policy.policy_id}>
+                <strong>{policy.project_id}</strong>
+                <span>
+                  {policy.max_units.toLocaleString()} units / {policy.enabled ? 'enabled' : 'disabled'}
+                </span>
+              </li>
+            ))}
+            {!snapshot.quotaPolicies.length && (
+              <li className="empty">No quota policies have been configured yet.</li>
             )}
           </ul>
         </article>

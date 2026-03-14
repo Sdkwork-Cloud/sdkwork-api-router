@@ -4,12 +4,14 @@ use axum::http::{Request, StatusCode};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde_json::Value;
+use serial_test::serial;
 use sqlx::SqlitePool;
 use std::sync::{Arc, Mutex};
 use tower::ServiceExt;
 
 mod support;
 
+#[serial(extension_env)]
 #[tokio::test]
 async fn videos_create_route_returns_ok() {
     let app = sdkwork_api_interface_http::gateway_router();
@@ -31,6 +33,7 @@ async fn videos_create_route_returns_ok() {
     assert_eq!(response.status(), StatusCode::OK);
 }
 
+#[serial(extension_env)]
 #[tokio::test]
 async fn videos_list_route_returns_ok() {
     let app = sdkwork_api_interface_http::gateway_router();
@@ -49,6 +52,7 @@ async fn videos_list_route_returns_ok() {
     assert_eq!(response.status(), StatusCode::OK);
 }
 
+#[serial(extension_env)]
 #[tokio::test]
 async fn video_retrieve_route_returns_ok() {
     let app = sdkwork_api_interface_http::gateway_router();
@@ -67,6 +71,7 @@ async fn video_retrieve_route_returns_ok() {
     assert_eq!(response.status(), StatusCode::OK);
 }
 
+#[serial(extension_env)]
 #[tokio::test]
 async fn video_delete_route_returns_ok() {
     let app = sdkwork_api_interface_http::gateway_router();
@@ -85,6 +90,7 @@ async fn video_delete_route_returns_ok() {
     assert_eq!(response.status(), StatusCode::OK);
 }
 
+#[serial(extension_env)]
 #[tokio::test]
 async fn video_content_route_returns_ok() {
     let app = sdkwork_api_interface_http::gateway_router();
@@ -103,6 +109,7 @@ async fn video_content_route_returns_ok() {
     assert_eq!(response.status(), StatusCode::OK);
 }
 
+#[serial(extension_env)]
 #[tokio::test]
 async fn video_remix_route_returns_ok() {
     let app = sdkwork_api_interface_http::gateway_router();
@@ -146,6 +153,7 @@ struct UpstreamCaptureState {
     authorization: Arc<Mutex<Option<String>>>,
 }
 
+#[serial(extension_env)]
 #[tokio::test]
 async fn stateful_videos_routes_relay_to_openai_compatible_provider() {
     let upstream_state = UpstreamCaptureState::default();
@@ -352,6 +360,7 @@ async fn stateful_videos_routes_relay_to_openai_compatible_provider() {
     );
 }
 
+#[serial(extension_env)]
 #[tokio::test]
 async fn stateful_video_content_route_relays_to_native_dynamic_provider() {
     let fixture = support::prepare_native_dynamic_mock_package("native-dynamic-video-content");

@@ -15,7 +15,7 @@ use axum::{
     Json, Router,
 };
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use sdkwork_api_app_billing::persist_ledger_entry;
+use sdkwork_api_app_billing::{check_quota, persist_ledger_entry, QuotaCheckResult};
 use sdkwork_api_app_credential::CredentialSecretManager;
 use sdkwork_api_app_gateway::cancel_batch;
 use sdkwork_api_app_gateway::cancel_fine_tuning_job;
@@ -185,6 +185,7 @@ use sdkwork_api_contract_openai::conversations::{
     UpdateConversationRequest,
 };
 use sdkwork_api_contract_openai::embeddings::CreateEmbeddingRequest;
+use sdkwork_api_contract_openai::errors::OpenAiErrorResponse;
 use sdkwork_api_contract_openai::evals::CreateEvalRequest;
 use sdkwork_api_contract_openai::files::CreateFileRequest;
 use sdkwork_api_contract_openai::fine_tuning::CreateFineTuningJobRequest;
@@ -1677,6 +1678,18 @@ async fn chat_completions_with_state_handler(
     State(state): State<GatewayApiState>,
     ExtractJson(request): ExtractJson<CreateChatCompletionRequest>,
 ) -> Response {
+    match enforce_project_quota(state.store.as_ref(), request_context.project_id(), 100).await {
+        Ok(Some(response)) => return response,
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to evaluate quota",
+            )
+                .into_response();
+        }
+    }
+
     if request.stream.unwrap_or(false) {
         match relay_chat_completion_stream_from_store(
             state.store.as_ref(),
@@ -4293,6 +4306,18 @@ async fn responses_with_state_handler(
     State(state): State<GatewayApiState>,
     ExtractJson(request): ExtractJson<CreateResponseRequest>,
 ) -> Response {
+    match enforce_project_quota(state.store.as_ref(), request_context.project_id(), 120).await {
+        Ok(Some(response)) => return response,
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to evaluate quota",
+            )
+                .into_response();
+        }
+    }
+
     if request.stream.unwrap_or(false) {
         match relay_response_stream_from_store(
             state.store.as_ref(),
@@ -4889,6 +4914,18 @@ async fn completions_with_state_handler(
     State(state): State<GatewayApiState>,
     ExtractJson(request): ExtractJson<CreateCompletionRequest>,
 ) -> Response {
+    match enforce_project_quota(state.store.as_ref(), request_context.project_id(), 80).await {
+        Ok(Some(response)) => return response,
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to evaluate quota",
+            )
+                .into_response();
+        }
+    }
+
     match relay_completion_from_store(
         state.store.as_ref(),
         &state.secret_manager,
@@ -4965,6 +5002,18 @@ async fn embeddings_with_state_handler(
     State(state): State<GatewayApiState>,
     ExtractJson(request): ExtractJson<CreateEmbeddingRequest>,
 ) -> Response {
+    match enforce_project_quota(state.store.as_ref(), request_context.project_id(), 10).await {
+        Ok(Some(response)) => return response,
+        Ok(None) => {}
+        Err(_) => {
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to evaluate quota",
+            )
+                .into_response();
+        }
+    }
+
     match relay_embedding_from_store(
         state.store.as_ref(),
         &state.secret_manager,
@@ -9301,6 +9350,45 @@ async fn vector_store_file_batch_files_with_state_handler(
         .expect("vector store file batch files"),
     )
     .into_response()
+}
+
+async fn enforce_project_quota(
+    store: &dyn AdminStore,
+    project_id: &str,
+    requested_units: u64,
+) -> anyhow::Result<Option<Response>> {
+    let evaluation = check_quota(store, project_id, requested_units).await?;
+    if evaluation.allowed {
+        Ok(None)
+    } else {
+        Ok(Some(quota_exceeded_response(project_id, &evaluation)))
+    }
+}
+
+fn quota_exceeded_response(project_id: &str, evaluation: &QuotaCheckResult) -> Response {
+    let mut error = OpenAiErrorResponse::new(
+        quota_exceeded_message(project_id, evaluation),
+        "insufficient_quota",
+    );
+    error.error.code = Some("quota_exceeded".to_owned());
+    (StatusCode::TOO_MANY_REQUESTS, Json(error)).into_response()
+}
+
+fn quota_exceeded_message(project_id: &str, evaluation: &QuotaCheckResult) -> String {
+    match (evaluation.policy_id.as_deref(), evaluation.limit_units) {
+        (Some(policy_id), Some(limit_units)) => format!(
+            "Quota exceeded for project {project_id} under policy {policy_id}: requested {} units with {} already used against a limit of {limit_units}.",
+            evaluation.requested_units, evaluation.used_units,
+        ),
+        (_, Some(limit_units)) => format!(
+            "Quota exceeded for project {project_id}: requested {} units with {} already used against a limit of {limit_units}.",
+            evaluation.requested_units, evaluation.used_units,
+        ),
+        _ => format!(
+            "Quota exceeded for project {project_id}: requested {} units with {} already used.",
+            evaluation.requested_units, evaluation.used_units,
+        ),
+    }
 }
 
 async fn record_gateway_usage_for_project(

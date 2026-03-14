@@ -1,5 +1,5 @@
 use anyhow::Result;
-use sdkwork_api_domain_billing::LedgerEntry;
+use sdkwork_api_domain_billing::{LedgerEntry, QuotaPolicy};
 use sdkwork_api_domain_catalog::{
     normalize_provider_extension_id, Channel, ModelCapability, ModelCatalogEntry,
     ProviderChannelBinding, ProxyProvider,
@@ -269,6 +269,16 @@ pub async fn run_migrations(url: &str) -> Result<PgPool> {
             project_id TEXT NOT NULL,
             units BIGINT NOT NULL,
             amount DOUBLE PRECISION NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS billing_quota_policies (
+            policy_id TEXT PRIMARY KEY NOT NULL,
+            project_id TEXT NOT NULL,
+            max_units BIGINT NOT NULL,
+            enabled BOOLEAN NOT NULL DEFAULT TRUE
         )",
     )
     .execute(&pool)
@@ -826,6 +836,47 @@ impl PostgresAdminStore {
         Ok(entries)
     }
 
+    pub async fn insert_quota_policy(&self, policy: &QuotaPolicy) -> Result<QuotaPolicy> {
+        sqlx::query(
+            "INSERT INTO billing_quota_policies (policy_id, project_id, max_units, enabled)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT(policy_id) DO UPDATE SET
+             project_id = excluded.project_id,
+             max_units = excluded.max_units,
+             enabled = excluded.enabled",
+        )
+        .bind(&policy.policy_id)
+        .bind(&policy.project_id)
+        .bind(i64::try_from(policy.max_units)?)
+        .bind(policy.enabled)
+        .execute(&self.pool)
+        .await?;
+        Ok(policy.clone())
+    }
+
+    pub async fn list_quota_policies(&self) -> Result<Vec<QuotaPolicy>> {
+        let rows = sqlx::query_as::<_, (String, String, i64, bool)>(
+            "SELECT policy_id, project_id, max_units, enabled
+             FROM billing_quota_policies
+             ORDER BY policy_id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let policies = rows
+            .into_iter()
+            .map(|(policy_id, project_id, max_units, enabled)| {
+                Ok(QuotaPolicy {
+                    policy_id,
+                    project_id,
+                    max_units: u64::try_from(max_units)?,
+                    enabled,
+                })
+            })
+            .collect::<std::result::Result<Vec<_>, std::num::TryFromIntError>>()?;
+        Ok(policies)
+    }
+
     pub async fn insert_tenant(&self, tenant: &Tenant) -> Result<Tenant> {
         sqlx::query(
             "INSERT INTO tenant_records (id, name) VALUES ($1, $2)
@@ -1169,6 +1220,14 @@ impl AdminStore for PostgresAdminStore {
 
     async fn list_ledger_entries(&self) -> Result<Vec<LedgerEntry>> {
         PostgresAdminStore::list_ledger_entries(self).await
+    }
+
+    async fn insert_quota_policy(&self, policy: &QuotaPolicy) -> Result<QuotaPolicy> {
+        PostgresAdminStore::insert_quota_policy(self, policy).await
+    }
+
+    async fn list_quota_policies(&self) -> Result<Vec<QuotaPolicy>> {
+        PostgresAdminStore::list_quota_policies(self).await
     }
 
     async fn insert_tenant(&self, tenant: &Tenant) -> Result<Tenant> {

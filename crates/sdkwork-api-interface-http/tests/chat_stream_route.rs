@@ -6,6 +6,7 @@ use axum::Router;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use ed25519_dalek::SigningKey;
 use sdkwork_api_ext_provider_native_mock::FIXTURE_EXTENSION_ID;
+use serial_test::serial;
 use sqlx::SqlitePool;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -15,6 +16,7 @@ use tower::ServiceExt;
 
 mod support;
 
+#[serial(extension_env)]
 #[tokio::test]
 async fn chat_stream_route_accepts_requests() {
     let app = sdkwork_api_interface_http::gateway_router();
@@ -51,6 +53,7 @@ struct UpstreamCaptureState {
     authorization: Arc<Mutex<Option<String>>>,
 }
 
+#[serial(extension_env)]
 #[tokio::test]
 async fn stateful_chat_stream_route_relays_to_openai_compatible_provider() {
     let upstream_state = UpstreamCaptureState::default();
@@ -170,6 +173,7 @@ async fn stateful_chat_stream_route_relays_to_openai_compatible_provider() {
     );
 }
 
+#[serial(extension_env)]
 #[tokio::test]
 async fn stateful_chat_stream_route_relays_to_native_dynamic_provider() {
     let extension_root = temp_extension_root("native-dynamic-stream");

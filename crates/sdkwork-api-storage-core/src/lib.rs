@@ -1,6 +1,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use sdkwork_api_domain_billing::LedgerEntry;
+use sdkwork_api_domain_billing::{LedgerEntry, QuotaPolicy};
 use sdkwork_api_domain_catalog::{Channel, ModelCatalogEntry, ProxyProvider};
 use sdkwork_api_domain_credential::UpstreamCredential;
 use sdkwork_api_domain_identity::GatewayApiKeyRecord;
@@ -86,6 +86,8 @@ pub trait AdminStore: Send + Sync {
 
     async fn insert_ledger_entry(&self, entry: &LedgerEntry) -> Result<LedgerEntry>;
     async fn list_ledger_entries(&self) -> Result<Vec<LedgerEntry>>;
+    async fn insert_quota_policy(&self, policy: &QuotaPolicy) -> Result<QuotaPolicy>;
+    async fn list_quota_policies(&self) -> Result<Vec<QuotaPolicy>>;
 
     async fn insert_tenant(&self, tenant: &Tenant) -> Result<Tenant>;
     async fn list_tenants(&self) -> Result<Vec<Tenant>>;

@@ -3,12 +3,14 @@ use axum::extract::State;
 use axum::http::{Request, StatusCode};
 use axum::routing::post;
 use axum::Router;
+use serial_test::serial;
 use sqlx::SqlitePool;
 use std::sync::{Arc, Mutex};
 use tower::ServiceExt;
 
 mod support;
 
+#[serial(extension_env)]
 #[tokio::test]
 async fn audio_speech_route_returns_audio_content() {
     let app = sdkwork_api_interface_http::gateway_router();
@@ -59,6 +61,7 @@ struct UpstreamCaptureState {
     authorization: Arc<Mutex<Option<String>>>,
 }
 
+#[serial(extension_env)]
 #[tokio::test]
 async fn stateful_audio_speech_route_relays_to_openai_compatible_provider() {
     let upstream_state = UpstreamCaptureState::default();
@@ -176,6 +179,7 @@ async fn stateful_audio_speech_route_relays_to_openai_compatible_provider() {
     );
 }
 
+#[serial(extension_env)]
 #[tokio::test]
 async fn stateful_audio_speech_route_relays_to_native_dynamic_provider() {
     let fixture = support::prepare_native_dynamic_mock_package("native-dynamic-audio-speech");

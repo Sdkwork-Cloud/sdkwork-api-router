@@ -810,6 +810,51 @@ async fn list_provider_health_snapshots_from_admin_api() {
     assert_eq!(json[0]["message"], "healthy");
 }
 
+#[serial(extension_env)]
+#[tokio::test]
+async fn create_and_list_quota_policies_from_admin_api() {
+    let pool = memory_pool().await;
+    let app = sdkwork_api_interface_admin::admin_router_with_pool(pool);
+    let token = login_token(app.clone()).await;
+
+    let create = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/billing/quota-policies")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"policy_id\":\"quota-project-1\",\"project_id\":\"project-1\",\"max_units\":1000,\"enabled\":true}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(create.status(), StatusCode::CREATED);
+
+    let list = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/admin/billing/quota-policies")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(list.status(), StatusCode::OK);
+    let json = read_json(list).await;
+    assert_eq!(json.as_array().unwrap().len(), 1);
+    assert_eq!(json[0]["policy_id"], "quota-project-1");
+    assert_eq!(json[0]["project_id"], "project-1");
+    assert_eq!(json[0]["max_units"], 1000);
+}
+
 fn temp_extension_root(suffix: &str) -> PathBuf {
     let mut path = std::env::temp_dir();
     let millis = SystemTime::now()

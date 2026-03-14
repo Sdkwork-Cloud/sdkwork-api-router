@@ -95,3 +95,10 @@ export interface LedgerEntry {
   units: number;
   amount: number;
 }
+
+export interface QuotaPolicyRecord {
+  policy_id: string;
+  project_id: string;
+  max_units: number;
+  enabled: boolean;
+}

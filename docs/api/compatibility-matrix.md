@@ -19,10 +19,10 @@ The table below reflects the current runtime truth as of 2026-03-14.
 | API Family | Stateful Gateway | Stateless Gateway | Notes |
 |---|---|---|---|
 | `/v1/models` | `native` | `emulated` | Stateful mode reads the local catalog; stateless mode returns a compatible local list |
-| `/v1/chat/completions` | `relay` | `emulated` | Supports JSON and SSE relay for configured OpenAI-compatible upstreams |
-| `/v1/completions` | `relay` | `emulated` | Relays legacy text completions when provider wiring exists |
-| `/v1/responses` | `relay` | `emulated` | Stateful mode relays create, retrieve, delete, cancel, compact, input item flows, and SSE streaming |
-| `/v1/embeddings` | `relay` | `emulated` | Uses catalog, credential, and provider state in stateful mode |
+| `/v1/chat/completions` | `relay` | `emulated` | Supports JSON and SSE relay for configured OpenAI-compatible upstreams, with project quota admission in stateful mode |
+| `/v1/completions` | `relay` | `emulated` | Relays legacy text completions when provider wiring exists and enforces project quota admission in stateful mode |
+| `/v1/responses` | `relay` | `emulated` | Stateful mode relays create, retrieve, delete, cancel, compact, input item flows, SSE streaming, and project quota admission |
+| `/v1/embeddings` | `relay` | `emulated` | Uses catalog, credential, and provider state in stateful mode, with project quota admission before dispatch |
 | `/v1/files` | `relay` | `emulated` | Stateful mode relays multipart upload, metadata, and binary content |
 | `/v1/uploads` | `relay` | `emulated` | Upload creation, part upload, completion, and cancel relay in stateful mode |
 | `/v1/audio/*` | `relay` | `emulated` | Speech can relay binary or event-stream output |
@@ -61,6 +61,7 @@ Admin APIs are SDKWork-owned control-plane surfaces and therefore classify as `n
 | `/admin/routing/simulations` | `native` | Catalog-backed routing decision preview with candidate assessment, runtime health, selection reasons, and reproducible `selection_seed` for weighted policies |
 | `/admin/usage/records` | `native` | Lists gateway-recorded usage |
 | `/admin/billing/ledger` | `native` | Lists gateway-booked billing entries |
+| `/admin/billing/quota-policies` | `native` | Creates and lists project-scoped hard quota policies used by stateful admission control |
 
 ## Extension Runtime
 

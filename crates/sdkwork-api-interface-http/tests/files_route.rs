@@ -4,12 +4,14 @@ use axum::http::{Request, StatusCode};
 use axum::routing::get;
 use axum::{Json, Router};
 use serde_json::Value;
+use serial_test::serial;
 use sqlx::SqlitePool;
 use std::sync::{Arc, Mutex};
 use tower::ServiceExt;
 
 mod support;
 
+#[serial(extension_env)]
 #[tokio::test]
 async fn files_route_returns_ok() {
     let app = sdkwork_api_interface_http::gateway_router();
@@ -33,6 +35,7 @@ async fn files_route_returns_ok() {
     assert_eq!(response.status(), StatusCode::OK);
 }
 
+#[serial(extension_env)]
 #[tokio::test]
 async fn files_list_route_returns_ok() {
     let app = sdkwork_api_interface_http::gateway_router();
@@ -51,6 +54,7 @@ async fn files_list_route_returns_ok() {
     assert_eq!(response.status(), StatusCode::OK);
 }
 
+#[serial(extension_env)]
 #[tokio::test]
 async fn file_retrieve_route_returns_ok() {
     let app = sdkwork_api_interface_http::gateway_router();
@@ -69,6 +73,7 @@ async fn file_retrieve_route_returns_ok() {
     assert_eq!(response.status(), StatusCode::OK);
 }
 
+#[serial(extension_env)]
 #[tokio::test]
 async fn file_delete_route_returns_ok() {
     let app = sdkwork_api_interface_http::gateway_router();
@@ -87,6 +92,7 @@ async fn file_delete_route_returns_ok() {
     assert_eq!(response.status(), StatusCode::OK);
 }
 
+#[serial(extension_env)]
 #[tokio::test]
 async fn file_content_route_returns_ok() {
     let app = sdkwork_api_interface_http::gateway_router();
@@ -123,6 +129,7 @@ struct UpstreamCaptureState {
     content_type: Arc<Mutex<Option<String>>>,
 }
 
+#[serial(extension_env)]
 #[tokio::test]
 async fn stateful_files_route_relays_to_openai_compatible_provider() {
     let upstream_state = UpstreamCaptureState::default();
@@ -310,6 +317,7 @@ async fn stateful_files_route_relays_to_openai_compatible_provider() {
     assert_eq!(&content_bytes[..], b"{}");
 }
 
+#[serial(extension_env)]
 #[tokio::test]
 async fn stateful_file_content_route_relays_to_native_dynamic_provider() {
     let fixture = support::prepare_native_dynamic_mock_package("native-dynamic-file-content");

@@ -6,6 +6,7 @@ import type {
   ProviderHealthSnapshot,
   ProjectRecord,
   ProxyProviderRecord,
+  QuotaPolicyRecord,
   RoutingSimulationResult,
   TenantRecord,
   UsageRecord,
@@ -76,6 +77,10 @@ export function listUsageRecords(): Promise<UsageRecord[]> {
 
 export function listLedgerEntries(): Promise<LedgerEntry[]> {
   return getJson<LedgerEntry[]>('/billing/ledger');
+}
+
+export function listQuotaPolicies(): Promise<QuotaPolicyRecord[]> {
+  return getJson<QuotaPolicyRecord[]>('/billing/quota-policies');
 }
 
 export function listProviderHealthSnapshots(): Promise<ProviderHealthSnapshot[]> {

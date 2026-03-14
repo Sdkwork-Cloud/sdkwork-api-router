@@ -8,6 +8,7 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use ed25519_dalek::SigningKey;
 use sdkwork_api_ext_provider_native_mock::FIXTURE_EXTENSION_ID;
 use serde_json::Value;
+use serial_test::serial;
 use sqlx::SqlitePool;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -17,6 +18,7 @@ use tower::ServiceExt;
 
 mod support;
 
+#[serial(extension_env)]
 #[tokio::test]
 async fn responses_route_returns_ok() {
     let app = sdkwork_api_interface_http::gateway_router();
@@ -35,6 +37,7 @@ async fn responses_route_returns_ok() {
     assert_eq!(response.status(), StatusCode::OK);
 }
 
+#[serial(extension_env)]
 #[tokio::test]
 async fn response_retrieve_route_returns_ok() {
     let app = sdkwork_api_interface_http::gateway_router();
@@ -53,6 +56,7 @@ async fn response_retrieve_route_returns_ok() {
     assert_eq!(response.status(), StatusCode::OK);
 }
 
+#[serial(extension_env)]
 #[tokio::test]
 async fn response_input_items_route_returns_ok() {
     let app = sdkwork_api_interface_http::gateway_router();
@@ -71,6 +75,7 @@ async fn response_input_items_route_returns_ok() {
     assert_eq!(response.status(), StatusCode::OK);
 }
 
+#[serial(extension_env)]
 #[tokio::test]
 async fn response_delete_route_returns_ok() {
     let app = sdkwork_api_interface_http::gateway_router();
@@ -88,6 +93,7 @@ async fn response_delete_route_returns_ok() {
     assert_eq!(response.status(), StatusCode::OK);
 }
 
+#[serial(extension_env)]
 #[tokio::test]
 async fn response_input_tokens_route_returns_ok() {
     let app = sdkwork_api_interface_http::gateway_router();
@@ -107,6 +113,7 @@ async fn response_input_tokens_route_returns_ok() {
     assert_eq!(response.status(), StatusCode::OK);
 }
 
+#[serial(extension_env)]
 #[tokio::test]
 async fn response_cancel_route_returns_ok() {
     let app = sdkwork_api_interface_http::gateway_router();
@@ -125,6 +132,7 @@ async fn response_cancel_route_returns_ok() {
     assert_eq!(response.status(), StatusCode::OK);
 }
 
+#[serial(extension_env)]
 #[tokio::test]
 async fn response_compact_route_returns_ok() {
     let app = sdkwork_api_interface_http::gateway_router();
@@ -169,6 +177,7 @@ struct UpstreamCaptureState {
     authorization: Arc<Mutex<Option<String>>>,
 }
 
+#[serial(extension_env)]
 #[tokio::test]
 async fn stateful_responses_route_relays_to_openai_compatible_provider() {
     let upstream_state = UpstreamCaptureState::default();
@@ -405,6 +414,7 @@ async fn stateful_responses_route_relays_to_openai_compatible_provider() {
     assert_eq!(compact_json["object"], "response.compaction");
 }
 
+#[serial(extension_env)]
 #[tokio::test]
 async fn stateful_responses_route_relays_stream_to_openai_compatible_provider() {
     let upstream_state = UpstreamCaptureState::default();
@@ -525,6 +535,7 @@ async fn stateful_responses_route_relays_stream_to_openai_compatible_provider() 
     );
 }
 
+#[serial(extension_env)]
 #[tokio::test]
 async fn stateful_responses_route_relays_stream_to_native_dynamic_provider() {
     let extension_root = temp_extension_root("native-dynamic-responses-stream");

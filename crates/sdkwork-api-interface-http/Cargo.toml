@@ -25,6 +25,7 @@ sqlx.workspace = true
 
 [dev-dependencies]
 ed25519-dalek.workspace = true
+serial_test.workspace = true
 sdkwork-api-ext-provider-native-mock = { path = "../sdkwork-api-ext-provider-native-mock" }
 sdkwork-api-extension-core = { path = "../sdkwork-api-extension-core" }
 sha2.workspace = true

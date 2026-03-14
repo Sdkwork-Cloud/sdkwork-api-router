@@ -142,7 +142,8 @@ Known gaps:
 - only stateful gateway execution paths relay upstream responses; the stateless demo router still emits local stub payloads
 - broader API families are now wired as either `relay` or `emulated`; see `docs/api/compatibility-matrix.md` for the execution-truth matrix
 - routing policies now support explicit `deterministic_priority` and `weighted_random` strategies, with runtime-aware candidate assessment, policy order, provider availability, live runtime health, persisted provider health snapshots, and instance-level cost or latency hints
-- geo affinity, quota-aware admission, and SLO-aware routing are not implemented yet
+- project-scoped quota-aware admission is now active for `/v1/chat/completions`, `/v1/completions`, `/v1/responses`, and `/v1/embeddings`, backed by persisted billing quota policies and OpenAI-compatible `429 insufficient_quota` responses
+- geo affinity and SLO-aware routing are not implemented yet
 - SQLite and PostgreSQL are active persistence drivers; MySQL and libsql remain extension boundaries
 
 ## Minimal Upstream Relay Setup

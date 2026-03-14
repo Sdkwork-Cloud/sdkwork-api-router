@@ -9,7 +9,9 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use sdkwork_api_app_billing::list_ledger_entries;
+use sdkwork_api_app_billing::{
+    create_quota_policy, list_ledger_entries, list_quota_policies, persist_quota_policy,
+};
 use sdkwork_api_app_catalog::{
     list_channels, list_model_entries, list_providers, persist_channel,
     persist_model_with_metadata, persist_provider_with_bindings_and_extension_id,
@@ -32,7 +34,7 @@ use sdkwork_api_app_routing::{
 };
 use sdkwork_api_app_tenant::{list_projects, list_tenants, persist_project, persist_tenant};
 use sdkwork_api_app_usage::list_usage_records;
-use sdkwork_api_domain_billing::LedgerEntry;
+use sdkwork_api_domain_billing::{LedgerEntry, QuotaPolicy};
 use sdkwork_api_domain_catalog::{
     Channel, ModelCapability, ModelCatalogEntry, ProviderChannelBinding, ProxyProvider,
 };
@@ -267,6 +269,15 @@ struct CreateRoutingPolicyRequest {
 }
 
 #[derive(Debug, Deserialize)]
+struct CreateQuotaPolicyRequest {
+    policy_id: String,
+    project_id: String,
+    max_units: u64,
+    #[serde(default = "default_true")]
+    enabled: bool,
+}
+
+#[derive(Debug, Deserialize)]
 struct RoutingSimulationRequest {
     capability: String,
     model: String,
@@ -320,6 +331,10 @@ pub fn admin_router() -> Router {
         )
         .route("/admin/usage/records", get(|| async { "usage-records" }))
         .route("/admin/billing/ledger", get(|| async { "billing-ledger" }))
+        .route(
+            "/admin/billing/quota-policies",
+            get(|| async { "billing-quota-policies" }),
+        )
         .route("/admin/routing/policies", get(|| async { "policies" }))
         .route(
             "/admin/routing/health-snapshots",
@@ -433,6 +448,10 @@ pub fn admin_router_with_store_and_secret_manager_and_jwt_secret(
         )
         .route("/admin/usage/records", get(list_usage_records_handler))
         .route("/admin/billing/ledger", get(list_ledger_entries_handler))
+        .route(
+            "/admin/billing/quota-policies",
+            get(list_quota_policies_handler).post(create_quota_policy_handler),
+        )
         .route(
             "/admin/routing/policies",
             get(list_routing_policies_handler).post(create_routing_policy_handler),
@@ -818,6 +837,34 @@ async fn list_ledger_entries_handler(
         .await
         .map(Json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn list_quota_policies_handler(
+    _claims: AuthenticatedAdminClaims,
+    State(state): State<AdminApiState>,
+) -> Result<Json<Vec<QuotaPolicy>>, StatusCode> {
+    list_quota_policies(state.store.as_ref())
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn create_quota_policy_handler(
+    _claims: AuthenticatedAdminClaims,
+    State(state): State<AdminApiState>,
+    Json(request): Json<CreateQuotaPolicyRequest>,
+) -> Result<(StatusCode, Json<QuotaPolicy>), StatusCode> {
+    let policy = create_quota_policy(
+        &request.policy_id,
+        &request.project_id,
+        request.max_units,
+        request.enabled,
+    )
+    .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let policy = persist_quota_policy(state.store.as_ref(), &policy)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok((StatusCode::CREATED, Json(policy)))
 }
 
 fn provider_bindings_from_request(request: &CreateProviderRequest) -> Vec<ProviderChannelBinding> {

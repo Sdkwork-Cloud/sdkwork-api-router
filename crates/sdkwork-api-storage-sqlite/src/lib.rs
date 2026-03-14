@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::str::FromStr;
 
-use sdkwork_api_domain_billing::LedgerEntry;
+use sdkwork_api_domain_billing::{LedgerEntry, QuotaPolicy};
 use sdkwork_api_domain_catalog::{
     normalize_provider_extension_id, Channel, ModelCapability, ModelCatalogEntry,
     ProviderChannelBinding, ProxyProvider,
@@ -220,6 +220,16 @@ pub async fn run_migrations(url: &str) -> Result<SqlitePool> {
             project_id TEXT NOT NULL,
             units INTEGER NOT NULL,
             amount REAL NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS billing_quota_policies (
+            policy_id TEXT PRIMARY KEY NOT NULL,
+            project_id TEXT NOT NULL,
+            max_units INTEGER NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 1
         )",
     )
     .execute(&pool)
@@ -876,6 +886,47 @@ impl SqliteAdminStore {
         Ok(entries)
     }
 
+    pub async fn insert_quota_policy(&self, policy: &QuotaPolicy) -> Result<QuotaPolicy> {
+        sqlx::query(
+            "INSERT INTO billing_quota_policies (policy_id, project_id, max_units, enabled)
+             VALUES (?, ?, ?, ?)
+             ON CONFLICT(policy_id) DO UPDATE SET
+             project_id = excluded.project_id,
+             max_units = excluded.max_units,
+             enabled = excluded.enabled",
+        )
+        .bind(&policy.policy_id)
+        .bind(&policy.project_id)
+        .bind(i64::try_from(policy.max_units)?)
+        .bind(if policy.enabled { 1_i64 } else { 0_i64 })
+        .execute(&self.pool)
+        .await?;
+        Ok(policy.clone())
+    }
+
+    pub async fn list_quota_policies(&self) -> Result<Vec<QuotaPolicy>> {
+        let rows = sqlx::query_as::<_, (String, String, i64, i64)>(
+            "SELECT policy_id, project_id, max_units, enabled
+             FROM billing_quota_policies
+             ORDER BY policy_id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let policies = rows
+            .into_iter()
+            .map(|(policy_id, project_id, max_units, enabled)| {
+                Ok(QuotaPolicy {
+                    policy_id,
+                    project_id,
+                    max_units: u64::try_from(max_units)?,
+                    enabled: enabled != 0,
+                })
+            })
+            .collect::<std::result::Result<Vec<_>, std::num::TryFromIntError>>()?;
+        Ok(policies)
+    }
+
     pub async fn insert_tenant(&self, tenant: &Tenant) -> Result<Tenant> {
         sqlx::query(
             "INSERT INTO tenant_records (id, name) VALUES (?, ?)
@@ -1208,6 +1259,14 @@ impl AdminStore for SqliteAdminStore {
 
     async fn list_ledger_entries(&self) -> Result<Vec<LedgerEntry>> {
         SqliteAdminStore::list_ledger_entries(self).await
+    }
+
+    async fn insert_quota_policy(&self, policy: &QuotaPolicy) -> Result<QuotaPolicy> {
+        SqliteAdminStore::insert_quota_policy(self, policy).await
+    }
+
+    async fn list_quota_policies(&self) -> Result<Vec<QuotaPolicy>> {
+        SqliteAdminStore::list_quota_policies(self).await
     }
 
     async fn insert_tenant(&self, tenant: &Tenant) -> Result<Tenant> {
