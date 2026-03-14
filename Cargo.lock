@@ -1572,10 +1572,16 @@ name = "sdkwork-api-app-routing"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "sdkwork-api-app-extension",
  "sdkwork-api-domain-catalog",
  "sdkwork-api-domain-routing",
+ "sdkwork-api-ext-provider-native-mock",
+ "sdkwork-api-extension-core",
+ "sdkwork-api-extension-host",
  "sdkwork-api-storage-core",
  "sdkwork-api-storage-sqlite",
+ "serde_json",
+ "serial_test",
  "tokio",
 ]
 

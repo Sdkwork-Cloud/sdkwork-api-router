@@ -275,6 +275,12 @@ struct RoutingSimulationResponse {
     candidate_ids: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     matched_policy_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    strategy: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    selection_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    assessments: Vec<sdkwork_api_domain_routing::RoutingCandidateAssessment>,
 }
 
 pub fn admin_router() -> Router {
@@ -718,6 +724,9 @@ async fn simulate_routing_handler(
         selected_provider_id: decision.selected_provider_id,
         candidate_ids: decision.candidate_ids,
         matched_policy_id: decision.matched_policy_id,
+        strategy: decision.strategy,
+        selection_reason: decision.selection_reason,
+        assessments: decision.assessments,
     }))
 }
 

@@ -6,12 +6,20 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+sdkwork-api-app-extension = { path = "../sdkwork-api-app-extension" }
+sdkwork-api-domain-catalog = { path = "../sdkwork-api-domain-catalog" }
 sdkwork-api-domain-routing = { path = "../sdkwork-api-domain-routing" }
+sdkwork-api-extension-core = { path = "../sdkwork-api-extension-core" }
 sdkwork-api-storage-core = { path = "../sdkwork-api-storage-core" }
 sdkwork-api-storage-sqlite = { path = "../sdkwork-api-storage-sqlite" }
+serde_json.workspace = true
 
 [dev-dependencies]
-sdkwork-api-domain-catalog = { path = "../sdkwork-api-domain-catalog" }
+sdkwork-api-ext-provider-native-mock = { path = "../sdkwork-api-ext-provider-native-mock" }
+sdkwork-api-extension-core = { path = "../sdkwork-api-extension-core" }
+sdkwork-api-extension-host = { path = "../sdkwork-api-extension-host" }
+serde_json.workspace = true
+serial_test.workspace = true
 tokio.workspace = true
 
 [lib]

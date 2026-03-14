@@ -53,6 +53,11 @@ Backend:
 - SSE relay for stateful `/v1/chat/completions` and `/v1/responses` when upstream providers or native dynamic extensions support streaming
 - Stub fallback responses for unconfigured providers or unsupported adapter kinds
 - Routing simulation API backed by persisted routing policies plus catalog or provider candidates
+- Runtime-aware routing assessment now considers:
+  - extension instance enablement
+  - connector and native dynamic runtime health
+  - instance config hints such as `weight`, `cost`, and `latency_ms`
+  - explainable candidate scoring surfaced through admin simulation responses
 - Built-in extension host with pluggable extension manifests for:
   - `sdkwork.provider.openai.official`
   - `sdkwork.provider.openrouter`
@@ -132,8 +137,8 @@ Known gaps:
 - native dynamic execution now supports JSON-capable provider operations plus chat and responses SSE relay, binary stream passthrough for audio speech plus file and video content, and optional package-runtime lifecycle hooks; hot reload and scheduled health supervision are not implemented yet
 - only stateful gateway execution paths relay upstream responses; the stateless demo router still emits local stub payloads
 - broader API families are now wired as either `relay` or `emulated`; see `docs/api/compatibility-matrix.md` for the execution-truth matrix
-- routing policies now support deterministic priority-based selection with ordered provider fallback and optional defaults
-- weighted balancing, health-scored failover, geo affinity, and SLO-aware routing are not implemented yet
+- routing policies now support deterministic runtime-aware selection with policy order, provider availability, runtime health, and instance-level cost or latency hints
+- weighted random balancing, geo affinity, quota-aware admission, and SLO-aware routing are not implemented yet
 - SQLite and PostgreSQL are active persistence drivers; MySQL and libsql remain extension boundaries
 
 ## Minimal Upstream Relay Setup

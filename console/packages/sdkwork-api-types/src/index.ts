@@ -50,9 +50,26 @@ export interface ModelCatalogRecord {
   provider_id: string;
 }
 
+export type RoutingCandidateHealth = 'healthy' | 'unhealthy' | 'unknown';
+
+export interface RoutingCandidateAssessment {
+  provider_id: string;
+  available: boolean;
+  health: RoutingCandidateHealth;
+  policy_rank: number;
+  weight?: number;
+  cost?: number;
+  latency_ms?: number;
+  reasons: string[];
+}
+
 export interface RoutingSimulationResult {
   selected_provider_id: string;
   candidate_ids: string[];
+  matched_policy_id?: string;
+  strategy?: string;
+  selection_reason?: string;
+  assessments: RoutingCandidateAssessment[];
 }
 
 export interface UsageRecord {

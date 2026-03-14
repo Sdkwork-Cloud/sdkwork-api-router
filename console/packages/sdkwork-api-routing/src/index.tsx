@@ -5,6 +5,7 @@ import type { RoutingSimulationResult } from 'sdkwork-api-types';
 const defaultSimulation: RoutingSimulationResult = {
   selected_provider_id: 'n/a',
   candidate_ids: [],
+  assessments: [],
 };
 
 export function RouteSimulationPage() {
@@ -51,18 +52,44 @@ export function RouteSimulationPage() {
           <span className="metric-label">Candidate Count</span>
           <strong>{simulation.candidate_ids.length}</strong>
         </article>
+        <article className="metric-card">
+          <span className="metric-label">Strategy</span>
+          <strong>{simulation.strategy ?? 'static_fallback'}</strong>
+        </article>
       </div>
+
+      <article className="detail-card">
+        <h3>Decision Reason</h3>
+        <p>{simulation.selection_reason ?? 'No routing explanation returned yet.'}</p>
+      </article>
 
       <article className="detail-card">
         <h3>Candidate Providers</h3>
         <ul className="compact-list">
-          {simulation.candidate_ids.map((candidateId) => (
-            <li key={candidateId}>
-              <strong>{candidateId}</strong>
-              <span>{candidateId === simulation.selected_provider_id ? 'selected' : 'standby'}</span>
+          {simulation.assessments.map((assessment) => (
+            <li key={assessment.provider_id}>
+              <div>
+                <strong>{assessment.provider_id}</strong>
+                <span>
+                  {assessment.provider_id === simulation.selected_provider_id ? 'selected' : 'standby'}
+                </span>
+              </div>
+              <div>
+                <span>{assessment.available ? 'available' : 'unavailable'}</span>
+                <span>{assessment.health}</span>
+                <span>policy #{assessment.policy_rank + 1}</span>
+                <span>weight {assessment.weight ?? 100}</span>
+                {assessment.cost !== undefined ? <span>cost {assessment.cost}</span> : null}
+                {assessment.latency_ms !== undefined ? (
+                  <span>latency {assessment.latency_ms}ms</span>
+                ) : null}
+              </div>
+              <div>
+                {assessment.reasons.length ? assessment.reasons.join(', ') : 'No detailed reasons returned.'}
+              </div>
             </li>
           ))}
-          {!simulation.candidate_ids.length && (
+          {!simulation.assessments.length && (
             <li className="empty">No candidates returned from the admin simulation endpoint.</li>
           )}
         </ul>

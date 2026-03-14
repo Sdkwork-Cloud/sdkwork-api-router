@@ -3,11 +3,91 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RoutingCandidateHealth {
+    Healthy,
+    Unhealthy,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RoutingCandidateAssessment {
+    pub provider_id: String,
+    pub available: bool,
+    pub health: RoutingCandidateHealth,
+    pub policy_rank: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weight: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latency_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reasons: Vec<String>,
+}
+
+impl RoutingCandidateAssessment {
+    pub fn new(provider_id: impl Into<String>) -> Self {
+        Self {
+            provider_id: provider_id.into(),
+            available: true,
+            health: RoutingCandidateHealth::Unknown,
+            policy_rank: 0,
+            weight: None,
+            cost: None,
+            latency_ms: None,
+            reasons: Vec::new(),
+        }
+    }
+
+    pub fn with_available(mut self, available: bool) -> Self {
+        self.available = available;
+        self
+    }
+
+    pub fn with_health(mut self, health: RoutingCandidateHealth) -> Self {
+        self.health = health;
+        self
+    }
+
+    pub fn with_policy_rank(mut self, policy_rank: usize) -> Self {
+        self.policy_rank = policy_rank;
+        self
+    }
+
+    pub fn with_weight(mut self, weight: u64) -> Self {
+        self.weight = Some(weight);
+        self
+    }
+
+    pub fn with_cost(mut self, cost: f64) -> Self {
+        self.cost = Some(cost);
+        self
+    }
+
+    pub fn with_latency_ms(mut self, latency_ms: u64) -> Self {
+        self.latency_ms = Some(latency_ms);
+        self
+    }
+
+    pub fn with_reason(mut self, reason: impl Into<String>) -> Self {
+        self.reasons.push(reason.into());
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RoutingDecision {
     pub selected_provider_id: String,
     pub candidate_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub matched_policy_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strategy: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub assessments: Vec<RoutingCandidateAssessment>,
 }
 
 impl RoutingDecision {
@@ -16,11 +96,29 @@ impl RoutingDecision {
             selected_provider_id: selected_provider_id.into(),
             candidate_ids,
             matched_policy_id: None,
+            strategy: None,
+            selection_reason: None,
+            assessments: Vec::new(),
         }
     }
 
     pub fn with_matched_policy_id(mut self, matched_policy_id: impl Into<String>) -> Self {
         self.matched_policy_id = Some(matched_policy_id.into());
+        self
+    }
+
+    pub fn with_strategy(mut self, strategy: impl Into<String>) -> Self {
+        self.strategy = Some(strategy.into());
+        self
+    }
+
+    pub fn with_selection_reason(mut self, selection_reason: impl Into<String>) -> Self {
+        self.selection_reason = Some(selection_reason.into());
+        self
+    }
+
+    pub fn with_assessments(mut self, assessments: Vec<RoutingCandidateAssessment>) -> Self {
+        self.assessments = assessments;
         self
     }
 }

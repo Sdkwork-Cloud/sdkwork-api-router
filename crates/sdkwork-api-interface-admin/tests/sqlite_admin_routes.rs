@@ -349,6 +349,9 @@ async fn routing_simulation_uses_catalog_models() {
         simulation_json["candidate_ids"].as_array().unwrap().len(),
         2
     );
+    assert_eq!(simulation_json["strategy"], "runtime_aware_deterministic");
+    assert!(simulation_json["selection_reason"].as_str().is_some());
+    assert_eq!(simulation_json["assessments"].as_array().unwrap().len(), 2);
 }
 
 #[serial(extension_env)]
@@ -484,6 +487,15 @@ async fn routing_simulation_reports_policy_selected_provider() {
         "provider-openrouter"
     );
     assert_eq!(simulation_json["matched_policy_id"], "policy-gpt-4-1");
+    assert_eq!(simulation_json["strategy"], "runtime_aware_deterministic");
+    assert!(simulation_json["selection_reason"].as_str().is_some());
+    assert_eq!(
+        simulation_json["assessments"][0]["provider_id"],
+        "provider-openrouter"
+    );
+    assert!(simulation_json["assessments"][0]["reasons"]
+        .as_array()
+        .is_some());
 }
 
 #[serial(extension_env)]
