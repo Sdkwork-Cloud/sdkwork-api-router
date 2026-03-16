@@ -1,0 +1,17 @@
+{
+  "name": "sdkwork-router-portal-commons",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.tsx",
+  "module": "./src/index.tsx",
+  "types": "./src/index.tsx",
+  "exports": {
+    ".": {
+      "import": "./src/index.tsx",
+      "types": "./src/index.tsx"
+    }
+  },
+  "dependencies": {
+    "react": "^19.0.0"
+  }
+}

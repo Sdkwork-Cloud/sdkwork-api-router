@@ -383,6 +383,14 @@ async fn stateful_assistants_route_relays_to_openai_compatible_provider() {
         upstream_state.authorization.lock().unwrap().as_deref(),
         Some("Bearer sk-upstream-openai")
     );
+    support::assert_single_usage_record_and_decision_log(
+        admin_app.clone(),
+        &admin_token,
+        "asst_upstream",
+        "provider-openai-official",
+        "gpt-4.1",
+    )
+    .await;
 
     let list_response = gateway_app
         .clone()
@@ -452,6 +460,192 @@ async fn stateful_assistants_route_relays_to_openai_compatible_provider() {
     assert_eq!(delete_response.status(), StatusCode::OK);
     let delete_json = read_json(delete_response).await;
     assert_eq!(delete_json["deleted"], true);
+}
+
+#[tokio::test]
+async fn stateful_assistants_create_usage_uses_created_assistant_id_for_billing() {
+    let tenant_id = "tenant-assistants-create";
+    let project_id = "project-assistants-create";
+    let upstream_state = UpstreamCaptureState::default();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let upstream = Router::new()
+        .route(
+            "/v1/assistants",
+            get(upstream_assistants_list_handler).post(upstream_assistants_handler),
+        )
+        .with_state(upstream_state.clone());
+
+    tokio::spawn(async move {
+        axum::serve(listener, upstream).await.unwrap();
+    });
+
+    let pool = memory_pool().await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let api_key = support::issue_gateway_api_key(&pool, tenant_id, project_id).await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+
+    let create_channel = admin_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/channels")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from("{\"id\":\"openai\",\"name\":\"OpenAI\"}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(create_channel.status(), StatusCode::CREATED);
+
+    let provider_route = admin_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/providers")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    "{{\"id\":\"provider-assistants-route\",\"channel_id\":\"openai\",\"adapter_kind\":\"openai\",\"base_url\":\"http://{address}\",\"display_name\":\"Assistants Route Provider\"}}"
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(provider_route.status(), StatusCode::CREATED);
+
+    let provider_assistant = admin_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/providers")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"id\":\"provider-assistants-created-id\",\"channel_id\":\"openai\",\"adapter_kind\":\"openai\",\"base_url\":\"http://127.0.0.1:1\",\"display_name\":\"Assistants Created Id Provider\"}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(provider_assistant.status(), StatusCode::CREATED);
+
+    let route_credential = admin_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/credentials")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    "{{\"tenant_id\":\"{tenant_id}\",\"provider_id\":\"provider-assistants-route\",\"key_reference\":\"cred-assistants-route\",\"secret_value\":\"sk-assistants-route\"}}"
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(route_credential.status(), StatusCode::CREATED);
+
+    let assistant_credential = admin_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/credentials")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    "{{\"tenant_id\":\"{tenant_id}\",\"provider_id\":\"provider-assistants-created-id\",\"key_reference\":\"cred-assistants-created-id\",\"secret_value\":\"sk-assistants-created-id\"}}"
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(assistant_credential.status(), StatusCode::CREATED);
+
+    let route_policy = admin_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/routing/policies")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "policy_id": "route-assistants-by-model",
+                        "capability": "assistants",
+                        "model_pattern": "gpt-4.1",
+                        "enabled": true,
+                        "priority": 200,
+                        "ordered_provider_ids": ["provider-assistants-route"]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(route_policy.status(), StatusCode::CREATED);
+
+    let assistant_policy = admin_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/routing/policies")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "policy_id": "route-assistants-by-created-id",
+                        "capability": "assistants",
+                        "model_pattern": "asst_upstream",
+                        "enabled": true,
+                        "priority": 100,
+                        "ordered_provider_ids": ["provider-assistants-created-id"]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(assistant_policy.status(), StatusCode::CREATED);
+
+    let response = gateway_app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/assistants")
+                .header("authorization", format!("Bearer {api_key}"))
+                .header("content-type", "application/json")
+                .body(Body::from("{\"name\":\"Support\",\"model\":\"gpt-4.1\"}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let response_json = read_json(response).await;
+    assert_eq!(response_json["id"], "asst_upstream");
+    assert_eq!(
+        upstream_state.authorization.lock().unwrap().as_deref(),
+        Some("Bearer sk-assistants-route")
+    );
+    support::assert_single_usage_record_and_decision_log(
+        admin_app,
+        &admin_token,
+        "asst_upstream",
+        "provider-assistants-route",
+        "gpt-4.1",
+    )
+    .await;
 }
 
 async fn upstream_assistants_handler(

@@ -13,23 +13,41 @@ interface PortalAuthPageProps {
   onNavigate: (path: string) => void;
 }
 
-interface PortalAuthCardProps {
+interface PortalAuthShellProps {
   eyebrow: string;
   title: string;
   blurb: string;
   status: string;
+  highlights: string[];
   children: ReactNode;
 }
 
-function PortalAuthCard({ eyebrow, title, blurb, status, children }: PortalAuthCardProps) {
+function PortalAuthShell({
+  eyebrow,
+  title,
+  blurb,
+  status,
+  highlights,
+  children,
+}: PortalAuthShellProps) {
   return (
-    <section className="auth-shell">
-      <div className="auth-card">
-        <p className="eyebrow">{eyebrow}</p>
-        <h2>{title}</h2>
-        <p className="auth-blurb">{blurb}</p>
-        <p className="status">{status}</p>
-        {children}
+    <section className="portal-auth-shell">
+      <div className="portal-auth-layout">
+        <article className="portal-auth-hero">
+          <p className="portal-kicker">{eyebrow}</p>
+          <h1>{title}</h1>
+          <p className="portal-auth-text">{blurb}</p>
+          <ul className="portal-highlight-list">
+            {highlights.map((highlight) => (
+              <li key={highlight}>{highlight}</li>
+            ))}
+          </ul>
+        </article>
+
+        <article className="portal-auth-card">
+          <p className="portal-status">{status}</p>
+          {children}
+        </article>
       </div>
     </section>
   );
@@ -52,14 +70,14 @@ export function PortalRegisterPage({ onAuthenticated, onNavigate }: PortalAuthPa
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [status, setStatus] = useState(
-    'Create a self-service workspace to obtain gateway API keys.',
+    'Create a self-service workspace and receive a portal session immediately.',
   );
   const [submitting, setSubmitting] = useState(false);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSubmitting(true);
-    setStatus('Provisioning workspace and issuing your first portal session...');
+    setStatus('Provisioning workspace and issuing your first session...');
 
     try {
       const session = await registerPortalUser({
@@ -68,7 +86,7 @@ export function PortalRegisterPage({ onAuthenticated, onNavigate }: PortalAuthPa
         display_name: displayName,
       });
       persistPortalSessionToken(session.token);
-      setStatus('Workspace ready. Redirecting to the dashboard...');
+      setStatus('Workspace created. Redirecting to the developer dashboard...');
       onAuthenticated(session);
     } catch (error) {
       setStatus(portalErrorMessage(error));
@@ -78,14 +96,20 @@ export function PortalRegisterPage({ onAuthenticated, onNavigate }: PortalAuthPa
   }
 
   return (
-    <PortalAuthCard
-      eyebrow="Public Portal"
-      title="Register a developer workspace"
-      blurb="This public surface is separate from operator-only admin APIs. Each account receives a dedicated tenant, project, and self-service key lifecycle."
+    <PortalAuthShell
+      eyebrow="Developer Portal"
+      title="Create a workspace for your team or prototype."
+      blurb="The portal is a developer product with its own account model, onboarding flow, and API key lifecycle. It does not reuse operator sessions from the admin console."
       status={status}
+      highlights={[
+        'Create a tenant and project automatically',
+        'Issue environment-scoped API keys',
+        'Keep end-user credentials isolated from admin operators',
+      ]}
     >
-      <form className="auth-form" onSubmit={handleSubmit}>
-        <label className="field">
+      <h2>Register workspace</h2>
+      <form className="portal-form" onSubmit={handleSubmit}>
+        <label className="portal-field">
           <span>Display name</span>
           <input
             value={displayName}
@@ -95,7 +119,7 @@ export function PortalRegisterPage({ onAuthenticated, onNavigate }: PortalAuthPa
             required
           />
         </label>
-        <label className="field">
+        <label className="portal-field">
           <span>Email</span>
           <input
             value={email}
@@ -106,7 +130,7 @@ export function PortalRegisterPage({ onAuthenticated, onNavigate }: PortalAuthPa
             required
           />
         </label>
-        <label className="field">
+        <label className="portal-field">
           <span>Password</span>
           <input
             value={password}
@@ -117,20 +141,20 @@ export function PortalRegisterPage({ onAuthenticated, onNavigate }: PortalAuthPa
             required
           />
         </label>
-        <div className="auth-actions">
-          <button className="button-primary" type="submit" disabled={submitting}>
-            {submitting ? 'Creating workspace...' : 'Register'}
+        <div className="portal-form-actions">
+          <button className="portal-primary-button" type="submit" disabled={submitting}>
+            {submitting ? 'Creating workspace...' : 'Create workspace'}
           </button>
           <button
-            className="button-secondary"
+            className="portal-secondary-button"
             type="button"
-            onClick={() => onNavigate('/portal/login')}
+            onClick={() => onNavigate('/login')}
           >
-            Existing account
+            Already have an account
           </button>
         </div>
       </form>
-    </PortalAuthCard>
+    </PortalAuthShell>
   );
 }
 
@@ -138,19 +162,19 @@ export function PortalLoginPage({ onAuthenticated, onNavigate }: PortalAuthPageP
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [status, setStatus] = useState(
-    'Sign in to inspect your workspace and issue environment-specific gateway keys.',
+    'Sign in to inspect your workspace and issue environment-specific API keys.',
   );
   const [submitting, setSubmitting] = useState(false);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSubmitting(true);
-    setStatus('Authenticating portal session...');
+    setStatus('Authenticating developer workspace session...');
 
     try {
       const session = await loginPortalUser({ email, password });
       persistPortalSessionToken(session.token);
-      setStatus('Portal session restored. Redirecting to the dashboard...');
+      setStatus('Portal session restored. Redirecting to your workspace...');
       onAuthenticated(session);
     } catch (error) {
       setStatus(portalErrorMessage(error));
@@ -160,14 +184,20 @@ export function PortalLoginPage({ onAuthenticated, onNavigate }: PortalAuthPageP
   }
 
   return (
-    <PortalAuthCard
+    <PortalAuthShell
       eyebrow="Portal Sign-In"
-      title="Return to your API workspace"
-      blurb="The browser and Tauri desktop shell use the same public portal boundary. Sign in once and manage keys from either host."
+      title="Open your developer workspace."
+      blurb="Use the portal for onboarding, workspace inspection, API key issuance, and password rotation. Operator-only admin workflows stay outside this application."
       status={status}
+      highlights={[
+        'Dedicated portal account boundary',
+        'Workspace overview and API key management',
+        'Quick-start demo account for local development',
+      ]}
     >
-      <form className="auth-form" onSubmit={handleSubmit}>
-        <label className="field">
+      <h2>Sign in</h2>
+      <form className="portal-form" onSubmit={handleSubmit}>
+        <label className="portal-field">
           <span>Email</span>
           <input
             value={email}
@@ -178,7 +208,7 @@ export function PortalLoginPage({ onAuthenticated, onNavigate }: PortalAuthPageP
             required
           />
         </label>
-        <label className="field">
+        <label className="portal-field">
           <span>Password</span>
           <input
             value={password}
@@ -189,19 +219,23 @@ export function PortalLoginPage({ onAuthenticated, onNavigate }: PortalAuthPageP
             required
           />
         </label>
-        <div className="auth-actions">
-          <button className="button-primary" type="submit" disabled={submitting}>
-            {submitting ? 'Signing in...' : 'Login'}
+        <div className="portal-form-actions">
+          <button className="portal-primary-button" type="submit" disabled={submitting}>
+            {submitting ? 'Signing in...' : 'Open workspace'}
           </button>
           <button
-            className="button-secondary"
+            className="portal-secondary-button"
             type="button"
-            onClick={() => onNavigate('/portal/register')}
+            onClick={() => onNavigate('/register')}
           >
             Create account
           </button>
         </div>
+        <div className="portal-note-card">
+          <span>Local demo account</span>
+          <code>portal@sdkwork.local / ChangeMe123!</code>
+        </div>
       </form>
-    </PortalAuthCard>
+    </PortalAuthShell>
   );
 }

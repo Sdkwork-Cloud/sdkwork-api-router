@@ -11,6 +11,7 @@ pub fn backend_name() -> &'static str {
 pub trait KeyringBackend: Debug + Send + Sync {
     fn set_password(&self, service: &str, username: &str, secret: &str) -> Result<()>;
     fn get_password(&self, service: &str, username: &str) -> Result<Option<String>>;
+    fn delete_password(&self, service: &str, username: &str) -> Result<bool>;
 }
 
 #[derive(Debug, Default)]
@@ -28,6 +29,15 @@ impl KeyringBackend for OsKeyringBackend {
         match entry.get_password() {
             Ok(secret) => Ok(Some(secret)),
             Err(keyring::Error::NoEntry) => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    fn delete_password(&self, service: &str, username: &str) -> Result<bool> {
+        let entry = keyring::Entry::new(service, username)?;
+        match entry.delete_credential() {
+            Ok(()) => Ok(true),
+            Err(keyring::Error::NoEntry) => Ok(false),
             Err(error) => Err(error.into()),
         }
     }
@@ -77,5 +87,10 @@ impl KeyringSecretStore {
         };
 
         Ok(Some(serde_json::from_str(&payload)?))
+    }
+
+    pub fn delete_envelope(&self, secret_ref: &CredentialSecretRef) -> Result<bool> {
+        self.backend
+            .delete_password(&self.service_name, &secret_ref.storage_key())
     }
 }

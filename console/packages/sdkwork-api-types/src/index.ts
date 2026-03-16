@@ -53,6 +53,19 @@ export interface PortalAuthSession {
   workspace: PortalWorkspaceScope;
 }
 
+export interface AdminUserProfile {
+  id: string;
+  email: string;
+  display_name: string;
+  active: boolean;
+  created_at_ms: number;
+}
+
+export interface AdminAuthSession {
+  token: string;
+  user: AdminUserProfile;
+}
+
 export interface PortalWorkspaceSummary {
   user: PortalUserProfile;
   tenant: TenantRecord;
@@ -77,7 +90,7 @@ export interface ModelCatalogRecord {
   provider_id: string;
 }
 
-export type RoutingStrategy = 'deterministic_priority' | 'weighted_random' | 'slo_aware';
+export type RoutingStrategy = 'deterministic_priority' | 'weighted_random' | 'slo_aware' | 'geo_affinity';
 export type RoutingCandidateHealth = 'healthy' | 'unhealthy' | 'unknown';
 export type RoutingDecisionSource = 'gateway' | 'admin_simulation';
 
@@ -89,6 +102,8 @@ export interface RoutingCandidateAssessment {
   weight?: number;
   cost?: number;
   latency_ms?: number;
+  region?: string;
+  region_match?: boolean;
   slo_eligible?: boolean;
   slo_violations: string[];
   reasons: string[];
@@ -101,6 +116,7 @@ export interface RoutingSimulationResult {
   strategy?: string;
   selection_seed?: number;
   selection_reason?: string;
+  requested_region?: string;
   slo_applied: boolean;
   slo_degraded: boolean;
   assessments: RoutingCandidateAssessment[];
@@ -118,6 +134,7 @@ export interface RoutingDecisionLog {
   strategy: string;
   selection_seed?: number;
   selection_reason?: string;
+  requested_region?: string;
   slo_applied: boolean;
   slo_degraded: boolean;
   created_at_ms: number;
@@ -136,6 +153,41 @@ export interface RoutingPolicyRecord {
   max_cost?: number;
   max_latency_ms?: number;
   require_healthy: boolean;
+}
+
+export interface ExtensionRuntimeStatusRecord {
+  runtime: string;
+  extension_id: string;
+  display_name: string;
+  instance_id: string;
+  base_url?: string;
+  health_url?: string;
+  process_id?: number;
+  library_path?: string;
+  running: boolean;
+  healthy: boolean;
+  supports_health_check: boolean;
+  supports_shutdown: boolean;
+  message?: string;
+}
+
+export type ExtensionRuntimeReloadScope = 'all' | 'extension' | 'instance';
+
+export interface ExtensionRuntimeReloadRequest {
+  extension_id?: string;
+  instance_id?: string;
+}
+
+export interface ExtensionRuntimeReloadResult {
+  scope: ExtensionRuntimeReloadScope;
+  requested_extension_id: string | null;
+  requested_instance_id: string | null;
+  resolved_extension_id: string | null;
+  discovered_package_count: number;
+  loadable_package_count: number;
+  active_runtime_count: number;
+  reloaded_at_ms: number;
+  runtime_statuses: ExtensionRuntimeStatusRecord[];
 }
 
 export interface ProviderHealthSnapshot {

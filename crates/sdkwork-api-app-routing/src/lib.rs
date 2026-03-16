@@ -38,6 +38,47 @@ pub struct CreateRoutingPolicyInput<'a> {
     pub require_healthy: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct RouteSelectionContext<'a> {
+    pub decision_source: RoutingDecisionSource,
+    pub tenant_id: Option<&'a str>,
+    pub project_id: Option<&'a str>,
+    pub requested_region: Option<&'a str>,
+    pub selection_seed: Option<u64>,
+}
+
+impl<'a> RouteSelectionContext<'a> {
+    pub fn new(decision_source: RoutingDecisionSource) -> Self {
+        Self {
+            decision_source,
+            tenant_id: None,
+            project_id: None,
+            requested_region: None,
+            selection_seed: None,
+        }
+    }
+
+    pub fn with_tenant_id_option(mut self, tenant_id: Option<&'a str>) -> Self {
+        self.tenant_id = tenant_id;
+        self
+    }
+
+    pub fn with_project_id_option(mut self, project_id: Option<&'a str>) -> Self {
+        self.project_id = project_id;
+        self
+    }
+
+    pub fn with_requested_region_option(mut self, requested_region: Option<&'a str>) -> Self {
+        self.requested_region = requested_region;
+        self
+    }
+
+    pub fn with_selection_seed_option(mut self, selection_seed: Option<u64>) -> Self {
+        self.selection_seed = selection_seed;
+        self
+    }
+}
+
 pub fn simulate_route(_capability: &str, _model: &str) -> Result<RoutingDecision> {
     Ok(RoutingDecision::new(
         "provider-openai-official",
@@ -104,7 +145,7 @@ pub async fn simulate_route_with_store(
     capability: &str,
     model: &str,
 ) -> Result<RoutingDecision> {
-    simulate_route_with_store_inner(store, capability, model, None).await
+    simulate_route_with_store_context(store, capability, model, None, None).await
 }
 
 pub async fn simulate_route_with_store_seeded(
@@ -113,7 +154,24 @@ pub async fn simulate_route_with_store_seeded(
     model: &str,
     selection_seed: u64,
 ) -> Result<RoutingDecision> {
-    simulate_route_with_store_inner(store, capability, model, Some(selection_seed)).await
+    simulate_route_with_store_context(store, capability, model, None, Some(selection_seed)).await
+}
+
+pub async fn simulate_route_with_store_context(
+    store: &dyn AdminStore,
+    capability: &str,
+    model: &str,
+    requested_region: Option<&str>,
+    selection_seed: Option<u64>,
+) -> Result<RoutingDecision> {
+    simulate_route_with_store_inner(
+        store,
+        capability,
+        model,
+        normalize_region_option(requested_region),
+        selection_seed,
+    )
+    .await
 }
 
 pub async fn select_route_with_store(
@@ -125,12 +183,36 @@ pub async fn select_route_with_store(
     project_id: Option<&str>,
     selection_seed: Option<u64>,
 ) -> Result<RoutingDecision> {
-    let decision =
-        simulate_route_with_store_inner(store, capability, route_key, selection_seed).await?;
+    select_route_with_store_context(
+        store,
+        capability,
+        route_key,
+        RouteSelectionContext::new(decision_source)
+            .with_tenant_id_option(tenant_id)
+            .with_project_id_option(project_id)
+            .with_selection_seed_option(selection_seed),
+    )
+    .await
+}
+
+pub async fn select_route_with_store_context(
+    store: &dyn AdminStore,
+    capability: &str,
+    route_key: &str,
+    context: RouteSelectionContext<'_>,
+) -> Result<RoutingDecision> {
+    let decision = simulate_route_with_store_context(
+        store,
+        capability,
+        route_key,
+        context.requested_region,
+        context.selection_seed,
+    )
+    .await?;
     let created_at_ms = current_time_millis();
     let log = RoutingDecisionLog::new(
         generate_decision_id(created_at_ms),
-        decision_source,
+        context.decision_source,
         capability,
         route_key,
         decision.selected_provider_id.clone(),
@@ -140,11 +222,12 @@ pub async fn select_route_with_store(
             .unwrap_or_else(|| STRATEGY_STATIC_FALLBACK.to_owned()),
         created_at_ms,
     )
-    .with_tenant_id_option(tenant_id.map(ToOwned::to_owned))
-    .with_project_id_option(project_id.map(ToOwned::to_owned))
+    .with_tenant_id_option(context.tenant_id.map(ToOwned::to_owned))
+    .with_project_id_option(context.project_id.map(ToOwned::to_owned))
     .with_matched_policy_id_option(decision.matched_policy_id.clone())
-    .with_selection_seed_option(selection_seed.or(decision.selection_seed))
+    .with_selection_seed_option(context.selection_seed.or(decision.selection_seed))
     .with_selection_reason_option(decision.selection_reason.clone())
+    .with_requested_region_option(decision.requested_region.clone())
     .with_slo_state(decision.slo_applied, decision.slo_degraded)
     .with_assessments(decision.assessments.clone());
     store.insert_routing_decision_log(&log).await?;
@@ -155,6 +238,7 @@ async fn simulate_route_with_store_inner(
     store: &dyn AdminStore,
     capability: &str,
     model: &str,
+    requested_region: Option<String>,
     selection_seed: Option<u64>,
 ) -> Result<RoutingDecision> {
     let mut model_candidate_ids: Vec<String> = store
@@ -187,12 +271,14 @@ async fn simulate_route_with_store_inner(
                 .collect::<Vec<_>>();
 
             if candidate_ids.is_empty() {
-                return simulate_route(capability, model);
+                return Ok(simulate_route(capability, model)?
+                    .with_requested_region_option(requested_region.clone()));
             }
 
             candidate_ids
         } else {
-            return simulate_route(capability, model);
+            return Ok(simulate_route(capability, model)?
+                .with_requested_region_option(requested_region.clone()));
         }
     } else {
         match matched_policy {
@@ -232,7 +318,12 @@ async fn simulate_route_with_store_inner(
         .collect::<Vec<_>>();
     assessments.sort_by(compare_assessments);
 
-    let selection = select_candidate(&mut assessments, matched_policy, selection_seed);
+    let selection = select_candidate(
+        &mut assessments,
+        matched_policy,
+        requested_region.as_deref(),
+        selection_seed,
+    );
     let selected = assessments
         .get(selection.selected_index)
         .map(|assessment| assessment.provider_id.clone())
@@ -246,6 +337,7 @@ async fn simulate_route_with_store_inner(
     let mut decision = RoutingDecision::new(selected, ranked_candidate_ids)
         .with_strategy(selection.strategy)
         .with_selection_reason(selection.selection_reason)
+        .with_requested_region_option(requested_region)
         .with_slo_state(selection.slo_applied, selection.slo_degraded)
         .with_assessments(assessments);
     if let Some(selection_seed) = selection.selection_seed {
@@ -269,6 +361,7 @@ struct CandidateSelection {
 fn select_candidate(
     assessments: &mut [RoutingCandidateAssessment],
     matched_policy: Option<&RoutingPolicy>,
+    requested_region: Option<&str>,
     provided_selection_seed: Option<u64>,
 ) -> CandidateSelection {
     let routing_strategy = matched_policy
@@ -304,6 +397,149 @@ fn select_candidate(
             }
         }
         RoutingStrategy::SloAware => select_slo_aware_candidate(assessments, matched_policy),
+        RoutingStrategy::GeoAffinity => {
+            select_geo_affinity_candidate(assessments, requested_region)
+        }
+    }
+}
+
+fn select_geo_affinity_candidate(
+    assessments: &mut [RoutingCandidateAssessment],
+    requested_region: Option<&str>,
+) -> CandidateSelection {
+    let Some(requested_region) = requested_region else {
+        let selected_index = 0;
+        let selection_reason = assessments
+            .get_mut(selected_index)
+            .map(|assessment| {
+                assessment.reasons.push(
+                    "selected as the top-ranked candidate because no requested region was provided"
+                        .to_owned(),
+                );
+                format!(
+                    "selected {} as the top-ranked candidate because no requested region was provided",
+                    assessment.provider_id
+                )
+            })
+            .unwrap_or_else(|| "geo-affinity routing had no assessed candidates".to_owned());
+        return CandidateSelection {
+            selected_index,
+            strategy: RoutingStrategy::GeoAffinity.as_str().to_owned(),
+            selection_seed: None,
+            selection_reason,
+            slo_applied: false,
+            slo_degraded: false,
+        };
+    };
+
+    let has_healthy_available_candidate = assessments.iter().any(|assessment| {
+        assessment.available && assessment.health == RoutingCandidateHealth::Healthy
+    });
+
+    let mut eligible_indices = Vec::new();
+    let mut matching_indices = Vec::new();
+    for (index, assessment) in assessments.iter_mut().enumerate() {
+        let region_match = assessment.region.as_deref() == Some(requested_region);
+        assessment.region_match = Some(region_match);
+
+        if !assessment.available {
+            assessment.reasons.push(
+                "excluded from geo-affinity selection because candidate is unavailable".to_owned(),
+            );
+            continue;
+        }
+        if has_healthy_available_candidate && assessment.health == RoutingCandidateHealth::Unhealthy
+        {
+            assessment.reasons.push(
+                "excluded from geo-affinity selection because a healthy candidate is available"
+                    .to_owned(),
+            );
+            continue;
+        }
+
+        eligible_indices.push(index);
+        if region_match {
+            assessment.reasons.push(format!(
+                "eligible for geo-affinity selection because region matches requested region {requested_region}"
+            ));
+            matching_indices.push(index);
+        } else if let Some(region) = assessment.region.as_deref() {
+            assessment.reasons.push(format!(
+                "excluded from geo-affinity selection because region {region} does not match requested region {requested_region}"
+            ));
+        } else {
+            assessment.reasons.push(format!(
+                "excluded from geo-affinity selection because candidate region is unknown for requested region {requested_region}"
+            ));
+        }
+    }
+
+    if let Some(&selected_index) = matching_indices.first() {
+        let provider_id = assessments
+            .get(selected_index)
+            .map(|assessment| assessment.provider_id.clone())
+            .unwrap_or_default();
+        if let Some(assessment) = assessments.get_mut(selected_index) {
+            assessment.reasons.push(format!(
+                "selected as the top-ranked candidate matching requested region {requested_region}"
+            ));
+        }
+        CandidateSelection {
+            selected_index,
+            strategy: RoutingStrategy::GeoAffinity.as_str().to_owned(),
+            selection_seed: None,
+            selection_reason: format!(
+                "selected {provider_id} as the top-ranked candidate matching requested region {requested_region}"
+            ),
+            slo_applied: false,
+            slo_degraded: false,
+        }
+    } else if let Some(&selected_index) = eligible_indices.first() {
+        let provider_id = assessments
+            .get(selected_index)
+            .map(|assessment| assessment.provider_id.clone())
+            .unwrap_or_default();
+        if let Some(assessment) = assessments.get_mut(selected_index) {
+            assessment.reasons.push(format!(
+                "selected as the top-ranked fallback because no candidate matched requested region {requested_region}"
+            ));
+        }
+        CandidateSelection {
+            selected_index,
+            strategy: RoutingStrategy::GeoAffinity.as_str().to_owned(),
+            selection_seed: None,
+            selection_reason: format!(
+                "selected {provider_id} as the top-ranked fallback because no candidate matched requested region {requested_region}"
+            ),
+            slo_applied: false,
+            slo_degraded: false,
+        }
+    } else {
+        let selected_index = 0;
+        let selection_reason = assessments
+            .get_mut(selected_index)
+            .map(|assessment| {
+                assessment.reasons.push(format!(
+                    "selected as the top-ranked fallback because geo-affinity had no eligible candidate for requested region {requested_region}"
+                ));
+                format!(
+                    "selected {} because geo-affinity had no eligible candidate for requested region {requested_region}",
+                    assessment.provider_id
+                )
+            })
+            .unwrap_or_else(|| {
+                format!(
+                    "geo-affinity routing had no eligible candidate for requested region {requested_region}"
+                )
+            });
+        CandidateSelection {
+            selected_index,
+            strategy: RoutingStrategy::GeoAffinity.as_str().to_owned(),
+            selection_seed: None,
+            selection_reason,
+            slo_applied: false,
+            slo_degraded: false,
+        }
     }
 }
 
@@ -625,6 +861,9 @@ fn assess_candidate(
         if let Some(latency_ms) = routing_hint_u64(&instance.config, "latency_ms") {
             assessment = assessment.with_latency_ms(latency_ms);
         }
+        if let Some(region) = routing_hint_string(&instance.config, "region") {
+            assessment = assessment.with_region(region);
+        }
     } else {
         assessment =
             assessment.with_reason("no matching extension instance is mounted for this provider");
@@ -673,6 +912,9 @@ fn assess_candidate(
     }
     if let Some(latency_ms) = assessment.latency_ms {
         assessment = assessment.with_reason(format!("latency hint = {latency_ms}ms"));
+    }
+    if let Some(region) = assessment.region.clone() {
+        assessment = assessment.with_reason(format!("region hint = {region}"));
     }
 
     assessment
@@ -763,4 +1005,26 @@ fn routing_hint_f64(config: &Value, key: &str) -> Option<f64> {
         .and_then(|routing| routing.get(key))
         .and_then(Value::as_f64)
         .or_else(|| config.get(key).and_then(Value::as_f64))
+}
+
+fn routing_hint_string(config: &Value, key: &str) -> Option<String> {
+    config
+        .get("routing")
+        .and_then(|routing| routing.get(key))
+        .and_then(Value::as_str)
+        .or_else(|| config.get(key).and_then(Value::as_str))
+        .and_then(normalize_region)
+}
+
+fn normalize_region_option(region: Option<&str>) -> Option<String> {
+    region.and_then(normalize_region)
+}
+
+fn normalize_region(region: &str) -> Option<String> {
+    let normalized = region.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
+    }
 }

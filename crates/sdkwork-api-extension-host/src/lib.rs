@@ -7,7 +7,7 @@ use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::os::raw::{c_char, c_void};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result as AnyhowResult};
@@ -63,6 +63,8 @@ type ExecuteStreamJsonFn =
     unsafe extern "C" fn(*const c_char, *const ProviderStreamWriter) -> *mut c_char;
 type LifecycleJsonFn = unsafe extern "C" fn(*const c_char) -> *mut c_char;
 type FreeStringFn = unsafe extern "C" fn(*mut c_char);
+const SDKWORK_NATIVE_DYNAMIC_SHUTDOWN_DRAIN_TIMEOUT_MS: &str =
+    "SDKWORK_NATIVE_DYNAMIC_SHUTDOWN_DRAIN_TIMEOUT_MS";
 
 #[derive(Clone)]
 pub struct BuiltinProviderExtensionFactory {
@@ -312,6 +314,7 @@ struct NativeDynamicRuntime {
     shutdown_json: Option<LifecycleJsonFn>,
     free_string: FreeStringFn,
     lifecycle_state: Mutex<NativeDynamicLifecycleState>,
+    lifecycle_drained: Condvar,
 }
 
 #[derive(Debug)]
@@ -320,6 +323,8 @@ struct NativeDynamicLifecycleState {
     healthy: bool,
     message: Option<String>,
     shutdown_invoked: bool,
+    draining: bool,
+    active_invocations: usize,
 }
 
 unsafe impl Send for NativeDynamicRuntime {}
@@ -385,6 +390,45 @@ impl NativeDynamicRuntime {
         Ok(())
     }
 
+    fn begin_invocation(&self) -> Result<(), ExtensionHostError> {
+        let mut state = self.lock_state()?;
+        if !state.running {
+            return Err(ExtensionHostError::NativeDynamicInvocationFailed {
+                entrypoint: self.entrypoint.clone(),
+                message: "native dynamic runtime is not running".to_owned(),
+            });
+        }
+        if state.draining || state.shutdown_invoked {
+            return Err(ExtensionHostError::NativeDynamicInvocationFailed {
+                entrypoint: self.entrypoint.clone(),
+                message: "native dynamic runtime is draining for shutdown".to_owned(),
+            });
+        }
+        state.active_invocations += 1;
+        Ok(())
+    }
+
+    fn finish_invocation(&self) {
+        let mut state = self
+            .lifecycle_state
+            .lock()
+            .expect("native dynamic runtime state lock");
+        if state.active_invocations > 0 {
+            state.active_invocations -= 1;
+        }
+        if state.active_invocations == 0 {
+            self.lifecycle_drained.notify_all();
+        }
+    }
+
+    fn invocation_guard(&self) -> Result<NativeDynamicInvocationGuard<'_>, ExtensionHostError> {
+        self.begin_invocation()?;
+        Ok(NativeDynamicInvocationGuard {
+            runtime: self,
+            finished: false,
+        })
+    }
+
     fn ensure_running(&self) -> Result<(), ExtensionHostError> {
         if self.lock_state()?.running {
             Ok(())
@@ -443,16 +487,52 @@ impl NativeDynamicRuntime {
             });
         };
 
+        let _guard = self.invocation_guard()?;
         self.invoke_lifecycle_json(health_check_json, "health_check")
     }
 
-    fn shutdown(&self) -> Result<(), ExtensionHostError> {
-        {
-            let state = self.lock_state()?;
-            if state.shutdown_invoked {
-                return Ok(());
+    fn shutdown(&self, drain_timeout_ms: Option<u64>) -> Result<(), ExtensionHostError> {
+        let mut state = self.lock_state()?;
+        if state.shutdown_invoked {
+            return Ok(());
+        }
+        state.draining = true;
+        if let Some(timeout_ms) = drain_timeout_ms {
+            let timeout = Duration::from_millis(timeout_ms);
+            let started_at = Instant::now();
+            while state.active_invocations > 0 {
+                let Some(remaining) = timeout.checked_sub(started_at.elapsed()) else {
+                    state.draining = false;
+                    return Err(ExtensionHostError::NativeDynamicShutdownDrainTimedOut {
+                        entrypoint: self.entrypoint.clone(),
+                        timeout_ms,
+                    });
+                };
+                let (next_state, wait_result) = self
+                    .lifecycle_drained
+                    .wait_timeout(state, remaining)
+                    .map_err(|_| ExtensionHostError::NativeDynamicRuntimeStatePoisoned {
+                        entrypoint: self.entrypoint.clone(),
+                    })?;
+                state = next_state;
+                if wait_result.timed_out() && state.active_invocations > 0 {
+                    state.draining = false;
+                    return Err(ExtensionHostError::NativeDynamicShutdownDrainTimedOut {
+                        entrypoint: self.entrypoint.clone(),
+                        timeout_ms,
+                    });
+                }
+            }
+        } else {
+            while state.active_invocations > 0 {
+                state = self.lifecycle_drained.wait(state).map_err(|_| {
+                    ExtensionHostError::NativeDynamicRuntimeStatePoisoned {
+                        entrypoint: self.entrypoint.clone(),
+                    }
+                })?;
             }
         }
+        drop(state);
 
         let message = if let Some(shutdown_json) = self.shutdown_json {
             let result: ExtensionLifecycleResult =
@@ -475,6 +555,7 @@ impl NativeDynamicRuntime {
         state.running = false;
         state.healthy = false;
         state.shutdown_invoked = true;
+        state.draining = false;
         state.message = message;
         Ok(())
     }
@@ -511,6 +592,20 @@ impl NativeDynamicRuntime {
                 message: error.to_string(),
             }
         })
+    }
+}
+
+struct NativeDynamicInvocationGuard<'a> {
+    runtime: &'a NativeDynamicRuntime,
+    finished: bool,
+}
+
+impl Drop for NativeDynamicInvocationGuard<'_> {
+    fn drop(&mut self) {
+        if !self.finished {
+            self.runtime.finish_invocation();
+            self.finished = true;
+        }
     }
 }
 
@@ -641,7 +736,7 @@ pub fn load_native_dynamic_provider_adapter(
     entrypoint: &Path,
     base_url: impl Into<String>,
 ) -> Result<Box<dyn ProviderExecutionAdapter>, ExtensionHostError> {
-    let (runtime, _) = load_native_dynamic_runtime(entrypoint)?;
+    let (runtime, _) = load_or_reuse_native_dynamic_runtime(entrypoint)?;
     Ok(Box::new(NativeDynamicProviderAdapter {
         runtime,
         base_url: base_url.into(),
@@ -778,6 +873,33 @@ pub fn shutdown_all_connector_runtimes() -> Result<(), ExtensionHostError> {
     Ok(())
 }
 
+pub fn shutdown_connector_runtimes_for_extension(
+    extension_id: &str,
+) -> Result<(), ExtensionHostError> {
+    let processes = {
+        let mut registry = connector_process_registry()?;
+        let instance_ids = registry
+            .iter()
+            .filter(|(_, process)| process.extension_id == extension_id)
+            .map(|(instance_id, _)| instance_id.clone())
+            .collect::<Vec<_>>();
+        instance_ids
+            .into_iter()
+            .filter_map(|instance_id| {
+                registry
+                    .remove(&instance_id)
+                    .map(|process| (instance_id, process))
+            })
+            .collect::<Vec<_>>()
+    };
+
+    for (instance_id, mut process) in processes {
+        kill_child(&instance_id, &mut process.child)?;
+    }
+
+    Ok(())
+}
+
 pub fn list_connector_runtime_statuses() -> Result<Vec<ConnectorRuntimeStatus>, ExtensionHostError>
 {
     let snapshots = {
@@ -849,19 +971,37 @@ pub fn list_native_dynamic_runtime_statuses(
 }
 
 pub fn shutdown_all_native_dynamic_runtimes() -> Result<(), ExtensionHostError> {
+    let drain_timeout_ms = configured_native_dynamic_shutdown_drain_timeout_ms()?;
     let runtimes = {
         let mut registry = native_dynamic_runtime_registry()?;
-        registry
-            .drain()
-            .map(|(_, runtime)| runtime)
+        registry.drain().collect::<Vec<_>>()
+    };
+
+    shutdown_native_dynamic_runtime_entries(runtimes, drain_timeout_ms)
+}
+
+pub fn shutdown_native_dynamic_runtimes_for_extension(
+    extension_id: &str,
+) -> Result<(), ExtensionHostError> {
+    let drain_timeout_ms = configured_native_dynamic_shutdown_drain_timeout_ms()?;
+    let runtimes = {
+        let mut registry = native_dynamic_runtime_registry()?;
+        let entrypoints = registry
+            .iter()
+            .filter(|(_, runtime)| runtime.manifest.id == extension_id)
+            .map(|(entrypoint, _)| entrypoint.clone())
+            .collect::<Vec<_>>();
+        entrypoints
+            .into_iter()
+            .filter_map(|entrypoint| {
+                registry
+                    .remove(&entrypoint)
+                    .map(|runtime| (entrypoint, runtime))
+            })
             .collect::<Vec<_>>()
     };
 
-    for runtime in runtimes {
-        runtime.shutdown()?;
-    }
-
-    Ok(())
+    shutdown_native_dynamic_runtime_entries(runtimes, drain_timeout_ms)
 }
 
 pub fn validate_extension_manifest(manifest: &ExtensionManifest) -> ManifestValidationReport {
@@ -992,7 +1132,7 @@ impl ExtensionHost {
             },
         )?;
         let library_path = resolve_entrypoint(entrypoint, Some(&package.root_dir));
-        let (runtime, library_manifest) = load_native_dynamic_runtime(&library_path)?;
+        let (runtime, library_manifest) = load_or_reuse_native_dynamic_runtime(&library_path)?;
         ensure_native_dynamic_manifest_matches(
             &package.manifest,
             &library_manifest,
@@ -1243,6 +1383,13 @@ pub enum ExtensionHostError {
         phase: String,
         message: String,
     },
+    NativeDynamicShutdownDrainTimedOut {
+        entrypoint: String,
+        timeout_ms: u64,
+    },
+    NativeDynamicShutdownDrainTimeoutInvalid {
+        value: String,
+    },
     NativeDynamicRuntimeStatePoisoned {
         entrypoint: String,
     },
@@ -1385,6 +1532,19 @@ impl fmt::Display for ExtensionHostError {
                 f,
                 "native dynamic extension library {} failed during {}: {}",
                 entrypoint, phase, message
+            ),
+            Self::NativeDynamicShutdownDrainTimedOut {
+                entrypoint,
+                timeout_ms,
+            } => write!(
+                f,
+                "native dynamic extension library {} drain timed out after {}ms; runtime kept running",
+                entrypoint, timeout_ms
+            ),
+            Self::NativeDynamicShutdownDrainTimeoutInvalid { value } => write!(
+                f,
+                "native dynamic shutdown drain timeout is invalid: {}",
+                value
             ),
             Self::NativeDynamicRuntimeStatePoisoned { entrypoint } => write!(
                 f,
@@ -1551,7 +1711,10 @@ fn load_native_dynamic_runtime(
                 healthy: true,
                 message: None,
                 shutdown_invoked: false,
+                draining: false,
+                active_invocations: 0,
             }),
+            lifecycle_drained: Condvar::new(),
         });
         runtime.initialize()?;
 
@@ -1560,6 +1723,61 @@ fn load_native_dynamic_runtime(
 
         Ok((runtime, manifest))
     }
+}
+
+fn load_or_reuse_native_dynamic_runtime(
+    entrypoint: &Path,
+) -> Result<(Arc<NativeDynamicRuntime>, ExtensionManifest), ExtensionHostError> {
+    let entrypoint = entrypoint.display().to_string();
+    if let Some(runtime) = native_dynamic_runtime_registry()?.get(&entrypoint).cloned() {
+        return Ok((runtime.clone(), runtime.manifest.clone()));
+    }
+
+    load_native_dynamic_runtime(Path::new(&entrypoint))
+}
+
+fn configured_native_dynamic_shutdown_drain_timeout_ms() -> Result<Option<u64>, ExtensionHostError>
+{
+    let Some(value) = std::env::var_os(SDKWORK_NATIVE_DYNAMIC_SHUTDOWN_DRAIN_TIMEOUT_MS) else {
+        return Ok(None);
+    };
+    let value = value.to_string_lossy().trim().to_owned();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    let timeout_ms = value.parse::<u64>().map_err(|_| {
+        ExtensionHostError::NativeDynamicShutdownDrainTimeoutInvalid {
+            value: value.clone(),
+        }
+    })?;
+    if timeout_ms == 0 {
+        Ok(None)
+    } else {
+        Ok(Some(timeout_ms))
+    }
+}
+
+fn shutdown_native_dynamic_runtime_entries(
+    runtimes: Vec<(String, Arc<NativeDynamicRuntime>)>,
+    drain_timeout_ms: Option<u64>,
+) -> Result<(), ExtensionHostError> {
+    for (index, (entrypoint, runtime)) in runtimes.iter().enumerate() {
+        if let Err(error) = runtime.shutdown(drain_timeout_ms) {
+            if matches!(
+                error,
+                ExtensionHostError::NativeDynamicShutdownDrainTimedOut { .. }
+            ) {
+                let mut registry = native_dynamic_runtime_registry()?;
+                registry.insert(entrypoint.clone(), Arc::clone(runtime));
+                for (pending_entrypoint, pending_runtime) in runtimes.iter().skip(index + 1) {
+                    registry.insert(pending_entrypoint.clone(), Arc::clone(pending_runtime));
+                }
+            }
+            return Err(error);
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -1675,6 +1893,7 @@ fn execute_native_dynamic_invocation(
     invocation: &ProviderInvocation,
 ) -> Result<ProviderInvocationResult, ExtensionHostError> {
     runtime.ensure_running()?;
+    let _guard = runtime.invocation_guard()?;
     let payload = serde_json::to_string(invocation).map_err(|error| {
         ExtensionHostError::NativeDynamicInvocationSerializeFailed {
             operation: invocation.operation.clone(),
@@ -1718,10 +1937,24 @@ async fn execute_native_dynamic_stream_invocation(
             message: error.to_string(),
         }
     })?;
+    runtime.begin_invocation()?;
 
     let (event_sender, mut event_receiver) = mpsc::unbounded_channel();
     let runtime_for_thread = Arc::clone(&runtime);
     std::thread::spawn(move || {
+        struct NativeDynamicOwnedInvocationGuard {
+            runtime: Arc<NativeDynamicRuntime>,
+        }
+
+        impl Drop for NativeDynamicOwnedInvocationGuard {
+            fn drop(&mut self) {
+                self.runtime.finish_invocation();
+            }
+        }
+
+        let _guard = NativeDynamicOwnedInvocationGuard {
+            runtime: Arc::clone(&runtime_for_thread),
+        };
         let raw_payload = into_raw_c_string(payload);
         let mut writer_context = Box::new(HostStreamWriterContext {
             sender: event_sender.clone(),

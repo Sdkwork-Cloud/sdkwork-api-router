@@ -1,6 +1,6 @@
 # API Compatibility
 
-The gateway uses five execution-truth labels:
+SDKWork tracks compatibility with five execution-truth labels:
 
 - `native`
 - `relay`
@@ -35,6 +35,19 @@ The control plane also exposes:
 
 - `/admin/*`
 - `/portal/*`
+
+## How To Read Compatibility
+
+- use the API reference pages to understand ownership, base paths, and auth
+- use this compatibility view to understand execution semantics
+- use the full matrix when you need route-family-level truth across stateful and stateless modes
+
+Primary entry points:
+
+- [API Reference Overview](/api-reference/overview)
+- [Gateway API Reference](/api-reference/gateway-api)
+- [Admin API Reference](/api-reference/admin-api)
+- [Portal API Reference](/api-reference/portal-api)
 
 ## Detailed References
 

@@ -1,12 +1,14 @@
 # Repository Layout
 
+This page explains how the workspace is organized so contributors can quickly find the right layer before making changes.
+
 ## Top-Level Structure
 
 ```text
 .
 |-- crates/
 |-- services/
-|-- console/
+|-- apps/
 |-- docs/
 |-- scripts/
 |-- Cargo.toml
@@ -14,31 +16,47 @@
 `-- README.zh-CN.md
 ```
 
+## Runtime Surfaces
+
+| Path | Responsibility |
+|---|---|
+| `services/gateway-service` | standalone `/v1/*` gateway binary |
+| `services/admin-api-service` | standalone `/admin/*` control-plane binary |
+| `services/portal-api-service` | standalone `/portal/*` self-service binary |
+| `services/router-web-service` | Pingora public web host for admin and portal static delivery |
+| `apps/sdkwork-router-admin/` | standalone admin browser app plus admin-owned Tauri host |
+| `apps/sdkwork-router-portal/` | standalone browser portal app |
+| `docs/` | VitePress documentation site |
+
 ## Backend Layers
 
-- `crates/sdkwork-api-interface-*`
-  - HTTP and interface boundaries
-- `crates/sdkwork-api-app-*`
-  - application or service layer
-- `crates/sdkwork-api-domain-*`
-  - domain models and policies
-- `crates/sdkwork-api-storage-*`
-  - repository and persistence implementations
+| Layer | Paths | Responsibility |
+|---|---|---|
+| interface | `crates/sdkwork-api-interface-*` | HTTP routers, request mapping, auth boundaries |
+| app | `crates/sdkwork-api-app-*` | orchestration, workflow logic, service-level decisions |
+| domain | `crates/sdkwork-api-domain-*` | domain models, policy rules, invariants |
+| storage | `crates/sdkwork-api-storage-*` | persistence contracts and concrete backends |
+| contracts | `crates/sdkwork-api-contract-*` | API shapes, compatibility contracts, shared request or response types |
+| provider | `crates/sdkwork-api-provider-*` | upstream adapters and provider-specific execution |
+| runtime | `crates/sdkwork-api-app-runtime`, `crates/sdkwork-api-runtime-host`, `crates/sdkwork-api-extension-*` | runtime loading, supervision, extension ABI, embedded hosting |
+| cross-cutting | `crates/sdkwork-api-config`, `crates/sdkwork-api-observability`, `crates/sdkwork-api-kernel` | config, telemetry, runtime glue |
 
 ## Standalone Services
 
 - `services/gateway-service`
 - `services/admin-api-service`
 - `services/portal-api-service`
+- `services/router-web-service`
 
 ## Frontend Layers
 
-- `console/src/`
-  - shell composition only
-- `console/packages/`
-  - reusable business modules
-- `console/src-tauri/`
-  - desktop-native host integration
+| Path | Responsibility |
+|---|---|
+| `apps/sdkwork-router-admin/src/` | standalone admin root shell and theme |
+| `apps/sdkwork-router-admin/packages/` | admin foundation and business modules |
+| `apps/sdkwork-router-admin/src-tauri/` | admin-owned Tauri host and desktop packaging integration |
+| `apps/sdkwork-router-portal/src/` | standalone portal root shell and theme |
+| `apps/sdkwork-router-portal/packages/` | portal foundation and business modules |
 
 ## Docs and Operational Assets
 
@@ -48,3 +66,11 @@
   - historical design and implementation records
 - `scripts/dev/`
   - cross-platform startup helpers
+
+## Common Navigation Rules
+
+- changes to HTTP routes usually begin in `crates/sdkwork-api-interface-*`
+- routing, billing, provider, or execution behavior usually continues in `crates/sdkwork-api-app-*`
+- policy rules belong in `crates/sdkwork-api-domain-*`
+- persistence or migration work belongs in `crates/sdkwork-api-storage-*`
+- documentation and operator guidance belong in `docs/`

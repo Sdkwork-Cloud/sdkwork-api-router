@@ -18,6 +18,7 @@ pub enum RoutingStrategy {
     DeterministicPriority,
     WeightedRandom,
     SloAware,
+    GeoAffinity,
 }
 
 impl RoutingStrategy {
@@ -26,6 +27,7 @@ impl RoutingStrategy {
             Self::DeterministicPriority => "deterministic_priority",
             Self::WeightedRandom => "weighted_random",
             Self::SloAware => "slo_aware",
+            Self::GeoAffinity => "geo_affinity",
         }
     }
 }
@@ -38,6 +40,7 @@ impl FromStr for RoutingStrategy {
             "deterministic_priority" => Ok(Self::DeterministicPriority),
             "weighted_random" => Ok(Self::WeightedRandom),
             "slo_aware" => Ok(Self::SloAware),
+            "geo_affinity" => Ok(Self::GeoAffinity),
             _ => Err(format!("unsupported routing strategy: {value}")),
         }
     }
@@ -56,6 +59,10 @@ pub struct RoutingCandidateAssessment {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latency_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub region_match: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub slo_eligible: Option<bool>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub slo_violations: Vec<String>,
@@ -73,6 +80,8 @@ impl RoutingCandidateAssessment {
             weight: None,
             cost: None,
             latency_ms: None,
+            region: None,
+            region_match: None,
             slo_eligible: None,
             slo_violations: Vec::new(),
             reasons: Vec::new(),
@@ -109,6 +118,26 @@ impl RoutingCandidateAssessment {
         self
     }
 
+    pub fn with_region(mut self, region: impl Into<String>) -> Self {
+        self.region = Some(region.into());
+        self
+    }
+
+    pub fn with_region_option(mut self, region: Option<String>) -> Self {
+        self.region = region;
+        self
+    }
+
+    pub fn with_region_match(mut self, region_match: bool) -> Self {
+        self.region_match = Some(region_match);
+        self
+    }
+
+    pub fn with_region_match_option(mut self, region_match: Option<bool>) -> Self {
+        self.region_match = region_match;
+        self
+    }
+
     pub fn with_slo_eligible(mut self, slo_eligible: bool) -> Self {
         self.slo_eligible = Some(slo_eligible);
         self
@@ -137,6 +166,8 @@ pub struct RoutingDecision {
     pub selection_seed: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selection_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_region: Option<String>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub slo_applied: bool,
     #[serde(default, skip_serializing_if = "is_false")]
@@ -154,6 +185,7 @@ impl RoutingDecision {
             strategy: None,
             selection_seed: None,
             selection_reason: None,
+            requested_region: None,
             slo_applied: false,
             slo_degraded: false,
             assessments: Vec::new(),
@@ -177,6 +209,16 @@ impl RoutingDecision {
 
     pub fn with_selection_reason(mut self, selection_reason: impl Into<String>) -> Self {
         self.selection_reason = Some(selection_reason.into());
+        self
+    }
+
+    pub fn with_requested_region(mut self, requested_region: impl Into<String>) -> Self {
+        self.requested_region = Some(requested_region.into());
+        self
+    }
+
+    pub fn with_requested_region_option(mut self, requested_region: Option<String>) -> Self {
+        self.requested_region = requested_region;
         self
     }
 
@@ -238,6 +280,8 @@ pub struct RoutingDecisionLog {
     pub selection_seed: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selection_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_region: Option<String>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub slo_applied: bool,
     #[serde(default, skip_serializing_if = "is_false")]
@@ -269,6 +313,7 @@ impl RoutingDecisionLog {
             strategy: strategy.into(),
             selection_seed: None,
             selection_reason: None,
+            requested_region: None,
             slo_applied: false,
             slo_degraded: false,
             created_at_ms,
@@ -323,6 +368,16 @@ impl RoutingDecisionLog {
 
     pub fn with_selection_reason_option(mut self, selection_reason: Option<String>) -> Self {
         self.selection_reason = selection_reason;
+        self
+    }
+
+    pub fn with_requested_region(mut self, requested_region: impl Into<String>) -> Self {
+        self.requested_region = Some(requested_region.into());
+        self
+    }
+
+    pub fn with_requested_region_option(mut self, requested_region: Option<String>) -> Self {
+        self.requested_region = requested_region;
         self
     }
 

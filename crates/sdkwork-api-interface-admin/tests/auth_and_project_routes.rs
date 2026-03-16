@@ -24,7 +24,9 @@ async fn login_token(app: Router) -> String {
                 .method("POST")
                 .uri("/admin/auth/login")
                 .header("content-type", "application/json")
-                .body(Body::from("{\"subject\":\"admin-1\"}"))
+                .body(Body::from(
+                    "{\"email\":\"admin@sdkwork.local\",\"password\":\"ChangeMe123!\"}",
+                ))
                 .unwrap(),
         )
         .await

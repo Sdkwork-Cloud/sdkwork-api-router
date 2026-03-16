@@ -96,6 +96,34 @@ async fn sqlite_store_persists_routing_decision_logs_newest_first() {
 }
 
 #[tokio::test]
+async fn sqlite_store_round_trips_requested_region_in_routing_decision_logs() {
+    let pool = run_migrations("sqlite::memory:").await.unwrap();
+    let store = SqliteAdminStore::new(pool);
+
+    let log = RoutingDecisionLog::new(
+        "decision-region",
+        RoutingDecisionSource::Gateway,
+        "chat_completion",
+        "gpt-4.1",
+        "provider-us-east",
+        "geo_affinity",
+        300,
+    )
+    .with_requested_region("us-east")
+    .with_assessments(vec![RoutingCandidateAssessment::new("provider-us-east")
+        .with_region("us-east")
+        .with_region_match(true)]);
+
+    store.insert_routing_decision_log(&log).await.unwrap();
+
+    let logs = store.list_routing_decision_logs().await.unwrap();
+    assert_eq!(logs.len(), 1);
+    assert_eq!(logs[0].requested_region.as_deref(), Some("us-east"));
+    assert_eq!(logs[0].assessments[0].region.as_deref(), Some("us-east"));
+    assert_eq!(logs[0].assessments[0].region_match, Some(true));
+}
+
+#[tokio::test]
 async fn sqlite_store_persists_provider_health_snapshots_newest_first() {
     let pool = run_migrations("sqlite::memory:").await.unwrap();
     let store = SqliteAdminStore::new(pool);

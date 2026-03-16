@@ -3,6 +3,8 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::os::raw::c_char;
 use std::sync::OnceLock;
+use std::thread;
+use std::time::Duration;
 
 use sdkwork_api_extension_abi::{
     free_raw_c_string, from_raw_c_str, into_raw_c_string, ExtensionHealthCheckResult,
@@ -17,6 +19,9 @@ use sdkwork_api_extension_core::{
 
 pub const FIXTURE_EXTENSION_ID: &str = "sdkwork.provider.native.mock";
 const LIFECYCLE_LOG_ENV: &str = "SDKWORK_NATIVE_MOCK_LIFECYCLE_LOG";
+const INVOCATION_LOG_ENV: &str = "SDKWORK_NATIVE_MOCK_INVOCATION_LOG";
+const JSON_DELAY_MS_ENV: &str = "SDKWORK_NATIVE_MOCK_JSON_DELAY_MS";
+const STREAM_DELAY_MS_ENV: &str = "SDKWORK_NATIVE_MOCK_STREAM_DELAY_MS";
 
 fn manifest_json() -> &'static CString {
     static MANIFEST_JSON: OnceLock<CString> = OnceLock::new();
@@ -144,6 +149,8 @@ pub unsafe extern "C" fn sdkwork_extension_provider_execute_json(
 ) -> *mut c_char {
     let invocation = unsafe { from_raw_c_str(payload) }
         .and_then(|payload| serde_json::from_str::<ProviderInvocation>(&payload).ok());
+    append_invocation_event("execute_json_start");
+    sleep_for_env_delay(JSON_DELAY_MS_ENV);
 
     let result = match invocation {
         Some(invocation)
@@ -177,6 +184,7 @@ pub unsafe extern "C" fn sdkwork_extension_provider_execute_json(
         )),
         None => ProviderInvocationResult::error("invalid invocation payload"),
     };
+    append_invocation_event("execute_json_finish");
 
     into_raw_c_string(serde_json::to_string(&result).expect("result json"))
 }
@@ -194,6 +202,7 @@ pub unsafe extern "C" fn sdkwork_extension_provider_execute_stream_json(
     let invocation = unsafe { from_raw_c_str(payload) }
         .and_then(|payload| serde_json::from_str::<ProviderInvocation>(&payload).ok());
     let writer = unsafe { writer.as_ref() };
+    append_invocation_event("execute_stream_start");
 
     let result = match (invocation, writer) {
         (Some(invocation), Some(writer))
@@ -221,14 +230,19 @@ pub unsafe extern "C" fn sdkwork_extension_provider_execute_stream_json(
                 ProviderStreamInvocationResult::error(
                     "host stream receiver closed before content type was set",
                 )
-            } else if !writer.write_chunk(first_frame.as_bytes())
-                || !writer.write_chunk(done_frame.as_bytes())
-            {
+            } else if !writer.write_chunk(first_frame.as_bytes()) {
                 ProviderStreamInvocationResult::error(
                     "host stream receiver closed before all chunks were written",
                 )
             } else {
-                ProviderStreamInvocationResult::streamed(content_type)
+                sleep_for_env_delay(STREAM_DELAY_MS_ENV);
+                if !writer.write_chunk(done_frame.as_bytes()) {
+                    ProviderStreamInvocationResult::error(
+                        "host stream receiver closed before all chunks were written",
+                    )
+                } else {
+                    ProviderStreamInvocationResult::streamed(content_type)
+                }
             }
         }
         (Some(invocation), Some(writer))
@@ -249,14 +263,19 @@ pub unsafe extern "C" fn sdkwork_extension_provider_execute_stream_json(
                 ProviderStreamInvocationResult::error(
                     "host stream receiver closed before content type was set",
                 )
-            } else if !writer.write_chunk(first_frame.as_bytes())
-                || !writer.write_chunk(done_frame.as_bytes())
-            {
+            } else if !writer.write_chunk(first_frame.as_bytes()) {
                 ProviderStreamInvocationResult::error(
                     "host stream receiver closed before all chunks were written",
                 )
             } else {
-                ProviderStreamInvocationResult::streamed(content_type)
+                sleep_for_env_delay(STREAM_DELAY_MS_ENV);
+                if !writer.write_chunk(done_frame.as_bytes()) {
+                    ProviderStreamInvocationResult::error(
+                        "host stream receiver closed before all chunks were written",
+                    )
+                } else {
+                    ProviderStreamInvocationResult::streamed(content_type)
+                }
             }
         }
         (Some(invocation), Some(writer))
@@ -277,12 +296,15 @@ pub unsafe extern "C" fn sdkwork_extension_provider_execute_stream_json(
                 ProviderStreamInvocationResult::error(
                     "host stream receiver closed before content type was set",
                 )
-            } else if !writer.write_chunk(bytes) {
-                ProviderStreamInvocationResult::error(
-                    "host stream receiver closed before all chunks were written",
-                )
             } else {
-                ProviderStreamInvocationResult::streamed(content_type)
+                sleep_for_env_delay(STREAM_DELAY_MS_ENV);
+                if !writer.write_chunk(bytes) {
+                    ProviderStreamInvocationResult::error(
+                        "host stream receiver closed before all chunks were written",
+                    )
+                } else {
+                    ProviderStreamInvocationResult::streamed(content_type)
+                }
             }
         }
         (Some(invocation), Some(writer))
@@ -295,12 +317,15 @@ pub unsafe extern "C" fn sdkwork_extension_provider_execute_stream_json(
                 ProviderStreamInvocationResult::error(
                     "host stream receiver closed before content type was set",
                 )
-            } else if !writer.write_chunk(bytes) {
-                ProviderStreamInvocationResult::error(
-                    "host stream receiver closed before all chunks were written",
-                )
             } else {
-                ProviderStreamInvocationResult::streamed(content_type)
+                sleep_for_env_delay(STREAM_DELAY_MS_ENV);
+                if !writer.write_chunk(bytes) {
+                    ProviderStreamInvocationResult::error(
+                        "host stream receiver closed before all chunks were written",
+                    )
+                } else {
+                    ProviderStreamInvocationResult::streamed(content_type)
+                }
             }
         }
         (Some(invocation), Some(writer))
@@ -313,12 +338,15 @@ pub unsafe extern "C" fn sdkwork_extension_provider_execute_stream_json(
                 ProviderStreamInvocationResult::error(
                     "host stream receiver closed before content type was set",
                 )
-            } else if !writer.write_chunk(bytes) {
-                ProviderStreamInvocationResult::error(
-                    "host stream receiver closed before all chunks were written",
-                )
             } else {
-                ProviderStreamInvocationResult::streamed(content_type)
+                sleep_for_env_delay(STREAM_DELAY_MS_ENV);
+                if !writer.write_chunk(bytes) {
+                    ProviderStreamInvocationResult::error(
+                        "host stream receiver closed before all chunks were written",
+                    )
+                } else {
+                    ProviderStreamInvocationResult::streamed(content_type)
+                }
             }
         }
         (Some(invocation), Some(_)) => ProviderStreamInvocationResult::unsupported(format!(
@@ -328,6 +356,7 @@ pub unsafe extern "C" fn sdkwork_extension_provider_execute_stream_json(
         (_, None) => ProviderStreamInvocationResult::error("stream writer is missing"),
         (None, Some(_)) => ProviderStreamInvocationResult::error("invalid invocation payload"),
     };
+    append_invocation_event("execute_stream_finish");
 
     into_raw_c_string(serde_json::to_string(&result).expect("result json"))
 }
@@ -349,4 +378,27 @@ fn append_lifecycle_event(event: &str) {
         return;
     };
     let _ = writeln!(file, "{event}");
+}
+
+fn append_invocation_event(event: &str) {
+    let Ok(path) = std::env::var(INVOCATION_LOG_ENV) else {
+        return;
+    };
+    let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) else {
+        return;
+    };
+    let _ = writeln!(file, "{event}");
+}
+
+fn sleep_for_env_delay(key: &str) {
+    let Ok(delay_ms) = std::env::var(key) else {
+        return;
+    };
+    let Ok(delay_ms) = delay_ms.parse::<u64>() else {
+        return;
+    };
+    if delay_ms == 0 {
+        return;
+    }
+    thread::sleep(Duration::from_millis(delay_ms));
 }

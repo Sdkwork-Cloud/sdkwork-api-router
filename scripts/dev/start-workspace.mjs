@@ -83,15 +83,26 @@ if (settings.help) {
 const plan = buildWorkspaceCommandPlan(settings);
 
 console.log('[start-workspace] unified launch settings');
-console.log(`  SDKWORK_DATABASE_URL=${settings.databaseUrl}`);
+console.log(
+  `  SDKWORK_DATABASE_URL=${settings.databaseUrl ?? '(local default via config loader)'}`,
+);
 console.log(`  SDKWORK_GATEWAY_BIND=${settings.gatewayBind}`);
 console.log(`  SDKWORK_ADMIN_BIND=${settings.adminBind}`);
 console.log(`  SDKWORK_PORTAL_BIND=${settings.portalBind}`);
-console.log(`  console_mode=${settings.preview ? 'preview' : settings.tauri ? 'tauri' : 'browser'}`);
+console.log(`  SDKWORK_WEB_BIND=${settings.webBind}`);
+console.log(`  frontend_mode=${settings.preview ? 'preview' : settings.tauri ? 'tauri' : 'browser'}`);
 
 if (settings.dryRun) {
   console.log(`[start-workspace] ${plan.backend.name}: ${formatCommand(plan.nodeExecutable, plan.backend.args)}`);
-  console.log(`[start-workspace] ${plan.console.name}: ${formatCommand(plan.nodeExecutable, plan.console.args)}`);
+  if (settings.preview) {
+    console.log(`[start-workspace] ${plan.web.name}: ${formatCommand(plan.nodeExecutable, plan.web.args)}`);
+  } else if (settings.tauri) {
+    console.log(`[start-workspace] ${plan.admin.name}: ${formatCommand(plan.nodeExecutable, plan.admin.args)}`);
+    console.log(`[start-workspace] ${plan.web.name}: ${formatCommand(plan.nodeExecutable, plan.web.args)}`);
+  } else {
+    console.log(`[start-workspace] ${plan.admin.name}: ${formatCommand(plan.nodeExecutable, plan.admin.args)}`);
+    console.log(`[start-workspace] ${plan.portal.name}: ${formatCommand(plan.nodeExecutable, plan.portal.args)}`);
+  }
   process.exit(0);
 }
 
@@ -100,7 +111,13 @@ const controller = installSignalHandlers(children);
 controller.register();
 
 let exited = false;
-for (const step of [plan.backend, plan.console]) {
+const steps = settings.preview
+  ? [plan.backend, plan.web]
+  : settings.tauri
+    ? [plan.backend, plan.admin, plan.web]
+    : [plan.backend, plan.admin, plan.portal];
+
+for (const step of steps) {
   const child = spawnStep(step, plan.nodeExecutable, children);
   child.on('exit', (code, signal) => {
     if (exited) {

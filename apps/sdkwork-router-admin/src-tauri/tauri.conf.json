@@ -1,0 +1,21 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "SDKWork Router Admin",
+  "version": "0.1.0",
+  "identifier": "com.sdkwork.router.admin",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173/admin/"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "SDKWork Router Admin",
+        "width": 1440,
+        "height": 960
+      }
+    ]
+  }
+}

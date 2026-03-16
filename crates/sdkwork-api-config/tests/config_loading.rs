@@ -2,6 +2,7 @@ use sdkwork_api_config::LocalConfigPaths;
 use sdkwork_api_config::RuntimeMode;
 use sdkwork_api_config::SecretBackendKind;
 use sdkwork_api_config::StandaloneConfig;
+use sdkwork_api_config::StandaloneConfigLoader;
 use sdkwork_api_storage_core::StorageDialect;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -26,6 +27,7 @@ fn standalone_defaults_are_local_friendly() {
     assert!(!config.require_signed_connector_extensions);
     assert!(config.require_signed_native_dynamic_extensions);
     assert!(config.extension_trusted_signers.is_empty());
+    assert_eq!(config.extension_hot_reload_interval_secs, 0);
     assert_eq!(config.secret_backend, SecretBackendKind::DatabaseEncrypted);
     assert_eq!(
         config.admin_jwt_signing_secret,
@@ -110,14 +112,25 @@ fn builds_secret_runtime_locations_from_pairs() {
 
 #[test]
 fn parses_extension_discovery_settings_from_pairs() {
+    #[cfg(windows)]
+    let expected_extension_paths = vec![
+        "D:/sdkwork/extensions".to_owned(),
+        "D:/sdkwork/extensions-trusted".to_owned(),
+    ];
+    #[cfg(not(windows))]
+    let expected_extension_paths = vec![
+        "/tmp/sdkwork/extensions".to_owned(),
+        "/tmp/sdkwork/extensions-trusted".to_owned(),
+    ];
     let extension_paths =
-        std::env::join_paths(["D:/sdkwork/extensions", "D:/sdkwork/extensions-trusted"]).unwrap();
+        std::env::join_paths(expected_extension_paths.iter().map(PathBuf::from)).unwrap();
 
     let config = StandaloneConfig::from_pairs([
         (
             "SDKWORK_EXTENSION_PATHS",
             extension_paths.to_string_lossy().as_ref(),
         ),
+        ("SDKWORK_EXTENSION_HOT_RELOAD_INTERVAL_SECS", "7"),
         ("SDKWORK_EXTENSION_ENABLE_CONNECTOR_EXTENSIONS", "false"),
         ("SDKWORK_EXTENSION_ENABLE_NATIVE_DYNAMIC_EXTENSIONS", "true"),
         (
@@ -135,13 +148,8 @@ fn parses_extension_discovery_settings_from_pairs() {
     ])
     .unwrap();
 
-    assert_eq!(
-        config.extension_paths,
-        vec![
-            "D:/sdkwork/extensions".to_owned(),
-            "D:/sdkwork/extensions-trusted".to_owned()
-        ]
-    );
+    assert_eq!(config.extension_paths, expected_extension_paths);
+    assert_eq!(config.extension_hot_reload_interval_secs, 7);
     assert!(!config.enable_connector_extensions);
     assert!(config.enable_native_dynamic_extensions);
     assert!(config.require_signed_connector_extensions);
@@ -180,6 +188,31 @@ fn local_config_paths_use_sdkwork_router_root() {
         paths.extensions_dir,
         PathBuf::from("/tmp/sdkwork-user/.sdkwork/router/extensions")
     );
+}
+
+#[test]
+fn uses_local_root_sqlite_defaults_when_no_config_file_exists() {
+    let root = temp_config_root("local-defaults");
+    let config =
+        StandaloneConfig::from_local_root_and_pairs(&root, std::iter::empty::<(&str, &str)>())
+            .unwrap();
+
+    assert_eq!(config.gateway_bind, "127.0.0.1:8080");
+    assert_eq!(config.admin_bind, "127.0.0.1:8081");
+    assert_eq!(config.portal_bind, "127.0.0.1:8082");
+    assert_eq!(
+        config.database_url,
+        sqlite_url_for(root.join("sdkwork-api-server.db"))
+    );
+    assert_eq!(
+        config.secret_local_file,
+        root.join("secrets.json").to_string_lossy()
+    );
+    assert_eq!(
+        config.extension_paths,
+        vec![root.join("extensions").to_string_lossy().into_owned()]
+    );
+    assert_eq!(config.storage_dialect().unwrap(), StorageDialect::Sqlite);
 }
 
 #[test]
@@ -271,6 +304,172 @@ fn exports_resolved_config_back_to_sdkwork_environment_pairs() {
     assert_eq!(
         values["SDKWORK_EXTENSION_PATHS"],
         root.join("extensions").to_string_lossy()
+    );
+}
+
+#[test]
+fn standalone_config_loader_reloads_from_original_inputs_after_resolved_env_export() {
+    let root = temp_config_root("loader-reload");
+    fs::write(
+        root.join("config.yaml"),
+        r#"
+admin_bind: "127.0.0.1:19081"
+extension_hot_reload_interval_secs: 1
+"#,
+    )
+    .unwrap();
+
+    let (loader, initial) = StandaloneConfigLoader::from_local_root_and_pairs(
+        &root,
+        [("SDKWORK_GATEWAY_BIND", "127.0.0.1:29080")],
+    )
+    .unwrap();
+    assert_eq!(initial.extension_hot_reload_interval_secs, 1);
+
+    fs::write(
+        root.join("config.yaml"),
+        r#"
+admin_bind: "127.0.0.1:19081"
+extension_hot_reload_interval_secs: 7
+"#,
+    )
+    .unwrap();
+
+    let stale =
+        StandaloneConfig::from_local_root_and_pairs(&root, initial.resolved_env_pairs()).unwrap();
+    assert_eq!(stale.extension_hot_reload_interval_secs, 1);
+
+    let reloaded = loader.reload().unwrap();
+    assert_eq!(reloaded.gateway_bind, "127.0.0.1:29080");
+    assert_eq!(reloaded.extension_hot_reload_interval_secs, 7);
+}
+
+#[test]
+fn standalone_config_loader_watch_state_changes_when_config_file_is_created() {
+    let root = temp_config_root("loader-watch-state");
+    let (loader, _initial) = StandaloneConfigLoader::from_local_root_and_pairs(
+        &root,
+        std::iter::empty::<(&str, &str)>(),
+    )
+    .unwrap();
+    let before = loader.watch_state().unwrap();
+
+    fs::write(
+        root.join("config.yaml"),
+        "portal_bind: \"127.0.0.1:19082\"\n",
+    )
+    .unwrap();
+
+    let after = loader.watch_state().unwrap();
+    assert_ne!(before, after);
+}
+
+#[test]
+fn parses_native_dynamic_shutdown_drain_timeout_from_pairs_and_reload_inputs() {
+    let env_config =
+        StandaloneConfig::from_pairs([("SDKWORK_NATIVE_DYNAMIC_SHUTDOWN_DRAIN_TIMEOUT_MS", "75")])
+            .unwrap();
+    let env_values = env_config
+        .resolved_env_pairs()
+        .into_iter()
+        .collect::<std::collections::HashMap<_, _>>();
+    assert_eq!(
+        env_values["SDKWORK_NATIVE_DYNAMIC_SHUTDOWN_DRAIN_TIMEOUT_MS"],
+        "75"
+    );
+
+    let root = temp_config_root("native-dynamic-drain-timeout");
+    fs::write(
+        root.join("config.yaml"),
+        "native_dynamic_shutdown_drain_timeout_ms: 25\n",
+    )
+    .unwrap();
+
+    let (loader, initial) = StandaloneConfigLoader::from_local_root_and_pairs(
+        &root,
+        std::iter::empty::<(&str, &str)>(),
+    )
+    .unwrap();
+    let initial_values = initial
+        .resolved_env_pairs()
+        .into_iter()
+        .collect::<std::collections::HashMap<_, _>>();
+    assert_eq!(
+        initial_values["SDKWORK_NATIVE_DYNAMIC_SHUTDOWN_DRAIN_TIMEOUT_MS"],
+        "25"
+    );
+
+    fs::write(
+        root.join("config.yaml"),
+        "native_dynamic_shutdown_drain_timeout_ms: 125\n",
+    )
+    .unwrap();
+
+    let reloaded = loader.reload().unwrap();
+    let reloaded_values = reloaded
+        .resolved_env_pairs()
+        .into_iter()
+        .collect::<std::collections::HashMap<_, _>>();
+    assert_eq!(
+        reloaded_values["SDKWORK_NATIVE_DYNAMIC_SHUTDOWN_DRAIN_TIMEOUT_MS"],
+        "125"
+    );
+}
+
+#[test]
+fn parses_credential_legacy_master_keys_from_pairs_and_reload_inputs() {
+    let env_config = StandaloneConfig::from_pairs([(
+        "SDKWORK_CREDENTIAL_LEGACY_MASTER_KEYS",
+        "legacy-key-a;legacy-key-b",
+    )])
+    .unwrap();
+    let env_values = env_config
+        .resolved_env_pairs()
+        .into_iter()
+        .collect::<std::collections::HashMap<_, _>>();
+    assert_eq!(
+        env_values["SDKWORK_CREDENTIAL_LEGACY_MASTER_KEYS"],
+        "legacy-key-a;legacy-key-b"
+    );
+    assert_eq!(
+        env_config.credential_legacy_master_keys,
+        vec!["legacy-key-a".to_owned(), "legacy-key-b".to_owned()]
+    );
+
+    let root = temp_config_root("credential-legacy-master-keys");
+    fs::write(
+        root.join("config.yaml"),
+        r#"
+credential_legacy_master_keys:
+  - "legacy-key-one"
+  - "legacy-key-two"
+"#,
+    )
+    .unwrap();
+
+    let (loader, initial) = StandaloneConfigLoader::from_local_root_and_pairs(
+        &root,
+        std::iter::empty::<(&str, &str)>(),
+    )
+    .unwrap();
+    assert_eq!(
+        initial.credential_legacy_master_keys,
+        vec!["legacy-key-one".to_owned(), "legacy-key-two".to_owned()]
+    );
+
+    fs::write(
+        root.join("config.yaml"),
+        r#"
+credential_legacy_master_keys:
+  - "legacy-key-three"
+"#,
+    )
+    .unwrap();
+
+    let reloaded = loader.reload().unwrap();
+    assert_eq!(
+        reloaded.credential_legacy_master_keys,
+        vec!["legacy-key-three".to_owned()]
     );
 }
 

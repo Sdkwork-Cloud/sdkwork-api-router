@@ -61,9 +61,10 @@ Admin APIs are SDKWork-owned control-plane surfaces and therefore classify as `n
 | `/admin/extensions/installations` | `native` | Stores extension installation state and config payload |
 | `/admin/extensions/instances` | `native` | Stores mounted extension instances with runtime config |
 | `/admin/extensions/runtime-statuses` | `native` | Lists normalized runtime status for active connector and native dynamic runtimes currently tracked by the host |
-| `/admin/routing/health-snapshots` | `native` | Lists persisted provider health snapshots captured from live runtime status for admin observability and routing fallback |
-| `/admin/routing/decision-logs` | `native` | Lists persisted gateway and admin-simulation routing decisions, including SLO degraded state and per-candidate evidence |
-| `/admin/routing/simulations` | `native` | Catalog-backed routing decision preview with candidate assessment, runtime health, selection reasons, SLO compliance metadata, and persisted audit logging |
+| `/admin/extensions/runtime-reloads` | `native` | Triggers an explicit managed-runtime reload for all runtimes, one extension family, or one connector instance, rebuilds trusted extension discovery state with unrelated native-dynamic runtime reuse, and returns the fresh runtime status snapshot plus applied-scope metadata and discovery counts |
+| `/admin/routing/health-snapshots` | `native` | Lists persisted provider health snapshots captured from live runtime status or active builtin upstream probes for admin observability and routing fallback |
+| `/admin/routing/decision-logs` | `native` | Lists persisted gateway and admin-simulation routing decisions, including SLO degraded state, requested-region geo-affinity evidence, and per-candidate assessment details |
+| `/admin/routing/simulations` | `native` | Catalog-backed routing decision preview with candidate assessment, runtime health, requested-region geo-affinity, selection reasons, SLO compliance metadata, and persisted audit logging |
 | `/admin/usage/records` | `native` | Lists gateway-recorded usage |
 | `/admin/usage/summary` | `native` | Aggregated usage counts by project, provider, and model for operator dashboards |
 | `/admin/billing/ledger` | `native` | Lists gateway-booked billing entries |

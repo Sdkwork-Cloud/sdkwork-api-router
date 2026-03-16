@@ -6,6 +6,7 @@ use ed25519_dalek::SigningKey;
 use sdkwork_api_app_identity::persist_gateway_api_key;
 use sdkwork_api_ext_provider_native_mock::FIXTURE_EXTENSION_ID;
 use sdkwork_api_storage_sqlite::SqliteAdminStore;
+use serde_json::Value;
 use sqlx::SqlitePool;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -29,7 +30,9 @@ pub async fn issue_admin_token(app: Router) -> String {
                 .method("POST")
                 .uri("/admin/auth/login")
                 .header("content-type", "application/json")
-                .body(Body::from("{\"subject\":\"http-test-admin\"}"))
+                .body(Body::from(
+                    "{\"email\":\"admin@sdkwork.local\",\"password\":\"ChangeMe123!\"}",
+                ))
                 .unwrap(),
         )
         .await
@@ -41,6 +44,50 @@ pub async fn issue_admin_token(app: Router) -> String {
         .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     json["token"].as_str().unwrap().to_owned()
+}
+
+#[allow(dead_code)]
+pub async fn assert_single_usage_record_and_decision_log(
+    admin_app: Router,
+    admin_token: &str,
+    expected_model: &str,
+    expected_provider: &str,
+    expected_route_key: &str,
+) {
+    let usage = admin_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/admin/usage/records")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(usage.status(), StatusCode::OK);
+    let usage_json = read_json(usage).await;
+    assert_eq!(usage_json.as_array().unwrap().len(), 1);
+    assert_eq!(usage_json[0]["model"], expected_model);
+    assert_eq!(usage_json[0]["provider"], expected_provider);
+
+    let logs = admin_app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/admin/routing/decision-logs")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(logs.status(), StatusCode::OK);
+    let logs_json = read_json(logs).await;
+    assert_eq!(logs_json.as_array().unwrap().len(), 1);
+    assert_eq!(logs_json[0]["route_key"], expected_route_key);
+    assert_eq!(logs_json[0]["selected_provider_id"], expected_provider);
 }
 
 #[allow(dead_code)]
@@ -292,4 +339,11 @@ fn sign_native_dynamic_package(
     let payload = serde_json::to_vec(&PackageSignaturePayload { manifest, files }).unwrap();
     let signature = signing_key.sign(&payload);
     STANDARD.encode(signature.to_bytes())
+}
+
+async fn read_json(response: axum::response::Response) -> Value {
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    serde_json::from_slice(&bytes).unwrap()
 }

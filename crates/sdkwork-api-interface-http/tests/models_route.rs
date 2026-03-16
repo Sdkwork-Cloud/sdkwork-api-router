@@ -3,6 +3,12 @@ use axum::extract::State;
 use axum::http::{Request, StatusCode};
 use axum::routing::get;
 use axum::{Json, Router};
+use sdkwork_api_app_credential::CredentialSecretManager;
+use sdkwork_api_app_identity::hash_gateway_api_key;
+use sdkwork_api_domain_catalog::ModelCatalogEntry;
+use sdkwork_api_domain_identity::GatewayApiKeyRecord;
+use sdkwork_api_storage_core::{AdminStore, Reloadable};
+use sdkwork_api_storage_sqlite::SqliteAdminStore;
 use serde_json::Value;
 use sqlx::SqlitePool;
 use std::sync::{Arc, Mutex};
@@ -196,6 +202,28 @@ async fn memory_pool() -> SqlitePool {
         .unwrap()
 }
 
+async fn seeded_gateway_store(model_id: &str, api_key: &str) -> Arc<dyn AdminStore> {
+    let pool = memory_pool().await;
+    let store = SqliteAdminStore::new(pool);
+    store
+        .insert_gateway_api_key(&GatewayApiKeyRecord::new(
+            "tenant-1",
+            "project-1",
+            "live",
+            hash_gateway_api_key(api_key),
+        ))
+        .await
+        .unwrap();
+    store
+        .insert_model(&ModelCatalogEntry::new(
+            model_id,
+            "provider-openai-official",
+        ))
+        .await
+        .unwrap();
+    Arc::new(store)
+}
+
 #[tokio::test]
 async fn models_route_reads_persisted_catalog_models() {
     let pool = memory_pool().await;
@@ -236,6 +264,51 @@ async fn models_route_reads_persisted_catalog_models() {
     assert_eq!(response.status(), StatusCode::OK);
     let json = read_json(response).await;
     assert_eq!(json["data"][0]["id"], "gpt-4.1");
+}
+
+#[tokio::test]
+async fn gateway_router_uses_replaced_live_store_for_new_requests() {
+    let api_key = "skw_live_reloadable_models";
+    let live_store = Reloadable::new(seeded_gateway_store("gpt-4.1-old", api_key).await);
+    let app = sdkwork_api_interface_http::gateway_router_with_state(
+        sdkwork_api_interface_http::GatewayApiState::with_live_store_and_secret_manager(
+            live_store.clone(),
+            CredentialSecretManager::database_encrypted("local-dev-master-key"),
+        ),
+    );
+
+    let first_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/models")
+                .header("authorization", format!("Bearer {api_key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(first_response.status(), StatusCode::OK);
+    let first_json = read_json(first_response).await;
+    assert_eq!(first_json["data"][0]["id"], "gpt-4.1-old");
+
+    live_store.replace(seeded_gateway_store("gpt-4.1-new", api_key).await);
+
+    let second_response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/models")
+                .header("authorization", format!("Bearer {api_key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(second_response.status(), StatusCode::OK);
+    let second_json = read_json(second_response).await;
+    assert_eq!(second_json["data"][0]["id"], "gpt-4.1-new");
 }
 
 #[tokio::test]

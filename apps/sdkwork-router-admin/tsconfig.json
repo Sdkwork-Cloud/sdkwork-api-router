@@ -1,0 +1,35 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "allowJs": false,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "baseUrl": ".",
+    "paths": {
+      "sdkwork-router-admin-admin-api": ["packages/sdkwork-router-admin-admin-api/src/index.ts"],
+      "sdkwork-router-admin-auth": ["packages/sdkwork-router-admin-auth/src/index.tsx"],
+      "sdkwork-router-admin-catalog": ["packages/sdkwork-router-admin-catalog/src/index.tsx"],
+      "sdkwork-router-admin-commons": ["packages/sdkwork-router-admin-commons/src/index.tsx"],
+      "sdkwork-router-admin-core": ["packages/sdkwork-router-admin-core/src/index.tsx"],
+      "sdkwork-router-admin-coupons": ["packages/sdkwork-router-admin-coupons/src/index.tsx"],
+      "sdkwork-router-admin-operations": ["packages/sdkwork-router-admin-operations/src/index.tsx"],
+      "sdkwork-router-admin-overview": ["packages/sdkwork-router-admin-overview/src/index.tsx"],
+      "sdkwork-router-admin-tenants": ["packages/sdkwork-router-admin-tenants/src/index.tsx"],
+      "sdkwork-router-admin-traffic": ["packages/sdkwork-router-admin-traffic/src/index.tsx"],
+      "sdkwork-router-admin-types": ["packages/sdkwork-router-admin-types/src/index.ts"],
+      "sdkwork-router-admin-users": ["packages/sdkwork-router-admin-users/src/index.tsx"]
+    }
+  },
+  "include": ["src", "packages/**/*.ts", "packages/**/*.tsx", "vite.config.ts"]
+}

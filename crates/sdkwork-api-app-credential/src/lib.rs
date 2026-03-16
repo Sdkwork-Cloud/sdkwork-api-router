@@ -1,10 +1,13 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use sdkwork_api_domain_credential::UpstreamCredential;
-use sdkwork_api_secret_core::{decrypt, encrypt, CredentialSecretRef, SecretBackendKind};
-use sdkwork_api_secret_keyring::{KeyringBackend, KeyringSecretStore};
+use sdkwork_api_secret_core::{
+    decrypt, encrypt, master_key_id, CredentialSecretRef, SecretBackendKind, SecretEnvelope,
+};
+use sdkwork_api_secret_keyring::{KeyringBackend, KeyringSecretStore, OsKeyringBackend};
 use sdkwork_api_secret_local::LocalEncryptedFileSecretStore;
 use sdkwork_api_storage_core::AdminStore;
 
@@ -16,8 +19,12 @@ pub fn service_name() -> &'static str {
 pub struct CredentialSecretManager {
     default_backend: SecretBackendKind,
     master_key: String,
-    local_file_store: LocalEncryptedFileSecretStore,
-    keyring_store: KeyringSecretStore,
+    current_master_key_id: String,
+    legacy_master_keys_by_id: HashMap<String, String>,
+    fallback_master_keys: Vec<String>,
+    secret_local_file: PathBuf,
+    secret_keyring_service: String,
+    keyring_backend: Arc<dyn KeyringBackend>,
 }
 
 impl CredentialSecretManager {
@@ -27,12 +34,30 @@ impl CredentialSecretManager {
         secret_local_file: impl Into<PathBuf>,
         secret_keyring_service: impl Into<String>,
     ) -> Self {
-        Self {
+        Self::new_with_legacy_master_keys(
             default_backend,
-            master_key: master_key.into(),
-            local_file_store: LocalEncryptedFileSecretStore::new(secret_local_file),
-            keyring_store: KeyringSecretStore::new(secret_keyring_service),
-        }
+            master_key,
+            Vec::new(),
+            secret_local_file,
+            secret_keyring_service,
+        )
+    }
+
+    pub fn new_with_legacy_master_keys(
+        default_backend: SecretBackendKind,
+        master_key: impl Into<String>,
+        legacy_master_keys: Vec<String>,
+        secret_local_file: impl Into<PathBuf>,
+        secret_keyring_service: impl Into<String>,
+    ) -> Self {
+        Self::new_with_legacy_master_keys_and_keyring_backend(
+            default_backend,
+            master_key,
+            legacy_master_keys,
+            secret_local_file,
+            secret_keyring_service,
+            Arc::new(OsKeyringBackend),
+        )
     }
 
     pub fn database_encrypted(master_key: impl Into<String>) -> Self {
@@ -67,16 +92,59 @@ impl CredentialSecretManager {
         service_name: impl Into<String>,
         backend: Arc<dyn KeyringBackend>,
     ) -> Self {
+        Self::new_with_legacy_master_keys_and_keyring_backend(
+            SecretBackendKind::OsKeyring,
+            master_key,
+            Vec::new(),
+            "sdkwork-api-secrets.json",
+            service_name,
+            backend,
+        )
+    }
+
+    fn new_with_legacy_master_keys_and_keyring_backend(
+        default_backend: SecretBackendKind,
+        master_key: impl Into<String>,
+        legacy_master_keys: Vec<String>,
+        secret_local_file: impl Into<PathBuf>,
+        secret_keyring_service: impl Into<String>,
+        keyring_backend: Arc<dyn KeyringBackend>,
+    ) -> Self {
+        let master_key = master_key.into();
+        let current_master_key_id = master_key_id(&master_key);
+        let mut legacy_master_keys_by_id = HashMap::new();
+        let mut fallback_master_keys = vec![master_key.clone()];
+
+        for legacy_master_key in legacy_master_keys {
+            let legacy_master_key_id = master_key_id(&legacy_master_key);
+            if legacy_master_key_id == current_master_key_id
+                || legacy_master_keys_by_id.contains_key(&legacy_master_key_id)
+            {
+                continue;
+            }
+
+            fallback_master_keys.push(legacy_master_key.clone());
+            legacy_master_keys_by_id.insert(legacy_master_key_id, legacy_master_key);
+        }
+
         Self {
-            default_backend: SecretBackendKind::OsKeyring,
-            master_key: master_key.into(),
-            local_file_store: LocalEncryptedFileSecretStore::new("sdkwork-api-secrets.json"),
-            keyring_store: KeyringSecretStore::with_backend(service_name, backend),
+            default_backend,
+            master_key,
+            current_master_key_id,
+            legacy_master_keys_by_id,
+            fallback_master_keys,
+            secret_local_file: secret_local_file.into(),
+            secret_keyring_service: secret_keyring_service.into(),
+            keyring_backend,
         }
     }
 
     pub fn default_backend(&self) -> SecretBackendKind {
         self.default_backend
+    }
+
+    pub fn current_master_key_id(&self) -> &str {
+        &self.current_master_key_id
     }
 
     fn secret_ref(&self, credential: &UpstreamCredential) -> CredentialSecretRef {
@@ -87,29 +155,110 @@ impl CredentialSecretManager {
         )
     }
 
+    fn credential_with_current_metadata(
+        &self,
+        credential: &UpstreamCredential,
+    ) -> UpstreamCredential {
+        let (secret_local_file, secret_keyring_service) = match self.default_backend {
+            SecretBackendKind::DatabaseEncrypted => (None, None),
+            SecretBackendKind::LocalEncryptedFile => (
+                Some(self.secret_local_file.to_string_lossy().into_owned()),
+                None,
+            ),
+            SecretBackendKind::OsKeyring => (None, Some(self.secret_keyring_service.clone())),
+        };
+
+        UpstreamCredential {
+            tenant_id: credential.tenant_id.clone(),
+            provider_id: credential.provider_id.clone(),
+            key_reference: credential.key_reference.clone(),
+            secret_backend: self.default_backend.as_str().to_owned(),
+            secret_local_file,
+            secret_keyring_service,
+            secret_master_key_id: Some(self.current_master_key_id.clone()),
+        }
+    }
+
+    fn local_file_store_for(
+        &self,
+        credential: &UpstreamCredential,
+    ) -> LocalEncryptedFileSecretStore {
+        let path = credential
+            .secret_local_file
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| self.secret_local_file.clone());
+        LocalEncryptedFileSecretStore::new(path)
+    }
+
+    fn keyring_store_for(&self, credential: &UpstreamCredential) -> KeyringSecretStore {
+        let service_name = credential
+            .secret_keyring_service
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or(self.secret_keyring_service.as_str());
+        KeyringSecretStore::with_backend(service_name.to_owned(), self.keyring_backend.clone())
+    }
+
+    fn decrypt_envelope(
+        &self,
+        credential: &UpstreamCredential,
+        envelope: &SecretEnvelope,
+    ) -> Result<String> {
+        if let Some(secret_master_key_id) = credential
+            .secret_master_key_id
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            let master_key = if secret_master_key_id == self.current_master_key_id {
+                Some(self.master_key.as_str())
+            } else {
+                self.legacy_master_keys_by_id
+                    .get(secret_master_key_id)
+                    .map(String::as_str)
+            }
+            .ok_or_else(|| anyhow!("credential master key is not configured"))?;
+
+            return decrypt(master_key, envelope);
+        }
+
+        for master_key in &self.fallback_master_keys {
+            if let Ok(secret) = decrypt(master_key, envelope) {
+                return Ok(secret);
+            }
+        }
+
+        Err(anyhow!(
+            "credential secret could not be decrypted with configured master keys"
+        ))
+    }
+
     async fn persist_secret(
         &self,
         store: &dyn AdminStore,
         credential: &UpstreamCredential,
         secret_value: &str,
     ) -> Result<UpstreamCredential> {
+        let credential = self.credential_with_current_metadata(credential);
         let envelope = encrypt(&self.master_key, secret_value)?;
-        let secret_ref = self.secret_ref(credential);
+        let secret_ref = self.secret_ref(&credential);
 
         match self.default_backend {
             SecretBackendKind::DatabaseEncrypted => {
                 store
-                    .insert_encrypted_credential(credential, &envelope)
+                    .insert_encrypted_credential(&credential, &envelope)
                     .await
             }
             SecretBackendKind::LocalEncryptedFile => {
-                self.local_file_store
+                self.local_file_store_for(&credential)
                     .store_envelope(&secret_ref, &envelope)?;
-                store.insert_credential(credential).await
+                store.insert_credential(&credential).await
             }
             SecretBackendKind::OsKeyring => {
-                self.keyring_store.store_envelope(&secret_ref, &envelope)?;
-                store.insert_credential(credential).await
+                self.keyring_store_for(&credential)
+                    .store_envelope(&secret_ref, &envelope)?;
+                store.insert_credential(&credential).await
             }
         }
     }
@@ -132,14 +281,35 @@ impl CredentialSecretManager {
                     )
                     .await?
             }
-            SecretBackendKind::LocalEncryptedFile => {
-                self.local_file_store.load_envelope(&secret_ref)?
-            }
-            SecretBackendKind::OsKeyring => self.keyring_store.load_envelope(&secret_ref)?,
+            SecretBackendKind::LocalEncryptedFile => self
+                .local_file_store_for(credential)
+                .load_envelope(&secret_ref)?,
+            SecretBackendKind::OsKeyring => self
+                .keyring_store_for(credential)
+                .load_envelope(&secret_ref)?,
         }
         .ok_or_else(|| anyhow!("credential secret not found"))?;
 
-        decrypt(&self.master_key, &envelope)
+        self.decrypt_envelope(credential, &envelope)
+    }
+
+    fn remove_secret(&self, credential: &UpstreamCredential) -> Result<()> {
+        let secret_ref = self.secret_ref(credential);
+        let backend = SecretBackendKind::parse(&credential.secret_backend)?;
+
+        match backend {
+            SecretBackendKind::DatabaseEncrypted => Ok(()),
+            SecretBackendKind::LocalEncryptedFile => {
+                self.local_file_store_for(credential)
+                    .delete_envelope(&secret_ref)?;
+                Ok(())
+            }
+            SecretBackendKind::OsKeyring => {
+                self.keyring_store_for(credential)
+                    .delete_envelope(&secret_ref)?;
+                Ok(())
+            }
+        }
     }
 }
 
@@ -220,6 +390,72 @@ pub async fn persist_credential_with_secret_and_manager(
 
 pub async fn list_credentials(store: &dyn AdminStore) -> Result<Vec<UpstreamCredential>> {
     store.list_credentials().await
+}
+
+pub async fn delete_credential_with_manager(
+    store: &dyn AdminStore,
+    manager: &CredentialSecretManager,
+    tenant_id: &str,
+    provider_id: &str,
+    key_reference: &str,
+) -> Result<bool> {
+    let Some(credential) = store
+        .find_credential(tenant_id, provider_id, key_reference)
+        .await?
+    else {
+        return Ok(false);
+    };
+
+    manager.remove_secret(&credential)?;
+    store
+        .delete_credential(tenant_id, provider_id, key_reference)
+        .await
+}
+
+pub async fn delete_provider_credentials_with_manager(
+    store: &dyn AdminStore,
+    manager: &CredentialSecretManager,
+    provider_id: &str,
+) -> Result<()> {
+    let credentials = store.list_credentials().await?;
+    for credential in credentials
+        .into_iter()
+        .filter(|credential| credential.provider_id == provider_id)
+    {
+        delete_credential_with_manager(
+            store,
+            manager,
+            &credential.tenant_id,
+            &credential.provider_id,
+            &credential.key_reference,
+        )
+        .await?;
+    }
+
+    Ok(())
+}
+
+pub async fn delete_tenant_credentials_with_manager(
+    store: &dyn AdminStore,
+    manager: &CredentialSecretManager,
+    tenant_id: &str,
+) -> Result<()> {
+    let credentials = store.list_credentials().await?;
+    for credential in credentials
+        .into_iter()
+        .filter(|credential| credential.tenant_id == tenant_id)
+    {
+        delete_credential_with_manager(
+            store,
+            manager,
+            &credential.tenant_id,
+            &credential.provider_id,
+            &credential.key_reference,
+        )
+        .await?;
+    }
+
+    Ok(())
 }
 
 pub async fn resolve_credential_secret(

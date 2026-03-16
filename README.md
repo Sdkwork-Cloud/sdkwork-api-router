@@ -14,8 +14,12 @@ Runtime surfaces:
   - operator-facing `/admin/*` control plane
 - `portal-api-service`
   - public `/portal/*` self-service API
-- `console/`
-  - browser-accessible React console that also runs inside Tauri
+- `router-web-service`
+  - Pingora-based public web host for `/admin/*`, `/portal/*`, and API proxy entrypoints
+- `apps/sdkwork-router-admin/`
+  - standalone super-admin browser app plus the admin-owned Tauri desktop host
+- `apps/sdkwork-router-portal/`
+  - standalone developer self-service portal app
 - `docs/`
   - VitePress documentation site with English and Chinese operational guides
 
@@ -23,9 +27,11 @@ Current foundations:
 
 - Axum-based Rust services
 - SQLite and PostgreSQL storage
-- browser and Tauri console
+- Pingora-backed public web delivery for admin and portal
+- standalone browser admin and portal apps
+- admin-owned Tauri desktop host
 - extension runtime for builtin, connector, and native-dynamic providers
-- public portal registration, login, workspace inspection, and API key issuance
+- public portal registration, login, dashboard, usage, billing posture, and API key issuance
 - local JSON and YAML runtime configuration under `~/.sdkwork/router/`
 
 ## Supported Platforms
@@ -101,26 +107,55 @@ Build the docs site:
 pnpm --dir docs build
 ```
 
-Key docs entry points:
+Primary English doc structure:
 
-- [Installation](./docs/getting-started/installation.md)
-- [Source Development](./docs/getting-started/source-development.md)
-- [Release Builds](./docs/getting-started/release-builds.md)
-- [Runtime Modes](./docs/getting-started/runtime-modes.md)
-- [Public Portal](./docs/getting-started/public-portal.md)
-- [Configuration](./docs/operations/configuration.md)
-- [Health and Metrics](./docs/operations/health-and-metrics.md)
-- [API Compatibility](./docs/reference/api-compatibility.md)
+- Getting Started:
+  - [Quickstart](./docs/getting-started/quickstart.md)
+  - [Installation](./docs/getting-started/installation.md)
+  - [Source Development](./docs/getting-started/source-development.md)
+  - [Build and Packaging](./docs/getting-started/build-and-packaging.md)
+  - [Release Builds](./docs/getting-started/release-builds.md)
+- Architecture:
+  - [Software Architecture](./docs/architecture/software-architecture.md)
+  - [Functional Modules](./docs/architecture/functional-modules.md)
+  - [Runtime Modes Deep Dive](./docs/architecture/runtime-modes.md)
+- API Reference:
+  - [Overview](./docs/api-reference/overview.md)
+  - [Gateway API](./docs/api-reference/gateway-api.md)
+  - [Admin API](./docs/api-reference/admin-api.md)
+  - [Portal API](./docs/api-reference/portal-api.md)
+- Operations:
+  - [Configuration](./docs/operations/configuration.md)
+  - [Health and Metrics](./docs/operations/health-and-metrics.md)
+- Reference:
+  - [API Compatibility](./docs/reference/api-compatibility.md)
+  - [Repository Layout](./docs/reference/repository-layout.md)
+  - [Build and Tooling](./docs/reference/build-and-tooling.md)
 
-Chinese docs entry points:
+Primary Chinese doc structure:
 
-- [安装准备](./docs/zh/getting-started/installation.md)
-- [源码运行](./docs/zh/getting-started/source-development.md)
-- [Release 构建](./docs/zh/getting-started/release-builds.md)
-- [运行模式](./docs/zh/getting-started/runtime-modes.md)
-- [公开门户](./docs/zh/getting-started/public-portal.md)
-- [配置说明](./docs/zh/operations/configuration.md)
-- [健康检查与 Metrics](./docs/zh/operations/health-and-metrics.md)
+- 开始使用：
+  - [快速开始](./docs/zh/getting-started/quickstart.md)
+  - [安装准备](./docs/zh/getting-started/installation.md)
+  - [源码运行](./docs/zh/getting-started/source-development.md)
+  - [编译与打包](./docs/zh/getting-started/build-and-packaging.md)
+  - [发布构建](./docs/zh/getting-started/release-builds.md)
+- 架构：
+  - [软件架构](./docs/zh/architecture/software-architecture.md)
+  - [功能模块](./docs/zh/architecture/functional-modules.md)
+  - [运行模式详解](./docs/zh/architecture/runtime-modes.md)
+- API 参考：
+  - [总览](./docs/zh/api-reference/overview.md)
+  - [网关 API](./docs/zh/api-reference/gateway-api.md)
+  - [管理端 API](./docs/zh/api-reference/admin-api.md)
+  - [门户 API](./docs/zh/api-reference/portal-api.md)
+- 运维：
+  - [配置说明](./docs/zh/operations/configuration.md)
+  - [健康检查与 Metrics](./docs/zh/operations/health-and-metrics.md)
+- 参考：
+  - [API 兼容矩阵](./docs/zh/reference/api-compatibility.md)
+  - [仓库结构](./docs/zh/reference/repository-layout.md)
+  - [构建与工具链](./docs/zh/reference/build-and-tooling.md)
 
 ## Prerequisites
 
@@ -151,10 +186,15 @@ Recommended full-stack startup:
 
 Open:
 
-- `http://127.0.0.1:5173/#/portal/register`
-- `http://127.0.0.1:5173/#/portal/login`
-- `http://127.0.0.1:5173/#/portal/dashboard`
-- `http://127.0.0.1:5173/#/admin`
+- browser mode admin app: `http://127.0.0.1:5173/admin/`
+- browser mode portal app: `http://127.0.0.1:5174/portal/`
+- desktop or preview web host: `http://127.0.0.1:3001/portal/`
+- desktop or preview admin site: `http://127.0.0.1:3001/admin/`
+
+Notes:
+
+- `start-workspace --tauri` starts the admin desktop shell and the shared Pingora web host for external browser access.
+- `start-workspace --preview` builds admin and portal, then serves both sites through the Pingora web host.
 
 To start with a specific config root:
 
@@ -177,9 +217,12 @@ Lower-level source helpers:
 - backend only:
   - `scripts/dev/start-servers.ps1`
   - `node scripts/dev/start-stack.mjs`
-- console only:
-  - `scripts/dev/start-console.ps1`
-  - `node scripts/dev/start-console.mjs`
+- admin only:
+  - `node scripts/dev/start-admin.mjs`
+- portal only:
+  - `node scripts/dev/start-portal.mjs`
+- public web host only:
+  - `node scripts/dev/start-web.mjs`
 
 Detailed source instructions:
 
@@ -190,20 +233,27 @@ Detailed source instructions:
 Build release service binaries:
 
 ```bash
-cargo build --release -p admin-api-service -p gateway-service -p portal-api-service
+cargo build --release -p admin-api-service -p gateway-service -p portal-api-service -p router-web-service
 ```
 
-Build browser console assets:
+Build admin app assets:
 
 ```bash
-pnpm --dir console install
-pnpm --dir console build
+pnpm --dir apps/sdkwork-router-admin install
+pnpm --dir apps/sdkwork-router-admin build
+```
+
+Build standalone portal assets:
+
+```bash
+pnpm --dir apps/sdkwork-router-portal install
+pnpm --dir apps/sdkwork-router-portal build
 ```
 
 Build the Tauri desktop package:
 
 ```bash
-pnpm --dir console tauri:build
+pnpm --dir apps/sdkwork-router-admin tauri:build
 ```
 
 Run release binaries with the default local config root:
@@ -278,6 +328,8 @@ Detailed operational docs:
 - [Configuration](./docs/operations/configuration.md)
 - [Health and Metrics](./docs/operations/health-and-metrics.md)
 - [Runtime Modes](./docs/getting-started/runtime-modes.md)
+- [Software Architecture](./docs/architecture/software-architecture.md)
+- [API Reference Overview](./docs/api-reference/overview.md)
 
 ## Additional Technical References
 
@@ -293,6 +345,8 @@ pnpm --dir docs typecheck
 pnpm --dir docs build
 cargo fmt --all --check
 cargo test --workspace -q -j 1
-pnpm --dir console -r typecheck
-pnpm --dir console build
+pnpm --dir apps/sdkwork-router-admin typecheck
+pnpm --dir apps/sdkwork-router-admin build
+pnpm --dir apps/sdkwork-router-portal typecheck
+pnpm --dir apps/sdkwork-router-portal build
 ```

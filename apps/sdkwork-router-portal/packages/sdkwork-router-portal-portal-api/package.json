@@ -1,0 +1,17 @@
+{
+  "name": "sdkwork-router-portal-portal-api",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "module": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts"
+    }
+  },
+  "dependencies": {
+    "sdkwork-router-portal-types": "workspace:*"
+  }
+}

@@ -12,6 +12,8 @@
 
 这意味着环境变量始终覆盖 `config.yaml`、`config.yml` 或 `config.json` 中的值。
 
+运行中的配置文件重载会继续使用进程启动时捕获的原始环境变量覆盖集。因此，服务启动后编辑 `config.yaml` 可以作用于下文列出的可热更新字段，但在父 shell 里再修改 `SDKWORK_*` 环境变量不会被已运行进程感知。
+
 ## 默认本地配置根目录
 
 默认本地配置根目录为：
@@ -60,6 +62,7 @@
 - `secret_local_file`：`<config-root>/secrets.json`
 - `enable_connector_extensions`：`true`
 - `enable_native_dynamic_extensions`：`false`
+- `extension_hot_reload_interval_secs`：`0`
 - `require_signed_connector_extensions`：`false`
 - `require_signed_native_dynamic_extensions`：`true`
 - `runtime_snapshot_interval_secs`：`0`
@@ -79,6 +82,7 @@
 - `extension_paths`
 - `enable_connector_extensions`
 - `enable_native_dynamic_extensions`
+- `extension_hot_reload_interval_secs`
 - `extension_trusted_signers`
 - `require_signed_connector_extensions`
 - `require_signed_native_dynamic_extensions`
@@ -89,6 +93,38 @@
 - `credential_master_key`
 - `secret_local_file`
 - `secret_keyring_service`
+
+## 运行时重载行为
+
+`gateway-service` 与 `admin-api-service` 会以 1 秒轮询一次当前解析出的配置文件集合。
+
+无需重启即可生效：
+
+- `extension_paths`
+- `enable_connector_extensions`
+- `enable_native_dynamic_extensions`
+- `extension_trusted_signers`
+- `require_signed_connector_extensions`
+- `require_signed_native_dynamic_extensions`
+- `extension_hot_reload_interval_secs`
+- `runtime_snapshot_interval_secs`
+
+仍然需要重启：
+
+- `gateway_bind`
+- `admin_bind`
+- `portal_bind`
+- `database_url`
+- `admin_jwt_signing_secret`
+- `portal_jwt_signing_secret`
+- `secret_backend`
+- `credential_master_key`
+- `secret_local_file`
+- `secret_keyring_service`
+
+当磁盘上的变更涉及这些需重启字段时，运行中进程会记录“已检测到但需重启后才会应用”的日志。
+
+`portal-api-service` 目前仍只在启动时读取配置。
 
 ## YAML 示例
 
@@ -102,6 +138,7 @@ extension_paths:
   - "extensions/partner"
 enable_connector_extensions: true
 enable_native_dynamic_extensions: false
+extension_hot_reload_interval_secs: 5
 extension_trusted_signers:
   sdkwork: "ZXhwaWNpdC1wdWJsaWMta2V5"
   partner: "c2Vjb25kLXB1YmxpYy1rZXk="
@@ -169,6 +206,7 @@ secret_keyring_service: "sdkwork-api-server"
 - `SDKWORK_EXTENSION_PATHS`
 - `SDKWORK_EXTENSION_ENABLE_CONNECTOR_EXTENSIONS`
 - `SDKWORK_EXTENSION_ENABLE_NATIVE_DYNAMIC_EXTENSIONS`
+- `SDKWORK_EXTENSION_HOT_RELOAD_INTERVAL_SECS`
 - `SDKWORK_EXTENSION_TRUSTED_SIGNERS`
 - `SDKWORK_EXTENSION_REQUIRE_SIGNATURE_FOR_CONNECTOR_EXTENSIONS`
 - `SDKWORK_EXTENSION_REQUIRE_SIGNATURE_FOR_NATIVE_DYNAMIC_EXTENSIONS`

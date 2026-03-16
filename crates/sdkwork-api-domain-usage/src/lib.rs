@@ -1,10 +1,22 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UsageRecord {
     pub project_id: String,
     pub model: String,
     pub provider: String,
+    #[serde(default)]
+    pub units: u64,
+    #[serde(default)]
+    pub amount: f64,
+    #[serde(default)]
+    pub input_tokens: u64,
+    #[serde(default)]
+    pub output_tokens: u64,
+    #[serde(default)]
+    pub total_tokens: u64,
+    #[serde(default)]
+    pub created_at_ms: u64,
 }
 
 impl UsageRecord {
@@ -17,7 +29,32 @@ impl UsageRecord {
             project_id: project_id.into(),
             model: model.into(),
             provider: provider.into(),
+            units: 0,
+            amount: 0.0,
+            input_tokens: 0,
+            output_tokens: 0,
+            total_tokens: 0,
+            created_at_ms: 0,
         }
+    }
+
+    pub fn with_metering(mut self, units: u64, amount: f64, created_at_ms: u64) -> Self {
+        self.units = units;
+        self.amount = amount;
+        self.created_at_ms = created_at_ms;
+        self
+    }
+
+    pub fn with_token_usage(
+        mut self,
+        input_tokens: u64,
+        output_tokens: u64,
+        total_tokens: u64,
+    ) -> Self {
+        self.input_tokens = input_tokens;
+        self.output_tokens = output_tokens;
+        self.total_tokens = total_tokens;
+        self
     }
 }
 

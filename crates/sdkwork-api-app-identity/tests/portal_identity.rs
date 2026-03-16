@@ -1,6 +1,7 @@
 use sdkwork_api_app_identity::{
-    create_portal_api_key, list_portal_api_keys, load_portal_workspace_summary, login_portal_user,
-    register_portal_user, verify_portal_jwt, PortalIdentityError,
+    change_portal_password, create_portal_api_key, list_portal_api_keys,
+    load_portal_workspace_summary, login_portal_user, register_portal_user, verify_portal_jwt,
+    PortalIdentityError,
 };
 use sdkwork_api_storage_sqlite::{run_migrations, SqliteAdminStore};
 
@@ -109,4 +110,70 @@ async fn portal_api_key_listing_is_workspace_scoped_and_login_rejects_invalid_pa
     assert_eq!(bob_keys[0].environment, "test");
     assert_eq!(bob_keys[0].tenant_id, bob.workspace.tenant_id);
     assert_eq!(bob_keys[0].project_id, bob.workspace.project_id);
+}
+
+#[tokio::test]
+async fn default_portal_login_bootstraps_a_local_demo_user() {
+    let store = memory_store().await;
+
+    let session = login_portal_user(
+        &store,
+        "portal@sdkwork.local",
+        "ChangeMe123!",
+        "portal-test-secret",
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(session.user.email, "portal@sdkwork.local");
+    assert_eq!(session.user.display_name, "Portal Demo");
+    assert!(session.workspace.tenant_id.starts_with("tenant_"));
+    assert!(session.workspace.project_id.starts_with("project_"));
+}
+
+#[tokio::test]
+async fn portal_password_change_rejects_old_password_and_accepts_new_password() {
+    let store = memory_store().await;
+
+    let session = login_portal_user(
+        &store,
+        "portal@sdkwork.local",
+        "ChangeMe123!",
+        "portal-test-secret",
+    )
+    .await
+    .unwrap();
+
+    let updated = change_portal_password(
+        &store,
+        &session.user.id,
+        "ChangeMe123!",
+        "PortalPassword456!",
+    )
+    .await
+    .unwrap();
+    assert_eq!(updated.email, "portal@sdkwork.local");
+
+    let old_password_error = login_portal_user(
+        &store,
+        "portal@sdkwork.local",
+        "ChangeMe123!",
+        "portal-test-secret",
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(
+        old_password_error,
+        PortalIdentityError::InvalidCredentials
+    ));
+
+    let new_session = login_portal_user(
+        &store,
+        "portal@sdkwork.local",
+        "PortalPassword456!",
+        "portal-test-secret",
+    )
+    .await
+    .unwrap();
+    assert_eq!(new_session.user.id, session.user.id);
 }

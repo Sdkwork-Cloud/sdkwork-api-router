@@ -1,7 +1,7 @@
-use anyhow::Result;
+use anyhow::{bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use sdkwork_api_app_credential::{resolve_provider_secret_with_manager, CredentialSecretManager};
-use sdkwork_api_app_routing::select_route_with_store;
+use sdkwork_api_app_routing::{select_route_with_store_context, RouteSelectionContext};
 use sdkwork_api_contract_openai::assistants::{
     AssistantObject, CreateAssistantRequest, DeleteAssistantResponse, ListAssistantsResponse,
     UpdateAssistantRequest,
@@ -93,7 +93,9 @@ use sdkwork_api_extension_core::{
     ExtensionKind, ExtensionManifest, ExtensionProtocol, ExtensionRuntime,
 };
 use sdkwork_api_extension_host::{
-    discover_extension_packages, ensure_connector_runtime_started,
+    discover_extension_packages, ensure_connector_runtime_started, shutdown_all_connector_runtimes,
+    shutdown_all_native_dynamic_runtimes, shutdown_connector_runtime,
+    shutdown_connector_runtimes_for_extension, shutdown_native_dynamic_runtimes_for_extension,
     verify_discovered_extension_package_trust, BuiltinProviderExtensionFactory,
     DiscoveredExtensionPackage, ExtensionDiscoveryPolicy, ExtensionHost,
 };
@@ -104,15 +106,38 @@ use sdkwork_api_provider_openrouter::OpenRouterProviderAdapter;
 use sdkwork_api_storage_core::AdminStore;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::fs;
+use std::future::Future;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, UNIX_EPOCH};
+use tokio::task::JoinHandle;
+use tokio::time::MissedTickBehavior;
 
 pub const LOCAL_PROVIDER_ID: &str = "sdkwork.local";
+
+tokio::task_local! {
+    static REQUEST_ROUTING_REGION: Option<String>;
+}
 
 #[derive(Clone)]
 struct CachedConfiguredExtensionHost {
     key: ConfiguredExtensionHostCacheKey,
     host: ExtensionHost,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ConfiguredExtensionHostReloadReport {
+    pub discovered_package_count: usize,
+    pub loadable_package_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfiguredExtensionHostReloadScope {
+    All,
+    Extension { extension_id: String },
+    Instance { instance_id: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -123,6 +148,12 @@ struct ConfiguredExtensionHostCacheKey {
     require_signed_connector_extensions: bool,
     require_signed_native_dynamic_extensions: bool,
     trusted_signers: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ConfiguredExtensionHostWatchState {
+    key: ConfiguredExtensionHostCacheKey,
+    fingerprint: Vec<String>,
 }
 
 impl From<&ExtensionDiscoveryPolicy> for ConfiguredExtensionHostCacheKey {
@@ -148,6 +179,12 @@ impl From<&ExtensionDiscoveryPolicy> for ConfiguredExtensionHostCacheKey {
 
 static CONFIGURED_EXTENSION_HOST_CACHE: OnceLock<Mutex<Option<CachedConfiguredExtensionHost>>> =
     OnceLock::new();
+
+struct BuiltConfiguredExtensionHost {
+    host: ExtensionHost,
+    discovered_package_count: usize,
+    loadable_package_count: usize,
+}
 
 pub fn service_name() -> &'static str {
     "gateway-service"
@@ -366,10 +403,12 @@ fn routing_decision_cache_key(
     project_id: Option<&str>,
     capability: &str,
     route_key: &str,
+    requested_region: Option<&str>,
 ) -> String {
     format!(
-        "{tenant_id}|{}|{capability}|{route_key}",
-        project_id.unwrap_or_default()
+        "{tenant_id}|{}|{capability}|{route_key}|{}",
+        project_id.unwrap_or_default(),
+        requested_region.unwrap_or_default()
     )
 }
 
@@ -378,9 +417,16 @@ fn cache_routing_decision(
     project_id: Option<&str>,
     capability: &str,
     route_key: &str,
+    requested_region: Option<&str>,
     decision: &RoutingDecision,
 ) {
-    let key = routing_decision_cache_key(tenant_id, project_id, capability, route_key);
+    let key = routing_decision_cache_key(
+        tenant_id,
+        project_id,
+        capability,
+        route_key,
+        requested_region,
+    );
     let mut cache = match routing_decision_cache().lock() {
         Ok(cache) => cache,
         Err(poisoned) => poisoned.into_inner(),
@@ -393,8 +439,15 @@ fn take_cached_routing_decision(
     project_id: Option<&str>,
     capability: &str,
     route_key: &str,
+    requested_region: Option<&str>,
 ) -> Option<RoutingDecision> {
-    let key = routing_decision_cache_key(tenant_id, project_id, capability, route_key);
+    let key = routing_decision_cache_key(
+        tenant_id,
+        project_id,
+        capability,
+        route_key,
+        requested_region,
+    );
     let mut cache = match routing_decision_cache().lock() {
         Ok(cache) => cache,
         Err(poisoned) => poisoned.into_inner(),
@@ -409,17 +462,25 @@ async fn select_gateway_route(
     capability: &str,
     route_key: &str,
 ) -> Result<RoutingDecision> {
-    let decision = select_route_with_store(
+    let requested_region = current_request_routing_region();
+    let decision = select_route_with_store_context(
         store,
         capability,
         route_key,
-        RoutingDecisionSource::Gateway,
-        Some(tenant_id),
-        project_id,
-        None,
+        RouteSelectionContext::new(RoutingDecisionSource::Gateway)
+            .with_tenant_id_option(Some(tenant_id))
+            .with_project_id_option(project_id)
+            .with_requested_region_option(requested_region.as_deref()),
     )
     .await?;
-    cache_routing_decision(tenant_id, project_id, capability, route_key, &decision);
+    cache_routing_decision(
+        tenant_id,
+        project_id,
+        capability,
+        route_key,
+        requested_region.as_deref(),
+        &decision,
+    );
     Ok(decision)
 }
 
@@ -430,22 +491,28 @@ pub async fn planned_execution_provider_id_for_route(
     capability: &str,
     route_key: &str,
 ) -> Result<String> {
-    let decision =
-        match take_cached_routing_decision(tenant_id, Some(project_id), capability, route_key) {
-            Some(decision) => decision,
-            None => {
-                select_route_with_store(
-                    store,
-                    capability,
-                    route_key,
-                    RoutingDecisionSource::Gateway,
-                    Some(tenant_id),
-                    Some(project_id),
-                    None,
-                )
-                .await?
-            }
-        };
+    let requested_region = current_request_routing_region();
+    let decision = match take_cached_routing_decision(
+        tenant_id,
+        Some(project_id),
+        capability,
+        route_key,
+        requested_region.as_deref(),
+    ) {
+        Some(decision) => decision,
+        None => {
+            select_route_with_store_context(
+                store,
+                capability,
+                route_key,
+                RouteSelectionContext::new(RoutingDecisionSource::Gateway)
+                    .with_tenant_id_option(Some(tenant_id))
+                    .with_project_id_option(Some(project_id))
+                    .with_requested_region_option(requested_region.as_deref()),
+            )
+            .await?
+        }
+    };
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(LOCAL_PROVIDER_ID.to_owned());
     };
@@ -464,6 +531,31 @@ pub async fn planned_execution_provider_id_for_route(
         Ok(target.provider_id)
     } else {
         Ok(LOCAL_PROVIDER_ID.to_owned())
+    }
+}
+
+pub async fn with_request_routing_region<T, F>(requested_region: Option<String>, future: F) -> T
+where
+    F: Future<Output = T>,
+{
+    REQUEST_ROUTING_REGION
+        .scope(
+            requested_region.and_then(|region| normalize_routing_region(&region)),
+            future,
+        )
+        .await
+}
+
+pub fn current_request_routing_region() -> Option<String> {
+    REQUEST_ROUTING_REGION.try_with(Clone::clone).ok().flatten()
+}
+
+fn normalize_routing_region(region: &str) -> Option<String> {
+    let normalized = region.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
     }
 }
 
@@ -5213,10 +5305,9 @@ pub fn create_speech_response(
     _project_id: &str,
     request: &CreateSpeechRequest,
 ) -> Result<SpeechResponse> {
-    let format = request
-        .response_format
-        .clone()
-        .unwrap_or_else(|| "wav".to_owned());
+    let format =
+        normalize_local_speech_format(request.response_format.as_deref().unwrap_or("wav"))?
+            .to_owned();
     let bytes = fallback_speech_bytes(&format);
     Ok(SpeechResponse::new(format, STANDARD.encode(bytes)))
 }
@@ -6084,26 +6175,227 @@ fn configured_extension_host() -> Result<ExtensionHost> {
         }
     }
 
-    let host = build_configured_extension_host(&policy)?;
+    let built = build_configured_extension_host(&policy)?;
     *cache_guard = Some(CachedConfiguredExtensionHost {
         key: cache_key,
-        host: host.clone(),
+        host: built.host.clone(),
     });
-    Ok(host)
+    Ok(built.host)
 }
 
-fn build_configured_extension_host(policy: &ExtensionDiscoveryPolicy) -> Result<ExtensionHost> {
-    let mut host = builtin_extension_host();
+pub fn reload_configured_extension_host() -> Result<ConfiguredExtensionHostReloadReport> {
+    reload_extension_host_with_scope(&ConfiguredExtensionHostReloadScope::All)
+}
 
-    for package in discover_extension_packages(policy)? {
+pub fn reload_extension_host_with_scope(
+    scope: &ConfiguredExtensionHostReloadScope,
+) -> Result<ConfiguredExtensionHostReloadReport> {
+    let policy = configured_extension_discovery_policy();
+    reload_extension_host_with_policy_and_scope(&policy, scope)
+}
+
+pub fn reload_extension_host_with_policy(
+    policy: &ExtensionDiscoveryPolicy,
+) -> Result<ConfiguredExtensionHostReloadReport> {
+    reload_extension_host_with_policy_and_scope(policy, &ConfiguredExtensionHostReloadScope::All)
+}
+
+fn reload_extension_host_with_policy_and_scope(
+    policy: &ExtensionDiscoveryPolicy,
+    scope: &ConfiguredExtensionHostReloadScope,
+) -> Result<ConfiguredExtensionHostReloadReport> {
+    let discovered_packages = discover_extension_packages(policy)?;
+    let cache_key = ConfiguredExtensionHostCacheKey::from(policy);
+
+    apply_configured_extension_host_reload_scope(scope)?;
+    let built = build_configured_extension_host_from_packages(discovered_packages, policy);
+    let cache = CONFIGURED_EXTENSION_HOST_CACHE.get_or_init(|| Mutex::new(None));
+    let mut cache_guard = match cache.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    *cache_guard = Some(CachedConfiguredExtensionHost {
+        key: cache_key,
+        host: built.host.clone(),
+    });
+
+    Ok(ConfiguredExtensionHostReloadReport {
+        discovered_package_count: built.discovered_package_count,
+        loadable_package_count: built.loadable_package_count,
+    })
+}
+
+fn apply_configured_extension_host_reload_scope(
+    scope: &ConfiguredExtensionHostReloadScope,
+) -> Result<()> {
+    match scope {
+        ConfiguredExtensionHostReloadScope::All => {
+            shutdown_all_connector_runtimes()?;
+            shutdown_all_native_dynamic_runtimes()?;
+        }
+        ConfiguredExtensionHostReloadScope::Extension { extension_id } => {
+            shutdown_connector_runtimes_for_extension(extension_id)?;
+            shutdown_native_dynamic_runtimes_for_extension(extension_id)?;
+        }
+        ConfiguredExtensionHostReloadScope::Instance { instance_id } => {
+            shutdown_connector_runtime(instance_id)?;
+        }
+    }
+
+    Ok(())
+}
+
+pub fn start_configured_extension_hot_reload_supervision(
+    interval_secs: u64,
+) -> Option<JoinHandle<()>> {
+    if interval_secs == 0 {
+        return None;
+    }
+
+    let initial_state = match configured_extension_host_watch_state() {
+        Ok(state) => Some(state),
+        Err(error) => {
+            eprintln!("extension hot reload watch startup state capture failed: {error}");
+            None
+        }
+    };
+
+    Some(tokio::spawn(async move {
+        let mut previous_state = initial_state;
+
+        let mut interval = tokio::time::interval(Duration::from_secs(interval_secs));
+        interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        interval.tick().await;
+
+        loop {
+            interval.tick().await;
+
+            let next_state = match configured_extension_host_watch_state() {
+                Ok(state) => state,
+                Err(error) => {
+                    eprintln!("extension hot reload watch state capture failed: {error}");
+                    continue;
+                }
+            };
+
+            if previous_state.as_ref() == Some(&next_state) {
+                continue;
+            }
+
+            match reload_configured_extension_host() {
+                Ok(report) => {
+                    eprintln!(
+                        "extension hot reload applied: discovered_package_count={} loadable_package_count={}",
+                        report.discovered_package_count, report.loadable_package_count
+                    );
+                    previous_state = Some(next_state);
+                }
+                Err(error) => {
+                    eprintln!("extension hot reload failed: {error}");
+                }
+            }
+        }
+    }))
+}
+
+fn build_configured_extension_host(
+    policy: &ExtensionDiscoveryPolicy,
+) -> Result<BuiltConfiguredExtensionHost> {
+    let packages = discover_extension_packages(policy)?;
+    Ok(build_configured_extension_host_from_packages(
+        packages, policy,
+    ))
+}
+
+fn build_configured_extension_host_from_packages(
+    packages: Vec<DiscoveredExtensionPackage>,
+    policy: &ExtensionDiscoveryPolicy,
+) -> BuiltConfiguredExtensionHost {
+    let mut host = builtin_extension_host();
+    let discovered_package_count = packages.len();
+    let mut loadable_package_count = 0;
+
+    for package in packages {
         let trust = verify_discovered_extension_package_trust(&package, policy);
         if !trust.load_allowed {
             continue;
         }
-        register_discovered_extension(&mut host, package);
+        if register_discovered_extension(&mut host, package) {
+            loadable_package_count += 1;
+        }
     }
 
-    Ok(host)
+    BuiltConfiguredExtensionHost {
+        host,
+        discovered_package_count,
+        loadable_package_count,
+    }
+}
+
+fn configured_extension_host_watch_state() -> Result<ConfiguredExtensionHostWatchState> {
+    let policy = configured_extension_discovery_policy();
+    Ok(ConfiguredExtensionHostWatchState {
+        key: ConfiguredExtensionHostCacheKey::from(&policy),
+        fingerprint: extension_tree_fingerprint(&policy.search_paths)?,
+    })
+}
+
+fn extension_tree_fingerprint(search_paths: &[PathBuf]) -> Result<Vec<String>> {
+    let mut fingerprint = Vec::new();
+    for path in search_paths {
+        collect_extension_tree_fingerprint(path, &mut fingerprint)?;
+    }
+    fingerprint.sort();
+    Ok(fingerprint)
+}
+
+fn collect_extension_tree_fingerprint(path: &Path, fingerprint: &mut Vec<String>) -> Result<()> {
+    match fs::metadata(path) {
+        Ok(metadata) => {
+            fingerprint.push(fingerprint_entry(path, &metadata));
+            if metadata.is_dir() {
+                let mut children = fs::read_dir(path)
+                    .with_context(|| {
+                        format!("failed to read extension directory {}", path.display())
+                    })?
+                    .collect::<std::result::Result<Vec<_>, _>>()
+                    .with_context(|| {
+                        format!("failed to enumerate extension directory {}", path.display())
+                    })?;
+                children.sort_by_key(|entry| entry.path());
+                for child in children {
+                    collect_extension_tree_fingerprint(&child.path(), fingerprint)?;
+                }
+            }
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            fingerprint.push(format!("missing|{}", path.display()));
+            Ok(())
+        }
+        Err(error) => {
+            Err(error).with_context(|| format!("failed to stat extension path {}", path.display()))
+        }
+    }
+}
+
+fn fingerprint_entry(path: &Path, metadata: &fs::Metadata) -> String {
+    let kind = if metadata.is_dir() { "dir" } else { "file" };
+    format!(
+        "{kind}|{}|{}|{}",
+        path.display(),
+        metadata.len(),
+        metadata_modified_ms(metadata),
+    )
+}
+
+fn metadata_modified_ms(metadata: &fs::Metadata) -> u64 {
+    metadata
+        .modified()
+        .ok()
+        .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 fn configured_extension_discovery_policy() -> ExtensionDiscoveryPolicy {
@@ -6167,14 +6459,18 @@ fn parse_trusted_signers(value: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-fn register_discovered_extension(host: &mut ExtensionHost, package: DiscoveredExtensionPackage) {
+fn register_discovered_extension(
+    host: &mut ExtensionHost,
+    package: DiscoveredExtensionPackage,
+) -> bool {
     if host.manifest(&package.manifest.id).is_some() {
-        return;
+        return false;
     }
 
     if package.manifest.runtime == ExtensionRuntime::NativeDynamic {
-        let _ = host.register_discovered_native_dynamic_provider(package);
-        return;
+        return host
+            .register_discovered_native_dynamic_provider(package)
+            .is_ok();
     }
 
     match (
@@ -6198,6 +6494,8 @@ fn register_discovered_extension(host: &mut ExtensionHost, package: DiscoveredEx
         }
         _ => host.register_discovered_manifest(package),
     }
+
+    true
 }
 
 async fn execute_json_provider_request_for_provider(
@@ -6300,7 +6598,23 @@ fn fallback_speech_bytes(format: &str) -> Vec<u8> {
             0x80, 0x3e, 0x00, 0x00, 0x02, 0x00, 0x10, 0x00, 0x64, 0x61, 0x74, 0x61, 0x00, 0x00,
             0x00, 0x00,
         ],
+        "mp3" => vec![0x49, 0x44, 0x33, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x21],
+        "opus" => b"OggS\x00\x02OpusHead\x01\x01\x00\x00\x00\x00\x00\x00\x00".to_vec(),
+        "aac" => vec![0xFF, 0xF1, 0x50, 0x80, 0x00, 0x1F, 0xFC],
+        "flac" => b"fLaC\x00\x00\x00\x22".to_vec(),
         "pcm" => vec![0x00, 0x00],
         _ => Vec::new(),
+    }
+}
+
+fn normalize_local_speech_format(format: &str) -> Result<&'static str> {
+    match format.to_ascii_lowercase().as_str() {
+        "wav" => Ok("wav"),
+        "mp3" => Ok("mp3"),
+        "opus" => Ok("opus"),
+        "aac" => Ok("aac"),
+        "flac" => Ok("flac"),
+        "pcm" => Ok("pcm"),
+        _ => bail!("unsupported local speech response_format: {format}"),
     }
 }

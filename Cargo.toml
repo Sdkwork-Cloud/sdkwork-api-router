@@ -2,8 +2,10 @@
 members = [
     "crates/sdkwork-api-app-billing",
     "crates/sdkwork-api-app-catalog",
+    "crates/sdkwork-api-app-coupon",
     "crates/sdkwork-api-app-credential",
     "crates/sdkwork-api-app-extension",
+    "crates/sdkwork-api-app-runtime",
     "crates/sdkwork-api-ext-provider-native-mock",
     "crates/sdkwork-api-extension-abi",
     "crates/sdkwork-api-extension-core",
@@ -18,6 +20,7 @@ members = [
     "crates/sdkwork-api-contract-openai",
     "crates/sdkwork-api-domain-billing",
     "crates/sdkwork-api-domain-catalog",
+    "crates/sdkwork-api-domain-coupon",
     "crates/sdkwork-api-domain-credential",
     "crates/sdkwork-api-domain-identity",
     "crates/sdkwork-api-domain-routing",
@@ -44,6 +47,7 @@ members = [
     "services/admin-api-service",
     "services/gateway-service",
     "services/portal-api-service",
+    "services/router-web-service",
 ]
 resolver = "2"
 

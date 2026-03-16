@@ -10,10 +10,11 @@ test('parseWorkspaceArgs returns browser-mode defaults', () => {
   const settings = parseWorkspaceArgs([]);
 
   assert.deepEqual(settings, {
-    databaseUrl: 'sqlite://sdkwork-api-server.db',
+    databaseUrl: null,
     gatewayBind: '127.0.0.1:8080',
     adminBind: '127.0.0.1:8081',
     portalBind: '127.0.0.1:8082',
+    webBind: '0.0.0.0:3001',
     install: false,
     preview: false,
     tauri: false,
@@ -32,6 +33,8 @@ test('parseWorkspaceArgs forwards install, preview, tauri, and bind overrides', 
     '0.0.0.0:18081',
     '--portal-bind',
     '0.0.0.0:18082',
+    '--web-bind',
+    '0.0.0.0:13001',
     '--install',
     '--preview',
     '--tauri',
@@ -45,10 +48,38 @@ test('parseWorkspaceArgs forwards install, preview, tauri, and bind overrides', 
   assert.equal(settings.gatewayBind, '0.0.0.0:18080');
   assert.equal(settings.adminBind, '0.0.0.0:18081');
   assert.equal(settings.portalBind, '0.0.0.0:18082');
+  assert.equal(settings.webBind, '0.0.0.0:13001');
   assert.equal(settings.install, true);
   assert.equal(settings.preview, true);
   assert.equal(settings.tauri, true);
   assert.equal(settings.dryRun, true);
+});
+
+test('buildWorkspaceCommandPlan keeps local config defaults when database override is absent', () => {
+  const plan = buildWorkspaceCommandPlan({
+    databaseUrl: null,
+    gatewayBind: '127.0.0.1:8080',
+    adminBind: '127.0.0.1:8081',
+    portalBind: '127.0.0.1:8082',
+    webBind: '0.0.0.0:3001',
+    install: false,
+    preview: false,
+    tauri: false,
+    dryRun: true,
+    help: false,
+  });
+
+  assert.equal(plan.backend.scriptPath, 'scripts/dev/start-stack.mjs');
+  assert.deepEqual(plan.backend.args, [
+    'scripts/dev/start-stack.mjs',
+    '--gateway-bind',
+    '127.0.0.1:8080',
+    '--admin-bind',
+    '127.0.0.1:8081',
+    '--portal-bind',
+    '127.0.0.1:8082',
+    '--dry-run',
+  ]);
 });
 
 test('buildWorkspaceCommandPlan forwards backend and console flags to child scripts', () => {
@@ -57,6 +88,7 @@ test('buildWorkspaceCommandPlan forwards backend and console flags to child scri
     gatewayBind: '0.0.0.0:18080',
     adminBind: '0.0.0.0:18081',
     portalBind: '0.0.0.0:18082',
+    webBind: '0.0.0.0:13001',
     install: true,
     preview: false,
     tauri: true,
@@ -78,13 +110,43 @@ test('buildWorkspaceCommandPlan forwards backend and console flags to child scri
     '--dry-run',
   ]);
 
-  assert.equal(plan.console.scriptPath, 'scripts/dev/start-console.mjs');
-  assert.deepEqual(plan.console.args, [
-    'scripts/dev/start-console.mjs',
+  assert.equal(plan.admin.scriptPath, 'scripts/dev/start-admin.mjs');
+  assert.deepEqual(plan.admin.args, [
+    'scripts/dev/start-admin.mjs',
     '--install',
     '--tauri',
     '--dry-run',
   ]);
+
+  assert.equal(plan.web.scriptPath, 'scripts/dev/start-web.mjs');
+  assert.deepEqual(plan.web.args, [
+    'scripts/dev/start-web.mjs',
+    '--bind',
+    '0.0.0.0:13001',
+    '--install',
+    '--tauri',
+    '--dry-run',
+  ]);
+});
+
+test('buildWorkspaceCommandPlan keeps browser mode on standalone admin and portal apps', () => {
+  const plan = buildWorkspaceCommandPlan({
+    databaseUrl: null,
+    gatewayBind: '127.0.0.1:8080',
+    adminBind: '127.0.0.1:8081',
+    portalBind: '127.0.0.1:8082',
+    webBind: '0.0.0.0:3001',
+    install: false,
+    preview: false,
+    tauri: false,
+    dryRun: true,
+    help: false,
+  });
+
+  assert.equal(plan.admin.scriptPath, 'scripts/dev/start-admin.mjs');
+  assert.deepEqual(plan.admin.args, ['scripts/dev/start-admin.mjs', '--dry-run']);
+  assert.equal(plan.portal.scriptPath, 'scripts/dev/start-portal.mjs');
+  assert.deepEqual(plan.portal.args, ['scripts/dev/start-portal.mjs', '--dry-run']);
 });
 
 test('parseWorkspaceArgs rejects missing values and unknown flags', () => {

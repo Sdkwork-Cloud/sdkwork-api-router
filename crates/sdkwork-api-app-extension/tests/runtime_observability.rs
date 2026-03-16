@@ -1,20 +1,33 @@
+use axum::{
+    extract::State,
+    http::{StatusCode, Uri},
+    routing::get,
+    Router,
+};
 use sdkwork_api_app_extension::{
     capture_provider_health_snapshots, list_discovered_extension_packages,
     list_extension_runtime_statuses,
 };
 use sdkwork_api_domain_catalog::{Channel, ProxyProvider};
+#[cfg(windows)]
 use sdkwork_api_extension_host::{
-    ensure_connector_runtime_started, load_native_dynamic_provider_adapter,
-    shutdown_all_connector_runtimes, shutdown_all_native_dynamic_runtimes,
-    ExtensionDiscoveryPolicy, ExtensionLoadPlan,
+    ensure_connector_runtime_started, shutdown_all_connector_runtimes, ExtensionLoadPlan,
+};
+use sdkwork_api_extension_host::{
+    load_native_dynamic_provider_adapter, shutdown_all_native_dynamic_runtimes,
+    ExtensionDiscoveryPolicy,
 };
 use sdkwork_api_storage_sqlite::{run_migrations, SqliteAdminStore};
+#[cfg(windows)]
 use serde_json::json;
 use serial_test::serial;
 use std::fs;
+#[cfg(windows)]
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::net::TcpListener as TokioTcpListener;
 
 #[test]
 fn lists_discovered_extension_packages_from_policy() {
@@ -156,6 +169,147 @@ async fn captures_provider_health_snapshots_from_runtime_statuses() {
     shutdown_all_native_dynamic_runtimes().unwrap();
 }
 
+#[tokio::test]
+async fn captures_provider_health_snapshots_for_builtin_upstream_probe() {
+    let (base_url, probe_state) = spawn_probe_server(StatusCode::UNAUTHORIZED).await;
+
+    let pool = run_migrations("sqlite::memory:").await.unwrap();
+    let store = SqliteAdminStore::new(pool);
+    store
+        .insert_channel(&Channel::new("openai", "OpenAI"))
+        .await
+        .unwrap();
+    store
+        .insert_provider(&ProxyProvider::new(
+            "provider-openai-official",
+            "openai",
+            "openai",
+            &base_url,
+            "OpenAI Official",
+        ))
+        .await
+        .unwrap();
+
+    let captured = capture_provider_health_snapshots(&store).await.unwrap();
+    assert_eq!(captured.len(), 1);
+    assert_eq!(captured[0].provider_id, "provider-openai-official");
+    assert_eq!(captured[0].runtime, "builtin");
+    assert!(captured[0].running);
+    assert!(captured[0].healthy);
+    assert_eq!(probe_state.request_paths(), vec!["/v1/models".to_owned()]);
+}
+
+#[tokio::test]
+async fn captures_unhealthy_builtin_upstream_probe_results_with_explicit_health_path() {
+    let (base_url, probe_state) = spawn_probe_server(StatusCode::SERVICE_UNAVAILABLE).await;
+
+    let pool = run_migrations("sqlite::memory:").await.unwrap();
+    let store = SqliteAdminStore::new(pool);
+    store
+        .insert_channel(&Channel::new("openai", "OpenAI"))
+        .await
+        .unwrap();
+    store
+        .insert_provider(&ProxyProvider::new(
+            "provider-openrouter-main",
+            "openai",
+            "openrouter",
+            &base_url,
+            "OpenRouter Main",
+        ))
+        .await
+        .unwrap();
+    store
+        .insert_extension_installation(
+            &sdkwork_api_extension_core::ExtensionInstallation::new(
+                "builtin-openrouter",
+                "sdkwork.provider.openrouter",
+                sdkwork_api_extension_core::ExtensionRuntime::Builtin,
+            )
+            .with_enabled(true),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_extension_instance(
+            &sdkwork_api_extension_core::ExtensionInstance::new(
+                "provider-openrouter-main",
+                "builtin-openrouter",
+                "sdkwork.provider.openrouter",
+            )
+            .with_enabled(true)
+            .with_base_url(base_url.clone())
+            .with_config(serde_json::json!({
+                "health_path": "/upstream-health"
+            })),
+        )
+        .await
+        .unwrap();
+
+    let captured = capture_provider_health_snapshots(&store).await.unwrap();
+    assert_eq!(captured.len(), 1);
+    assert_eq!(captured[0].provider_id, "provider-openrouter-main");
+    assert_eq!(captured[0].runtime, "builtin");
+    assert!(captured[0].running);
+    assert!(!captured[0].healthy);
+    assert_eq!(
+        probe_state.request_paths(),
+        vec!["/upstream-health".to_owned()]
+    );
+}
+
+#[tokio::test]
+async fn does_not_probe_connector_managed_provider_without_runtime_status() {
+    let (base_url, probe_state) = spawn_probe_server(StatusCode::OK).await;
+
+    let pool = run_migrations("sqlite::memory:").await.unwrap();
+    let store = SqliteAdminStore::new(pool);
+    store
+        .insert_channel(&Channel::new("openai", "OpenAI"))
+        .await
+        .unwrap();
+    store
+        .insert_provider(
+            &ProxyProvider::new(
+                "provider-custom-openai",
+                "openai",
+                "custom-openai",
+                &base_url,
+                "Custom OpenAI Connector",
+            )
+            .with_extension_id("sdkwork.provider.custom-openai"),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_extension_installation(
+            &sdkwork_api_extension_core::ExtensionInstallation::new(
+                "custom-openai-installation",
+                "sdkwork.provider.custom-openai",
+                sdkwork_api_extension_core::ExtensionRuntime::Connector,
+            )
+            .with_enabled(true),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_extension_instance(
+            &sdkwork_api_extension_core::ExtensionInstance::new(
+                "provider-custom-openai",
+                "custom-openai-installation",
+                "sdkwork.provider.custom-openai",
+            )
+            .with_enabled(true)
+            .with_base_url(base_url),
+        )
+        .await
+        .unwrap();
+
+    let captured = capture_provider_health_snapshots(&store).await.unwrap();
+    assert!(captured.is_empty());
+    assert!(probe_state.request_paths().is_empty());
+}
+
 fn connector_manifest(extension_id: &str) -> String {
     format!(
         r#"
@@ -236,6 +390,49 @@ fn temp_extension_root(suffix: &str) -> PathBuf {
 
 fn cleanup_dir(path: &Path) {
     let _ = fs::remove_dir_all(path);
+}
+
+#[derive(Clone)]
+struct ProbeServerState {
+    status: StatusCode,
+    request_paths: Arc<Mutex<Vec<String>>>,
+}
+
+impl ProbeServerState {
+    fn new(status: StatusCode) -> Self {
+        Self {
+            status,
+            request_paths: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    fn request_paths(&self) -> Vec<String> {
+        self.request_paths.lock().unwrap().clone()
+    }
+}
+
+async fn spawn_probe_server(status: StatusCode) -> (String, ProbeServerState) {
+    let state = ProbeServerState::new(status);
+    let listener = TokioTcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let app = Router::new()
+        .fallback(get(record_probe))
+        .with_state(state.clone());
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    (format!("http://{address}"), state)
+}
+
+async fn record_probe(State(state): State<ProbeServerState>, uri: Uri) -> StatusCode {
+    state
+        .request_paths
+        .lock()
+        .unwrap()
+        .push(uri.path().to_owned());
+    state.status
 }
 
 fn native_dynamic_fixture_library_path() -> PathBuf {

@@ -49,6 +49,13 @@ impl LocalEncryptedFileSecretStore {
         Ok(document.entries.get(&secret_ref.storage_key()).cloned())
     }
 
+    pub fn delete_envelope(&self, secret_ref: &CredentialSecretRef) -> Result<bool> {
+        let mut document = self.load_document()?;
+        let removed = document.entries.remove(&secret_ref.storage_key()).is_some();
+        self.write_document(&document)?;
+        Ok(removed)
+    }
+
     fn load_document(&self) -> Result<SecretFileDocument> {
         if !self.path.exists() {
             return Ok(SecretFileDocument::default());

@@ -335,6 +335,14 @@ async fn stateful_webhooks_route_relays_to_openai_compatible_provider() {
     assert_eq!(create_response.status(), StatusCode::OK);
     let create_json = read_json(create_response).await;
     assert_eq!(create_json["id"], "wh_upstream");
+    support::assert_single_usage_record_and_decision_log(
+        admin_app.clone(),
+        &admin_token,
+        "wh_upstream",
+        "provider-openai-official",
+        "https://example.com/webhook",
+    )
+    .await;
 
     let list_response = gateway_app
         .clone()
@@ -404,6 +412,194 @@ async fn stateful_webhooks_route_relays_to_openai_compatible_provider() {
         upstream_state.authorization.lock().unwrap().as_deref(),
         Some("Bearer sk-upstream-openai")
     );
+}
+
+#[tokio::test]
+async fn stateful_webhooks_create_usage_uses_created_webhook_id_for_billing() {
+    let tenant_id = "tenant-webhooks-create";
+    let project_id = "project-webhooks-create";
+    let upstream_state = UpstreamCaptureState::default();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let upstream = Router::new()
+        .route(
+            "/v1/webhooks",
+            get(upstream_webhooks_list_handler).post(upstream_webhooks_handler),
+        )
+        .with_state(upstream_state.clone());
+
+    tokio::spawn(async move {
+        axum::serve(listener, upstream).await.unwrap();
+    });
+
+    let pool = memory_pool().await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let api_key = support::issue_gateway_api_key(&pool, tenant_id, project_id).await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+
+    let create_channel = admin_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/channels")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from("{\"id\":\"openai\",\"name\":\"OpenAI\"}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(create_channel.status(), StatusCode::CREATED);
+
+    let provider_route = admin_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/providers")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    "{{\"id\":\"provider-webhooks-route\",\"channel_id\":\"openai\",\"adapter_kind\":\"openai\",\"base_url\":\"http://{address}\",\"display_name\":\"Webhooks Route Provider\"}}"
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(provider_route.status(), StatusCode::CREATED);
+
+    let provider_webhook = admin_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/providers")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"id\":\"provider-webhooks-created-id\",\"channel_id\":\"openai\",\"adapter_kind\":\"openai\",\"base_url\":\"http://127.0.0.1:1\",\"display_name\":\"Webhooks Created Id Provider\"}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(provider_webhook.status(), StatusCode::CREATED);
+
+    let route_credential = admin_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/credentials")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    "{{\"tenant_id\":\"{tenant_id}\",\"provider_id\":\"provider-webhooks-route\",\"key_reference\":\"cred-webhooks-route\",\"secret_value\":\"sk-webhooks-route\"}}"
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(route_credential.status(), StatusCode::CREATED);
+
+    let webhook_credential = admin_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/credentials")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    "{{\"tenant_id\":\"{tenant_id}\",\"provider_id\":\"provider-webhooks-created-id\",\"key_reference\":\"cred-webhooks-created-id\",\"secret_value\":\"sk-webhooks-created-id\"}}"
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(webhook_credential.status(), StatusCode::CREATED);
+
+    let route_policy = admin_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/routing/policies")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "policy_id": "route-webhooks-by-url",
+                        "capability": "webhooks",
+                        "model_pattern": "https://example.com/webhook",
+                        "enabled": true,
+                        "priority": 200,
+                        "ordered_provider_ids": ["provider-webhooks-route"]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(route_policy.status(), StatusCode::CREATED);
+
+    let webhook_policy = admin_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/routing/policies")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "policy_id": "route-webhooks-by-created-id",
+                        "capability": "webhooks",
+                        "model_pattern": "wh_upstream",
+                        "enabled": true,
+                        "priority": 100,
+                        "ordered_provider_ids": ["provider-webhooks-created-id"]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(webhook_policy.status(), StatusCode::CREATED);
+
+    let response = gateway_app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/webhooks")
+                .header("authorization", format!("Bearer {api_key}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"url\":\"https://example.com/webhook\",\"events\":[\"response.completed\"]}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let response_json = read_json(response).await;
+    assert_eq!(response_json["id"], "wh_upstream");
+    assert_eq!(
+        upstream_state.authorization.lock().unwrap().as_deref(),
+        Some("Bearer sk-webhooks-route")
+    );
+    support::assert_single_usage_record_and_decision_log(
+        admin_app,
+        &admin_token,
+        "wh_upstream",
+        "provider-webhooks-route",
+        "https://example.com/webhook",
+    )
+    .await;
 }
 
 async fn upstream_webhooks_handler(

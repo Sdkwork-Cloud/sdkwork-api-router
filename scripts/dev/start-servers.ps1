@@ -1,5 +1,5 @@
 param(
-    [string]$DatabaseUrl = "sqlite://sdkwork-api-server.db",
+    [string]$DatabaseUrl = "",
     [string]$AdminBind = "127.0.0.1:8081",
     [string]$GatewayBind = "127.0.0.1:8080",
     [string]$PortalBind = "127.0.0.1:8082",
@@ -22,10 +22,10 @@ function Start-ServiceWindow {
     $command = @"
 `$Host.UI.RawUI.WindowTitle = '$($Title)'
 Set-Location -LiteralPath '$([string](Escape-PsLiteral $repoRoot.Path))'
-`$env:SDKWORK_DATABASE_URL = '$([string](Escape-PsLiteral $DatabaseUrl))'
 `$env:SDKWORK_ADMIN_BIND = '$([string](Escape-PsLiteral $AdminBind))'
 `$env:SDKWORK_GATEWAY_BIND = '$([string](Escape-PsLiteral $GatewayBind))'
 `$env:SDKWORK_PORTAL_BIND = '$([string](Escape-PsLiteral $PortalBind))'
+$(if ($DatabaseUrl) { "`$env:SDKWORK_DATABASE_URL = '$([string](Escape-PsLiteral $DatabaseUrl))'" })
 cargo run -p $PackageName
 "@
 
@@ -41,7 +41,11 @@ cargo run -p $PackageName
     ) | Out-Null
 }
 
-Write-Host "[start-servers] SDKWORK_DATABASE_URL=$DatabaseUrl"
+if ($DatabaseUrl) {
+    Write-Host "[start-servers] SDKWORK_DATABASE_URL=$DatabaseUrl"
+} else {
+    Write-Host "[start-servers] SDKWORK_DATABASE_URL=(local default via config loader)"
+}
 Write-Host "[start-servers] SDKWORK_ADMIN_BIND=$AdminBind"
 Write-Host "[start-servers] SDKWORK_GATEWAY_BIND=$GatewayBind"
 Write-Host "[start-servers] SDKWORK_PORTAL_BIND=$PortalBind"

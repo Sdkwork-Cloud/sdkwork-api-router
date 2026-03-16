@@ -20,11 +20,12 @@ Characteristics:
 
 - the runtime is hosted in-process through `sdkwork-api-runtime-host`
 - the Tauri shell under `console/src-tauri/` can start or call into the embedded runtime
-- the same React console build can be opened in a normal browser or hosted inside Tauri through hash-routed portal and admin shells
+- the admin console build can be opened in a normal browser or hosted inside Tauri
+- the portal now ships as a separate browser-first app under `apps/sdkwork-router-portal/`
 - loopback binding is the default trust boundary
 - SQLite is the preferred local persistence strategy
 - OS keyring is the preferred secret backend when available
-- the React console packages can target the same portal and admin surfaces in both standalone and embedded modes
+- the admin console and portal app can both target the same backend services while remaining independent frontend products
 
 ## Current Implementation State
 
@@ -33,8 +34,9 @@ The current repository includes:
 - a minimal `EmbeddedRuntime` abstraction
 - a loopback base URL contract
 - a Tauri shell scaffold with an initial runtime command
-- a live React console with browser and Tauri-friendly hash routes for `#/portal/register`, `#/portal/login`, `#/portal/dashboard`, and `#/admin`
-- a public portal API surface for self-service registration, login, workspace inspection, and scoped API key issuance
+- a live landing plus admin console with browser and Tauri-friendly entry points under `console/`
+- a standalone portal app with dedicated dashboard, usage, credits, billing, API key, and account modules
+- a public portal API surface for self-service registration, login, workspace inspection, dashboard, usage, billing, and scoped API key issuance
 - a package-bounded portal frontend split across SDK, auth, and user dashboard modules
 - a standalone `portal-api-service` with dedicated JWT signing config and bind address
 - SQLite-backed control-plane persistence for identity, catalog, usage, and billing slices
@@ -46,8 +48,8 @@ The current repository includes:
   - `database_encrypted`
   - `local_encrypted_file`
   - `os_keyring`
-- per-credential backend tracking so previously stored secrets can still be resolved after a default backend switch
-- environment-driven standalone config loading for bind addresses, database URL, secret backend, credential master key, local secret file path, and keyring service name
+- per-credential backend, locator, and master-key lineage tracking so previously stored secrets can still be resolved after backend-path, keyring-service, or master-key changes
+- environment-driven standalone config loading for bind addresses, database URL, secret backend, credential master key, legacy decrypt-only credential master keys, local secret file path, and keyring service name
 - environment-driven extension discovery config for manifest search paths plus connector and native-dynamic runtime toggles
 - signed admin JWT authentication for the control plane, with the signing secret now provided by runtime config instead of a hardcoded development constant
 - signed portal JWT authentication isolated from admin JWT issuer and audience settings
@@ -70,7 +72,10 @@ The current repository includes:
 - connector runtime supervision is now active for discovered packages, including host-managed process startup, HTTP health probing, and reuse of already healthy external endpoints
 - native dynamic runtime execution is now active for trusted provider packages through a narrow JSON ABI, with manifest matching, optional lifecycle hooks, health contracts, and symbol validation at load time
 - gateway runtime loading now skips external packages whose trust policy does not allow execution, so blocked connector or native-dynamic packages fall back cleanly instead of entering the execution host
-- standalone services can now supervise provider runtime health in the background and persist provider-centric health snapshots for later routing fallback or admin inspection
+- admin runtime control now supports process-local reload of all managed runtimes, one extension family, or one connector instance, while reusing unrelated native-dynamic runtimes across host rebuilds
+- admin runtime control now also supports shared-store coordinated extension-runtime rollout across active gateway and admin nodes through durable rollout records and per-node participant status
+- admin runtime control now also supports shared-store coordinated standalone-config rollout across active gateway, admin, and portal nodes through durable rollout records and per-node participant status
+- standalone services can now supervise provider runtime health in the background, persist provider-centric health snapshots for later routing fallback or admin inspection, actively probe builtin upstream providers when no live runtime status exists, and automatically hot reload configured extension trees on a polling interval
 
 ## Extension Runtime Status
 
@@ -162,7 +167,7 @@ Configuration-driven loading now uses a stable merge order:
 2. installation-level runtime choice and package config
 3. instance-level overrides such as `base_url`, `credential_ref`, and rollout weights
 
-This means `connector` extensions are executable through the host runtime contract, while `native_dynamic` extensions are now executable for JSON-capable provider operations, chat or responses SSE stream relay, the current binary stream routes for audio speech plus file and video content, and package-runtime lifecycle or health contracts through the same ABI boundary. Background health snapshot supervision is now active for standalone services, while hot reload remains future work.
+This means `connector` extensions are executable through the host runtime contract, while `native_dynamic` extensions are now executable for JSON-capable provider operations, chat or responses SSE stream relay, the current binary stream routes for audio speech plus file and video content, and package-runtime lifecycle or health contracts through the same ABI boundary. Background health snapshot supervision is now active for standalone services, and when no live runtime status exists the same capture pass now probes builtin upstream providers to persist routing-facing health evidence. Operators can now trigger process-local extension runtime reload through the admin control plane at whole-host, extension, or connector-instance scope, with unrelated native-dynamic runtimes reused across rebuilds. Those same scopes can also be rolled out across active gateway and admin nodes through shared admin-store coordination, with rollout status derived from durable per-node participant records instead of direct point-to-point fan-out. The admin control plane can also trigger coordinated standalone config reload across active gateway, admin, and portal nodes through `POST /admin/runtime-config/rollouts`, reusing each node's local hot-reload pass while keeping rollout state in a durable shared ledger. Those native-dynamic shutdown paths now reject new invocations, wait for in-flight JSON, stream, and health-check calls to finish before plugin shutdown runs, and can optionally roll back to a still-running runtime if `native_dynamic_shutdown_drain_timeout_ms` expires before unload begins. Standalone services also support polling-based automatic extension hot reload when the configured extension tree changes. All three standalone services now re-read their local config file set on a one-second polling interval and can hot-swap their active admin-store dependency when `database_url` changes, rotate admin or portal JWT signing secrets, and rebind their configured TCP listener without restarting the process. Those same gateway and admin services can now also hot-swap secret-manager settings, including `secret_backend`, `credential_master_key`, `credential_legacy_master_keys`, `secret_local_file`, and `secret_keyring_service`, while preserving historical credential readability through persisted locator plus master-key metadata. The remaining runtime-control gaps are now narrower and mostly policy-oriented, such as cross-node config-content synchronization and richer staged rollout policy.
 
 The runtime now also supports two manifest sources:
 
@@ -189,6 +194,6 @@ Routing remains intentionally conservative in this batch:
 - provider selection now considers availability, runtime health, and instance-level `cost`, `latency_ms`, and `weight` hints in addition to ordered preference plus optional default provider
 - provider health now falls back to the latest persisted snapshot when live runtime status is unavailable
 - project-scoped quota-aware admission now rejects over-budget requests for `/v1/chat/completions`, `/v1/completions`, `/v1/responses`, and `/v1/embeddings` before upstream dispatch
-- regional policy dimensions such as geo affinity remain future work
+- `geo_affinity` routing now prefers provider instances whose configured region matches the caller-supplied `x-sdkwork-region` hint, while degrading safely to the top-ranked healthy candidate when no regional match exists
 
 The runtime host is still intentionally lightweight, but the core gateway, admin, routing, credential, and provider relay slices now run against the same Rust workspace and can be assembled in-process for embedded mode.

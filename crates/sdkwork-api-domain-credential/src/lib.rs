@@ -6,6 +6,12 @@ pub struct UpstreamCredential {
     pub provider_id: String,
     pub key_reference: String,
     pub secret_backend: String,
+    #[serde(default)]
+    pub secret_local_file: Option<String>,
+    #[serde(default)]
+    pub secret_keyring_service: Option<String>,
+    #[serde(default)]
+    pub secret_master_key_id: Option<String>,
 }
 
 impl UpstreamCredential {
@@ -28,6 +34,21 @@ impl UpstreamCredential {
             provider_id: provider_id.into(),
             key_reference: key_reference.into(),
             secret_backend: secret_backend.into(),
+            secret_local_file: None,
+            secret_keyring_service: None,
+            secret_master_key_id: None,
         }
+    }
+
+    pub fn with_secret_metadata(
+        mut self,
+        secret_local_file: Option<String>,
+        secret_keyring_service: Option<String>,
+        secret_master_key_id: Option<String>,
+    ) -> Self {
+        self.secret_local_file = secret_local_file;
+        self.secret_keyring_service = secret_keyring_service;
+        self.secret_master_key_id = secret_master_key_id;
+        self
     }
 }

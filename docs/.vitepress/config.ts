@@ -1,14 +1,18 @@
 import { defineConfig } from 'vitepress';
 
 const englishNav = [
-  { text: 'Getting Started', link: '/getting-started/installation' },
+  { text: 'Getting Started', link: '/getting-started/quickstart' },
+  { text: 'Architecture', link: '/architecture/software-architecture' },
+  { text: 'API Reference', link: '/api-reference/overview' },
   { text: 'Operations', link: '/operations/configuration' },
   { text: 'Reference', link: '/reference/api-compatibility' },
   { text: '中文', link: '/zh/' },
 ];
 
 const chineseNav = [
-  { text: '开始使用', link: '/zh/getting-started/installation' },
+  { text: '开始使用', link: '/zh/getting-started/quickstart' },
+  { text: '架构', link: '/zh/architecture/software-architecture' },
+  { text: 'API 参考', link: '/zh/api-reference/overview' },
   { text: '运维', link: '/zh/operations/configuration' },
   { text: '参考', link: '/zh/reference/api-compatibility' },
   { text: 'English', link: '/' },
@@ -18,11 +22,30 @@ const englishSidebar = [
   {
     text: 'Getting Started',
     items: [
+      { text: 'Quickstart', link: '/getting-started/quickstart' },
       { text: 'Installation', link: '/getting-started/installation' },
       { text: 'Source Development', link: '/getting-started/source-development' },
+      { text: 'Build and Packaging', link: '/getting-started/build-and-packaging' },
       { text: 'Release Builds', link: '/getting-started/release-builds' },
       { text: 'Runtime Modes', link: '/getting-started/runtime-modes' },
       { text: 'Public Portal', link: '/getting-started/public-portal' },
+    ],
+  },
+  {
+    text: 'Architecture',
+    items: [
+      { text: 'Software Architecture', link: '/architecture/software-architecture' },
+      { text: 'Functional Modules', link: '/architecture/functional-modules' },
+      { text: 'Runtime Modes Deep Dive', link: '/architecture/runtime-modes' },
+    ],
+  },
+  {
+    text: 'API Reference',
+    items: [
+      { text: 'Overview', link: '/api-reference/overview' },
+      { text: 'Gateway API', link: '/api-reference/gateway-api' },
+      { text: 'Admin API', link: '/api-reference/admin-api' },
+      { text: 'Portal API', link: '/api-reference/portal-api' },
     ],
   },
   {
@@ -37,7 +60,7 @@ const englishSidebar = [
     items: [
       { text: 'API Compatibility', link: '/reference/api-compatibility' },
       { text: 'Repository Layout', link: '/reference/repository-layout' },
-      { text: 'Detailed Runtime Modes', link: '/architecture/runtime-modes' },
+      { text: 'Build and Tooling', link: '/reference/build-and-tooling' },
       { text: 'Full Compatibility Matrix', link: '/api/compatibility-matrix' },
     ],
   },
@@ -47,11 +70,30 @@ const chineseSidebar = [
   {
     text: '开始使用',
     items: [
+      { text: '快速开始', link: '/zh/getting-started/quickstart' },
       { text: '安装准备', link: '/zh/getting-started/installation' },
       { text: '源码运行', link: '/zh/getting-started/source-development' },
-      { text: 'Release 构建', link: '/zh/getting-started/release-builds' },
+      { text: '编译与打包', link: '/zh/getting-started/build-and-packaging' },
+      { text: '发布构建', link: '/zh/getting-started/release-builds' },
       { text: '运行模式', link: '/zh/getting-started/runtime-modes' },
-      { text: 'Public Portal', link: '/zh/getting-started/public-portal' },
+      { text: '公开门户', link: '/zh/getting-started/public-portal' },
+    ],
+  },
+  {
+    text: '架构',
+    items: [
+      { text: '软件架构', link: '/zh/architecture/software-architecture' },
+      { text: '功能模块', link: '/zh/architecture/functional-modules' },
+      { text: '运行模式详解', link: '/zh/architecture/runtime-modes' },
+    ],
+  },
+  {
+    text: 'API 参考',
+    items: [
+      { text: '总览', link: '/zh/api-reference/overview' },
+      { text: '网关 API', link: '/zh/api-reference/gateway-api' },
+      { text: '管理端 API', link: '/zh/api-reference/admin-api' },
+      { text: '门户 API', link: '/zh/api-reference/portal-api' },
     ],
   },
   {
@@ -66,8 +108,8 @@ const chineseSidebar = [
     items: [
       { text: 'API 兼容矩阵', link: '/zh/reference/api-compatibility' },
       { text: '仓库结构', link: '/zh/reference/repository-layout' },
-      { text: '运行模式详解', link: '/architecture/runtime-modes' },
-      { text: '完整兼容矩阵', link: '/api/compatibility-matrix' },
+      { text: '构建与工具链', link: '/zh/reference/build-and-tooling' },
+      { text: '完整兼容矩阵（英文）', link: '/api/compatibility-matrix' },
     ],
   },
 ];
@@ -75,7 +117,7 @@ const chineseSidebar = [
 export default defineConfig({
   title: 'SDKWork API Server',
   description:
-    'OpenAI-compatible gateway, control plane, extension runtime, and public portal.',
+    'OpenAI-compatible gateway, admin control plane, public portal, and extension runtime.',
   lang: 'en-US',
   cleanUrls: true,
   lastUpdated: true,

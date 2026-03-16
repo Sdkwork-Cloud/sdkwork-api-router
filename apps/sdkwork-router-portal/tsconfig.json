@@ -1,0 +1,35 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "allowJs": false,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "baseUrl": ".",
+    "paths": {
+      "sdkwork-router-portal-account": ["packages/sdkwork-router-portal-account/src/index.tsx"],
+      "sdkwork-router-portal-api-keys": ["packages/sdkwork-router-portal-api-keys/src/index.tsx"],
+      "sdkwork-router-portal-auth": ["packages/sdkwork-router-portal-auth/src/index.tsx"],
+      "sdkwork-router-portal-billing": ["packages/sdkwork-router-portal-billing/src/index.tsx"],
+      "sdkwork-router-portal-commerce": ["packages/sdkwork-router-portal-commerce/src/index.ts"],
+      "sdkwork-router-portal-commons": ["packages/sdkwork-router-portal-commons/src/index.tsx"],
+      "sdkwork-router-portal-core": ["packages/sdkwork-router-portal-core/src/index.tsx"],
+      "sdkwork-router-portal-credits": ["packages/sdkwork-router-portal-credits/src/index.tsx"],
+      "sdkwork-router-portal-dashboard": ["packages/sdkwork-router-portal-dashboard/src/index.tsx"],
+      "sdkwork-router-portal-portal-api": ["packages/sdkwork-router-portal-portal-api/src/index.ts"],
+      "sdkwork-router-portal-types": ["packages/sdkwork-router-portal-types/src/index.ts"],
+      "sdkwork-router-portal-usage": ["packages/sdkwork-router-portal-usage/src/index.tsx"]
+    }
+  },
+  "include": ["src", "packages/**/*.ts", "packages/**/*.tsx", "vite.config.ts"]
+}

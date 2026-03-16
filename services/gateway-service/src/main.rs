@@ -1,52 +1,52 @@
-use std::sync::Arc;
-
 use sdkwork_api_app_credential::CredentialSecretManager;
-use sdkwork_api_app_extension::start_provider_health_snapshot_supervision;
-use sdkwork_api_config::StandaloneConfig;
-use sdkwork_api_interface_http::gateway_router_with_store_and_secret_manager;
+use sdkwork_api_app_runtime::{
+    build_admin_store_from_config, resolve_service_runtime_node_id,
+    start_extension_runtime_rollout_supervision, start_standalone_runtime_supervision,
+    StandaloneListenerHost, StandaloneServiceKind, StandaloneServiceReloadHandles,
+};
+use sdkwork_api_config::StandaloneConfigLoader;
+use sdkwork_api_interface_http::{gateway_router_with_state, GatewayApiState};
 use sdkwork_api_observability::init_tracing;
-use sdkwork_api_storage_core::{AdminStore, StorageDialect};
-use sdkwork_api_storage_postgres::{run_migrations as run_postgres_migrations, PostgresAdminStore};
-use sdkwork_api_storage_sqlite::{run_migrations, SqliteAdminStore};
-use tokio::net::TcpListener;
+use sdkwork_api_storage_core::Reloadable;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     init_tracing("gateway-service");
-    let config = StandaloneConfig::from_env()?;
+    let (config_loader, config) = StandaloneConfigLoader::from_env()?;
     config.apply_to_process_env();
-    let store: Arc<dyn AdminStore> = match config.storage_dialect() {
-        Some(StorageDialect::Sqlite) => {
-            let pool = run_migrations(&config.database_url).await?;
-            Arc::new(SqliteAdminStore::new(pool))
-        }
-        Some(StorageDialect::Postgres) => {
-            let pool = run_postgres_migrations(&config.database_url).await?;
-            Arc::new(PostgresAdminStore::new(pool))
-        }
-        Some(other) => {
-            anyhow::bail!(
-                "gateway-service startup does not yet support storage dialect: {}",
-                other.as_str()
-            )
-        }
-        None => anyhow::bail!("gateway-service received unsupported database URL scheme"),
-    };
-    let _runtime_snapshot_supervisor = start_provider_health_snapshot_supervision(
-        store.clone(),
-        config.runtime_snapshot_interval_secs,
+    let live_store = Reloadable::new(build_admin_store_from_config(&config).await?);
+    let live_secret_manager =
+        Reloadable::new(CredentialSecretManager::new_with_legacy_master_keys(
+            config.secret_backend,
+            config.credential_master_key.clone(),
+            config.credential_legacy_master_keys.clone(),
+            config.secret_local_file.clone(),
+            config.secret_keyring_service.clone(),
+        ));
+    let state = GatewayApiState::with_live_store_and_secret_manager_handle(
+        live_store.clone(),
+        live_secret_manager.clone(),
     );
-    let secret_manager = CredentialSecretManager::new(
-        config.secret_backend,
-        config.credential_master_key.clone(),
-        config.secret_local_file.clone(),
-        config.secret_keyring_service.clone(),
-    );
-    let listener = TcpListener::bind(&config.gateway_bind).await?;
-    axum::serve(
-        listener,
-        gateway_router_with_store_and_secret_manager(store, secret_manager),
+    let listener_host = StandaloneListenerHost::bind(
+        config.gateway_bind.clone(),
+        gateway_router_with_state(state),
     )
     .await?;
+    let node_id = resolve_service_runtime_node_id(StandaloneServiceKind::Gateway);
+    let _rollout_supervision = start_extension_runtime_rollout_supervision(
+        StandaloneServiceKind::Gateway,
+        node_id.clone(),
+        live_store.clone(),
+    )?;
+    let _runtime_supervision = start_standalone_runtime_supervision(
+        StandaloneServiceKind::Gateway,
+        config_loader,
+        config.clone(),
+        StandaloneServiceReloadHandles::gateway(live_store)
+            .with_secret_manager(live_secret_manager)
+            .with_listener(listener_host.reload_handle())
+            .with_node_id(node_id),
+    );
+    listener_host.wait().await?;
     Ok(())
 }

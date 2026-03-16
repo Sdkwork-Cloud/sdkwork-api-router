@@ -3,5 +3,13 @@
 /docs/.vitepress/dist/
 /docs/.vitepress/cache/
 **/node_modules/
+**/src-tauri/target/
+/apps/*/dist/
+**/.turbo/
+**/coverage/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
 /.worktrees/
 /worktrees/

@@ -9,7 +9,9 @@ use axum::{
     extract::State,
     http::header,
     http::request::Parts,
+    http::Request,
     http::StatusCode,
+    middleware::Next,
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
@@ -187,12 +189,12 @@ use sdkwork_api_app_gateway::{
     relay_upload_from_store, relay_upload_part_from_store,
     relay_vector_store_file_batch_from_store, relay_vector_store_file_from_store,
     relay_vector_store_from_store, relay_video_content_from_store, relay_video_from_store,
-    relay_webhook_from_store,
+    relay_webhook_from_store, with_request_routing_region,
 };
 use sdkwork_api_app_identity::{
     resolve_gateway_request_context, GatewayRequestContext as IdentityGatewayRequestContext,
 };
-use sdkwork_api_app_usage::persist_usage_record;
+use sdkwork_api_app_usage::persist_usage_record_with_tokens;
 use sdkwork_api_contract_openai::assistants::{CreateAssistantRequest, UpdateAssistantRequest};
 use sdkwork_api_contract_openai::audio::{
     CreateSpeechRequest, CreateTranscriptionRequest, CreateTranslationRequest,
@@ -246,7 +248,7 @@ use sdkwork_api_contract_openai::videos::{
 use sdkwork_api_contract_openai::webhooks::{CreateWebhookRequest, UpdateWebhookRequest};
 use sdkwork_api_observability::{observe_http_metrics, observe_http_tracing, HttpMetricsRegistry};
 use sdkwork_api_provider_core::{ProviderRequest, ProviderStreamOutput};
-use sdkwork_api_storage_core::AdminStore;
+use sdkwork_api_storage_core::{AdminStore, Reloadable};
 use sdkwork_api_storage_sqlite::SqliteAdminStore;
 use serde_json::Value;
 use sqlx::SqlitePool;
@@ -254,10 +256,22 @@ use sqlx::SqlitePool;
 const DEFAULT_STATELESS_TENANT_ID: &str = "sdkwork-stateless";
 const DEFAULT_STATELESS_PROJECT_ID: &str = "sdkwork-stateless-default";
 
-#[derive(Clone)]
 pub struct GatewayApiState {
+    live_store: Reloadable<Arc<dyn AdminStore>>,
+    live_secret_manager: Reloadable<CredentialSecretManager>,
     store: Arc<dyn AdminStore>,
     secret_manager: CredentialSecretManager,
+}
+
+impl Clone for GatewayApiState {
+    fn clone(&self) -> Self {
+        Self {
+            live_store: self.live_store.clone(),
+            live_secret_manager: self.live_secret_manager.clone(),
+            store: self.live_store.snapshot(),
+            secret_manager: self.live_secret_manager.snapshot(),
+        }
+    }
 }
 
 impl GatewayApiState {
@@ -273,19 +287,35 @@ impl GatewayApiState {
     }
 
     pub fn with_secret_manager(pool: SqlitePool, secret_manager: CredentialSecretManager) -> Self {
-        Self {
-            store: Arc::new(SqliteAdminStore::new(pool)),
-            secret_manager,
-        }
+        Self::with_store_and_secret_manager(Arc::new(SqliteAdminStore::new(pool)), secret_manager)
     }
 
     pub fn with_store_and_secret_manager(
         store: Arc<dyn AdminStore>,
         secret_manager: CredentialSecretManager,
     ) -> Self {
+        Self::with_live_store_and_secret_manager_handle(
+            Reloadable::new(store),
+            Reloadable::new(secret_manager),
+        )
+    }
+
+    pub fn with_live_store_and_secret_manager(
+        live_store: Reloadable<Arc<dyn AdminStore>>,
+        secret_manager: CredentialSecretManager,
+    ) -> Self {
+        Self::with_live_store_and_secret_manager_handle(live_store, Reloadable::new(secret_manager))
+    }
+
+    pub fn with_live_store_and_secret_manager_handle(
+        live_store: Reloadable<Arc<dyn AdminStore>>,
+        live_secret_manager: Reloadable<CredentialSecretManager>,
+    ) -> Self {
         Self {
-            store,
-            secret_manager,
+            store: live_store.snapshot(),
+            secret_manager: live_secret_manager.snapshot(),
+            live_store,
+            live_secret_manager,
         }
     }
 }
@@ -466,6 +496,15 @@ impl FromRequestParts<StatelessGatewayContext> for StatelessGatewayRequest {
     ) -> Result<Self, Self::Rejection> {
         Ok(Self(state.clone()))
     }
+}
+
+async fn apply_request_routing_region(request: Request<Body>, next: Next) -> Response {
+    let requested_region = request
+        .headers()
+        .get("x-sdkwork-region")
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+    with_request_routing_region(requested_region, next.run(request)).await
 }
 
 pub fn gateway_router() -> Router {
@@ -797,6 +836,7 @@ pub fn gateway_router_with_stateless_config(config: StatelessGatewayConfig) -> R
             "/v1/vector_stores/{vector_store_id}/file_batches/{batch_id}/files",
             get(vector_store_file_batch_files_handler),
         )
+        .layer(axum::middleware::from_fn(apply_request_routing_region))
         .layer(axum::middleware::from_fn_with_state(
             metrics,
             observe_http_metrics,
@@ -843,6 +883,13 @@ pub fn gateway_router_with_store_and_secret_manager(
     store: Arc<dyn AdminStore>,
     secret_manager: CredentialSecretManager,
 ) -> Router {
+    gateway_router_with_state(GatewayApiState::with_store_and_secret_manager(
+        store,
+        secret_manager,
+    ))
+}
+
+pub fn gateway_router_with_state(state: GatewayApiState) -> Router {
     let service_name: Arc<str> = Arc::from("gateway");
     let metrics = Arc::new(HttpMetricsRegistry::new("gateway"));
     Router::new()
@@ -1224,6 +1271,7 @@ pub fn gateway_router_with_store_and_secret_manager(
             "/v1/vector_stores/{vector_store_id}/file_batches/{batch_id}/files",
             get(vector_store_file_batch_files_with_state_handler),
         )
+        .layer(axum::middleware::from_fn(apply_request_routing_region))
         .layer(axum::middleware::from_fn_with_state(
             metrics,
             observe_http_metrics,
@@ -1232,10 +1280,7 @@ pub fn gateway_router_with_store_and_secret_manager(
             service_name,
             observe_http_tracing,
         ))
-        .with_state(GatewayApiState::with_store_and_secret_manager(
-            store,
-            secret_manager,
-        ))
+        .with_state(state)
 }
 
 async fn list_models_handler(request_context: StatelessGatewayRequest) -> Response {
@@ -5103,14 +5148,17 @@ async fn chat_completions_with_state_handler(
         .await
         {
             Ok(Some(response)) => {
-                let usage_result = record_gateway_usage_for_project(
+                let token_usage = extract_token_usage_metrics(&response);
+                let usage_result = record_gateway_usage_for_project_with_route_key_and_tokens(
                     state.store.as_ref(),
                     request_context.tenant_id(),
                     request_context.project_id(),
                     "chat_completion",
                     &request.model,
+                    &request.model,
                     100,
                     0.10,
+                    token_usage,
                 )
                 .await;
                 if usage_result.is_err() {
@@ -5544,12 +5592,17 @@ async fn conversations_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            let conversation_id = response
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or("conversations");
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "responses",
                 "conversations",
+                conversation_id,
                 20,
                 0.02,
             )
@@ -5571,12 +5624,16 @@ async fn conversations_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    let response = create_conversation(request_context.tenant_id(), request_context.project_id())
+        .expect("conversation");
+
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "responses",
         "conversations",
+        response.id.as_str(),
         20,
         0.02,
     )
@@ -5590,11 +5647,7 @@ async fn conversations_with_state_handler(
             .into_response();
     }
 
-    Json(
-        create_conversation(request_context.tenant_id(), request_context.project_id())
-            .expect("conversation"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn conversations_list_with_state_handler(
@@ -5678,12 +5731,15 @@ async fn conversation_retrieve_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            let usage_model = response_usage_id_or_single_data_item_id(&response)
+                .unwrap_or(conversation_id.as_str());
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "responses",
                 &conversation_id,
+                usage_model,
                 20,
                 0.02,
             )
@@ -5752,12 +5808,15 @@ async fn conversation_update_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            let usage_model = response_usage_id_or_single_data_item_id(&response)
+                .unwrap_or(conversation_id.as_str());
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "responses",
                 &conversation_id,
+                usage_model,
                 20,
                 0.02,
             )
@@ -5825,12 +5884,15 @@ async fn conversation_delete_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            let usage_model = response_usage_id_or_single_data_item_id(&response)
+                .unwrap_or(conversation_id.as_str());
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "responses",
                 &conversation_id,
+                usage_model,
                 20,
                 0.02,
             )
@@ -5899,12 +5961,15 @@ async fn conversation_items_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            let usage_model = response_usage_id_or_single_data_item_id(&response)
+                .unwrap_or(conversation_id.as_str());
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "responses",
                 &conversation_id,
+                usage_model,
                 20,
                 0.02,
             )
@@ -5926,12 +5991,24 @@ async fn conversation_items_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    let response = create_conversation_items(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &conversation_id,
+    )
+    .expect("conversation items");
+    let usage_model = match response.data.as_slice() {
+        [item] => item.id.as_str(),
+        _ => conversation_id.as_str(),
+    };
+
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "responses",
         &conversation_id,
+        usage_model,
         20,
         0.02,
     )
@@ -5945,15 +6022,7 @@ async fn conversation_items_with_state_handler(
             .into_response();
     }
 
-    Json(
-        create_conversation_items(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &conversation_id,
-        )
-        .expect("conversation items"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn conversation_items_list_with_state_handler(
@@ -6044,11 +6113,12 @@ async fn conversation_item_retrieve_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "responses",
+                &conversation_id,
                 &item_id,
                 20,
                 0.02,
@@ -6073,11 +6143,12 @@ async fn conversation_item_retrieve_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "responses",
+        &conversation_id,
         &item_id,
         20,
         0.02,
@@ -6120,11 +6191,12 @@ async fn conversation_item_delete_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "responses",
+                &conversation_id,
                 &item_id,
                 20,
                 0.02,
@@ -6149,11 +6221,12 @@ async fn conversation_item_delete_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "responses",
+        &conversation_id,
         &item_id,
         20,
         0.02,
@@ -6195,12 +6268,17 @@ async fn threads_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            let thread_usage_id = response
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or("threads");
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "assistants",
                 "threads",
+                thread_usage_id,
                 20,
                 0.02,
             )
@@ -6222,12 +6300,16 @@ async fn threads_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    let response =
+        create_thread(request_context.tenant_id(), request_context.project_id()).expect("thread");
+
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "assistants",
         "threads",
+        response.id.as_str(),
         20,
         0.02,
     )
@@ -6241,8 +6323,7 @@ async fn threads_with_state_handler(
             .into_response();
     }
 
-    Json(create_thread(request_context.tenant_id(), request_context.project_id()).expect("thread"))
-        .into_response()
+    Json(response).into_response()
 }
 
 async fn thread_retrieve_with_state_handler(
@@ -6480,12 +6561,17 @@ async fn thread_messages_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            let message_id = response
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or(thread_id.as_str());
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "assistants",
                 &thread_id,
+                message_id,
                 20,
                 0.02,
             )
@@ -6507,12 +6593,23 @@ async fn thread_messages_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    let text = request.content.as_str().unwrap_or("hello");
+    let response = create_thread_message(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &thread_id,
+        &request.role,
+        text,
+    )
+    .expect("thread message create");
+
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "assistants",
         &thread_id,
+        response.id.as_str(),
         20,
         0.02,
     )
@@ -6526,18 +6623,7 @@ async fn thread_messages_with_state_handler(
             .into_response();
     }
 
-    let text = request.content.as_str().unwrap_or("hello");
-    Json(
-        create_thread_message(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &thread_id,
-            &request.role,
-            text,
-        )
-        .expect("thread message create"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn thread_messages_list_with_state_handler(
@@ -6628,11 +6714,12 @@ async fn thread_message_retrieve_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "assistants",
+                &thread_id,
                 &message_id,
                 20,
                 0.02,
@@ -6655,11 +6742,12 @@ async fn thread_message_retrieve_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "assistants",
+        &thread_id,
         &message_id,
         20,
         0.02,
@@ -6704,11 +6792,12 @@ async fn thread_message_update_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "assistants",
+                &thread_id,
                 &message_id,
                 20,
                 0.02,
@@ -6731,11 +6820,12 @@ async fn thread_message_update_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "assistants",
+        &thread_id,
         &message_id,
         20,
         0.02,
@@ -6778,11 +6868,12 @@ async fn thread_message_delete_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "assistants",
+                &thread_id,
                 &message_id,
                 20,
                 0.02,
@@ -6805,11 +6896,12 @@ async fn thread_message_delete_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "assistants",
+        &thread_id,
         &message_id,
         20,
         0.02,
@@ -6851,12 +6943,15 @@ async fn thread_and_run_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            let usage_model =
+                response_usage_id_or_single_data_item_id(&response).unwrap_or("threads/runs");
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "assistants",
                 "threads/runs",
+                usage_model,
                 25,
                 0.025,
             )
@@ -6878,12 +6973,20 @@ async fn thread_and_run_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    let response = create_thread_and_run(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &request.assistant_id,
+    )
+    .expect("thread and run create");
+
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "assistants",
         "threads/runs",
+        response.id.as_str(),
         25,
         0.025,
     )
@@ -6897,15 +7000,7 @@ async fn thread_and_run_with_state_handler(
             .into_response();
     }
 
-    Json(
-        create_thread_and_run(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &request.assistant_id,
-        )
-        .expect("thread and run create"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn thread_runs_with_state_handler(
@@ -6925,12 +7020,17 @@ async fn thread_runs_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            let run_id = response
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or(thread_id.as_str());
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "assistants",
                 &thread_id,
+                run_id,
                 25,
                 0.025,
             )
@@ -6952,12 +7052,22 @@ async fn thread_runs_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    let response = create_thread_run(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &thread_id,
+        &request.assistant_id,
+        request.model.as_deref(),
+    )
+    .expect("thread run create");
+
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "assistants",
         &thread_id,
+        response.id.as_str(),
         25,
         0.025,
     )
@@ -6971,17 +7081,7 @@ async fn thread_runs_with_state_handler(
             .into_response();
     }
 
-    Json(
-        create_thread_run(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &thread_id,
-            &request.assistant_id,
-            request.model.as_deref(),
-        )
-        .expect("thread run create"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn thread_runs_list_with_state_handler(
@@ -7072,11 +7172,12 @@ async fn thread_run_retrieve_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "assistants",
+                &thread_id,
                 &run_id,
                 15,
                 0.015,
@@ -7099,11 +7200,12 @@ async fn thread_run_retrieve_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "assistants",
+        &thread_id,
         &run_id,
         15,
         0.015,
@@ -7148,11 +7250,12 @@ async fn thread_run_update_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "assistants",
+                &thread_id,
                 &run_id,
                 20,
                 0.02,
@@ -7175,11 +7278,12 @@ async fn thread_run_update_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "assistants",
+        &thread_id,
         &run_id,
         20,
         0.02,
@@ -7222,11 +7326,12 @@ async fn thread_run_cancel_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "assistants",
+                &thread_id,
                 &run_id,
                 20,
                 0.02,
@@ -7249,11 +7354,12 @@ async fn thread_run_cancel_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "assistants",
+        &thread_id,
         &run_id,
         20,
         0.02,
@@ -7298,11 +7404,12 @@ async fn thread_run_submit_tool_outputs_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "assistants",
+                &thread_id,
                 &run_id,
                 20,
                 0.02,
@@ -7325,11 +7432,12 @@ async fn thread_run_submit_tool_outputs_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "assistants",
+        &thread_id,
         &run_id,
         20,
         0.02,
@@ -7378,11 +7486,12 @@ async fn thread_run_steps_list_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "assistants",
+                &thread_id,
                 &run_id,
                 15,
                 0.015,
@@ -7405,11 +7514,12 @@ async fn thread_run_steps_list_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "assistants",
+        &thread_id,
         &run_id,
         15,
         0.015,
@@ -7453,11 +7563,12 @@ async fn thread_run_step_retrieve_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "assistants",
+                &thread_id,
                 &step_id,
                 15,
                 0.015,
@@ -7482,11 +7593,12 @@ async fn thread_run_step_retrieve_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "assistants",
+        &thread_id,
         &step_id,
         15,
         0.015,
@@ -7648,14 +7760,17 @@ async fn responses_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            let token_usage = extract_token_usage_metrics(&response);
+            if record_gateway_usage_for_project_with_route_key_and_tokens(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "responses",
                 &request.model,
+                &request.model,
                 120,
                 0.12,
+                token_usage,
             )
             .await
             .is_err()
@@ -8248,14 +8363,17 @@ async fn embeddings_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            let token_usage = extract_token_usage_metrics(&response);
+            if record_gateway_usage_for_project_with_route_key_and_tokens(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "embeddings",
                 &request.model,
+                &request.model,
                 10,
                 0.01,
+                token_usage,
             )
             .await
             .is_err()
@@ -8898,12 +9016,17 @@ async fn audio_voice_consents_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            let consent_id = response
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or(request.voice.as_str());
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "audio",
                 &request.voice,
+                consent_id,
                 5,
                 0.005,
             )
@@ -8925,12 +9048,20 @@ async fn audio_voice_consents_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    let response = create_audio_voice_consent(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &request,
+    )
+    .expect("audio voice consent");
+
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "audio",
         &request.voice,
+        response.id.as_str(),
         5,
         0.005,
     )
@@ -8944,15 +9075,7 @@ async fn audio_voice_consents_with_state_handler(
             .into_response();
     }
 
-    Json(
-        create_audio_voice_consent(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &request,
-        )
-        .expect("audio voice consent"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn files_with_state_handler(
@@ -8975,12 +9098,17 @@ async fn files_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            let file_id = response
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or(request.purpose.as_str());
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "files",
                 &request.purpose,
+                file_id,
                 5,
                 0.005,
             )
@@ -9002,12 +9130,20 @@ async fn files_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    let response = create_file(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &request,
+    )
+    .expect("file");
+
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "files",
         &request.purpose,
+        response.id.as_str(),
         5,
         0.005,
     )
@@ -9021,15 +9157,7 @@ async fn files_with_state_handler(
             .into_response();
     }
 
-    Json(
-        create_file(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &request,
-        )
-        .expect("file"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn files_list_with_state_handler(
@@ -9322,12 +9450,17 @@ async fn containers_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            let container_id = response
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or(request.name.as_str());
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "containers",
                 &request.name,
+                container_id,
                 10,
                 0.01,
             )
@@ -9349,12 +9482,20 @@ async fn containers_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    let response = sdkwork_api_app_gateway::create_container(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &request,
+    )
+    .expect("container");
+
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "containers",
         &request.name,
+        response.id.as_str(),
         10,
         0.01,
     )
@@ -9368,15 +9509,7 @@ async fn containers_with_state_handler(
             .into_response();
     }
 
-    Json(
-        sdkwork_api_app_gateway::create_container(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &request,
-        )
-        .expect("container"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn containers_list_with_state_handler(
@@ -9609,12 +9742,15 @@ async fn container_files_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            let usage_model = response_usage_id_or_single_data_item_id(&response)
+                .unwrap_or(request.file_id.as_str());
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "containers",
                 &container_id,
+                usage_model,
                 8,
                 0.008,
             )
@@ -9636,12 +9772,21 @@ async fn container_files_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    let response = sdkwork_api_app_gateway::create_container_file(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &container_id,
+        &request,
+    )
+    .expect("container file");
+
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "containers",
         &container_id,
+        response.id.as_str(),
         8,
         0.008,
     )
@@ -9655,16 +9800,7 @@ async fn container_files_with_state_handler(
             .into_response();
     }
 
-    Json(
-        sdkwork_api_app_gateway::create_container_file(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &container_id,
-            &request,
-        )
-        .expect("container file"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn container_files_list_with_state_handler(
@@ -9755,12 +9891,13 @@ async fn container_file_retrieve_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "containers",
                 &container_id,
+                &file_id,
                 3,
                 0.003,
             )
@@ -9782,12 +9919,13 @@ async fn container_file_retrieve_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "containers",
         &container_id,
+        &file_id,
         3,
         0.003,
     )
@@ -9829,12 +9967,13 @@ async fn container_file_delete_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "containers",
                 &container_id,
+                &file_id,
                 3,
                 0.003,
             )
@@ -9856,12 +9995,13 @@ async fn container_file_delete_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "containers",
         &container_id,
+        &file_id,
         3,
         0.003,
     )
@@ -9903,12 +10043,13 @@ async fn container_file_content_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "containers",
                 &container_id,
+                &file_id,
                 3,
                 0.003,
             )
@@ -9930,12 +10071,13 @@ async fn container_file_content_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "containers",
         &container_id,
+        &file_id,
         3,
         0.003,
     )
@@ -9972,12 +10114,15 @@ async fn videos_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            let usage_model = response_usage_id_or_single_data_item_id(&response)
+                .unwrap_or(request.model.as_str());
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "videos",
                 &request.model,
+                usage_model,
                 90,
                 0.09,
             )
@@ -9999,12 +10144,25 @@ async fn videos_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    let response = create_video(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &request.model,
+        &request.prompt,
+    )
+    .expect("video");
+    let usage_model = match response.data.as_slice() {
+        [video] => video.id.as_str(),
+        _ => request.model.as_str(),
+    };
+
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "videos",
         &request.model,
+        usage_model,
         90,
         0.09,
     )
@@ -10018,16 +10176,7 @@ async fn videos_with_state_handler(
             .into_response();
     }
 
-    Json(
-        create_video(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &request.model,
-            &request.prompt,
-        )
-        .expect("video"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn videos_list_with_state_handler(
@@ -10325,12 +10474,15 @@ async fn video_remix_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            let usage_model =
+                response_usage_id_or_single_data_item_id(&response).unwrap_or(video_id.as_str());
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "videos",
                 &video_id,
+                usage_model,
                 60,
                 0.06,
             )
@@ -10352,12 +10504,25 @@ async fn video_remix_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    let response = remix_video(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &video_id,
+        &request.prompt,
+    )
+    .expect("video remix");
+    let usage_model = match response.data.as_slice() {
+        [item] => item.id.as_str(),
+        _ => video_id.as_str(),
+    };
+
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "videos",
         &video_id,
+        usage_model,
         60,
         0.06,
     )
@@ -10371,16 +10536,7 @@ async fn video_remix_with_state_handler(
             .into_response();
     }
 
-    Json(
-        remix_video(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &video_id,
-            &request.prompt,
-        )
-        .expect("video remix"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn video_characters_list_with_state_handler(
@@ -10471,12 +10627,13 @@ async fn video_character_retrieve_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "videos",
                 &video_id,
+                &character_id,
                 60,
                 0.06,
             )
@@ -10500,12 +10657,13 @@ async fn video_character_retrieve_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "videos",
         &video_id,
+        &character_id,
         60,
         0.06,
     )
@@ -10549,12 +10707,13 @@ async fn video_character_update_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "videos",
                 &video_id,
+                &character_id,
                 60,
                 0.06,
             )
@@ -10576,12 +10735,13 @@ async fn video_character_update_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "videos",
         &video_id,
+        &character_id,
         60,
         0.06,
     )
@@ -10625,12 +10785,15 @@ async fn video_extend_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            let usage_model =
+                response_usage_id_or_single_data_item_id(&response).unwrap_or(video_id.as_str());
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "videos",
                 &video_id,
+                usage_model,
                 60,
                 0.06,
             )
@@ -10652,12 +10815,25 @@ async fn video_extend_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    let response = extend_video(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &video_id,
+        &request.prompt,
+    )
+    .expect("video extend");
+    let usage_model = match response.data.as_slice() {
+        [item] => item.id.as_str(),
+        _ => video_id.as_str(),
+    };
+
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "videos",
         &video_id,
+        usage_model,
         60,
         0.06,
     )
@@ -10671,16 +10847,7 @@ async fn video_extend_with_state_handler(
             .into_response();
     }
 
-    Json(
-        extend_video(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &video_id,
-            &request.prompt,
-        )
-        .expect("video extend"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn video_character_create_with_state_handler(
@@ -10698,12 +10865,17 @@ async fn video_character_create_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            let character_id = response
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or(request.video_id.as_str());
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "videos",
                 &request.video_id,
+                character_id,
                 40,
                 0.04,
             )
@@ -10725,12 +10897,20 @@ async fn video_character_create_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    let response = sdkwork_api_app_gateway::create_video_character(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &request,
+    )
+    .expect("video character create");
+
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "videos",
         &request.video_id,
+        response.id.as_str(),
         40,
         0.04,
     )
@@ -10744,15 +10924,7 @@ async fn video_character_create_with_state_handler(
             .into_response();
     }
 
-    Json(
-        sdkwork_api_app_gateway::create_video_character(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &request,
-        )
-        .expect("video character create"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn video_character_retrieve_canonical_with_state_handler(
@@ -10844,12 +11016,15 @@ async fn video_edits_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            let usage_model = response_usage_id_or_single_data_item_id(&response)
+                .unwrap_or(request.video_id.as_str());
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "videos",
                 &request.video_id,
+                usage_model,
                 80,
                 0.08,
             )
@@ -10871,12 +11046,24 @@ async fn video_edits_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    let response = sdkwork_api_app_gateway::edit_video(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &request,
+    )
+    .expect("video edits");
+    let usage_model = match response.data.as_slice() {
+        [item] => item.id.as_str(),
+        _ => request.video_id.as_str(),
+    };
+
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "videos",
         &request.video_id,
+        usage_model,
         80,
         0.08,
     )
@@ -10890,15 +11077,7 @@ async fn video_edits_with_state_handler(
             .into_response();
     }
 
-    Json(
-        sdkwork_api_app_gateway::edit_video(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &request,
-        )
-        .expect("video edits"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn video_extensions_with_state_handler(
@@ -10916,12 +11095,16 @@ async fn video_extensions_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            let route_key = request.video_id.as_deref().unwrap_or("videos");
+            let usage_model =
+                response_usage_id_or_single_data_item_id(&response).unwrap_or(route_key);
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "videos",
-                request.video_id.as_deref().unwrap_or("videos"),
+                route_key,
+                usage_model,
                 80,
                 0.08,
             )
@@ -10943,12 +11126,25 @@ async fn video_extensions_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    let response = sdkwork_api_app_gateway::extensions_video(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &request,
+    )
+    .expect("video extensions");
+    let route_key = request.video_id.as_deref().unwrap_or("videos");
+    let usage_model = match response.data.as_slice() {
+        [item] => item.id.as_str(),
+        _ => route_key,
+    };
+
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "videos",
-        request.video_id.as_deref().unwrap_or("videos"),
+        route_key,
+        usage_model,
         80,
         0.08,
     )
@@ -10962,15 +11158,7 @@ async fn video_extensions_with_state_handler(
             .into_response();
     }
 
-    Json(
-        sdkwork_api_app_gateway::extensions_video(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &request,
-        )
-        .expect("video extensions"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn uploads_with_state_handler(
@@ -10988,12 +11176,17 @@ async fn uploads_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            let upload_id = response
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or(request.purpose.as_str());
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "uploads",
                 &request.purpose,
+                upload_id,
                 8,
                 0.008,
             )
@@ -11015,12 +11208,20 @@ async fn uploads_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    let response = create_upload(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &request,
+    )
+    .expect("upload");
+
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "uploads",
         &request.purpose,
+        response.id.as_str(),
         8,
         0.008,
     )
@@ -11034,15 +11235,7 @@ async fn uploads_with_state_handler(
             .into_response();
     }
 
-    Json(
-        create_upload(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &request,
-        )
-        .expect("upload"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn upload_parts_with_state_handler(
@@ -11066,12 +11259,17 @@ async fn upload_parts_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            let part_id = response
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or(request.upload_id.as_str());
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "uploads",
                 &request.upload_id,
+                part_id,
                 4,
                 0.004,
             )
@@ -11093,12 +11291,20 @@ async fn upload_parts_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    let response = create_upload_part(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &request,
+    )
+    .expect("upload part");
+
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "uploads",
         &request.upload_id,
+        response.id.as_str(),
         4,
         0.004,
     )
@@ -11112,15 +11318,7 @@ async fn upload_parts_with_state_handler(
             .into_response();
     }
 
-    Json(
-        create_upload_part(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &request,
-        )
-        .expect("upload part"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn upload_complete_with_state_handler(
@@ -11285,12 +11483,17 @@ async fn fine_tuning_jobs_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            let fine_tuning_job_id = response
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or(request.model.as_str());
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "fine_tuning",
                 &request.model,
+                fine_tuning_job_id,
                 200,
                 0.2,
             )
@@ -11312,12 +11515,20 @@ async fn fine_tuning_jobs_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    let response = create_fine_tuning_job(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &request.model,
+    )
+    .expect("fine tuning");
+
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "fine_tuning",
         &request.model,
+        response.id.as_str(),
         200,
         0.2,
     )
@@ -11331,15 +11542,7 @@ async fn fine_tuning_jobs_with_state_handler(
             .into_response();
     }
 
-    Json(
-        create_fine_tuning_job(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &request.model,
-        )
-        .expect("fine tuning"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn fine_tuning_jobs_list_with_state_handler(
@@ -11861,12 +12064,15 @@ async fn fine_tuning_checkpoint_permissions_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            let usage_model = response_usage_id_or_single_data_item_id(&response)
+                .unwrap_or(fine_tuned_model_checkpoint.as_str());
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "fine_tuning",
                 &fine_tuned_model_checkpoint,
+                usage_model,
                 5,
                 0.005,
             )
@@ -11890,12 +12096,24 @@ async fn fine_tuning_checkpoint_permissions_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    let response = sdkwork_api_app_gateway::create_fine_tuning_checkpoint_permissions(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &request,
+    )
+    .expect("fine tuning checkpoint permissions create");
+    let usage_model = match response.data.as_slice() {
+        [permission] => permission.id.as_str(),
+        _ => fine_tuned_model_checkpoint.as_str(),
+    };
+
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "fine_tuning",
         &fine_tuned_model_checkpoint,
+        usage_model,
         5,
         0.005,
     )
@@ -11909,15 +12127,7 @@ async fn fine_tuning_checkpoint_permissions_with_state_handler(
             .into_response();
     }
 
-    Json(
-        sdkwork_api_app_gateway::create_fine_tuning_checkpoint_permissions(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &request,
-        )
-        .expect("fine tuning checkpoint permissions create"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn fine_tuning_checkpoint_permissions_list_with_state_handler(
@@ -12010,12 +12220,13 @@ async fn fine_tuning_checkpoint_permission_delete_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "fine_tuning",
                 &fine_tuned_model_checkpoint,
+                &permission_id,
                 4,
                 0.004,
             )
@@ -12039,12 +12250,13 @@ async fn fine_tuning_checkpoint_permission_delete_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "fine_tuning",
         &fine_tuned_model_checkpoint,
+        &permission_id,
         4,
         0.004,
     )
@@ -12084,12 +12296,17 @@ async fn assistants_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            let assistant_id = response
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or(request.model.as_str());
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "assistants",
                 &request.model,
+                assistant_id,
                 20,
                 0.02,
             )
@@ -12111,12 +12328,21 @@ async fn assistants_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    let response = create_assistant(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &request.name,
+        &request.model,
+    )
+    .expect("assistant");
+
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "assistants",
         &request.model,
+        response.id.as_str(),
         20,
         0.02,
     )
@@ -12130,16 +12356,7 @@ async fn assistants_with_state_handler(
             .into_response();
     }
 
-    Json(
-        create_assistant(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &request.name,
-            &request.model,
-        )
-        .expect("assistant"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn assistants_list_with_state_handler(
@@ -12444,12 +12661,17 @@ async fn webhooks_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            let webhook_id = response
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or(request.url.as_str());
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "webhooks",
                 &request.url,
+                webhook_id,
                 20,
                 0.02,
             )
@@ -12471,12 +12693,21 @@ async fn webhooks_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    let response = create_webhook(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &request.url,
+        &request.events,
+    )
+    .expect("webhook");
+
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "webhooks",
         &request.url,
+        response.id.as_str(),
         20,
         0.02,
     )
@@ -12490,16 +12721,7 @@ async fn webhooks_with_state_handler(
             .into_response();
     }
 
-    Json(
-        create_webhook(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &request.url,
-            &request.events,
-        )
-        .expect("webhook"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn webhooks_list_with_state_handler(
@@ -12807,12 +13029,17 @@ async fn realtime_sessions_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            let realtime_session_id = response
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or(request.model.as_str());
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "realtime_sessions",
                 &request.model,
+                realtime_session_id,
                 30,
                 0.03,
             )
@@ -12834,12 +13061,20 @@ async fn realtime_sessions_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    let response = create_realtime_session(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &request.model,
+    )
+    .expect("realtime");
+
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "realtime_sessions",
         &request.model,
+        response.id.as_str(),
         30,
         0.03,
     )
@@ -12853,15 +13088,7 @@ async fn realtime_sessions_with_state_handler(
             .into_response();
     }
 
-    Json(
-        create_realtime_session(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &request.model,
-        )
-        .expect("realtime"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn evals_with_state_handler(
@@ -12879,12 +13106,17 @@ async fn evals_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            let eval_id = response
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or(request.name.as_str());
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "evals",
                 &request.name,
+                eval_id,
                 40,
                 0.04,
             )
@@ -12906,12 +13138,20 @@ async fn evals_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    let response = create_eval(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &request.name,
+    )
+    .expect("eval");
+
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "evals",
         &request.name,
+        response.id.as_str(),
         40,
         0.04,
     )
@@ -12925,15 +13165,7 @@ async fn evals_with_state_handler(
             .into_response();
     }
 
-    Json(
-        create_eval(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &request.name,
-        )
-        .expect("eval"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn evals_list_with_state_handler(
@@ -12948,11 +13180,51 @@ async fn evals_list_with_state_handler(
     )
     .await
     {
-        Ok(Some(response)) => return Json(response).into_response(),
+        Ok(Some(response)) => {
+            if record_gateway_usage_for_project(
+                state.store.as_ref(),
+                request_context.tenant_id(),
+                request_context.project_id(),
+                "evals",
+                "evals",
+                15,
+                0.015,
+            )
+            .await
+            .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
         Ok(None) => {}
         Err(_) => {
             return bad_gateway_openai_response("failed to relay upstream evals list");
         }
+    }
+
+    if record_gateway_usage_for_project(
+        state.store.as_ref(),
+        request_context.tenant_id(),
+        request_context.project_id(),
+        "evals",
+        "evals",
+        15,
+        0.015,
+    )
+    .await
+    .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
     }
 
     Json(list_evals(request_context.tenant_id(), request_context.project_id()).expect("eval list"))
@@ -12973,11 +13245,51 @@ async fn eval_retrieve_with_state_handler(
     )
     .await
     {
-        Ok(Some(response)) => return Json(response).into_response(),
+        Ok(Some(response)) => {
+            if record_gateway_usage_for_project(
+                state.store.as_ref(),
+                request_context.tenant_id(),
+                request_context.project_id(),
+                "evals",
+                &eval_id,
+                20,
+                0.02,
+            )
+            .await
+            .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
         Ok(None) => {}
         Err(_) => {
             return bad_gateway_openai_response("failed to relay upstream eval retrieve");
         }
+    }
+
+    if record_gateway_usage_for_project(
+        state.store.as_ref(),
+        request_context.tenant_id(),
+        request_context.project_id(),
+        "evals",
+        &eval_id,
+        20,
+        0.02,
+    )
+    .await
+    .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
     }
 
     Json(
@@ -13007,11 +13319,51 @@ async fn eval_update_with_state_handler(
     )
     .await
     {
-        Ok(Some(response)) => return Json(response).into_response(),
+        Ok(Some(response)) => {
+            if record_gateway_usage_for_project(
+                state.store.as_ref(),
+                request_context.tenant_id(),
+                request_context.project_id(),
+                "evals",
+                &eval_id,
+                20,
+                0.02,
+            )
+            .await
+            .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
         Ok(None) => {}
         Err(_) => {
             return bad_gateway_openai_response("failed to relay upstream eval update");
         }
+    }
+
+    if record_gateway_usage_for_project(
+        state.store.as_ref(),
+        request_context.tenant_id(),
+        request_context.project_id(),
+        "evals",
+        &eval_id,
+        20,
+        0.02,
+    )
+    .await
+    .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
     }
 
     Json(
@@ -13040,11 +13392,51 @@ async fn eval_delete_with_state_handler(
     )
     .await
     {
-        Ok(Some(response)) => return Json(response).into_response(),
+        Ok(Some(response)) => {
+            if record_gateway_usage_for_project(
+                state.store.as_ref(),
+                request_context.tenant_id(),
+                request_context.project_id(),
+                "evals",
+                &eval_id,
+                20,
+                0.02,
+            )
+            .await
+            .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
         Ok(None) => {}
         Err(_) => {
             return bad_gateway_openai_response("failed to relay upstream eval delete");
         }
+    }
+
+    if record_gateway_usage_for_project(
+        state.store.as_ref(),
+        request_context.tenant_id(),
+        request_context.project_id(),
+        "evals",
+        &eval_id,
+        20,
+        0.02,
+    )
+    .await
+    .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
     }
 
     Json(
@@ -13072,11 +13464,51 @@ async fn eval_runs_list_with_state_handler(
     )
     .await
     {
-        Ok(Some(response)) => return Json(response).into_response(),
+        Ok(Some(response)) => {
+            if record_gateway_usage_for_project(
+                state.store.as_ref(),
+                request_context.tenant_id(),
+                request_context.project_id(),
+                "evals",
+                &eval_id,
+                15,
+                0.015,
+            )
+            .await
+            .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
         Ok(None) => {}
         Err(_) => {
             return bad_gateway_openai_response("failed to relay upstream eval runs list");
         }
+    }
+
+    if record_gateway_usage_for_project(
+        state.store.as_ref(),
+        request_context.tenant_id(),
+        request_context.project_id(),
+        "evals",
+        &eval_id,
+        15,
+        0.015,
+    )
+    .await
+    .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
     }
 
     Json(
@@ -13106,23 +13538,68 @@ async fn eval_runs_with_state_handler(
     )
     .await
     {
-        Ok(Some(response)) => return Json(response).into_response(),
+        Ok(Some(response)) => {
+            let run_id = response
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or(eval_id.as_str());
+            if record_gateway_usage_for_project_with_route_key(
+                state.store.as_ref(),
+                request_context.tenant_id(),
+                request_context.project_id(),
+                "evals",
+                &eval_id,
+                run_id,
+                25,
+                0.025,
+            )
+            .await
+            .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
         Ok(None) => {}
         Err(_) => {
             return bad_gateway_openai_response("failed to relay upstream eval run create");
         }
     }
 
-    Json(
-        create_eval_run(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &eval_id,
-            &request,
-        )
-        .expect("eval run create"),
+    let response = create_eval_run(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &eval_id,
+        &request,
     )
-    .into_response()
+    .expect("eval run create");
+
+    if record_gateway_usage_for_project_with_route_key(
+        state.store.as_ref(),
+        request_context.tenant_id(),
+        request_context.project_id(),
+        "evals",
+        &eval_id,
+        response.id.as_str(),
+        25,
+        0.025,
+    )
+    .await
+    .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(response).into_response()
 }
 
 async fn eval_run_retrieve_with_state_handler(
@@ -13140,11 +13617,53 @@ async fn eval_run_retrieve_with_state_handler(
     )
     .await
     {
-        Ok(Some(response)) => return Json(response).into_response(),
+        Ok(Some(response)) => {
+            if record_gateway_usage_for_project_with_route_key(
+                state.store.as_ref(),
+                request_context.tenant_id(),
+                request_context.project_id(),
+                "evals",
+                &eval_id,
+                &run_id,
+                20,
+                0.02,
+            )
+            .await
+            .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
         Ok(None) => {}
         Err(_) => {
             return bad_gateway_openai_response("failed to relay upstream eval run retrieve");
         }
+    }
+
+    if record_gateway_usage_for_project_with_route_key(
+        state.store.as_ref(),
+        request_context.tenant_id(),
+        request_context.project_id(),
+        "evals",
+        &eval_id,
+        &run_id,
+        20,
+        0.02,
+    )
+    .await
+    .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
     }
 
     Json(
@@ -13174,11 +13693,53 @@ async fn eval_run_delete_with_state_handler(
     )
     .await
     {
-        Ok(Some(response)) => return Json(response).into_response(),
+        Ok(Some(response)) => {
+            if record_gateway_usage_for_project_with_route_key(
+                state.store.as_ref(),
+                request_context.tenant_id(),
+                request_context.project_id(),
+                "evals",
+                &eval_id,
+                &run_id,
+                20,
+                0.02,
+            )
+            .await
+            .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
         Ok(None) => {}
         Err(_) => {
             return bad_gateway_openai_response("failed to relay upstream eval run delete");
         }
+    }
+
+    if record_gateway_usage_for_project_with_route_key(
+        state.store.as_ref(),
+        request_context.tenant_id(),
+        request_context.project_id(),
+        "evals",
+        &eval_id,
+        &run_id,
+        20,
+        0.02,
+    )
+    .await
+    .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
     }
 
     Json(
@@ -13208,11 +13769,53 @@ async fn eval_run_cancel_with_state_handler(
     )
     .await
     {
-        Ok(Some(response)) => return Json(response).into_response(),
+        Ok(Some(response)) => {
+            if record_gateway_usage_for_project_with_route_key(
+                state.store.as_ref(),
+                request_context.tenant_id(),
+                request_context.project_id(),
+                "evals",
+                &eval_id,
+                &run_id,
+                20,
+                0.02,
+            )
+            .await
+            .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
         Ok(None) => {}
         Err(_) => {
             return bad_gateway_openai_response("failed to relay upstream eval run cancel");
         }
+    }
+
+    if record_gateway_usage_for_project_with_route_key(
+        state.store.as_ref(),
+        request_context.tenant_id(),
+        request_context.project_id(),
+        "evals",
+        &eval_id,
+        &run_id,
+        20,
+        0.02,
+    )
+    .await
+    .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
     }
 
     Json(
@@ -13242,13 +13845,55 @@ async fn eval_run_output_items_list_with_state_handler(
     )
     .await
     {
-        Ok(Some(response)) => return Json(response).into_response(),
+        Ok(Some(response)) => {
+            if record_gateway_usage_for_project_with_route_key(
+                state.store.as_ref(),
+                request_context.tenant_id(),
+                request_context.project_id(),
+                "evals",
+                &eval_id,
+                &run_id,
+                15,
+                0.015,
+            )
+            .await
+            .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
         Ok(None) => {}
         Err(_) => {
             return bad_gateway_openai_response(
                 "failed to relay upstream eval run output items list",
             );
         }
+    }
+
+    if record_gateway_usage_for_project_with_route_key(
+        state.store.as_ref(),
+        request_context.tenant_id(),
+        request_context.project_id(),
+        "evals",
+        &eval_id,
+        &run_id,
+        15,
+        0.015,
+    )
+    .await
+    .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
     }
 
     Json(
@@ -13279,13 +13924,55 @@ async fn eval_run_output_item_retrieve_with_state_handler(
     )
     .await
     {
-        Ok(Some(response)) => return Json(response).into_response(),
+        Ok(Some(response)) => {
+            if record_gateway_usage_for_project_with_route_key(
+                state.store.as_ref(),
+                request_context.tenant_id(),
+                request_context.project_id(),
+                "evals",
+                &eval_id,
+                &output_item_id,
+                15,
+                0.015,
+            )
+            .await
+            .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
         Ok(None) => {}
         Err(_) => {
             return bad_gateway_openai_response(
                 "failed to relay upstream eval run output item retrieve",
             );
         }
+    }
+
+    if record_gateway_usage_for_project_with_route_key(
+        state.store.as_ref(),
+        request_context.tenant_id(),
+        request_context.project_id(),
+        "evals",
+        &eval_id,
+        &output_item_id,
+        15,
+        0.015,
+    )
+    .await
+    .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
     }
 
     Json(
@@ -13316,12 +14003,17 @@ async fn batches_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            let batch_id = response
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or(request.endpoint.as_str());
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "batches",
                 &request.endpoint,
+                batch_id,
                 60,
                 0.06,
             )
@@ -13343,12 +14035,21 @@ async fn batches_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    let response = create_batch(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &request.endpoint,
+        &request.input_file_id,
+    )
+    .expect("batch");
+
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "batches",
         &request.endpoint,
+        response.id.as_str(),
         60,
         0.06,
     )
@@ -13362,16 +14063,7 @@ async fn batches_with_state_handler(
             .into_response();
     }
 
-    Json(
-        create_batch(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &request.endpoint,
-            &request.input_file_id,
-        )
-        .expect("batch"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn batches_list_with_state_handler(
@@ -13599,12 +14291,17 @@ async fn vector_stores_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            let vector_store_id = response
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or(request.name.as_str());
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "vector_stores",
                 &request.name,
+                vector_store_id,
                 35,
                 0.035,
             )
@@ -13626,12 +14323,20 @@ async fn vector_stores_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    let response = create_vector_store(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &request.name,
+    )
+    .expect("vector store");
+
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "vector_stores",
         &request.name,
+        response.id.as_str(),
         35,
         0.035,
     )
@@ -13645,15 +14350,7 @@ async fn vector_stores_with_state_handler(
             .into_response();
     }
 
-    Json(
-        create_vector_store(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &request.name,
-        )
-        .expect("vector store"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn vector_stores_list_with_state_handler(
@@ -14033,12 +14730,15 @@ async fn vector_store_files_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            let usage_model = response_usage_id_or_single_data_item_id(&response)
+                .unwrap_or(request.file_id.as_str());
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "vector_store_files",
                 &vector_store_id,
+                usage_model,
                 25,
                 0.025,
             )
@@ -14060,12 +14760,21 @@ async fn vector_store_files_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    let response = create_vector_store_file(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &vector_store_id,
+        &request.file_id,
+    )
+    .expect("vector store file");
+
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "vector_store_files",
         &vector_store_id,
+        response.id.as_str(),
         25,
         0.025,
     )
@@ -14079,16 +14788,7 @@ async fn vector_store_files_with_state_handler(
             .into_response();
     }
 
-    Json(
-        create_vector_store_file(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &vector_store_id,
-            &request.file_id,
-        )
-        .expect("vector store file"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn vector_store_files_list_with_state_handler(
@@ -14179,12 +14879,13 @@ async fn vector_store_file_retrieve_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "vector_store_files",
                 &vector_store_id,
+                &file_id,
                 15,
                 0.015,
             )
@@ -14208,12 +14909,13 @@ async fn vector_store_file_retrieve_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "vector_store_files",
         &vector_store_id,
+        &file_id,
         15,
         0.015,
     )
@@ -14255,12 +14957,13 @@ async fn vector_store_file_delete_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "vector_store_files",
                 &vector_store_id,
+                &file_id,
                 15,
                 0.015,
             )
@@ -14284,12 +14987,13 @@ async fn vector_store_file_delete_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "vector_store_files",
         &vector_store_id,
+        &file_id,
         15,
         0.015,
     )
@@ -14332,12 +15036,17 @@ async fn vector_store_file_batches_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            let batch_id = response
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or(vector_store_id.as_str());
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "vector_store_file_batches",
                 &vector_store_id,
+                batch_id,
                 25,
                 0.025,
             )
@@ -14359,12 +15068,21 @@ async fn vector_store_file_batches_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    let response = create_vector_store_file_batch(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &vector_store_id,
+        &request.file_ids,
+    )
+    .expect("vector store file batch");
+
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "vector_store_file_batches",
         &vector_store_id,
+        response.id.as_str(),
         25,
         0.025,
     )
@@ -14378,16 +15096,7 @@ async fn vector_store_file_batches_with_state_handler(
             .into_response();
     }
 
-    Json(
-        create_vector_store_file_batch(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &vector_store_id,
-            &request.file_ids,
-        )
-        .expect("vector store file batch"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn vector_store_file_batch_retrieve_with_state_handler(
@@ -14406,12 +15115,13 @@ async fn vector_store_file_batch_retrieve_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "vector_store_file_batches",
                 &vector_store_id,
+                &batch_id,
                 15,
                 0.015,
             )
@@ -14435,12 +15145,13 @@ async fn vector_store_file_batch_retrieve_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "vector_store_file_batches",
         &vector_store_id,
+        &batch_id,
         15,
         0.015,
     )
@@ -14482,12 +15193,13 @@ async fn vector_store_file_batch_cancel_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "vector_store_file_batches",
                 &vector_store_id,
+                &batch_id,
                 15,
                 0.015,
             )
@@ -14511,12 +15223,13 @@ async fn vector_store_file_batch_cancel_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "vector_store_file_batches",
         &vector_store_id,
+        &batch_id,
         15,
         0.015,
     )
@@ -14558,12 +15271,13 @@ async fn vector_store_file_batch_files_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            if record_gateway_usage_for_project_with_route_key(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "vector_store_file_batches",
                 &vector_store_id,
+                &batch_id,
                 15,
                 0.015,
             )
@@ -14587,12 +15301,13 @@ async fn vector_store_file_batch_files_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
         "vector_store_file_batches",
         &vector_store_id,
+        &batch_id,
         15,
         0.015,
     )
@@ -14646,6 +15361,15 @@ fn bad_gateway_openai_response(message: impl Into<String>) -> Response {
     (StatusCode::BAD_GATEWAY, Json(error)).into_response()
 }
 
+fn invalid_request_openai_response(
+    message: impl Into<String>,
+    code: impl Into<String>,
+) -> Response {
+    let mut error = OpenAiErrorResponse::new(message, "invalid_request_error");
+    error.error.code = Some(code.into());
+    (StatusCode::BAD_REQUEST, Json(error)).into_response()
+}
+
 fn quota_exceeded_message(project_id: &str, evaluation: &QuotaCheckResult) -> String {
     match (evaluation.policy_id.as_deref(), evaluation.limit_units) {
         (Some(policy_id), Some(limit_units)) => format!(
@@ -14672,10 +15396,124 @@ async fn record_gateway_usage_for_project(
     units: u64,
     amount: f64,
 ) -> anyhow::Result<()> {
-    let provider_id =
-        planned_execution_provider_id_for_route(store, tenant_id, project_id, capability, model)
-            .await?;
-    persist_usage_record(store, project_id, model, &provider_id).await?;
+    record_gateway_usage_for_project_with_route_key(
+        store, tenant_id, project_id, capability, model, model, units, amount,
+    )
+    .await
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct TokenUsageMetrics {
+    input_tokens: u64,
+    output_tokens: u64,
+    total_tokens: u64,
+}
+
+fn json_u64(value: Option<&Value>) -> Option<u64> {
+    value.and_then(|value| value.as_u64())
+}
+
+fn extract_token_usage_metrics(response: &Value) -> Option<TokenUsageMetrics> {
+    if let Some(usage) = response.get("usage") {
+        let input_tokens = json_u64(usage.get("prompt_tokens"))
+            .or_else(|| json_u64(usage.get("input_tokens")))
+            .unwrap_or(0);
+        let output_tokens = json_u64(usage.get("completion_tokens"))
+            .or_else(|| json_u64(usage.get("output_tokens")))
+            .unwrap_or(0);
+        let total_tokens = json_u64(usage.get("total_tokens"))
+            .unwrap_or_else(|| input_tokens.saturating_add(output_tokens));
+
+        if input_tokens > 0 || output_tokens > 0 || total_tokens > 0 {
+            return Some(TokenUsageMetrics {
+                input_tokens,
+                output_tokens,
+                total_tokens,
+            });
+        }
+    }
+
+    let input_tokens = json_u64(response.get("input_tokens")).unwrap_or(0);
+    let output_tokens = json_u64(response.get("output_tokens")).unwrap_or(0);
+    let total_tokens = json_u64(response.get("total_tokens"))
+        .unwrap_or_else(|| input_tokens.saturating_add(output_tokens));
+
+    if input_tokens > 0 || output_tokens > 0 || total_tokens > 0 {
+        return Some(TokenUsageMetrics {
+            input_tokens,
+            output_tokens,
+            total_tokens,
+        });
+    }
+
+    None
+}
+
+fn response_usage_id_or_single_data_item_id(response: &Value) -> Option<&str> {
+    response.get("id").and_then(Value::as_str).or_else(|| {
+        match response
+            .get("data")
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+        {
+            Some([item]) => item.get("id").and_then(Value::as_str),
+            _ => None,
+        }
+    })
+}
+
+async fn record_gateway_usage_for_project_with_route_key(
+    store: &dyn AdminStore,
+    tenant_id: &str,
+    project_id: &str,
+    capability: &str,
+    route_key: &str,
+    usage_model: &str,
+    units: u64,
+    amount: f64,
+) -> anyhow::Result<()> {
+    record_gateway_usage_for_project_with_route_key_and_tokens(
+        store,
+        tenant_id,
+        project_id,
+        capability,
+        route_key,
+        usage_model,
+        units,
+        amount,
+        None,
+    )
+    .await
+}
+
+async fn record_gateway_usage_for_project_with_route_key_and_tokens(
+    store: &dyn AdminStore,
+    tenant_id: &str,
+    project_id: &str,
+    capability: &str,
+    route_key: &str,
+    usage_model: &str,
+    units: u64,
+    amount: f64,
+    token_usage: Option<TokenUsageMetrics>,
+) -> anyhow::Result<()> {
+    let provider_id = planned_execution_provider_id_for_route(
+        store, tenant_id, project_id, capability, route_key,
+    )
+    .await?;
+    let token_usage = token_usage.unwrap_or_default();
+    persist_usage_record_with_tokens(
+        store,
+        project_id,
+        usage_model,
+        &provider_id,
+        units,
+        amount,
+        token_usage.input_tokens,
+        token_usage.output_tokens,
+        token_usage.total_tokens,
+    )
+    .await?;
     persist_ledger_entry(store, project_id, units, amount).await?;
     Ok(())
 }
@@ -14719,7 +15557,12 @@ fn local_speech_response(
     project_id: &str,
     request: &CreateSpeechRequest,
 ) -> Response {
-    let speech = create_speech_response(tenant_id, project_id, request).expect("speech");
+    let speech = match create_speech_response(tenant_id, project_id, request) {
+        Ok(speech) => speech,
+        Err(error) => {
+            return invalid_request_openai_response(error.to_string(), "invalid_response_format");
+        }
+    };
     if request.stream_format.as_deref() == Some("sse") {
         let delta = serde_json::json!({
             "type":"response.output_audio.delta",

@@ -9,6 +9,8 @@ anyhow.workspace = true
 axum.workspace = true
 sdkwork-api-app-credential = { path = "../../crates/sdkwork-api-app-credential" }
 sdkwork-api-app-extension = { path = "../../crates/sdkwork-api-app-extension" }
+sdkwork-api-app-gateway = { path = "../../crates/sdkwork-api-app-gateway" }
+sdkwork-api-app-runtime = { path = "../../crates/sdkwork-api-app-runtime" }
 sdkwork-api-config = { path = "../../crates/sdkwork-api-config" }
 sdkwork-api-interface-admin = { path = "../../crates/sdkwork-api-interface-admin" }
 sdkwork-api-observability = { path = "../../crates/sdkwork-api-observability" }

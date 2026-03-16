@@ -1,0 +1,19 @@
+{
+  "name": "sdkwork-router-admin-catalog",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.tsx",
+  "module": "./src/index.tsx",
+  "types": "./src/index.tsx",
+  "exports": {
+    ".": {
+      "import": "./src/index.tsx",
+      "types": "./src/index.tsx"
+    }
+  },
+  "dependencies": {
+    "react": "^19.0.0",
+    "sdkwork-router-admin-commons": "workspace:*",
+    "sdkwork-router-admin-types": "workspace:*"
+  }
+}

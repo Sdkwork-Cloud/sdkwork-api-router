@@ -1,0 +1,352 @@
+:root {
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: "Aptos", "Trebuchet MS", sans-serif;
+  color: #243844;
+  background:
+    radial-gradient(circle at top left, rgba(255, 178, 82, 0.24), transparent 28%),
+    radial-gradient(circle at top right, rgba(56, 157, 144, 0.22), transparent 30%),
+    linear-gradient(180deg, #fff8ef 0%, #f7f6f0 42%, #eef4f4 100%);
+}
+
+a,
+button,
+input,
+select {
+  font: inherit;
+}
+
+button {
+  border: 0;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.portal-app {
+  min-height: 100vh;
+}
+
+.portal-kicker {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(36, 56, 68, 0.58);
+}
+
+.portal-status {
+  margin: 0;
+  color: #2d6c68;
+  line-height: 1.65;
+}
+
+.portal-auth-shell,
+.portal-loading-shell {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 26px;
+}
+
+.portal-auth-layout {
+  display: grid;
+  gap: 18px;
+  width: min(1180px, 100%);
+  grid-template-columns: minmax(0, 1.2fr) minmax(340px, 0.95fr);
+}
+
+.portal-auth-hero,
+.portal-auth-card,
+.portal-loading-card,
+.portal-panel,
+.portal-guide-card,
+.portal-card {
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(36, 56, 68, 0.08);
+  box-shadow: 0 20px 48px rgba(58, 72, 70, 0.1);
+  backdrop-filter: blur(14px);
+}
+
+.portal-auth-hero,
+.portal-auth-card,
+.portal-loading-card {
+  border-radius: 30px;
+  padding: 30px;
+}
+
+.portal-auth-hero {
+  display: grid;
+  gap: 18px;
+  align-content: start;
+  background:
+    linear-gradient(135deg, rgba(26, 112, 117, 0.94), rgba(236, 156, 73, 0.86)),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.06), transparent);
+  color: #fff8f1;
+}
+
+.portal-auth-hero .portal-kicker {
+  color: rgba(255, 248, 241, 0.76);
+}
+
+.portal-auth-hero h1,
+.portal-loading-card h1,
+.portal-hero h1 {
+  margin: 0;
+  font-size: clamp(2.3rem, 4vw, 4.2rem);
+  line-height: 0.95;
+  letter-spacing: -0.07em;
+}
+
+.portal-auth-text,
+.portal-hero-text {
+  margin: 0;
+  line-height: 1.78;
+}
+
+.portal-highlight-list,
+.portal-facts {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.portal-highlight-list li,
+.portal-facts li {
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.portal-auth-card,
+.portal-loading-card,
+.portal-panel,
+.portal-card {
+  display: grid;
+  gap: 16px;
+}
+
+.portal-auth-card h2,
+.portal-panel h2,
+.portal-card h3 {
+  margin: 4px 0 0;
+  letter-spacing: -0.04em;
+}
+
+.portal-form {
+  display: grid;
+  gap: 14px;
+}
+
+.portal-field {
+  display: grid;
+  gap: 8px;
+}
+
+.portal-field span {
+  color: rgba(36, 56, 68, 0.72);
+}
+
+.portal-field input,
+.portal-field select {
+  width: 100%;
+  min-height: 48px;
+  padding: 0 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(36, 56, 68, 0.12);
+  background: rgba(249, 252, 252, 0.96);
+  color: #173a3d;
+}
+
+.portal-form-actions,
+.portal-hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.portal-primary-button,
+.portal-secondary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 46px;
+  padding: 0 18px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition:
+    transform 160ms ease,
+    box-shadow 160ms ease,
+    opacity 160ms ease;
+}
+
+.portal-primary-button {
+  color: #fff8f2;
+  background: linear-gradient(135deg, #176d70, #eb9155);
+  box-shadow: 0 16px 28px rgba(23, 109, 112, 0.18);
+}
+
+.portal-secondary-button {
+  color: #23454a;
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(36, 56, 68, 0.12);
+}
+
+.portal-primary-button:hover,
+.portal-secondary-button:hover {
+  transform: translateY(-1px);
+}
+
+.portal-primary-button:disabled,
+.portal-secondary-button:disabled {
+  opacity: 0.72;
+  cursor: wait;
+  transform: none;
+}
+
+.portal-note-card {
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(255, 244, 230, 0.92), rgba(239, 250, 249, 0.92));
+  border: 1px solid rgba(36, 56, 68, 0.08);
+}
+
+.portal-note-card code,
+.portal-code-card pre {
+  margin: 0;
+  padding: 14px;
+  border-radius: 16px;
+  font-family: "IBM Plex Mono", Consolas, monospace;
+  font-size: 0.9rem;
+  color: #17434b;
+  background: rgba(255, 255, 255, 0.86);
+  overflow-x: auto;
+}
+
+.portal-shell {
+  width: min(1180px, calc(100vw - 40px));
+  margin: 0 auto;
+  padding: 28px 0 72px;
+  display: grid;
+  gap: 18px;
+}
+
+.portal-hero {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(0, 1.4fr) minmax(280px, 0.8fr);
+  padding: 30px;
+  border-radius: 32px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.84), rgba(255, 248, 240, 0.88)),
+    linear-gradient(180deg, rgba(255, 178, 82, 0.08), transparent);
+  border: 1px solid rgba(36, 56, 68, 0.08);
+  box-shadow: 0 20px 50px rgba(58, 72, 70, 0.12);
+}
+
+.portal-chip {
+  padding: 10px 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(36, 56, 68, 0.08);
+}
+
+.portal-guide-grid,
+.portal-detail-grid,
+.portal-layout-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.portal-guide-card {
+  display: grid;
+  gap: 8px;
+  padding: 20px;
+  border-radius: 24px;
+}
+
+.portal-guide-card span {
+  font-weight: 700;
+  color: #1f6c69;
+}
+
+.portal-guide-card p {
+  margin: 0;
+  line-height: 1.68;
+}
+
+.portal-panel {
+  padding: 24px;
+  border-radius: 28px;
+}
+
+.portal-panel-accent {
+  background:
+    linear-gradient(180deg, rgba(255, 250, 244, 0.92), rgba(255, 255, 255, 0.78)),
+    linear-gradient(90deg, rgba(233, 153, 70, 0.08), transparent);
+}
+
+.portal-panel-heading {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.portal-card {
+  padding: 20px;
+  border-radius: 22px;
+}
+
+.portal-facts li {
+  background: rgba(249, 252, 252, 0.9);
+}
+
+.portal-facts strong {
+  color: #17373d;
+}
+
+.portal-facts span {
+  color: rgba(36, 56, 68, 0.74);
+  word-break: break-word;
+}
+
+.portal-empty {
+  color: rgba(36, 56, 68, 0.52);
+}
+
+@media (max-width: 980px) {
+  .portal-auth-layout,
+  .portal-hero {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .portal-shell,
+  .portal-auth-shell,
+  .portal-loading-shell {
+    width: calc(100vw - 24px);
+    padding: 18px 0 40px;
+  }
+
+  .portal-app {
+    overflow-x: hidden;
+  }
+}

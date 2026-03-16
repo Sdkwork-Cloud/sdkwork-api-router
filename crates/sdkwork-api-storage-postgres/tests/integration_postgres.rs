@@ -171,6 +171,36 @@ async fn postgres_store_persists_routing_decision_logs_when_url_is_provided() {
 }
 
 #[tokio::test]
+async fn postgres_store_round_trips_requested_region_in_routing_decision_logs_when_url_is_provided()
+{
+    let Some(database_url) = std::env::var("SDKWORK_TEST_POSTGRES_URL").ok() else {
+        return;
+    };
+
+    let pool = run_migrations(&database_url).await.unwrap();
+    let store = PostgresAdminStore::new(pool);
+
+    let log = RoutingDecisionLog::new(
+        "decision-postgres-region",
+        RoutingDecisionSource::AdminSimulation,
+        "chat_completion",
+        "gpt-4.1",
+        "provider-us-east",
+        "geo_affinity",
+        4321,
+    )
+    .with_requested_region("us-east")
+    .with_assessments(vec![RoutingCandidateAssessment::new("provider-us-east")
+        .with_region("us-east")
+        .with_region_match(true)]);
+
+    store.insert_routing_decision_log(&log).await.unwrap();
+
+    let logs = store.list_routing_decision_logs().await.unwrap();
+    assert!(logs.iter().any(|entry| entry == &log));
+}
+
+#[tokio::test]
 async fn postgres_store_persists_provider_health_snapshots_when_url_is_provided() {
     let Some(database_url) = std::env::var("SDKWORK_TEST_POSTGRES_URL").ok() else {
         return;

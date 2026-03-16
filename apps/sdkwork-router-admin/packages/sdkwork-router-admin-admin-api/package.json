@@ -1,0 +1,17 @@
+{
+  "name": "sdkwork-router-admin-admin-api",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "module": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts"
+    }
+  },
+  "dependencies": {
+    "sdkwork-router-admin-types": "workspace:*"
+  }
+}

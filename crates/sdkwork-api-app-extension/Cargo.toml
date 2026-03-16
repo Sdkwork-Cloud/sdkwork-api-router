@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
@@ -16,6 +17,7 @@ sdkwork-api-extension-host = { path = "../sdkwork-api-extension-host" }
 sdkwork-api-storage-core = { path = "../sdkwork-api-storage-core" }
 
 [dev-dependencies]
+axum.workspace = true
 sdkwork-api-storage-sqlite = { path = "../sdkwork-api-storage-sqlite" }
 serial_test.workspace = true
 serde_json.workspace = true

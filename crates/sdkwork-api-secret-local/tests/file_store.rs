@@ -26,5 +26,8 @@ fn stores_and_loads_encrypted_envelope_in_local_file() {
         .expect("secret envelope");
     assert_eq!(loaded, envelope);
 
+    assert_eq!(store.delete_envelope(&secret_ref).unwrap(), true);
+    assert!(store.load_envelope(&secret_ref).unwrap().is_none());
+
     let _ = std::fs::remove_file(path);
 }

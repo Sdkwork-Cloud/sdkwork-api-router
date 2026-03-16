@@ -1,0 +1,36 @@
+{
+  "name": "sdkwork-router-portal-app",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.0.0",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "preview": "vite preview --host 0.0.0.0 --port 4174 --strictPort"
+  },
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "sdkwork-router-portal-account": "workspace:*",
+    "sdkwork-router-portal-api-keys": "workspace:*",
+    "sdkwork-router-portal-auth": "workspace:*",
+    "sdkwork-router-portal-billing": "workspace:*",
+    "sdkwork-router-portal-commerce": "workspace:*",
+    "sdkwork-router-portal-commons": "workspace:*",
+    "sdkwork-router-portal-core": "workspace:*",
+    "sdkwork-router-portal-credits": "workspace:*",
+    "sdkwork-router-portal-dashboard": "workspace:*",
+    "sdkwork-router-portal-portal-api": "workspace:*",
+    "sdkwork-router-portal-types": "workspace:*",
+    "sdkwork-router-portal-usage": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.10",
+    "@types/react-dom": "^19.0.4",
+    "@vitejs/plugin-react": "^5.0.0",
+    "turbo": "^2.5.8",
+    "typescript": "^5.8.2",
+    "vite": "^7.0.0"
+  }
+}

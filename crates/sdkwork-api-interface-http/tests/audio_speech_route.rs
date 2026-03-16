@@ -46,6 +46,67 @@ async fn audio_speech_route_returns_audio_content() {
 
 #[serial(extension_env)]
 #[tokio::test]
+async fn audio_speech_route_returns_local_mp3_content_when_requested() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/audio/speech")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"model\":\"gpt-4o-mini-tts\",\"voice\":\"nova\",\"input\":\"hello\",\"response_format\":\"mp3\"}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok()),
+        Some("audio/mpeg")
+    );
+
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert!(!bytes.is_empty());
+}
+
+#[serial(extension_env)]
+#[tokio::test]
+async fn audio_speech_route_returns_bad_request_for_unsupported_local_format() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/audio/speech")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"model\":\"gpt-4o-mini-tts\",\"voice\":\"nova\",\"input\":\"hello\",\"response_format\":\"mystery\"}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let json = read_json(response).await;
+    assert_eq!(
+        json["error"]["message"],
+        "unsupported local speech response_format: mystery"
+    );
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "invalid_response_format");
+}
+
+#[serial(extension_env)]
+#[tokio::test]
 async fn stateless_audio_speech_route_relays_to_openai_compatible_provider() {
     let upstream_state = UpstreamCaptureState::default();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

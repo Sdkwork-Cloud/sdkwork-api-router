@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
+use reqwest::{Client, StatusCode, Url};
 use sdkwork_api_domain_catalog::ProxyProvider;
 use sdkwork_api_domain_routing::ProviderHealthSnapshot;
 use sdkwork_api_extension_core::{ExtensionInstallation, ExtensionInstance, ExtensionRuntime};
@@ -21,6 +22,8 @@ use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;
 
 pub use sdkwork_api_extension_host::ExtensionDiscoveryPolicy;
+
+const BUILTIN_UPSTREAM_PROBE_TIMEOUT_MS: u64 = 750;
 
 pub struct PersistExtensionInstanceInput<'a> {
     pub instance_id: &'a str,
@@ -135,6 +138,12 @@ pub async fn capture_provider_health_snapshots(
     store: &dyn AdminStore,
 ) -> Result<Vec<ProviderHealthSnapshot>> {
     let providers = store.list_providers().await?;
+    let installations = store
+        .list_extension_installations()
+        .await?
+        .into_iter()
+        .map(|installation| (installation.installation_id.clone(), installation))
+        .collect::<HashMap<_, _>>();
     let instances = store
         .list_extension_instances()
         .await?
@@ -143,15 +152,28 @@ pub async fn capture_provider_health_snapshots(
         .collect::<HashMap<_, _>>();
     let statuses = list_extension_runtime_statuses()?;
     let observed_at_ms = unix_timestamp_ms();
+    let probe_client = builtin_upstream_probe_client()?;
 
     let mut snapshots = Vec::new();
     for provider in providers {
-        let Some(snapshot) = provider_health_snapshot_from_runtime(
+        let instance = instances.get(&provider.id);
+        let installation =
+            instance.and_then(|instance| installations.get(&instance.installation_id));
+        let snapshot = if let Some(snapshot) =
+            provider_health_snapshot_from_runtime(&provider, instance, &statuses, observed_at_ms)
+        {
+            snapshot
+        } else if let Some(snapshot) = provider_health_snapshot_from_probe(
+            &probe_client,
             &provider,
-            instances.get(&provider.id),
-            &statuses,
+            instance,
+            installation,
             observed_at_ms,
-        ) else {
+        )
+        .await
+        {
+            snapshot
+        } else {
             continue;
         };
         store.insert_provider_health_snapshot(&snapshot).await?;
@@ -344,11 +366,259 @@ fn provider_health_snapshot_from_runtime(
     )
 }
 
+async fn provider_health_snapshot_from_probe(
+    client: &Client,
+    provider: &ProxyProvider,
+    instance: Option<&ExtensionInstance>,
+    installation: Option<&ExtensionInstallation>,
+    observed_at_ms: u64,
+) -> Option<ProviderHealthSnapshot> {
+    if !provider_supports_builtin_upstream_probe(provider, instance, installation) {
+        return None;
+    }
+
+    let probe_path = provider_probe_path(provider, instance, installation)?;
+    let base_url = instance
+        .and_then(|instance| instance.base_url.as_deref())
+        .unwrap_or(provider.base_url.as_str());
+    let outcome = match join_probe_url(base_url, &probe_path) {
+        Some(probe_url) => probe_builtin_upstream_health(client, &probe_url, &probe_path).await,
+        None => BuiltinUpstreamProbeOutcome::stopped(format!(
+            "builtin upstream probe target is invalid for base_url {base_url}"
+        )),
+    };
+
+    Some(
+        ProviderHealthSnapshot::new(
+            &provider.id,
+            &provider.extension_id,
+            "builtin",
+            observed_at_ms,
+        )
+        .with_instance_id_option(instance.map(|instance| instance.instance_id.clone()))
+        .with_running(outcome.running)
+        .with_healthy(outcome.healthy)
+        .with_message_option(Some(outcome.message)),
+    )
+}
+
+fn builtin_upstream_probe_client() -> Result<Client> {
+    Ok(Client::builder()
+        .timeout(Duration::from_millis(BUILTIN_UPSTREAM_PROBE_TIMEOUT_MS))
+        .build()?)
+}
+
+async fn probe_builtin_upstream_health(
+    client: &Client,
+    probe_url: &str,
+    probe_path: &str,
+) -> BuiltinUpstreamProbeOutcome {
+    match client.get(probe_url).send().await {
+        Ok(response) => builtin_upstream_probe_outcome_from_response(response.status(), probe_path),
+        Err(error) => BuiltinUpstreamProbeOutcome::stopped(format!(
+            "builtin upstream probe {probe_path} failed: {error}"
+        )),
+    }
+}
+
+fn builtin_upstream_probe_outcome_from_response(
+    status: StatusCode,
+    probe_path: &str,
+) -> BuiltinUpstreamProbeOutcome {
+    let code = status.as_u16();
+    if builtin_upstream_status_is_healthy(status) {
+        let message = if status.is_success() {
+            format!("builtin upstream probe {probe_path} returned http {code}")
+        } else {
+            format!(
+                "builtin upstream probe {probe_path} returned http {code} and was treated as reachable"
+            )
+        };
+        BuiltinUpstreamProbeOutcome::healthy(message)
+    } else {
+        BuiltinUpstreamProbeOutcome::running(format!(
+            "builtin upstream probe {probe_path} returned http {code}"
+        ))
+    }
+}
+
+fn builtin_upstream_status_is_healthy(status: StatusCode) -> bool {
+    status.is_success()
+        || matches!(
+            status,
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN | StatusCode::TOO_MANY_REQUESTS
+        )
+}
+
+fn provider_supports_builtin_upstream_probe(
+    provider: &ProxyProvider,
+    instance: Option<&ExtensionInstance>,
+    installation: Option<&ExtensionInstallation>,
+) -> bool {
+    if matches!(
+        installation.map(|installation| &installation.runtime),
+        Some(ExtensionRuntime::Connector | ExtensionRuntime::NativeDynamic)
+    ) {
+        return false;
+    }
+
+    if is_official_builtin_provider_extension_id(&provider.extension_id) {
+        return true;
+    }
+
+    matches!(
+        installation.map(|installation| &installation.runtime),
+        Some(ExtensionRuntime::Builtin)
+    ) && (explicit_probe_path(instance, installation).is_some()
+        || builtin_upstream_default_probe_path(provider).is_some())
+}
+
+fn provider_probe_path(
+    provider: &ProxyProvider,
+    instance: Option<&ExtensionInstance>,
+    installation: Option<&ExtensionInstallation>,
+) -> Option<String> {
+    explicit_probe_path(instance, installation)
+        .or_else(|| builtin_upstream_default_probe_path(provider).map(ToOwned::to_owned))
+}
+
+fn explicit_probe_path(
+    instance: Option<&ExtensionInstance>,
+    installation: Option<&ExtensionInstallation>,
+) -> Option<String> {
+    instance
+        .and_then(|instance| config_string(&instance.config, "health_path"))
+        .or_else(|| {
+            installation.and_then(|installation| config_string(&installation.config, "health_path"))
+        })
+}
+
+fn builtin_upstream_default_probe_path(provider: &ProxyProvider) -> Option<&'static str> {
+    match provider.extension_id.as_str() {
+        "sdkwork.provider.openai.official"
+        | "sdkwork.provider.openrouter"
+        | "sdkwork.provider.ollama" => Some("/v1/models"),
+        _ => match provider.adapter_kind.as_str() {
+            "openai"
+            | "openai-compatible"
+            | "custom-openai"
+            | "openrouter"
+            | "openrouter-compatible"
+            | "ollama"
+            | "ollama-compatible" => Some("/v1/models"),
+            _ => None,
+        },
+    }
+}
+
+fn is_official_builtin_provider_extension_id(extension_id: &str) -> bool {
+    matches!(
+        extension_id,
+        "sdkwork.provider.openai.official"
+            | "sdkwork.provider.openrouter"
+            | "sdkwork.provider.ollama"
+    )
+}
+
+fn join_probe_url(base_url: &str, probe_path: &str) -> Option<String> {
+    let mut url = Url::parse(base_url).ok()?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return None;
+    }
+
+    let base_segments = url
+        .path_segments()
+        .map(|segments| {
+            segments
+                .filter(|segment| !segment.is_empty())
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let probe_segments = probe_path
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    let overlap = overlapping_path_segments(&base_segments, &probe_segments);
+    let combined_segments = base_segments
+        .into_iter()
+        .chain(
+            probe_segments
+                .into_iter()
+                .skip(overlap)
+                .map(ToOwned::to_owned),
+        )
+        .collect::<Vec<_>>();
+
+    if combined_segments.is_empty() {
+        url.set_path("/");
+    } else {
+        url.set_path(&format!("/{}", combined_segments.join("/")));
+    }
+
+    Some(url.into())
+}
+
+fn overlapping_path_segments(base_segments: &[String], probe_segments: &[&str]) -> usize {
+    let max_overlap = base_segments.len().min(probe_segments.len());
+    for overlap in (1..=max_overlap).rev() {
+        if base_segments[base_segments.len() - overlap..]
+            .iter()
+            .map(String::as_str)
+            .eq(probe_segments[..overlap].iter().copied())
+        {
+            return overlap;
+        }
+    }
+
+    0
+}
+
+#[derive(Debug, Clone)]
+struct BuiltinUpstreamProbeOutcome {
+    running: bool,
+    healthy: bool,
+    message: String,
+}
+
+impl BuiltinUpstreamProbeOutcome {
+    fn healthy(message: String) -> Self {
+        Self {
+            running: true,
+            healthy: true,
+            message,
+        }
+    }
+
+    fn running(message: String) -> Self {
+        Self {
+            running: true,
+            healthy: false,
+            message,
+        }
+    }
+
+    fn stopped(message: String) -> Self {
+        Self {
+            running: false,
+            healthy: false,
+            message,
+        }
+    }
+}
+
 fn unix_timestamp_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis() as u64)
         .unwrap_or_default()
+}
+
+fn config_string(value: &Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
 }
 
 fn env_flag(key: &str, default: bool) -> bool {
@@ -382,4 +652,70 @@ fn parse_trusted_signers(value: &str) -> Vec<(String, String)> {
             Some((publisher.to_owned(), public_key.to_owned()))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sdkwork_api_domain_catalog::ProxyProvider;
+    use sdkwork_api_extension_core::{ExtensionInstallation, ExtensionInstance, ExtensionRuntime};
+    use serde_json::json;
+
+    #[test]
+    fn join_probe_url_preserves_base_url_path_prefix_without_duplicate_segments() {
+        assert_eq!(
+            join_probe_url("https://openrouter.ai/api/v1", "/v1/models").as_deref(),
+            Some("https://openrouter.ai/api/v1/models")
+        );
+    }
+
+    #[tokio::test]
+    async fn explicit_health_path_enables_probe_for_builtin_installation_without_default_family() {
+        let client = builtin_upstream_probe_client().unwrap();
+        let provider = ProxyProvider::new(
+            "provider-custom-builtin",
+            "openai",
+            "custom-http",
+            "not-a-valid-base-url",
+            "Custom Builtin",
+        )
+        .with_extension_id("sdkwork.provider.custom-builtin");
+        let installation = ExtensionInstallation::new(
+            "custom-builtin-installation",
+            "sdkwork.provider.custom-builtin",
+            ExtensionRuntime::Builtin,
+        )
+        .with_enabled(true)
+        .with_config(json!({
+            "health_path": "/custom-health"
+        }));
+        let instance = ExtensionInstance::new(
+            "provider-custom-builtin",
+            "custom-builtin-installation",
+            "sdkwork.provider.custom-builtin",
+        )
+        .with_enabled(true)
+        .with_base_url("not-a-valid-base-url")
+        .with_config(json!({}));
+
+        let snapshot = provider_health_snapshot_from_probe(
+            &client,
+            &provider,
+            Some(&instance),
+            Some(&installation),
+            42,
+        )
+        .await;
+
+        assert!(snapshot.is_some());
+        let snapshot = snapshot.unwrap();
+        assert_eq!(snapshot.provider_id, "provider-custom-builtin");
+        assert_eq!(snapshot.runtime, "builtin");
+        assert!(!snapshot.running);
+        assert!(!snapshot.healthy);
+        assert!(snapshot
+            .message
+            .as_deref()
+            .is_some_and(|message| message.contains("invalid")));
+    }
 }

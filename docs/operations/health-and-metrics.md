@@ -42,3 +42,24 @@ Use metrics endpoints for:
 - request-rate monitoring
 - latency tracking
 - service-level troubleshooting
+
+## Runtime Rollout Observability
+
+Multi-node runtime rollout is now inspected through the admin API rather than a dedicated metrics series.
+
+Endpoints:
+
+- create rollout: `POST /admin/extensions/runtime-rollouts`
+- list rollouts: `GET /admin/extensions/runtime-rollouts`
+- inspect rollout: `GET /admin/extensions/runtime-rollouts/{rollout_id}`
+- create standalone config rollout: `POST /admin/runtime-config/rollouts`
+- list standalone config rollouts: `GET /admin/runtime-config/rollouts`
+- inspect standalone config rollout: `GET /admin/runtime-config/rollouts/{rollout_id}`
+
+Operational notes:
+
+- active gateway and admin nodes heartbeat into the shared admin store for extension-runtime rollout
+- active gateway, admin, and portal nodes heartbeat into the shared admin store for standalone config rollout
+- rollout status is derived from per-node participant records and rollout deadlines
+- aggregate statuses are `pending`, `applying`, `succeeded`, `failed`, or `timed_out`
+- participant rows expose `node_id`, `service_kind`, `status`, optional failure `message`, and `updated_at_ms`

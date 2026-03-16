@@ -1,0 +1,69 @@
+# Gateway API
+
+The gateway service exposes the OpenAI-compatible data plane under `/v1/*`.
+
+## Base URL and Auth
+
+- default local base URL: `http://127.0.0.1:8080/v1`
+- primary auth: `Authorization: Bearer skw_live_...`
+- health: `GET /health`
+- metrics: `GET /metrics`
+
+Minimal first request:
+
+```bash
+curl http://127.0.0.1:8080/v1/models \
+  -H "Authorization: Bearer skw_live_your_key_here"
+```
+
+In standalone service mode, expect stateful gateway behavior backed by the admin store. The stateless gateway runtime is available as a library/runtime shape and remains documented through the compatibility matrix.
+
+## Route Families
+
+| Family | Routes | Notes |
+|---|---|---|
+| models | `GET /models`, `GET /models/{model_id}`, `DELETE /models/{model_id}` | catalog-backed in stateful mode |
+| chat completions | `GET /chat/completions`, `POST /chat/completions`, `GET/POST/DELETE /chat/completions/{completion_id}`, `GET /chat/completions/{completion_id}/messages` | supports compatible JSON and stream relay |
+| completions | `POST /completions` | legacy text completion surface |
+| responses | `POST /responses`, `POST /responses/input_tokens`, `POST /responses/compact`, `GET/DELETE /responses/{response_id}`, `GET /responses/{response_id}/input_items`, `POST /responses/{response_id}/cancel` | OpenAI-style response workflow surface |
+| embeddings | `POST /embeddings` | request-model-driven provider selection |
+| moderations | `POST /moderations` | OpenAI-compatible moderation route |
+| images | `POST /images/generations`, `POST /images/edits`, `POST /images/variations` | generation and multipart edit flows |
+| audio | `POST /audio/transcriptions`, `POST /audio/translations`, `POST /audio/speech`, `GET /audio/voices`, `POST /audio/voice_consents` | includes binary speech output and voice consent creation |
+| files | `GET/POST /files`, `GET/DELETE /files/{file_id}`, `GET /files/{file_id}/content` | metadata plus binary content retrieval |
+| uploads | `POST /uploads`, `POST /uploads/{upload_id}/parts`, `POST /uploads/{upload_id}/complete`, `POST /uploads/{upload_id}/cancel` | multipart upload lifecycle |
+| containers | `GET/POST /containers`, `GET/DELETE /containers/{container_id}`, `GET/POST /containers/{container_id}/files`, `GET/DELETE /containers/{container_id}/files/{file_id}`, `GET /containers/{container_id}/files/{file_id}/content` | container and nested file flows |
+| assistants | `GET/POST /assistants`, `GET/POST/DELETE /assistants/{assistant_id}` | compatible assistants management |
+| threads | `POST /threads`, `GET/POST/DELETE /threads/{thread_id}`, nested messages and runs routes | includes tool output submission and run steps |
+| conversations | `GET/POST /conversations`, `GET/POST/DELETE /conversations/{conversation_id}`, nested item routes | conversation-native flow for response-style workloads |
+| vector stores | `GET/POST /vector_stores`, `GET/POST/DELETE /vector_stores/{vector_store_id}`, nested search, files, and file batches | retrieval and ingestion workflows |
+| batches | `GET/POST /batches`, `GET /batches/{batch_id}`, `POST /batches/{batch_id}/cancel` | asynchronous batch workflows |
+| fine tuning | `GET/POST /fine_tuning/jobs`, retrieve, cancel, events, checkpoints, pause, resume, checkpoint permissions | broad fine-tuning family coverage |
+| webhooks | `GET/POST /webhooks`, `GET/POST/DELETE /webhooks/{webhook_id}` | compatible webhook CRUD |
+| realtime | `POST /realtime/sessions` | realtime session creation |
+| evals | `GET/POST /evals`, `GET/POST/DELETE /evals/{eval_id}`, nested runs and output item routes | evaluation workflows |
+| videos | `GET/POST /videos`, retrieve, delete, content, remix, edits, extensions, extend, and character routes | includes both canonical and nested video resources |
+
+## Gateway Semantics
+
+- provider selection is routed through models, route keys, and routing policy
+- usage and billing are recorded against authenticated projects in stateful mode
+- create-like routes may preserve route-key-based provider selection while recording usage against created resource IDs
+- generation-style routes such as chat, completions, responses, embeddings, and moderations keep billing keyed to the request model even when upstream responses return resource IDs
+
+## Helpful Headers
+
+| Header | Purpose |
+|---|---|
+| `Authorization` | gateway API key |
+| `Content-Type` | JSON, multipart, or upstream-compatible media type |
+| `x-request-id` | request correlation |
+| `x-sdkwork-region` | optional routing hint for geo-affinity-aware provider selection |
+
+## Related Docs
+
+- compatibility truth:
+  - [API Compatibility](/reference/api-compatibility)
+  - [Full Compatibility Matrix](/api/compatibility-matrix)
+- control plane:
+  - [Admin API](/api-reference/admin-api)

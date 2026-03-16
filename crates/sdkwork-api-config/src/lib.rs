@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 pub use sdkwork_api_secret_core::SecretBackendKind;
@@ -18,20 +19,25 @@ const SDKWORK_EXTENSION_ENABLE_CONNECTOR_EXTENSIONS: &str =
     "SDKWORK_EXTENSION_ENABLE_CONNECTOR_EXTENSIONS";
 const SDKWORK_EXTENSION_ENABLE_NATIVE_DYNAMIC_EXTENSIONS: &str =
     "SDKWORK_EXTENSION_ENABLE_NATIVE_DYNAMIC_EXTENSIONS";
+const SDKWORK_EXTENSION_HOT_RELOAD_INTERVAL_SECS: &str =
+    "SDKWORK_EXTENSION_HOT_RELOAD_INTERVAL_SECS";
 const SDKWORK_EXTENSION_TRUSTED_SIGNERS: &str = "SDKWORK_EXTENSION_TRUSTED_SIGNERS";
 const SDKWORK_EXTENSION_REQUIRE_SIGNATURE_FOR_CONNECTOR_EXTENSIONS: &str =
     "SDKWORK_EXTENSION_REQUIRE_SIGNATURE_FOR_CONNECTOR_EXTENSIONS";
 const SDKWORK_EXTENSION_REQUIRE_SIGNATURE_FOR_NATIVE_DYNAMIC_EXTENSIONS: &str =
     "SDKWORK_EXTENSION_REQUIRE_SIGNATURE_FOR_NATIVE_DYNAMIC_EXTENSIONS";
+const SDKWORK_NATIVE_DYNAMIC_SHUTDOWN_DRAIN_TIMEOUT_MS: &str =
+    "SDKWORK_NATIVE_DYNAMIC_SHUTDOWN_DRAIN_TIMEOUT_MS";
 const SDKWORK_ADMIN_JWT_SIGNING_SECRET: &str = "SDKWORK_ADMIN_JWT_SIGNING_SECRET";
 const SDKWORK_PORTAL_JWT_SIGNING_SECRET: &str = "SDKWORK_PORTAL_JWT_SIGNING_SECRET";
 const SDKWORK_RUNTIME_SNAPSHOT_INTERVAL_SECS: &str = "SDKWORK_RUNTIME_SNAPSHOT_INTERVAL_SECS";
 const SDKWORK_SECRET_BACKEND: &str = "SDKWORK_SECRET_BACKEND";
 const SDKWORK_CREDENTIAL_MASTER_KEY: &str = "SDKWORK_CREDENTIAL_MASTER_KEY";
+const SDKWORK_CREDENTIAL_LEGACY_MASTER_KEYS: &str = "SDKWORK_CREDENTIAL_LEGACY_MASTER_KEYS";
 const SDKWORK_SECRET_LOCAL_FILE: &str = "SDKWORK_SECRET_LOCAL_FILE";
 const SDKWORK_SECRET_KEYRING_SERVICE: &str = "SDKWORK_SECRET_KEYRING_SERVICE";
 
-const MANAGED_ENV_KEYS: [&str; 15] = [
+const MANAGED_ENV_KEYS: [&str; 17] = [
     SDKWORK_GATEWAY_BIND,
     SDKWORK_ADMIN_BIND,
     SDKWORK_PORTAL_BIND,
@@ -39,9 +45,11 @@ const MANAGED_ENV_KEYS: [&str; 15] = [
     SDKWORK_EXTENSION_PATHS,
     SDKWORK_EXTENSION_ENABLE_CONNECTOR_EXTENSIONS,
     SDKWORK_EXTENSION_ENABLE_NATIVE_DYNAMIC_EXTENSIONS,
+    SDKWORK_EXTENSION_HOT_RELOAD_INTERVAL_SECS,
     SDKWORK_EXTENSION_TRUSTED_SIGNERS,
     SDKWORK_EXTENSION_REQUIRE_SIGNATURE_FOR_CONNECTOR_EXTENSIONS,
     SDKWORK_EXTENSION_REQUIRE_SIGNATURE_FOR_NATIVE_DYNAMIC_EXTENSIONS,
+    SDKWORK_NATIVE_DYNAMIC_SHUTDOWN_DRAIN_TIMEOUT_MS,
     SDKWORK_ADMIN_JWT_SIGNING_SECRET,
     SDKWORK_PORTAL_JWT_SIGNING_SECRET,
     SDKWORK_RUNTIME_SNAPSHOT_INTERVAL_SECS,
@@ -49,8 +57,11 @@ const MANAGED_ENV_KEYS: [&str; 15] = [
     SDKWORK_CREDENTIAL_MASTER_KEY,
 ];
 
-const MANAGED_SECRET_ENV_KEYS: [&str; 2] =
-    [SDKWORK_SECRET_LOCAL_FILE, SDKWORK_SECRET_KEYRING_SERVICE];
+const MANAGED_SECRET_ENV_KEYS: [&str; 3] = [
+    SDKWORK_CREDENTIAL_LEGACY_MASTER_KEYS,
+    SDKWORK_SECRET_LOCAL_FILE,
+    SDKWORK_SECRET_KEYRING_SERVICE,
+];
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum RuntimeMode {
@@ -105,16 +116,52 @@ pub struct StandaloneConfig {
     pub extension_paths: Vec<String>,
     pub enable_connector_extensions: bool,
     pub enable_native_dynamic_extensions: bool,
+    pub extension_hot_reload_interval_secs: u64,
     pub extension_trusted_signers: HashMap<String, String>,
     pub require_signed_connector_extensions: bool,
     pub require_signed_native_dynamic_extensions: bool,
+    pub native_dynamic_shutdown_drain_timeout_ms: u64,
     pub admin_jwt_signing_secret: String,
     pub portal_jwt_signing_secret: String,
     pub runtime_snapshot_interval_secs: u64,
     pub secret_backend: SecretBackendKind,
     pub credential_master_key: String,
+    pub credential_legacy_master_keys: Vec<String>,
     pub secret_local_file: String,
     pub secret_keyring_service: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StandaloneRuntimeDynamicConfig {
+    pub extension_paths: Vec<String>,
+    pub enable_connector_extensions: bool,
+    pub enable_native_dynamic_extensions: bool,
+    pub extension_hot_reload_interval_secs: u64,
+    pub extension_trusted_signers: HashMap<String, String>,
+    pub require_signed_connector_extensions: bool,
+    pub require_signed_native_dynamic_extensions: bool,
+    pub native_dynamic_shutdown_drain_timeout_ms: u64,
+    pub runtime_snapshot_interval_secs: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct StandaloneConfigLoader {
+    local_root: PathBuf,
+    values: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StandaloneConfigWatchState {
+    entries: Vec<StandaloneConfigWatchEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StandaloneConfigWatchEntry {
+    path: PathBuf,
+    exists: bool,
+    is_file: bool,
+    len: u64,
+    modified_at_ms: Option<u128>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -126,14 +173,17 @@ struct StandaloneConfigFile {
     extension_paths: Option<Vec<String>>,
     enable_connector_extensions: Option<bool>,
     enable_native_dynamic_extensions: Option<bool>,
+    extension_hot_reload_interval_secs: Option<u64>,
     extension_trusted_signers: Option<HashMap<String, String>>,
     require_signed_connector_extensions: Option<bool>,
     require_signed_native_dynamic_extensions: Option<bool>,
+    native_dynamic_shutdown_drain_timeout_ms: Option<u64>,
     admin_jwt_signing_secret: Option<String>,
     portal_jwt_signing_secret: Option<String>,
     runtime_snapshot_interval_secs: Option<u64>,
     secret_backend: Option<String>,
     credential_master_key: Option<String>,
+    credential_legacy_master_keys: Option<Vec<String>>,
     secret_local_file: Option<String>,
     secret_keyring_service: Option<String>,
 }
@@ -148,14 +198,17 @@ impl Default for StandaloneConfig {
             extension_paths: Vec::new(),
             enable_connector_extensions: true,
             enable_native_dynamic_extensions: false,
+            extension_hot_reload_interval_secs: 0,
             extension_trusted_signers: HashMap::new(),
             require_signed_connector_extensions: false,
             require_signed_native_dynamic_extensions: true,
+            native_dynamic_shutdown_drain_timeout_ms: 0,
             admin_jwt_signing_secret: "local-dev-admin-jwt-secret".to_owned(),
             portal_jwt_signing_secret: "local-dev-portal-jwt-secret".to_owned(),
             runtime_snapshot_interval_secs: 0,
             secret_backend: SecretBackendKind::DatabaseEncrypted,
             credential_master_key: "local-dev-master-key".to_owned(),
+            credential_legacy_master_keys: Vec::new(),
             secret_local_file: "sdkwork-api-secrets.json".to_owned(),
             secret_keyring_service: "sdkwork-api-server".to_owned(),
         }
@@ -164,9 +217,8 @@ impl Default for StandaloneConfig {
 
 impl StandaloneConfig {
     pub fn from_env() -> Result<Self> {
-        let values = collect_pairs(std::env::vars());
-        let local_root = resolve_local_root_dir(&values)?;
-        Self::from_local_root_and_values(local_root, values)
+        let (_, config) = StandaloneConfigLoader::from_env()?;
+        Ok(config)
     }
 
     pub fn from_local_root_and_pairs<P, I, K, V>(local_root: P, pairs: I) -> Result<Self>
@@ -228,6 +280,14 @@ impl StandaloneConfig {
                 self.runtime_snapshot_interval_secs.to_string(),
             ),
             (
+                SDKWORK_NATIVE_DYNAMIC_SHUTDOWN_DRAIN_TIMEOUT_MS.to_owned(),
+                self.native_dynamic_shutdown_drain_timeout_ms.to_string(),
+            ),
+            (
+                SDKWORK_EXTENSION_HOT_RELOAD_INTERVAL_SECS.to_owned(),
+                self.extension_hot_reload_interval_secs.to_string(),
+            ),
+            (
                 SDKWORK_SECRET_BACKEND.to_owned(),
                 self.secret_backend.as_str().to_owned(),
             ),
@@ -259,6 +319,13 @@ impl StandaloneConfig {
             ));
         }
 
+        if !self.credential_legacy_master_keys.is_empty() {
+            pairs.push((
+                SDKWORK_CREDENTIAL_LEGACY_MASTER_KEYS.to_owned(),
+                join_env_list(&self.credential_legacy_master_keys),
+            ));
+        }
+
         pairs
     }
 
@@ -270,6 +337,58 @@ impl StandaloneConfig {
         for (key, value) in self.resolved_env_pairs() {
             std::env::set_var(key, value);
         }
+    }
+
+    pub fn runtime_dynamic_config(&self) -> StandaloneRuntimeDynamicConfig {
+        StandaloneRuntimeDynamicConfig {
+            extension_paths: self.extension_paths.clone(),
+            enable_connector_extensions: self.enable_connector_extensions,
+            enable_native_dynamic_extensions: self.enable_native_dynamic_extensions,
+            extension_hot_reload_interval_secs: self.extension_hot_reload_interval_secs,
+            extension_trusted_signers: self.extension_trusted_signers.clone(),
+            require_signed_connector_extensions: self.require_signed_connector_extensions,
+            require_signed_native_dynamic_extensions: self.require_signed_native_dynamic_extensions,
+            native_dynamic_shutdown_drain_timeout_ms: self.native_dynamic_shutdown_drain_timeout_ms,
+            runtime_snapshot_interval_secs: self.runtime_snapshot_interval_secs,
+        }
+    }
+
+    pub fn non_reloadable_changed_fields(&self, next: &Self) -> Vec<&'static str> {
+        let mut fields = Vec::new();
+        if self.gateway_bind != next.gateway_bind {
+            fields.push("gateway_bind");
+        }
+        if self.admin_bind != next.admin_bind {
+            fields.push("admin_bind");
+        }
+        if self.portal_bind != next.portal_bind {
+            fields.push("portal_bind");
+        }
+        if self.database_url != next.database_url {
+            fields.push("database_url");
+        }
+        if self.admin_jwt_signing_secret != next.admin_jwt_signing_secret {
+            fields.push("admin_jwt_signing_secret");
+        }
+        if self.portal_jwt_signing_secret != next.portal_jwt_signing_secret {
+            fields.push("portal_jwt_signing_secret");
+        }
+        if self.secret_backend != next.secret_backend {
+            fields.push("secret_backend");
+        }
+        if self.credential_master_key != next.credential_master_key {
+            fields.push("credential_master_key");
+        }
+        if self.credential_legacy_master_keys != next.credential_legacy_master_keys {
+            fields.push("credential_legacy_master_keys");
+        }
+        if self.secret_local_file != next.secret_local_file {
+            fields.push("secret_local_file");
+        }
+        if self.secret_keyring_service != next.secret_keyring_service {
+            fields.push("secret_keyring_service");
+        }
+        fields
     }
 
     pub fn storage_dialect(&self) -> Option<StorageDialect> {
@@ -316,14 +435,17 @@ impl StandaloneConfig {
             extension_paths: vec![paths.extensions_dir.to_string_lossy().into_owned()],
             enable_connector_extensions: true,
             enable_native_dynamic_extensions: false,
+            extension_hot_reload_interval_secs: 0,
             extension_trusted_signers: HashMap::new(),
             require_signed_connector_extensions: false,
             require_signed_native_dynamic_extensions: true,
+            native_dynamic_shutdown_drain_timeout_ms: 0,
             admin_jwt_signing_secret: "local-dev-admin-jwt-secret".to_owned(),
             portal_jwt_signing_secret: "local-dev-portal-jwt-secret".to_owned(),
             runtime_snapshot_interval_secs: 0,
             secret_backend: SecretBackendKind::DatabaseEncrypted,
             credential_master_key: "local-dev-master-key".to_owned(),
+            credential_legacy_master_keys: Vec::new(),
             secret_local_file: paths.secret_local_file.to_string_lossy().into_owned(),
             secret_keyring_service: "sdkwork-api-server".to_owned(),
         }
@@ -359,6 +481,9 @@ impl StandaloneConfig {
         if let Some(value) = file.enable_native_dynamic_extensions {
             self.enable_native_dynamic_extensions = value;
         }
+        if let Some(value) = file.extension_hot_reload_interval_secs {
+            self.extension_hot_reload_interval_secs = value;
+        }
         if let Some(value) = file.extension_trusted_signers {
             self.extension_trusted_signers = value;
         }
@@ -367,6 +492,9 @@ impl StandaloneConfig {
         }
         if let Some(value) = file.require_signed_native_dynamic_extensions {
             self.require_signed_native_dynamic_extensions = value;
+        }
+        if let Some(value) = file.native_dynamic_shutdown_drain_timeout_ms {
+            self.native_dynamic_shutdown_drain_timeout_ms = value;
         }
         if let Some(value) = file.admin_jwt_signing_secret {
             self.admin_jwt_signing_secret = value;
@@ -387,6 +515,9 @@ impl StandaloneConfig {
         }
         if let Some(value) = file.credential_master_key {
             self.credential_master_key = value;
+        }
+        if let Some(value) = file.credential_legacy_master_keys {
+            self.credential_legacy_master_keys = value;
         }
         if let Some(value) = file.secret_local_file {
             self.secret_local_file = normalize_file_path_value(&value, base_dir);
@@ -426,6 +557,11 @@ impl StandaloneConfig {
             SDKWORK_EXTENSION_ENABLE_NATIVE_DYNAMIC_EXTENSIONS,
             self.enable_native_dynamic_extensions,
         )?;
+        self.extension_hot_reload_interval_secs = parse_u64_env(
+            values,
+            SDKWORK_EXTENSION_HOT_RELOAD_INTERVAL_SECS,
+            self.extension_hot_reload_interval_secs,
+        )?;
         if let Some(value) = values.get(SDKWORK_EXTENSION_TRUSTED_SIGNERS) {
             self.extension_trusted_signers =
                 parse_trusted_signers(value, SDKWORK_EXTENSION_TRUSTED_SIGNERS)?;
@@ -439,6 +575,11 @@ impl StandaloneConfig {
             values,
             SDKWORK_EXTENSION_REQUIRE_SIGNATURE_FOR_NATIVE_DYNAMIC_EXTENSIONS,
             self.require_signed_native_dynamic_extensions,
+        )?;
+        self.native_dynamic_shutdown_drain_timeout_ms = parse_u64_env(
+            values,
+            SDKWORK_NATIVE_DYNAMIC_SHUTDOWN_DRAIN_TIMEOUT_MS,
+            self.native_dynamic_shutdown_drain_timeout_ms,
         )?;
         if let Some(value) = values.get(SDKWORK_ADMIN_JWT_SIGNING_SECRET) {
             self.admin_jwt_signing_secret = value.clone();
@@ -457,6 +598,10 @@ impl StandaloneConfig {
         if let Some(value) = values.get(SDKWORK_CREDENTIAL_MASTER_KEY) {
             self.credential_master_key = value.clone();
         }
+        if let Some(value) = values.get(SDKWORK_CREDENTIAL_LEGACY_MASTER_KEYS) {
+            self.credential_legacy_master_keys =
+                parse_string_list_env(value, SDKWORK_CREDENTIAL_LEGACY_MASTER_KEYS)?;
+        }
         if let Some(value) = values.get(SDKWORK_SECRET_LOCAL_FILE) {
             self.secret_local_file = value.clone();
         }
@@ -465,6 +610,120 @@ impl StandaloneConfig {
         }
 
         Ok(())
+    }
+}
+
+impl StandaloneRuntimeDynamicConfig {
+    pub fn apply_to_process_env(&self) {
+        for key in [
+            SDKWORK_EXTENSION_PATHS,
+            SDKWORK_EXTENSION_ENABLE_CONNECTOR_EXTENSIONS,
+            SDKWORK_EXTENSION_ENABLE_NATIVE_DYNAMIC_EXTENSIONS,
+            SDKWORK_EXTENSION_HOT_RELOAD_INTERVAL_SECS,
+            SDKWORK_EXTENSION_TRUSTED_SIGNERS,
+            SDKWORK_EXTENSION_REQUIRE_SIGNATURE_FOR_CONNECTOR_EXTENSIONS,
+            SDKWORK_EXTENSION_REQUIRE_SIGNATURE_FOR_NATIVE_DYNAMIC_EXTENSIONS,
+            SDKWORK_RUNTIME_SNAPSHOT_INTERVAL_SECS,
+        ] {
+            std::env::remove_var(key);
+        }
+
+        if !self.extension_paths.is_empty() {
+            std::env::set_var(
+                SDKWORK_EXTENSION_PATHS,
+                join_env_paths(&self.extension_paths),
+            );
+        }
+        std::env::set_var(
+            SDKWORK_EXTENSION_ENABLE_CONNECTOR_EXTENSIONS,
+            self.enable_connector_extensions.to_string(),
+        );
+        std::env::set_var(
+            SDKWORK_EXTENSION_ENABLE_NATIVE_DYNAMIC_EXTENSIONS,
+            self.enable_native_dynamic_extensions.to_string(),
+        );
+        std::env::set_var(
+            SDKWORK_EXTENSION_HOT_RELOAD_INTERVAL_SECS,
+            self.extension_hot_reload_interval_secs.to_string(),
+        );
+        if !self.extension_trusted_signers.is_empty() {
+            std::env::set_var(
+                SDKWORK_EXTENSION_TRUSTED_SIGNERS,
+                trusted_signers_to_env(&self.extension_trusted_signers),
+            );
+        }
+        std::env::set_var(
+            SDKWORK_EXTENSION_REQUIRE_SIGNATURE_FOR_CONNECTOR_EXTENSIONS,
+            self.require_signed_connector_extensions.to_string(),
+        );
+        std::env::set_var(
+            SDKWORK_EXTENSION_REQUIRE_SIGNATURE_FOR_NATIVE_DYNAMIC_EXTENSIONS,
+            self.require_signed_native_dynamic_extensions.to_string(),
+        );
+        std::env::set_var(
+            SDKWORK_NATIVE_DYNAMIC_SHUTDOWN_DRAIN_TIMEOUT_MS,
+            self.native_dynamic_shutdown_drain_timeout_ms.to_string(),
+        );
+        std::env::set_var(
+            SDKWORK_RUNTIME_SNAPSHOT_INTERVAL_SECS,
+            self.runtime_snapshot_interval_secs.to_string(),
+        );
+    }
+}
+
+impl StandaloneConfigLoader {
+    pub fn from_env() -> Result<(Self, StandaloneConfig)> {
+        Self::from_values(collect_pairs(std::env::vars()))
+    }
+
+    pub fn from_local_root_and_pairs<P, I, K, V>(
+        local_root: P,
+        pairs: I,
+    ) -> Result<(Self, StandaloneConfig)>
+    where
+        P: AsRef<Path>,
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<String>,
+        V: Into<String>,
+    {
+        let values = collect_pairs(pairs);
+        let local_root = absolutize_path(local_root.as_ref())?;
+        Self::from_local_root_and_values(local_root, values)
+    }
+
+    pub fn reload(&self) -> Result<StandaloneConfig> {
+        StandaloneConfig::from_local_root_and_values(self.local_root.clone(), self.values.clone())
+    }
+
+    pub fn watch_state(&self) -> Result<StandaloneConfigWatchState> {
+        StandaloneConfigWatchState::capture(&self.local_root, &self.values)
+    }
+
+    fn from_values(values: HashMap<String, String>) -> Result<(Self, StandaloneConfig)> {
+        let local_root = resolve_local_root_dir(&values)?;
+        Self::from_local_root_and_values(local_root, values)
+    }
+
+    fn from_local_root_and_values(
+        local_root: PathBuf,
+        values: HashMap<String, String>,
+    ) -> Result<(Self, StandaloneConfig)> {
+        let config =
+            StandaloneConfig::from_local_root_and_values(local_root.clone(), values.clone())?;
+        Ok((Self { local_root, values }, config))
+    }
+}
+
+impl StandaloneConfigWatchState {
+    fn capture(local_root: &Path, values: &HashMap<String, String>) -> Result<Self> {
+        let paths = LocalConfigPaths::from_root_dir(local_root.to_path_buf());
+        let watch_paths = config_watch_paths(&paths, values)?;
+        let mut entries = watch_paths
+            .into_iter()
+            .map(|path| capture_watch_entry(path.as_path()))
+            .collect::<Result<Vec<_>>>()?;
+        entries.sort_by(|left, right| left.path.cmp(&right.path));
+        Ok(Self { entries })
     }
 }
 
@@ -529,19 +788,7 @@ fn resolve_config_file_path(
     paths: &LocalConfigPaths,
     values: &HashMap<String, String>,
 ) -> Result<Option<PathBuf>> {
-    let home_dir = resolve_home_dir(values).ok();
-
-    if let Some(path) = values
-        .get(SDKWORK_CONFIG_FILE)
-        .filter(|value| !value.trim().is_empty())
-    {
-        let expanded = expand_home_prefix(path, home_dir.as_deref());
-        let resolved = if expanded.is_absolute() {
-            expanded
-        } else {
-            paths.root_dir.join(expanded)
-        };
-        let resolved = absolutize_path(&resolved)?;
+    if let Some(resolved) = resolve_requested_config_file_path(paths, values)? {
         if !resolved.is_file() {
             anyhow::bail!(
                 "configured config file does not exist: {}",
@@ -558,6 +805,38 @@ fn resolve_config_file_path(
     }
 
     Ok(None)
+}
+
+fn config_watch_paths(
+    paths: &LocalConfigPaths,
+    values: &HashMap<String, String>,
+) -> Result<Vec<PathBuf>> {
+    if let Some(path) = resolve_requested_config_file_path(paths, values)? {
+        return Ok(vec![path]);
+    }
+
+    Ok(paths.discovered_config_candidates().to_vec())
+}
+
+fn resolve_requested_config_file_path(
+    paths: &LocalConfigPaths,
+    values: &HashMap<String, String>,
+) -> Result<Option<PathBuf>> {
+    let home_dir = resolve_home_dir(values).ok();
+
+    values
+        .get(SDKWORK_CONFIG_FILE)
+        .filter(|value| !value.trim().is_empty())
+        .map(|path| {
+            let expanded = expand_home_prefix(path, home_dir.as_deref());
+            let resolved = if expanded.is_absolute() {
+                expanded
+            } else {
+                paths.root_dir.join(expanded)
+            };
+            absolutize_path(&resolved)
+        })
+        .transpose()
 }
 
 fn load_config_file(path: &Path) -> Result<StandaloneConfigFile> {
@@ -637,6 +916,27 @@ fn trusted_signers_to_env(trusted_signers: &HashMap<String, String>) -> String {
         .map(|(publisher, public_key)| format!("{publisher}={public_key}"))
         .collect::<Vec<_>>()
         .join(";")
+}
+
+fn parse_string_list_env(value: &str, key: &str) -> Result<Vec<String>> {
+    let mut entries = Vec::new();
+    for entry in value.split(';') {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        entries.push(entry.to_owned());
+    }
+
+    if entries.is_empty() && !value.trim().is_empty() {
+        anyhow::bail!("invalid list value for {key}");
+    }
+
+    Ok(entries)
+}
+
+fn join_env_list(values: &[String]) -> String {
+    values.join(";")
 }
 
 fn normalize_file_path_value(value: &str, base_dir: &Path) -> String {
@@ -736,6 +1036,40 @@ fn absolutize_path(path: &Path) -> Result<PathBuf> {
     } else {
         Ok(std::env::current_dir()?.join(path))
     }
+}
+
+fn capture_watch_entry(path: &Path) -> Result<StandaloneConfigWatchEntry> {
+    match fs::metadata(path) {
+        Ok(metadata) => Ok(StandaloneConfigWatchEntry {
+            path: path.to_path_buf(),
+            exists: true,
+            is_file: metadata.is_file(),
+            len: metadata.len(),
+            modified_at_ms: metadata.modified().ok().and_then(system_time_to_unix_ms),
+        }),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(StandaloneConfigWatchEntry {
+                path: path.to_path_buf(),
+                exists: false,
+                is_file: false,
+                len: 0,
+                modified_at_ms: None,
+            })
+        }
+        Err(error) => Err(error).with_context(|| {
+            format!(
+                "failed to capture config watch metadata for {}",
+                path.display()
+            )
+        }),
+    }
+}
+
+fn system_time_to_unix_ms(value: SystemTime) -> Option<u128> {
+    value
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_millis())
 }
 
 #[cfg(test)]

@@ -27,6 +27,15 @@ impl KeyringBackend for MemoryKeyringBackend {
             .get(&(service.to_owned(), username.to_owned()))
             .cloned())
     }
+
+    fn delete_password(&self, service: &str, username: &str) -> Result<bool> {
+        Ok(self
+            .entries
+            .lock()
+            .unwrap()
+            .remove(&(service.to_owned(), username.to_owned()))
+            .is_some())
+    }
 }
 
 #[test]
@@ -46,4 +55,7 @@ fn stores_and_loads_encrypted_envelope_in_keyring_backend() {
         .unwrap()
         .expect("secret envelope");
     assert_eq!(loaded, envelope);
+
+    assert_eq!(store.delete_envelope(&secret_ref).unwrap(), true);
+    assert!(store.load_envelope(&secret_ref).unwrap().is_none());
 }

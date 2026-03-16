@@ -3,97 +3,116 @@ layout: home
 
 hero:
   name: SDKWork API Server
-  text: OpenAI-compatible gateway with admin control plane, public portal, and extension runtime
-  tagline: Cross-platform Rust services, browser and Tauri console, SQLite and PostgreSQL persistence, and a pluggable channel/provider architecture.
+  text: OpenAI-compatible gateway, admin control plane, public portal, and extension runtime
+  tagline: A cross-platform Rust workspace for running OpenAI-style APIs, routing traffic across providers, operating a control plane, and shipping browser or desktop operator experiences.
   actions:
     - theme: brand
-      text: Installation Guide
-      link: /getting-started/installation
+      text: Quickstart
+      link: /getting-started/quickstart
     - theme: alt
-      text: Source Development
-      link: /getting-started/source-development
+      text: API Reference
+      link: /api-reference/overview
     - theme: alt
-      text: Release Builds
-      link: /getting-started/release-builds
+      text: Software Architecture
+      link: /architecture/software-architecture
 
 features:
-  - title: Cross-platform startup
-    details: Run the stack on Windows, Linux, or macOS from source with browser mode, desktop mode, or partial service startup.
-  - title: Release-ready runtime
-    details: Build release binaries for admin, gateway, and portal services, plus browser assets or Tauri desktop packages.
+  - title: OpenAI-compatible gateway
+    details: Expose a broad `/v1/*` surface for chat, responses, embeddings, files, uploads, audio, images, assistants, threads, vector stores, evals, videos, and more.
+  - title: Native control plane
+    details: Operate channels, providers, credentials, routing policies, runtime rollouts, usage, billing, and quota management through `/admin/*`.
   - title: Public self-service portal
-    details: Ship registration, login, workspace inspection, and self-service API key issuance without exposing operator-only admin APIs.
+    details: Let end users register, sign in, inspect their workspace, review usage and billing posture, and issue gateway API keys through `/portal/*` and the standalone portal app.
+  - title: Pluggable runtime
+    details: Run builtin, connector, and native-dynamic provider runtimes with hot reload, health snapshots, and rollout-aware supervision.
 ---
+
+## Documentation Map
+
+SDKWork now follows a documentation structure closer to mature API platforms such as OpenAI's official docs:
+
+- [Getting Started](/getting-started/installation): install prerequisites, run from source, compile binaries, and package browser or Tauri artifacts
+- [Architecture](/architecture/software-architecture): understand the standalone services, workspace layering, extension runtime, and module boundaries
+- [API Reference](/api-reference/overview): navigate the gateway, admin, and portal surfaces with the right base path and auth model
+- [Operations](/operations/configuration): configure, observe, and troubleshoot standalone deployments
+- [Reference](/reference/api-compatibility): inspect compatibility labels, repository layout, and build tooling
 
 ## Start Here
 
 Choose the path that matches what you need right now:
 
-- New to the project:
-  - go to [Installation](/getting-started/installation)
-- Running from source:
-  - go to [Source Development](/getting-started/source-development)
-- Building distributable artifacts:
-  - go to [Release Builds](/getting-started/release-builds)
-- Understanding runtime shape:
-  - go to [Runtime Modes](/getting-started/runtime-modes)
-- Onboarding end users:
-  - go to [Public Portal](/getting-started/public-portal)
+- First verified local run:
+  - [Quickstart](/getting-started/quickstart)
+- First-time setup:
+  - [Installation](/getting-started/installation)
+- Local development:
+  - [Source Development](/getting-started/source-development)
+- Compilation and packaging:
+  - [Build and Packaging](/getting-started/build-and-packaging)
+- Deployable artifacts:
+  - [Release Builds](/getting-started/release-builds)
+- System design:
+  - [Software Architecture](/architecture/software-architecture)
+- Endpoint inventory:
+  - [Gateway API](/api-reference/gateway-api)
 
-## What This Repository Contains
+## Product Surfaces
 
-Runtime surfaces:
+| Surface | Base path | Purpose |
+|---|---|---|
+| gateway-service | `/v1/*` | OpenAI-compatible data plane |
+| admin-api-service | `/admin/*` | operator control plane |
+| portal-api-service | `/portal/*` | self-service auth, workspace, and API key lifecycle |
+| router-web-service | `/admin/*`, `/portal/*`, `/api/*` | Pingora public site delivery and API proxy entry |
+| apps/sdkwork-router-admin | browser or Tauri | standalone super-admin experience |
+| apps/sdkwork-router-portal | browser | standalone developer self-service portal |
+| docs | `/` | VitePress documentation site |
 
-- `gateway-service`
-  - OpenAI-compatible `/v1/*` gateway
-- `admin-api-service`
-  - operator-only `/admin/*` control plane
-- `portal-api-service`
-  - public `/portal/*` self-service API
-- `console/`
-  - React shell for browser and Tauri
+## Local Default Ports
 
-Platform support:
+| Surface | Default bind |
+|---|---|
+| gateway | `127.0.0.1:8080` |
+| admin | `127.0.0.1:8081` |
+| portal | `127.0.0.1:8082` |
+| web host | `127.0.0.1:3001` |
+| admin web app | `127.0.0.1:5173` |
+| portal web app | `127.0.0.1:5174` |
 
-- Windows
-- Linux
-- macOS
+## Fast Paths
 
-Persistence:
-
-- SQLite
-- PostgreSQL
-
-Secret backends:
-
-- `database_encrypted`
-- `local_encrypted_file`
-- `os_keyring`
-
-## Core Operational Entry Points
-
-Full stack from source:
+Run the full stack from source:
 
 ```bash
 node scripts/dev/start-workspace.mjs
 ```
 
-Full stack with Tauri:
+Run the full stack with the desktop shell and shared Pingora host:
 
 ```bash
 node scripts/dev/start-workspace.mjs --tauri
 ```
 
-Docs local preview:
+Compile the standalone release binaries:
 
 ```bash
-pnpm --dir docs install
-pnpm --dir docs dev
+cargo build --release -p admin-api-service -p gateway-service -p portal-api-service
 ```
 
-Console local preview:
+Build the admin app:
 
 ```bash
-pnpm --dir console install
-pnpm --dir console dev
+pnpm --dir apps/sdkwork-router-admin build
+```
+
+Build the standalone portal app:
+
+```bash
+pnpm --dir apps/sdkwork-router-portal build
+```
+
+Build the docs site:
+
+```bash
+pnpm --dir docs build
 ```

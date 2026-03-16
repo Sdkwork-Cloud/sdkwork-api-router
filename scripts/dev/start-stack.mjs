@@ -1,75 +1,12 @@
 #!/usr/bin/env node
 
 import { spawn } from 'node:child_process';
-
-function parseArgs(argv) {
-  const result = {
-    databaseUrl: 'sqlite://sdkwork-api-server.db',
-    gatewayBind: '127.0.0.1:8080',
-    adminBind: '127.0.0.1:8081',
-    portalBind: '127.0.0.1:8082',
-    dryRun: false,
-    help: false,
-  };
-
-  for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
-    if (arg === '--dry-run') {
-      result.dryRun = true;
-      continue;
-    }
-    if (arg === '--help' || arg === '-h') {
-      result.help = true;
-      continue;
-    }
-    if (arg === '--database-url') {
-      result.databaseUrl = argv[index + 1] ?? result.databaseUrl;
-      index += 1;
-      continue;
-    }
-    if (arg === '--gateway-bind') {
-      result.gatewayBind = argv[index + 1] ?? result.gatewayBind;
-      index += 1;
-      continue;
-    }
-    if (arg === '--admin-bind') {
-      result.adminBind = argv[index + 1] ?? result.adminBind;
-      index += 1;
-      continue;
-    }
-    if (arg === '--portal-bind') {
-      result.portalBind = argv[index + 1] ?? result.portalBind;
-      index += 1;
-    }
-  }
-
-  return result;
-}
-
-function printHelp() {
-  console.log(`Usage: node scripts/dev/start-stack.mjs [options]
-
-Starts admin, gateway, and portal services in the current terminal.
-
-Options:
-  --database-url <url>   Shared SDKWORK_DATABASE_URL value
-  --gateway-bind <bind>  SDKWORK_GATEWAY_BIND override
-  --admin-bind <bind>    SDKWORK_ADMIN_BIND override
-  --portal-bind <bind>   SDKWORK_PORTAL_BIND override
-  --dry-run              Print commands without starting processes
-  -h, --help             Show this help
-`);
-}
-
-function serviceEnv(settings) {
-  return {
-    ...process.env,
-    SDKWORK_DATABASE_URL: settings.databaseUrl,
-    SDKWORK_GATEWAY_BIND: settings.gatewayBind,
-    SDKWORK_ADMIN_BIND: settings.adminBind,
-    SDKWORK_PORTAL_BIND: settings.portalBind,
-  };
-}
+import {
+  databaseDisplayValue,
+  parseStackArgs,
+  serviceEnv,
+  stackHelpText,
+} from './backend-launch-lib.mjs';
 
 function cargoExecutable() {
   return process.platform === 'win32' ? 'cargo.exe' : 'cargo';
@@ -120,14 +57,14 @@ function installSignalHandlers(children) {
   process.on('SIGTERM', () => shutdown('SIGTERM'));
 }
 
-const settings = parseArgs(process.argv.slice(2));
+const settings = parseStackArgs(process.argv.slice(2));
 if (settings.help) {
-  printHelp();
+  console.log(stackHelpText());
   process.exit(0);
 }
 
 console.log('[start-stack] shared configuration');
-console.log(`  SDKWORK_DATABASE_URL=${settings.databaseUrl}`);
+console.log(`  SDKWORK_DATABASE_URL=${databaseDisplayValue(settings)}`);
 console.log(`  SDKWORK_ADMIN_BIND=${settings.adminBind}`);
 console.log(`  SDKWORK_GATEWAY_BIND=${settings.gatewayBind}`);
 console.log(`  SDKWORK_PORTAL_BIND=${settings.portalBind}`);

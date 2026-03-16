@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use sdkwork_api_domain_catalog::{
     Channel, ModelCapability, ModelCatalogEntry, ProviderChannelBinding, ProxyProvider,
 };
@@ -29,6 +29,14 @@ pub async fn persist_channel(store: &dyn AdminStore, id: &str, name: &str) -> Re
 
 pub async fn list_channels(store: &dyn AdminStore) -> Result<Vec<Channel>> {
     store.list_channels().await
+}
+
+pub async fn delete_channel(store: &dyn AdminStore, channel_id: &str) -> Result<bool> {
+    let channel_id = channel_id.trim();
+    if channel_id.is_empty() {
+        return Err(anyhow!("channel id is required"));
+    }
+    store.delete_channel(channel_id).await
 }
 
 pub fn create_provider_with_config(
@@ -172,6 +180,14 @@ pub async fn list_providers(store: &dyn AdminStore) -> Result<Vec<ProxyProvider>
     store.list_providers().await
 }
 
+pub async fn delete_provider(store: &dyn AdminStore, provider_id: &str) -> Result<bool> {
+    let provider_id = provider_id.trim();
+    if provider_id.is_empty() {
+        return Err(anyhow!("provider id is required"));
+    }
+    store.delete_provider(provider_id).await
+}
+
 pub fn create_model(external_name: &str, provider_id: &str) -> Result<ModelCatalogEntry> {
     Ok(ModelCatalogEntry::new(external_name, provider_id))
 }
@@ -222,4 +238,20 @@ pub async fn persist_model_with_metadata(
 
 pub async fn list_model_entries(store: &dyn AdminStore) -> Result<Vec<ModelCatalogEntry>> {
     store.list_models().await
+}
+
+pub async fn delete_model_variant(
+    store: &dyn AdminStore,
+    external_name: &str,
+    provider_id: &str,
+) -> Result<bool> {
+    let external_name = external_name.trim();
+    if external_name.is_empty() {
+        return Err(anyhow!("external_name is required"));
+    }
+    let provider_id = provider_id.trim();
+    if provider_id.is_empty() {
+        return Err(anyhow!("provider_id is required"));
+    }
+    store.delete_model_variant(external_name, provider_id).await
 }

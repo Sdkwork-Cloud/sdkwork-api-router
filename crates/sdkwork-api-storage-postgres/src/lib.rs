@@ -4,8 +4,9 @@ use sdkwork_api_domain_catalog::{
     normalize_provider_extension_id, Channel, ModelCapability, ModelCatalogEntry,
     ProviderChannelBinding, ProxyProvider,
 };
+use sdkwork_api_domain_coupon::CouponCampaign;
 use sdkwork_api_domain_credential::UpstreamCredential;
-use sdkwork_api_domain_identity::{GatewayApiKeyRecord, PortalUserRecord};
+use sdkwork_api_domain_identity::{AdminUserRecord, GatewayApiKeyRecord, PortalUserRecord};
 use sdkwork_api_domain_routing::{
     ProviderHealthSnapshot, RoutingCandidateAssessment, RoutingDecisionLog, RoutingDecisionSource,
     RoutingPolicy, RoutingStrategy,
@@ -14,7 +15,11 @@ use sdkwork_api_domain_tenant::{Project, Tenant};
 use sdkwork_api_domain_usage::UsageRecord;
 use sdkwork_api_extension_core::{ExtensionInstallation, ExtensionInstance, ExtensionRuntime};
 use sdkwork_api_secret_core::SecretEnvelope;
-use sdkwork_api_storage_core::{AdminStore, StorageDialect};
+use sdkwork_api_storage_core::{
+    AdminStore, ExtensionRuntimeRolloutParticipantRecord, ExtensionRuntimeRolloutRecord,
+    ServiceRuntimeNodeRecord, StandaloneConfigRolloutParticipantRecord,
+    StandaloneConfigRolloutRecord, StorageDialect,
+};
 use serde_json::Value;
 use sqlx::{postgres::PgPoolOptions, PgPool};
 use std::str::FromStr;
@@ -116,6 +121,20 @@ type PortalUserRow = (
     i64,
 );
 
+type AdminUserRow = (String, String, String, String, String, bool, i64);
+
+type CouponRow = (String, String, String, String, i64, bool, String, String, i64);
+
+type CredentialRow = (
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
+
 fn decode_portal_user_row(row: Option<PortalUserRow>) -> Result<Option<PortalUserRecord>> {
     row.map(
         |(
@@ -143,6 +162,64 @@ fn decode_portal_user_row(row: Option<PortalUserRow>) -> Result<Option<PortalUse
         },
     )
     .transpose()
+}
+
+fn decode_admin_user_row(row: Option<AdminUserRow>) -> Result<Option<AdminUserRecord>> {
+    row.map(
+        |(id, email, display_name, password_salt, password_hash, active, created_at_ms)| {
+            Ok(AdminUserRecord {
+                id,
+                email,
+                display_name,
+                password_salt,
+                password_hash,
+                active,
+                created_at_ms: u64::try_from(created_at_ms)?,
+            })
+        },
+    )
+    .transpose()
+}
+
+fn decode_coupon_row(row: Option<CouponRow>) -> Result<Option<CouponCampaign>> {
+    row.map(
+        |(id, code, discount_label, audience, remaining, active, note, expires_on, created_at_ms)| {
+            Ok(CouponCampaign {
+                id,
+                code,
+                discount_label,
+                audience,
+                remaining: u64::try_from(remaining)?,
+                active,
+                note,
+                expires_on,
+                created_at_ms: u64::try_from(created_at_ms)?,
+            })
+        },
+    )
+    .transpose()
+}
+
+fn decode_credential_row(row: CredentialRow) -> UpstreamCredential {
+    let (
+        tenant_id,
+        provider_id,
+        key_reference,
+        secret_backend,
+        secret_local_file,
+        secret_keyring_service,
+        secret_master_key_id,
+    ) = row;
+
+    UpstreamCredential {
+        tenant_id,
+        provider_id,
+        key_reference,
+        secret_backend,
+        secret_local_file,
+        secret_keyring_service,
+        secret_master_key_id,
+    }
 }
 
 pub async fn run_migrations(url: &str) -> Result<PgPool> {
@@ -203,6 +280,47 @@ pub async fn run_migrations(url: &str) -> Result<PgPool> {
     .execute(&pool)
     .await?;
     sqlx::query(
+        "CREATE TABLE IF NOT EXISTS admin_users (
+            id TEXT PRIMARY KEY NOT NULL,
+            email TEXT NOT NULL,
+            display_name TEXT NOT NULL DEFAULT '',
+            password_salt TEXT NOT NULL DEFAULT '',
+            password_hash TEXT NOT NULL DEFAULT '',
+            active BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at_ms BIGINT NOT NULL DEFAULT 0
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS display_name TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS password_salt TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS password_hash TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS created_at_ms BIGINT NOT NULL DEFAULT 0",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query("CREATE UNIQUE INDEX IF NOT EXISTS idx_admin_users_email ON admin_users (email)")
+        .execute(&pool)
+        .await?;
+    sqlx::query(
         "CREATE TABLE IF NOT EXISTS tenant_records (
             id TEXT PRIMARY KEY NOT NULL,
             name TEXT NOT NULL
@@ -216,6 +334,26 @@ pub async fn run_migrations(url: &str) -> Result<PgPool> {
             tenant_id TEXT NOT NULL,
             name TEXT NOT NULL
         )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS coupon_campaigns (
+            id TEXT PRIMARY KEY NOT NULL,
+            code TEXT NOT NULL,
+            discount_label TEXT NOT NULL,
+            audience TEXT NOT NULL,
+            remaining BIGINT NOT NULL DEFAULT 0,
+            active BOOLEAN NOT NULL DEFAULT TRUE,
+            note TEXT NOT NULL DEFAULT '',
+            expires_on TEXT NOT NULL DEFAULT '',
+            created_at_ms BIGINT NOT NULL DEFAULT 0
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_coupon_campaigns_code ON coupon_campaigns (code)",
     )
     .execute(&pool)
     .await?;
@@ -270,6 +408,9 @@ pub async fn run_migrations(url: &str) -> Result<PgPool> {
             provider_id TEXT NOT NULL,
             key_reference TEXT NOT NULL,
             secret_backend TEXT NOT NULL DEFAULT 'database_encrypted',
+            secret_local_file TEXT,
+            secret_keyring_service TEXT,
+            secret_master_key_id TEXT,
             secret_ciphertext TEXT,
             secret_key_version INTEGER,
             PRIMARY KEY (tenant_id, provider_id, key_reference)
@@ -279,6 +420,19 @@ pub async fn run_migrations(url: &str) -> Result<PgPool> {
     .await?;
     sqlx::query(
         "ALTER TABLE credential_records ADD COLUMN IF NOT EXISTS secret_backend TEXT NOT NULL DEFAULT 'database_encrypted'",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query("ALTER TABLE credential_records ADD COLUMN IF NOT EXISTS secret_local_file TEXT")
+        .execute(&pool)
+        .await?;
+    sqlx::query(
+        "ALTER TABLE credential_records ADD COLUMN IF NOT EXISTS secret_keyring_service TEXT",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE credential_records ADD COLUMN IF NOT EXISTS secret_master_key_id TEXT",
     )
     .execute(&pool)
     .await?;
@@ -364,6 +518,7 @@ pub async fn run_migrations(url: &str) -> Result<PgPool> {
             strategy TEXT NOT NULL,
             selection_seed BIGINT,
             selection_reason TEXT,
+            requested_region TEXT,
             slo_applied BOOLEAN NOT NULL DEFAULT FALSE,
             slo_degraded BOOLEAN NOT NULL DEFAULT FALSE,
             created_at_ms BIGINT NOT NULL,
@@ -372,6 +527,9 @@ pub async fn run_migrations(url: &str) -> Result<PgPool> {
     )
     .execute(&pool)
     .await?;
+    sqlx::query("ALTER TABLE routing_decision_logs ADD COLUMN IF NOT EXISTS requested_region TEXT")
+        .execute(&pool)
+        .await?;
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS routing_provider_health (
             provider_id TEXT NOT NULL,
@@ -390,8 +548,42 @@ pub async fn run_migrations(url: &str) -> Result<PgPool> {
         "CREATE TABLE IF NOT EXISTS usage_records (
             project_id TEXT NOT NULL,
             model TEXT NOT NULL,
-            provider_id TEXT NOT NULL
+            provider_id TEXT NOT NULL,
+            units BIGINT NOT NULL DEFAULT 0,
+            amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+            input_tokens BIGINT NOT NULL DEFAULT 0,
+            output_tokens BIGINT NOT NULL DEFAULT 0,
+            total_tokens BIGINT NOT NULL DEFAULT 0,
+            created_at_ms BIGINT NOT NULL DEFAULT 0
         )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query("ALTER TABLE usage_records ADD COLUMN IF NOT EXISTS units BIGINT NOT NULL DEFAULT 0")
+        .execute(&pool)
+        .await?;
+    sqlx::query(
+        "ALTER TABLE usage_records ADD COLUMN IF NOT EXISTS amount DOUBLE PRECISION NOT NULL DEFAULT 0",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE usage_records ADD COLUMN IF NOT EXISTS input_tokens BIGINT NOT NULL DEFAULT 0",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE usage_records ADD COLUMN IF NOT EXISTS output_tokens BIGINT NOT NULL DEFAULT 0",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE usage_records ADD COLUMN IF NOT EXISTS total_tokens BIGINT NOT NULL DEFAULT 0",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE usage_records ADD COLUMN IF NOT EXISTS created_at_ms BIGINT NOT NULL DEFAULT 0",
     )
     .execute(&pool)
     .await?;
@@ -450,6 +642,109 @@ pub async fn run_migrations(url: &str) -> Result<PgPool> {
     )
     .execute(&pool)
     .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS service_runtime_nodes (
+            node_id TEXT PRIMARY KEY NOT NULL,
+            service_kind TEXT NOT NULL,
+            started_at_ms BIGINT NOT NULL,
+            last_seen_at_ms BIGINT NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_service_runtime_nodes_last_seen
+         ON service_runtime_nodes (last_seen_at_ms DESC, node_id)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS extension_runtime_rollouts (
+            rollout_id TEXT PRIMARY KEY NOT NULL,
+            scope TEXT NOT NULL,
+            requested_extension_id TEXT,
+            requested_instance_id TEXT,
+            resolved_extension_id TEXT,
+            created_by TEXT NOT NULL,
+            created_at_ms BIGINT NOT NULL,
+            deadline_at_ms BIGINT NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_extension_runtime_rollouts_created_at
+         ON extension_runtime_rollouts (created_at_ms DESC, rollout_id)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS extension_runtime_rollout_participants (
+            rollout_id TEXT NOT NULL,
+            node_id TEXT NOT NULL,
+            service_kind TEXT NOT NULL,
+            status TEXT NOT NULL,
+            message TEXT,
+            updated_at_ms BIGINT NOT NULL,
+            PRIMARY KEY (rollout_id, node_id)
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_extension_runtime_rollout_participants_node_status
+         ON extension_runtime_rollout_participants (node_id, status, updated_at_ms, rollout_id)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_extension_runtime_rollout_participants_rollout
+         ON extension_runtime_rollout_participants (rollout_id, node_id)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS standalone_config_rollouts (
+            rollout_id TEXT PRIMARY KEY NOT NULL,
+            requested_service_kind TEXT,
+            created_by TEXT NOT NULL,
+            created_at_ms BIGINT NOT NULL,
+            deadline_at_ms BIGINT NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_standalone_config_rollouts_created_at
+         ON standalone_config_rollouts (created_at_ms DESC, rollout_id)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS standalone_config_rollout_participants (
+            rollout_id TEXT NOT NULL,
+            node_id TEXT NOT NULL,
+            service_kind TEXT NOT NULL,
+            status TEXT NOT NULL,
+            message TEXT,
+            updated_at_ms BIGINT NOT NULL,
+            PRIMARY KEY (rollout_id, node_id)
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_standalone_config_rollout_participants_node_status
+         ON standalone_config_rollout_participants (node_id, status, updated_at_ms, rollout_id)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_standalone_config_rollout_participants_rollout
+         ON standalone_config_rollout_participants (rollout_id, node_id)",
+    )
+    .execute(&pool)
+    .await?;
     Ok(pool)
 }
 
@@ -485,6 +780,18 @@ impl PostgresAdminStore {
             .into_iter()
             .map(|(id, name)| Channel { id, name })
             .collect())
+    }
+
+    pub async fn delete_channel(&self, channel_id: &str) -> Result<bool> {
+        sqlx::query("DELETE FROM catalog_provider_channel_bindings WHERE channel_id = $1")
+            .bind(channel_id)
+            .execute(&self.pool)
+            .await?;
+        let result = sqlx::query("DELETE FROM catalog_channels WHERE id = $1")
+            .bind(channel_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected() > 0)
     }
 
     pub async fn insert_provider(&self, provider: &ProxyProvider) -> Result<ProxyProvider> {
@@ -567,18 +874,47 @@ impl PostgresAdminStore {
         }))
     }
 
+    pub async fn delete_provider(&self, provider_id: &str) -> Result<bool> {
+        sqlx::query("DELETE FROM credential_records WHERE provider_id = $1")
+            .bind(provider_id)
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DELETE FROM routing_policy_providers WHERE provider_id = $1")
+            .bind(provider_id)
+            .execute(&self.pool)
+            .await?;
+        sqlx::query(
+            "UPDATE routing_policies SET default_provider_id = NULL WHERE default_provider_id = $1",
+        )
+        .bind(provider_id)
+        .execute(&self.pool)
+        .await?;
+        sqlx::query("DELETE FROM catalog_provider_channel_bindings WHERE provider_id = $1")
+            .bind(provider_id)
+            .execute(&self.pool)
+            .await?;
+        let result = sqlx::query("DELETE FROM catalog_proxy_providers WHERE id = $1")
+            .bind(provider_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
     pub async fn insert_credential(
         &self,
         credential: &UpstreamCredential,
     ) -> Result<UpstreamCredential> {
         sqlx::query(
-            "INSERT INTO credential_records (tenant_id, provider_id, key_reference, secret_backend, secret_ciphertext, secret_key_version) VALUES ($1, $2, $3, $4, NULL, NULL)
-             ON CONFLICT(tenant_id, provider_id, key_reference) DO UPDATE SET secret_backend = excluded.secret_backend, secret_ciphertext = NULL, secret_key_version = NULL",
+            "INSERT INTO credential_records (tenant_id, provider_id, key_reference, secret_backend, secret_local_file, secret_keyring_service, secret_master_key_id, secret_ciphertext, secret_key_version) VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, NULL)
+             ON CONFLICT(tenant_id, provider_id, key_reference) DO UPDATE SET secret_backend = excluded.secret_backend, secret_local_file = excluded.secret_local_file, secret_keyring_service = excluded.secret_keyring_service, secret_master_key_id = excluded.secret_master_key_id, secret_ciphertext = NULL, secret_key_version = NULL",
         )
         .bind(&credential.tenant_id)
         .bind(&credential.provider_id)
         .bind(&credential.key_reference)
         .bind(&credential.secret_backend)
+        .bind(&credential.secret_local_file)
+        .bind(&credential.secret_keyring_service)
+        .bind(&credential.secret_master_key_id)
         .execute(&self.pool)
         .await?;
         Ok(credential.clone())
@@ -590,13 +926,16 @@ impl PostgresAdminStore {
         envelope: &SecretEnvelope,
     ) -> Result<UpstreamCredential> {
         sqlx::query(
-            "INSERT INTO credential_records (tenant_id, provider_id, key_reference, secret_backend, secret_ciphertext, secret_key_version) VALUES ($1, $2, $3, $4, $5, $6)
-             ON CONFLICT(tenant_id, provider_id, key_reference) DO UPDATE SET secret_backend = excluded.secret_backend, secret_ciphertext = excluded.secret_ciphertext, secret_key_version = excluded.secret_key_version",
+            "INSERT INTO credential_records (tenant_id, provider_id, key_reference, secret_backend, secret_local_file, secret_keyring_service, secret_master_key_id, secret_ciphertext, secret_key_version) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             ON CONFLICT(tenant_id, provider_id, key_reference) DO UPDATE SET secret_backend = excluded.secret_backend, secret_local_file = excluded.secret_local_file, secret_keyring_service = excluded.secret_keyring_service, secret_master_key_id = excluded.secret_master_key_id, secret_ciphertext = excluded.secret_ciphertext, secret_key_version = excluded.secret_key_version",
         )
         .bind(&credential.tenant_id)
         .bind(&credential.provider_id)
         .bind(&credential.key_reference)
         .bind(&credential.secret_backend)
+        .bind(&credential.secret_local_file)
+        .bind(&credential.secret_keyring_service)
+        .bind(&credential.secret_master_key_id)
         .bind(&envelope.ciphertext)
         .bind(i32::try_from(envelope.key_version)?)
         .execute(&self.pool)
@@ -605,22 +944,12 @@ impl PostgresAdminStore {
     }
 
     pub async fn list_credentials(&self) -> Result<Vec<UpstreamCredential>> {
-        let rows = sqlx::query_as::<_, (String, String, String, String)>(
-            "SELECT tenant_id, provider_id, key_reference, secret_backend FROM credential_records ORDER BY provider_id, tenant_id",
+        let rows = sqlx::query_as::<_, CredentialRow>(
+            "SELECT tenant_id, provider_id, key_reference, secret_backend, secret_local_file, secret_keyring_service, secret_master_key_id FROM credential_records ORDER BY provider_id, tenant_id",
         )
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows
-            .into_iter()
-            .map(
-                |(tenant_id, provider_id, key_reference, secret_backend)| UpstreamCredential {
-                    tenant_id,
-                    provider_id,
-                    key_reference,
-                    secret_backend,
-                },
-            )
-            .collect())
+        Ok(rows.into_iter().map(decode_credential_row).collect())
     }
 
     pub async fn find_credential(
@@ -629,8 +958,8 @@ impl PostgresAdminStore {
         provider_id: &str,
         key_reference: &str,
     ) -> Result<Option<UpstreamCredential>> {
-        let row = sqlx::query_as::<_, (String, String, String, String)>(
-            "SELECT tenant_id, provider_id, key_reference, secret_backend FROM credential_records WHERE tenant_id = $1 AND provider_id = $2 AND key_reference = $3",
+        let row = sqlx::query_as::<_, CredentialRow>(
+            "SELECT tenant_id, provider_id, key_reference, secret_backend, secret_local_file, secret_keyring_service, secret_master_key_id FROM credential_records WHERE tenant_id = $1 AND provider_id = $2 AND key_reference = $3",
         )
         .bind(tenant_id)
         .bind(provider_id)
@@ -638,14 +967,7 @@ impl PostgresAdminStore {
         .fetch_optional(&self.pool)
         .await?;
 
-        Ok(row.map(
-            |(tenant_id, provider_id, key_reference, secret_backend)| UpstreamCredential {
-                tenant_id,
-                provider_id,
-                key_reference,
-                secret_backend,
-            },
-        ))
+        Ok(row.map(decode_credential_row))
     }
 
     pub async fn find_credential_envelope(
@@ -678,22 +1000,33 @@ impl PostgresAdminStore {
         tenant_id: &str,
         provider_id: &str,
     ) -> Result<Option<UpstreamCredential>> {
-        let row = sqlx::query_as::<_, (String, String, String, String)>(
-            "SELECT tenant_id, provider_id, key_reference, secret_backend FROM credential_records WHERE tenant_id = $1 AND provider_id = $2 ORDER BY ctid DESC LIMIT 1",
+        let row = sqlx::query_as::<_, CredentialRow>(
+            "SELECT tenant_id, provider_id, key_reference, secret_backend, secret_local_file, secret_keyring_service, secret_master_key_id FROM credential_records WHERE tenant_id = $1 AND provider_id = $2 ORDER BY ctid DESC LIMIT 1",
         )
         .bind(tenant_id)
         .bind(provider_id)
         .fetch_optional(&self.pool)
         .await?;
 
-        Ok(row.map(
-            |(tenant_id, provider_id, key_reference, secret_backend)| UpstreamCredential {
-                tenant_id,
-                provider_id,
-                key_reference,
-                secret_backend,
-            },
-        ))
+        Ok(row.map(decode_credential_row))
+    }
+
+    pub async fn delete_credential(
+        &self,
+        tenant_id: &str,
+        provider_id: &str,
+        key_reference: &str,
+    ) -> Result<bool> {
+        let result = sqlx::query(
+            "DELETE FROM credential_records WHERE tenant_id = $1 AND provider_id = $2 AND key_reference = $3",
+        )
+        .bind(tenant_id)
+        .bind(provider_id)
+        .bind(key_reference)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
     }
 
     pub async fn insert_model(&self, model: &ModelCatalogEntry) -> Result<ModelCatalogEntry> {
@@ -763,6 +1096,21 @@ impl PostgresAdminStore {
             .bind(external_name)
             .execute(&self.pool)
             .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn delete_model_variant(
+        &self,
+        external_name: &str,
+        provider_id: &str,
+    ) -> Result<bool> {
+        let result = sqlx::query(
+            "DELETE FROM catalog_models WHERE external_name = $1 AND provider_id = $2",
+        )
+        .bind(external_name)
+        .bind(provider_id)
+        .execute(&self.pool)
+        .await?;
         Ok(result.rows_affected() > 0)
     }
 
@@ -866,9 +1214,9 @@ impl PostgresAdminStore {
         log: &RoutingDecisionLog,
     ) -> Result<RoutingDecisionLog> {
         sqlx::query(
-            "INSERT INTO routing_decision_logs (decision_id, decision_source, tenant_id, project_id, capability, route_key, selected_provider_id, matched_policy_id, strategy, selection_seed, selection_reason, slo_applied, slo_degraded, created_at_ms, assessments_json)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-             ON CONFLICT(decision_id) DO UPDATE SET decision_source = excluded.decision_source, tenant_id = excluded.tenant_id, project_id = excluded.project_id, capability = excluded.capability, route_key = excluded.route_key, selected_provider_id = excluded.selected_provider_id, matched_policy_id = excluded.matched_policy_id, strategy = excluded.strategy, selection_seed = excluded.selection_seed, selection_reason = excluded.selection_reason, slo_applied = excluded.slo_applied, slo_degraded = excluded.slo_degraded, created_at_ms = excluded.created_at_ms, assessments_json = excluded.assessments_json",
+            "INSERT INTO routing_decision_logs (decision_id, decision_source, tenant_id, project_id, capability, route_key, selected_provider_id, matched_policy_id, strategy, selection_seed, selection_reason, requested_region, slo_applied, slo_degraded, created_at_ms, assessments_json)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+             ON CONFLICT(decision_id) DO UPDATE SET decision_source = excluded.decision_source, tenant_id = excluded.tenant_id, project_id = excluded.project_id, capability = excluded.capability, route_key = excluded.route_key, selected_provider_id = excluded.selected_provider_id, matched_policy_id = excluded.matched_policy_id, strategy = excluded.strategy, selection_seed = excluded.selection_seed, selection_reason = excluded.selection_reason, requested_region = excluded.requested_region, slo_applied = excluded.slo_applied, slo_degraded = excluded.slo_degraded, created_at_ms = excluded.created_at_ms, assessments_json = excluded.assessments_json",
         )
         .bind(&log.decision_id)
         .bind(log.decision_source.as_str())
@@ -881,6 +1229,7 @@ impl PostgresAdminStore {
         .bind(&log.strategy)
         .bind(log.selection_seed.map(i64::try_from).transpose()?)
         .bind(&log.selection_reason)
+        .bind(&log.requested_region)
         .bind(log.slo_applied)
         .bind(log.slo_degraded)
         .bind(i64::try_from(log.created_at_ms)?)
@@ -906,13 +1255,14 @@ impl PostgresAdminStore {
                 String,
                 Option<i64>,
                 Option<String>,
+                Option<String>,
                 bool,
                 bool,
                 i64,
                 String,
             ),
         >(
-            "SELECT decision_id, decision_source, tenant_id, project_id, capability, route_key, selected_provider_id, matched_policy_id, strategy, selection_seed, selection_reason, slo_applied, slo_degraded, created_at_ms, assessments_json
+            "SELECT decision_id, decision_source, tenant_id, project_id, capability, route_key, selected_provider_id, matched_policy_id, strategy, selection_seed, selection_reason, requested_region, slo_applied, slo_degraded, created_at_ms, assessments_json
              FROM routing_decision_logs
              ORDER BY created_at_ms DESC, decision_id DESC",
         )
@@ -933,6 +1283,7 @@ impl PostgresAdminStore {
                     strategy,
                     selection_seed,
                     selection_reason,
+                    requested_region,
                     slo_applied,
                     slo_degraded,
                     created_at_ms,
@@ -953,6 +1304,7 @@ impl PostgresAdminStore {
                     .with_matched_policy_id_option(matched_policy_id)
                     .with_selection_seed_option(selection_seed.map(u64::try_from).transpose()?)
                     .with_selection_reason_option(selection_reason)
+                    .with_requested_region_option(requested_region)
                     .with_slo_state(slo_applied, slo_degraded)
                     .with_assessments(decode_routing_assessments(&assessments_json)?))
                 },
@@ -1032,30 +1384,45 @@ impl PostgresAdminStore {
 
     pub async fn insert_usage_record(&self, record: &UsageRecord) -> Result<UsageRecord> {
         sqlx::query(
-            "INSERT INTO usage_records (project_id, model, provider_id) VALUES ($1, $2, $3)",
+            "INSERT INTO usage_records (project_id, model, provider_id, units, amount, input_tokens, output_tokens, total_tokens, created_at_ms)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
         )
         .bind(&record.project_id)
         .bind(&record.model)
         .bind(&record.provider)
+        .bind(i64::try_from(record.units)?)
+        .bind(record.amount)
+        .bind(i64::try_from(record.input_tokens)?)
+        .bind(i64::try_from(record.output_tokens)?)
+        .bind(i64::try_from(record.total_tokens)?)
+        .bind(i64::try_from(record.created_at_ms)?)
         .execute(&self.pool)
         .await?;
         Ok(record.clone())
     }
 
     pub async fn list_usage_records(&self) -> Result<Vec<UsageRecord>> {
-        let rows = sqlx::query_as::<_, (String, String, String)>(
-            "SELECT project_id, model, provider_id FROM usage_records",
+        let rows = sqlx::query_as::<_, (String, String, String, i64, f64, i64, i64, i64, i64)>(
+            "SELECT project_id, model, provider_id, units, amount, input_tokens, output_tokens, total_tokens, created_at_ms FROM usage_records",
         )
         .fetch_all(&self.pool)
         .await?;
         Ok(rows
             .into_iter()
-            .map(|(project_id, model, provider)| UsageRecord {
-                project_id,
-                model,
-                provider,
+            .map(|(project_id, model, provider, units, amount, input_tokens, output_tokens, total_tokens, created_at_ms)| -> Result<UsageRecord> {
+                Ok(UsageRecord {
+                    project_id,
+                    model,
+                    provider,
+                    units: u64::try_from(units)?,
+                    amount,
+                    input_tokens: u64::try_from(input_tokens)?,
+                    output_tokens: u64::try_from(output_tokens)?,
+                    total_tokens: u64::try_from(total_tokens)?,
+                    created_at_ms: u64::try_from(created_at_ms)?,
+                })
             })
-            .collect())
+            .collect::<Result<Vec<_>>>()?)
     }
 
     pub async fn insert_ledger_entry(&self, entry: &LedgerEntry) -> Result<LedgerEntry> {
@@ -1164,6 +1531,18 @@ impl PostgresAdminStore {
         Ok(row.map(|(id, name)| Tenant { id, name }))
     }
 
+    pub async fn delete_tenant(&self, tenant_id: &str) -> Result<bool> {
+        sqlx::query("DELETE FROM credential_records WHERE tenant_id = $1")
+            .bind(tenant_id)
+            .execute(&self.pool)
+            .await?;
+        let result = sqlx::query("DELETE FROM tenant_records WHERE id = $1")
+            .bind(tenant_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
     pub async fn insert_project(&self, project: &Project) -> Result<Project> {
         sqlx::query(
             "INSERT INTO tenant_projects (id, tenant_id, name) VALUES ($1, $2, $3)
@@ -1207,6 +1586,87 @@ impl PostgresAdminStore {
         }))
     }
 
+    pub async fn delete_project(&self, project_id: &str) -> Result<bool> {
+        sqlx::query("DELETE FROM identity_gateway_api_keys WHERE project_id = $1")
+            .bind(project_id)
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DELETE FROM billing_quota_policies WHERE project_id = $1")
+            .bind(project_id)
+            .execute(&self.pool)
+            .await?;
+        let result = sqlx::query("DELETE FROM tenant_projects WHERE id = $1")
+            .bind(project_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn insert_coupon(&self, coupon: &CouponCampaign) -> Result<CouponCampaign> {
+        sqlx::query(
+            "INSERT INTO coupon_campaigns (id, code, discount_label, audience, remaining, active, note, expires_on, created_at_ms)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             ON CONFLICT(id) DO UPDATE SET
+             code = excluded.code,
+             discount_label = excluded.discount_label,
+             audience = excluded.audience,
+             remaining = excluded.remaining,
+             active = excluded.active,
+             note = excluded.note,
+             expires_on = excluded.expires_on,
+             created_at_ms = excluded.created_at_ms",
+        )
+        .bind(&coupon.id)
+        .bind(&coupon.code)
+        .bind(&coupon.discount_label)
+        .bind(&coupon.audience)
+        .bind(i64::try_from(coupon.remaining)?)
+        .bind(coupon.active)
+        .bind(&coupon.note)
+        .bind(&coupon.expires_on)
+        .bind(i64::try_from(coupon.created_at_ms)?)
+        .execute(&self.pool)
+        .await?;
+        Ok(coupon.clone())
+    }
+
+    pub async fn list_coupons(&self) -> Result<Vec<CouponCampaign>> {
+        let rows = sqlx::query_as::<_, CouponRow>(
+            "SELECT id, code, discount_label, audience, remaining, active, note, expires_on, created_at_ms
+             FROM coupon_campaigns
+             ORDER BY active DESC, created_at_ms DESC, code ASC",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter()
+            .map(|row| decode_coupon_row(Some(row)))
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .map(|row| row.ok_or_else(|| anyhow::anyhow!("coupon row decode returned empty")))
+            .collect()
+    }
+
+    pub async fn find_coupon(&self, coupon_id: &str) -> Result<Option<CouponCampaign>> {
+        let row = sqlx::query_as::<_, CouponRow>(
+            "SELECT id, code, discount_label, audience, remaining, active, note, expires_on, created_at_ms
+             FROM coupon_campaigns
+             WHERE id = $1",
+        )
+        .bind(coupon_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        decode_coupon_row(row)
+    }
+
+    pub async fn delete_coupon(&self, coupon_id: &str) -> Result<bool> {
+        let result = sqlx::query("DELETE FROM coupon_campaigns WHERE id = $1")
+            .bind(coupon_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
     pub async fn insert_portal_user(&self, user: &PortalUserRecord) -> Result<PortalUserRecord> {
         sqlx::query(
             "INSERT INTO identity_users (id, email, display_name, password_salt, password_hash, workspace_tenant_id, workspace_project_id, active, created_at_ms)
@@ -1235,6 +1695,23 @@ impl PostgresAdminStore {
         Ok(user.clone())
     }
 
+    pub async fn list_portal_users(&self) -> Result<Vec<PortalUserRecord>> {
+        let rows = sqlx::query_as::<_, PortalUserRow>(
+            "SELECT id, email, display_name, password_salt, password_hash, workspace_tenant_id, workspace_project_id, active, created_at_ms
+             FROM identity_users
+             ORDER BY created_at_ms DESC, email ASC",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter()
+            .map(|row| decode_portal_user_row(Some(row)))
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .map(|row| row.ok_or_else(|| anyhow::anyhow!("portal user row decode returned empty")))
+            .collect()
+    }
+
     pub async fn find_portal_user_by_email(&self, email: &str) -> Result<Option<PortalUserRecord>> {
         let row = sqlx::query_as::<_, (String, String, String, String, String, String, String, bool, i64)>(
             "SELECT id, email, display_name, password_salt, password_hash, workspace_tenant_id, workspace_project_id, active, created_at_ms
@@ -1257,6 +1734,87 @@ impl PostgresAdminStore {
         .fetch_optional(&self.pool)
         .await?;
         decode_portal_user_row(row)
+    }
+
+    pub async fn delete_portal_user(&self, user_id: &str) -> Result<bool> {
+        let result = sqlx::query("DELETE FROM identity_users WHERE id = $1")
+            .bind(user_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn insert_admin_user(&self, user: &AdminUserRecord) -> Result<AdminUserRecord> {
+        sqlx::query(
+            "INSERT INTO admin_users (id, email, display_name, password_salt, password_hash, active, created_at_ms)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             ON CONFLICT(id) DO UPDATE SET
+             email = excluded.email,
+             display_name = excluded.display_name,
+             password_salt = excluded.password_salt,
+             password_hash = excluded.password_hash,
+             active = excluded.active,
+             created_at_ms = excluded.created_at_ms",
+        )
+        .bind(&user.id)
+        .bind(&user.email)
+        .bind(&user.display_name)
+        .bind(&user.password_salt)
+        .bind(&user.password_hash)
+        .bind(user.active)
+        .bind(i64::try_from(user.created_at_ms)?)
+        .execute(&self.pool)
+        .await?;
+        Ok(user.clone())
+    }
+
+    pub async fn list_admin_users(&self) -> Result<Vec<AdminUserRecord>> {
+        let rows = sqlx::query_as::<_, AdminUserRow>(
+            "SELECT id, email, display_name, password_salt, password_hash, active, created_at_ms
+             FROM admin_users
+             ORDER BY created_at_ms DESC, email ASC",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter()
+            .map(|row| decode_admin_user_row(Some(row)))
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .map(|row| row.ok_or_else(|| anyhow::anyhow!("admin user row decode returned empty")))
+            .collect()
+    }
+
+    pub async fn find_admin_user_by_email(&self, email: &str) -> Result<Option<AdminUserRecord>> {
+        let row = sqlx::query_as::<_, AdminUserRow>(
+            "SELECT id, email, display_name, password_salt, password_hash, active, created_at_ms
+             FROM admin_users
+             WHERE email = $1",
+        )
+        .bind(email)
+        .fetch_optional(&self.pool)
+        .await?;
+        decode_admin_user_row(row)
+    }
+
+    pub async fn find_admin_user_by_id(&self, user_id: &str) -> Result<Option<AdminUserRecord>> {
+        let row = sqlx::query_as::<_, AdminUserRow>(
+            "SELECT id, email, display_name, password_salt, password_hash, active, created_at_ms
+             FROM admin_users
+             WHERE id = $1",
+        )
+        .bind(user_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        decode_admin_user_row(row)
+    }
+
+    pub async fn delete_admin_user(&self, user_id: &str) -> Result<bool> {
+        let result = sqlx::query("DELETE FROM admin_users WHERE id = $1")
+            .bind(user_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected() > 0)
     }
 
     pub async fn insert_gateway_api_key(
@@ -1319,6 +1877,14 @@ impl PostgresAdminStore {
                 }
             }),
         )
+    }
+
+    pub async fn delete_gateway_api_key(&self, hashed_key: &str) -> Result<bool> {
+        let result = sqlx::query("DELETE FROM identity_gateway_api_keys WHERE hashed_key = $1")
+            .bind(hashed_key)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected() > 0)
     }
 
     pub async fn insert_extension_installation(
@@ -1426,6 +1992,515 @@ impl PostgresAdminStore {
         }
         Ok(instances)
     }
+
+    pub async fn upsert_service_runtime_node(
+        &self,
+        record: &ServiceRuntimeNodeRecord,
+    ) -> Result<ServiceRuntimeNodeRecord> {
+        sqlx::query(
+            "INSERT INTO service_runtime_nodes (node_id, service_kind, started_at_ms, last_seen_at_ms)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT(node_id) DO UPDATE SET
+                 service_kind = excluded.service_kind,
+                 started_at_ms = excluded.started_at_ms,
+                 last_seen_at_ms = excluded.last_seen_at_ms",
+        )
+        .bind(&record.node_id)
+        .bind(&record.service_kind)
+        .bind(record.started_at_ms as i64)
+        .bind(record.last_seen_at_ms as i64)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(record.clone())
+    }
+
+    pub async fn list_service_runtime_nodes(&self) -> Result<Vec<ServiceRuntimeNodeRecord>> {
+        let rows = sqlx::query_as::<_, (String, String, i64, i64)>(
+            "SELECT node_id, service_kind, started_at_ms, last_seen_at_ms
+             FROM service_runtime_nodes
+             ORDER BY node_id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|(node_id, service_kind, started_at_ms, last_seen_at_ms)| {
+                ServiceRuntimeNodeRecord {
+                    node_id,
+                    service_kind,
+                    started_at_ms: started_at_ms as u64,
+                    last_seen_at_ms: last_seen_at_ms as u64,
+                }
+            })
+            .collect())
+    }
+
+    pub async fn insert_extension_runtime_rollout(
+        &self,
+        rollout: &ExtensionRuntimeRolloutRecord,
+    ) -> Result<ExtensionRuntimeRolloutRecord> {
+        sqlx::query(
+            "INSERT INTO extension_runtime_rollouts (
+                rollout_id,
+                scope,
+                requested_extension_id,
+                requested_instance_id,
+                resolved_extension_id,
+                created_by,
+                created_at_ms,
+                deadline_at_ms
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             ON CONFLICT(rollout_id) DO UPDATE SET
+                 scope = excluded.scope,
+                 requested_extension_id = excluded.requested_extension_id,
+                 requested_instance_id = excluded.requested_instance_id,
+                 resolved_extension_id = excluded.resolved_extension_id,
+                 created_by = excluded.created_by,
+                 created_at_ms = excluded.created_at_ms,
+                 deadline_at_ms = excluded.deadline_at_ms",
+        )
+        .bind(&rollout.rollout_id)
+        .bind(&rollout.scope)
+        .bind(&rollout.requested_extension_id)
+        .bind(&rollout.requested_instance_id)
+        .bind(&rollout.resolved_extension_id)
+        .bind(&rollout.created_by)
+        .bind(rollout.created_at_ms as i64)
+        .bind(rollout.deadline_at_ms as i64)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(rollout.clone())
+    }
+
+    pub async fn find_extension_runtime_rollout(
+        &self,
+        rollout_id: &str,
+    ) -> Result<Option<ExtensionRuntimeRolloutRecord>> {
+        let row = sqlx::query_as::<
+            _,
+            (
+                String,
+                String,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                String,
+                i64,
+                i64,
+            ),
+        >(
+            "SELECT rollout_id, scope, requested_extension_id, requested_instance_id, resolved_extension_id, created_by, created_at_ms, deadline_at_ms
+             FROM extension_runtime_rollouts
+             WHERE rollout_id = $1",
+        )
+        .bind(rollout_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(
+            |(
+                rollout_id,
+                scope,
+                requested_extension_id,
+                requested_instance_id,
+                resolved_extension_id,
+                created_by,
+                created_at_ms,
+                deadline_at_ms,
+            )| ExtensionRuntimeRolloutRecord {
+                rollout_id,
+                scope,
+                requested_extension_id,
+                requested_instance_id,
+                resolved_extension_id,
+                created_by,
+                created_at_ms: created_at_ms as u64,
+                deadline_at_ms: deadline_at_ms as u64,
+            },
+        ))
+    }
+
+    pub async fn list_extension_runtime_rollouts(
+        &self,
+    ) -> Result<Vec<ExtensionRuntimeRolloutRecord>> {
+        let rows = sqlx::query_as::<
+            _,
+            (
+                String,
+                String,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                String,
+                i64,
+                i64,
+            ),
+        >(
+            "SELECT rollout_id, scope, requested_extension_id, requested_instance_id, resolved_extension_id, created_by, created_at_ms, deadline_at_ms
+             FROM extension_runtime_rollouts
+             ORDER BY created_at_ms DESC, rollout_id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    rollout_id,
+                    scope,
+                    requested_extension_id,
+                    requested_instance_id,
+                    resolved_extension_id,
+                    created_by,
+                    created_at_ms,
+                    deadline_at_ms,
+                )| ExtensionRuntimeRolloutRecord {
+                    rollout_id,
+                    scope,
+                    requested_extension_id,
+                    requested_instance_id,
+                    resolved_extension_id,
+                    created_by,
+                    created_at_ms: created_at_ms as u64,
+                    deadline_at_ms: deadline_at_ms as u64,
+                },
+            )
+            .collect())
+    }
+
+    pub async fn insert_extension_runtime_rollout_participant(
+        &self,
+        participant: &ExtensionRuntimeRolloutParticipantRecord,
+    ) -> Result<ExtensionRuntimeRolloutParticipantRecord> {
+        sqlx::query(
+            "INSERT INTO extension_runtime_rollout_participants (
+                rollout_id,
+                node_id,
+                service_kind,
+                status,
+                message,
+                updated_at_ms
+             ) VALUES ($1, $2, $3, $4, $5, $6)
+             ON CONFLICT(rollout_id, node_id) DO UPDATE SET
+                 service_kind = excluded.service_kind,
+                 status = excluded.status,
+                 message = excluded.message,
+                 updated_at_ms = excluded.updated_at_ms",
+        )
+        .bind(&participant.rollout_id)
+        .bind(&participant.node_id)
+        .bind(&participant.service_kind)
+        .bind(&participant.status)
+        .bind(&participant.message)
+        .bind(participant.updated_at_ms as i64)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(participant.clone())
+    }
+
+    pub async fn list_extension_runtime_rollout_participants(
+        &self,
+        rollout_id: &str,
+    ) -> Result<Vec<ExtensionRuntimeRolloutParticipantRecord>> {
+        let rows = sqlx::query_as::<_, (String, String, String, String, Option<String>, i64)>(
+            "SELECT rollout_id, node_id, service_kind, status, message, updated_at_ms
+             FROM extension_runtime_rollout_participants
+             WHERE rollout_id = $1
+             ORDER BY node_id",
+        )
+        .bind(rollout_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(
+                |(rollout_id, node_id, service_kind, status, message, updated_at_ms)| {
+                    ExtensionRuntimeRolloutParticipantRecord {
+                        rollout_id,
+                        node_id,
+                        service_kind,
+                        status,
+                        message,
+                        updated_at_ms: updated_at_ms as u64,
+                    }
+                },
+            )
+            .collect())
+    }
+
+    pub async fn list_pending_extension_runtime_rollout_participants_for_node(
+        &self,
+        node_id: &str,
+    ) -> Result<Vec<ExtensionRuntimeRolloutParticipantRecord>> {
+        let rows = sqlx::query_as::<_, (String, String, String, String, Option<String>, i64)>(
+            "SELECT participants.rollout_id, participants.node_id, participants.service_kind, participants.status, participants.message, participants.updated_at_ms
+             FROM extension_runtime_rollout_participants AS participants
+             INNER JOIN extension_runtime_rollouts AS rollouts ON rollouts.rollout_id = participants.rollout_id
+             WHERE participants.node_id = $1
+               AND participants.status = 'pending'
+             ORDER BY rollouts.created_at_ms, participants.rollout_id",
+        )
+        .bind(node_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(
+                |(rollout_id, node_id, service_kind, status, message, updated_at_ms)| {
+                    ExtensionRuntimeRolloutParticipantRecord {
+                        rollout_id,
+                        node_id,
+                        service_kind,
+                        status,
+                        message,
+                        updated_at_ms: updated_at_ms as u64,
+                    }
+                },
+            )
+            .collect())
+    }
+
+    pub async fn transition_extension_runtime_rollout_participant(
+        &self,
+        rollout_id: &str,
+        node_id: &str,
+        from_status: &str,
+        to_status: &str,
+        message: Option<&str>,
+        updated_at_ms: u64,
+    ) -> Result<bool> {
+        let result = sqlx::query(
+            "UPDATE extension_runtime_rollout_participants
+             SET status = $1, message = $2, updated_at_ms = $3
+             WHERE rollout_id = $4 AND node_id = $5 AND status = $6",
+        )
+        .bind(to_status)
+        .bind(message)
+        .bind(updated_at_ms as i64)
+        .bind(rollout_id)
+        .bind(node_id)
+        .bind(from_status)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() == 1)
+    }
+
+    pub async fn insert_standalone_config_rollout(
+        &self,
+        rollout: &StandaloneConfigRolloutRecord,
+    ) -> Result<StandaloneConfigRolloutRecord> {
+        sqlx::query(
+            "INSERT INTO standalone_config_rollouts (
+                rollout_id,
+                requested_service_kind,
+                created_by,
+                created_at_ms,
+                deadline_at_ms
+             ) VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT(rollout_id) DO UPDATE SET
+                 requested_service_kind = excluded.requested_service_kind,
+                 created_by = excluded.created_by,
+                 created_at_ms = excluded.created_at_ms,
+                 deadline_at_ms = excluded.deadline_at_ms",
+        )
+        .bind(&rollout.rollout_id)
+        .bind(&rollout.requested_service_kind)
+        .bind(&rollout.created_by)
+        .bind(rollout.created_at_ms as i64)
+        .bind(rollout.deadline_at_ms as i64)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(rollout.clone())
+    }
+
+    pub async fn find_standalone_config_rollout(
+        &self,
+        rollout_id: &str,
+    ) -> Result<Option<StandaloneConfigRolloutRecord>> {
+        let row = sqlx::query_as::<_, (String, Option<String>, String, i64, i64)>(
+            "SELECT rollout_id, requested_service_kind, created_by, created_at_ms, deadline_at_ms
+             FROM standalone_config_rollouts
+             WHERE rollout_id = $1",
+        )
+        .bind(rollout_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(
+            |(rollout_id, requested_service_kind, created_by, created_at_ms, deadline_at_ms)| {
+                StandaloneConfigRolloutRecord {
+                    rollout_id,
+                    requested_service_kind,
+                    created_by,
+                    created_at_ms: created_at_ms as u64,
+                    deadline_at_ms: deadline_at_ms as u64,
+                }
+            },
+        ))
+    }
+
+    pub async fn list_standalone_config_rollouts(
+        &self,
+    ) -> Result<Vec<StandaloneConfigRolloutRecord>> {
+        let rows = sqlx::query_as::<_, (String, Option<String>, String, i64, i64)>(
+            "SELECT rollout_id, requested_service_kind, created_by, created_at_ms, deadline_at_ms
+             FROM standalone_config_rollouts
+             ORDER BY created_at_ms DESC, rollout_id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    rollout_id,
+                    requested_service_kind,
+                    created_by,
+                    created_at_ms,
+                    deadline_at_ms,
+                )| {
+                    StandaloneConfigRolloutRecord {
+                        rollout_id,
+                        requested_service_kind,
+                        created_by,
+                        created_at_ms: created_at_ms as u64,
+                        deadline_at_ms: deadline_at_ms as u64,
+                    }
+                },
+            )
+            .collect())
+    }
+
+    pub async fn insert_standalone_config_rollout_participant(
+        &self,
+        participant: &StandaloneConfigRolloutParticipantRecord,
+    ) -> Result<StandaloneConfigRolloutParticipantRecord> {
+        sqlx::query(
+            "INSERT INTO standalone_config_rollout_participants (
+                rollout_id,
+                node_id,
+                service_kind,
+                status,
+                message,
+                updated_at_ms
+             ) VALUES ($1, $2, $3, $4, $5, $6)
+             ON CONFLICT(rollout_id, node_id) DO UPDATE SET
+                 service_kind = excluded.service_kind,
+                 status = excluded.status,
+                 message = excluded.message,
+                 updated_at_ms = excluded.updated_at_ms",
+        )
+        .bind(&participant.rollout_id)
+        .bind(&participant.node_id)
+        .bind(&participant.service_kind)
+        .bind(&participant.status)
+        .bind(&participant.message)
+        .bind(participant.updated_at_ms as i64)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(participant.clone())
+    }
+
+    pub async fn list_standalone_config_rollout_participants(
+        &self,
+        rollout_id: &str,
+    ) -> Result<Vec<StandaloneConfigRolloutParticipantRecord>> {
+        let rows = sqlx::query_as::<_, (String, String, String, String, Option<String>, i64)>(
+            "SELECT rollout_id, node_id, service_kind, status, message, updated_at_ms
+             FROM standalone_config_rollout_participants
+             WHERE rollout_id = $1
+             ORDER BY node_id",
+        )
+        .bind(rollout_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(
+                |(rollout_id, node_id, service_kind, status, message, updated_at_ms)| {
+                    StandaloneConfigRolloutParticipantRecord {
+                        rollout_id,
+                        node_id,
+                        service_kind,
+                        status,
+                        message,
+                        updated_at_ms: updated_at_ms as u64,
+                    }
+                },
+            )
+            .collect())
+    }
+
+    pub async fn list_pending_standalone_config_rollout_participants_for_node(
+        &self,
+        node_id: &str,
+    ) -> Result<Vec<StandaloneConfigRolloutParticipantRecord>> {
+        let rows = sqlx::query_as::<_, (String, String, String, String, Option<String>, i64)>(
+            "SELECT participants.rollout_id, participants.node_id, participants.service_kind, participants.status, participants.message, participants.updated_at_ms
+             FROM standalone_config_rollout_participants AS participants
+             INNER JOIN standalone_config_rollouts AS rollouts ON rollouts.rollout_id = participants.rollout_id
+             WHERE participants.node_id = $1
+               AND participants.status = 'pending'
+             ORDER BY rollouts.created_at_ms, participants.rollout_id",
+        )
+        .bind(node_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(
+                |(rollout_id, node_id, service_kind, status, message, updated_at_ms)| {
+                    StandaloneConfigRolloutParticipantRecord {
+                        rollout_id,
+                        node_id,
+                        service_kind,
+                        status,
+                        message,
+                        updated_at_ms: updated_at_ms as u64,
+                    }
+                },
+            )
+            .collect())
+    }
+
+    pub async fn transition_standalone_config_rollout_participant(
+        &self,
+        rollout_id: &str,
+        node_id: &str,
+        from_status: &str,
+        to_status: &str,
+        message: Option<&str>,
+        updated_at_ms: u64,
+    ) -> Result<bool> {
+        let result = sqlx::query(
+            "UPDATE standalone_config_rollout_participants
+             SET status = $1, message = $2, updated_at_ms = $3
+             WHERE rollout_id = $4 AND node_id = $5 AND status = $6",
+        )
+        .bind(to_status)
+        .bind(message)
+        .bind(updated_at_ms as i64)
+        .bind(rollout_id)
+        .bind(node_id)
+        .bind(from_status)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() == 1)
+    }
 }
 
 #[async_trait::async_trait]
@@ -1442,6 +2517,10 @@ impl AdminStore for PostgresAdminStore {
         PostgresAdminStore::list_channels(self).await
     }
 
+    async fn delete_channel(&self, channel_id: &str) -> Result<bool> {
+        PostgresAdminStore::delete_channel(self, channel_id).await
+    }
+
     async fn insert_provider(&self, provider: &ProxyProvider) -> Result<ProxyProvider> {
         PostgresAdminStore::insert_provider(self, provider).await
     }
@@ -1452,6 +2531,10 @@ impl AdminStore for PostgresAdminStore {
 
     async fn find_provider(&self, provider_id: &str) -> Result<Option<ProxyProvider>> {
         PostgresAdminStore::find_provider(self, provider_id).await
+    }
+
+    async fn delete_provider(&self, provider_id: &str) -> Result<bool> {
+        PostgresAdminStore::delete_provider(self, provider_id).await
     }
 
     async fn insert_credential(
@@ -1500,6 +2583,15 @@ impl AdminStore for PostgresAdminStore {
         PostgresAdminStore::find_provider_credential(self, tenant_id, provider_id).await
     }
 
+    async fn delete_credential(
+        &self,
+        tenant_id: &str,
+        provider_id: &str,
+        key_reference: &str,
+    ) -> Result<bool> {
+        PostgresAdminStore::delete_credential(self, tenant_id, provider_id, key_reference).await
+    }
+
     async fn insert_model(&self, model: &ModelCatalogEntry) -> Result<ModelCatalogEntry> {
         PostgresAdminStore::insert_model(self, model).await
     }
@@ -1514,6 +2606,10 @@ impl AdminStore for PostgresAdminStore {
 
     async fn delete_model(&self, external_name: &str) -> Result<bool> {
         PostgresAdminStore::delete_model(self, external_name).await
+    }
+
+    async fn delete_model_variant(&self, external_name: &str, provider_id: &str) -> Result<bool> {
+        PostgresAdminStore::delete_model_variant(self, external_name, provider_id).await
     }
 
     async fn insert_routing_policy(&self, policy: &RoutingPolicy) -> Result<RoutingPolicy> {
@@ -1582,6 +2678,10 @@ impl AdminStore for PostgresAdminStore {
         PostgresAdminStore::find_tenant(self, tenant_id).await
     }
 
+    async fn delete_tenant(&self, tenant_id: &str) -> Result<bool> {
+        PostgresAdminStore::delete_tenant(self, tenant_id).await
+    }
+
     async fn insert_project(&self, project: &Project) -> Result<Project> {
         PostgresAdminStore::insert_project(self, project).await
     }
@@ -1594,8 +2694,32 @@ impl AdminStore for PostgresAdminStore {
         PostgresAdminStore::find_project(self, project_id).await
     }
 
+    async fn delete_project(&self, project_id: &str) -> Result<bool> {
+        PostgresAdminStore::delete_project(self, project_id).await
+    }
+
+    async fn insert_coupon(&self, coupon: &CouponCampaign) -> Result<CouponCampaign> {
+        PostgresAdminStore::insert_coupon(self, coupon).await
+    }
+
+    async fn list_coupons(&self) -> Result<Vec<CouponCampaign>> {
+        PostgresAdminStore::list_coupons(self).await
+    }
+
+    async fn find_coupon(&self, coupon_id: &str) -> Result<Option<CouponCampaign>> {
+        PostgresAdminStore::find_coupon(self, coupon_id).await
+    }
+
+    async fn delete_coupon(&self, coupon_id: &str) -> Result<bool> {
+        PostgresAdminStore::delete_coupon(self, coupon_id).await
+    }
+
     async fn insert_portal_user(&self, user: &PortalUserRecord) -> Result<PortalUserRecord> {
         PostgresAdminStore::insert_portal_user(self, user).await
+    }
+
+    async fn list_portal_users(&self) -> Result<Vec<PortalUserRecord>> {
+        PostgresAdminStore::list_portal_users(self).await
     }
 
     async fn find_portal_user_by_email(&self, email: &str) -> Result<Option<PortalUserRecord>> {
@@ -1604,6 +2728,30 @@ impl AdminStore for PostgresAdminStore {
 
     async fn find_portal_user_by_id(&self, user_id: &str) -> Result<Option<PortalUserRecord>> {
         PostgresAdminStore::find_portal_user_by_id(self, user_id).await
+    }
+
+    async fn delete_portal_user(&self, user_id: &str) -> Result<bool> {
+        PostgresAdminStore::delete_portal_user(self, user_id).await
+    }
+
+    async fn insert_admin_user(&self, user: &AdminUserRecord) -> Result<AdminUserRecord> {
+        PostgresAdminStore::insert_admin_user(self, user).await
+    }
+
+    async fn list_admin_users(&self) -> Result<Vec<AdminUserRecord>> {
+        PostgresAdminStore::list_admin_users(self).await
+    }
+
+    async fn find_admin_user_by_email(&self, email: &str) -> Result<Option<AdminUserRecord>> {
+        PostgresAdminStore::find_admin_user_by_email(self, email).await
+    }
+
+    async fn find_admin_user_by_id(&self, user_id: &str) -> Result<Option<AdminUserRecord>> {
+        PostgresAdminStore::find_admin_user_by_id(self, user_id).await
+    }
+
+    async fn delete_admin_user(&self, user_id: &str) -> Result<bool> {
+        PostgresAdminStore::delete_admin_user(self, user_id).await
     }
 
     async fn insert_gateway_api_key(
@@ -1619,6 +2767,10 @@ impl AdminStore for PostgresAdminStore {
 
     async fn find_gateway_api_key(&self, hashed_key: &str) -> Result<Option<GatewayApiKeyRecord>> {
         PostgresAdminStore::find_gateway_api_key(self, hashed_key).await
+    }
+
+    async fn delete_gateway_api_key(&self, hashed_key: &str) -> Result<bool> {
+        PostgresAdminStore::delete_gateway_api_key(self, hashed_key).await
     }
 
     async fn insert_extension_installation(
@@ -1641,5 +2793,142 @@ impl AdminStore for PostgresAdminStore {
 
     async fn list_extension_instances(&self) -> Result<Vec<ExtensionInstance>> {
         PostgresAdminStore::list_extension_instances(self).await
+    }
+
+    async fn upsert_service_runtime_node(
+        &self,
+        record: &ServiceRuntimeNodeRecord,
+    ) -> Result<ServiceRuntimeNodeRecord> {
+        PostgresAdminStore::upsert_service_runtime_node(self, record).await
+    }
+
+    async fn list_service_runtime_nodes(&self) -> Result<Vec<ServiceRuntimeNodeRecord>> {
+        PostgresAdminStore::list_service_runtime_nodes(self).await
+    }
+
+    async fn insert_extension_runtime_rollout(
+        &self,
+        rollout: &ExtensionRuntimeRolloutRecord,
+    ) -> Result<ExtensionRuntimeRolloutRecord> {
+        PostgresAdminStore::insert_extension_runtime_rollout(self, rollout).await
+    }
+
+    async fn find_extension_runtime_rollout(
+        &self,
+        rollout_id: &str,
+    ) -> Result<Option<ExtensionRuntimeRolloutRecord>> {
+        PostgresAdminStore::find_extension_runtime_rollout(self, rollout_id).await
+    }
+
+    async fn list_extension_runtime_rollouts(&self) -> Result<Vec<ExtensionRuntimeRolloutRecord>> {
+        PostgresAdminStore::list_extension_runtime_rollouts(self).await
+    }
+
+    async fn insert_extension_runtime_rollout_participant(
+        &self,
+        participant: &ExtensionRuntimeRolloutParticipantRecord,
+    ) -> Result<ExtensionRuntimeRolloutParticipantRecord> {
+        PostgresAdminStore::insert_extension_runtime_rollout_participant(self, participant).await
+    }
+
+    async fn list_extension_runtime_rollout_participants(
+        &self,
+        rollout_id: &str,
+    ) -> Result<Vec<ExtensionRuntimeRolloutParticipantRecord>> {
+        PostgresAdminStore::list_extension_runtime_rollout_participants(self, rollout_id).await
+    }
+
+    async fn list_pending_extension_runtime_rollout_participants_for_node(
+        &self,
+        node_id: &str,
+    ) -> Result<Vec<ExtensionRuntimeRolloutParticipantRecord>> {
+        PostgresAdminStore::list_pending_extension_runtime_rollout_participants_for_node(
+            self, node_id,
+        )
+        .await
+    }
+
+    async fn transition_extension_runtime_rollout_participant(
+        &self,
+        rollout_id: &str,
+        node_id: &str,
+        from_status: &str,
+        to_status: &str,
+        message: Option<&str>,
+        updated_at_ms: u64,
+    ) -> Result<bool> {
+        PostgresAdminStore::transition_extension_runtime_rollout_participant(
+            self,
+            rollout_id,
+            node_id,
+            from_status,
+            to_status,
+            message,
+            updated_at_ms,
+        )
+        .await
+    }
+
+    async fn insert_standalone_config_rollout(
+        &self,
+        rollout: &StandaloneConfigRolloutRecord,
+    ) -> Result<StandaloneConfigRolloutRecord> {
+        PostgresAdminStore::insert_standalone_config_rollout(self, rollout).await
+    }
+
+    async fn find_standalone_config_rollout(
+        &self,
+        rollout_id: &str,
+    ) -> Result<Option<StandaloneConfigRolloutRecord>> {
+        PostgresAdminStore::find_standalone_config_rollout(self, rollout_id).await
+    }
+
+    async fn list_standalone_config_rollouts(&self) -> Result<Vec<StandaloneConfigRolloutRecord>> {
+        PostgresAdminStore::list_standalone_config_rollouts(self).await
+    }
+
+    async fn insert_standalone_config_rollout_participant(
+        &self,
+        participant: &StandaloneConfigRolloutParticipantRecord,
+    ) -> Result<StandaloneConfigRolloutParticipantRecord> {
+        PostgresAdminStore::insert_standalone_config_rollout_participant(self, participant).await
+    }
+
+    async fn list_standalone_config_rollout_participants(
+        &self,
+        rollout_id: &str,
+    ) -> Result<Vec<StandaloneConfigRolloutParticipantRecord>> {
+        PostgresAdminStore::list_standalone_config_rollout_participants(self, rollout_id).await
+    }
+
+    async fn list_pending_standalone_config_rollout_participants_for_node(
+        &self,
+        node_id: &str,
+    ) -> Result<Vec<StandaloneConfigRolloutParticipantRecord>> {
+        PostgresAdminStore::list_pending_standalone_config_rollout_participants_for_node(
+            self, node_id,
+        )
+        .await
+    }
+
+    async fn transition_standalone_config_rollout_participant(
+        &self,
+        rollout_id: &str,
+        node_id: &str,
+        from_status: &str,
+        to_status: &str,
+        message: Option<&str>,
+        updated_at_ms: u64,
+    ) -> Result<bool> {
+        PostgresAdminStore::transition_standalone_config_rollout_participant(
+            self,
+            rollout_id,
+            node_id,
+            from_status,
+            to_status,
+            message,
+            updated_at_ms,
+        )
+        .await
     }
 }

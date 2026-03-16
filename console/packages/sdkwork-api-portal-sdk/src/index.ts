@@ -15,7 +15,7 @@ export class PortalApiError extends Error {
 }
 
 export function portalBaseUrl(): string {
-  return '/portal';
+  return '/api/portal';
 }
 
 export function readPortalSessionToken(): string | null {
@@ -104,6 +104,17 @@ export function loginPortalUser(input: {
 
 export function getPortalMe(token?: string): Promise<PortalUserProfile> {
   return getJson<PortalUserProfile>('/auth/me', requiredPortalToken(token));
+}
+
+export function changePortalPassword(
+  input: { current_password: string; new_password: string },
+  token?: string,
+): Promise<PortalUserProfile> {
+  return postJson<typeof input, PortalUserProfile>(
+    '/auth/change-password',
+    input,
+    requiredPortalToken(token),
+  );
 }
 
 export function getPortalWorkspace(token?: string): Promise<PortalWorkspaceSummary> {

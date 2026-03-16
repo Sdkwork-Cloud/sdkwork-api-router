@@ -300,6 +300,14 @@ async fn stateful_batches_route_relays_to_openai_compatible_provider() {
         upstream_state.authorization.lock().unwrap().as_deref(),
         Some("Bearer sk-upstream-openai")
     );
+    support::assert_single_usage_record_and_decision_log(
+        admin_app.clone(),
+        &admin_token,
+        "batch_upstream",
+        "provider-openai-official",
+        "/v1/responses",
+    )
+    .await;
 
     let list_response = gateway_app
         .clone()
@@ -347,6 +355,194 @@ async fn stateful_batches_route_relays_to_openai_compatible_provider() {
     assert_eq!(cancel_response.status(), StatusCode::OK);
     let cancel_json = read_json(cancel_response).await;
     assert_eq!(cancel_json["status"], "cancelled");
+}
+
+#[tokio::test]
+async fn stateful_batches_create_usage_uses_created_batch_id_for_billing() {
+    let tenant_id = "tenant-batches-create";
+    let project_id = "project-batches-create";
+    let upstream_state = UpstreamCaptureState::default();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let upstream = Router::new()
+        .route(
+            "/v1/batches",
+            get(upstream_batches_list_handler).post(upstream_batches_handler),
+        )
+        .with_state(upstream_state.clone());
+
+    tokio::spawn(async move {
+        axum::serve(listener, upstream).await.unwrap();
+    });
+
+    let pool = memory_pool().await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let api_key = support::issue_gateway_api_key(&pool, tenant_id, project_id).await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+
+    let create_channel = admin_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/channels")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from("{\"id\":\"openai\",\"name\":\"OpenAI\"}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(create_channel.status(), StatusCode::CREATED);
+
+    let provider_route = admin_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/providers")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    "{{\"id\":\"provider-batches-route\",\"channel_id\":\"openai\",\"adapter_kind\":\"openai\",\"base_url\":\"http://{address}\",\"display_name\":\"Batches Route Provider\"}}"
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(provider_route.status(), StatusCode::CREATED);
+
+    let provider_batch = admin_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/providers")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"id\":\"provider-batches-created-id\",\"channel_id\":\"openai\",\"adapter_kind\":\"openai\",\"base_url\":\"http://127.0.0.1:1\",\"display_name\":\"Batches Created Id Provider\"}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(provider_batch.status(), StatusCode::CREATED);
+
+    let route_credential = admin_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/credentials")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    "{{\"tenant_id\":\"{tenant_id}\",\"provider_id\":\"provider-batches-route\",\"key_reference\":\"cred-batches-route\",\"secret_value\":\"sk-batches-route\"}}"
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(route_credential.status(), StatusCode::CREATED);
+
+    let batch_credential = admin_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/credentials")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    "{{\"tenant_id\":\"{tenant_id}\",\"provider_id\":\"provider-batches-created-id\",\"key_reference\":\"cred-batches-created-id\",\"secret_value\":\"sk-batches-created-id\"}}"
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(batch_credential.status(), StatusCode::CREATED);
+
+    let route_policy = admin_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/routing/policies")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "policy_id": "route-batches-by-endpoint",
+                        "capability": "batches",
+                        "model_pattern": "/v1/responses",
+                        "enabled": true,
+                        "priority": 200,
+                        "ordered_provider_ids": ["provider-batches-route"]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(route_policy.status(), StatusCode::CREATED);
+
+    let batch_policy = admin_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/routing/policies")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "policy_id": "route-batches-by-created-id",
+                        "capability": "batches",
+                        "model_pattern": "batch_upstream",
+                        "enabled": true,
+                        "priority": 100,
+                        "ordered_provider_ids": ["provider-batches-created-id"]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(batch_policy.status(), StatusCode::CREATED);
+
+    let response = gateway_app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/batches")
+                .header("authorization", format!("Bearer {api_key}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"input_file_id\":\"file_1\",\"endpoint\":\"/v1/responses\",\"completion_window\":\"24h\"}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let response_json = read_json(response).await;
+    assert_eq!(response_json["id"], "batch_upstream");
+    assert_eq!(
+        upstream_state.authorization.lock().unwrap().as_deref(),
+        Some("Bearer sk-batches-route")
+    );
+    support::assert_single_usage_record_and_decision_log(
+        admin_app,
+        &admin_token,
+        "batch_upstream",
+        "provider-batches-route",
+        "/v1/responses",
+    )
+    .await;
 }
 
 async fn upstream_batches_handler(

@@ -1,0 +1,14 @@
+[package]
+name = "router-web-service"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+sdkwork-api-observability = { path = "../../crates/sdkwork-api-observability" }
+sdkwork-api-runtime-host = { path = "../../crates/sdkwork-api-runtime-host" }
+
+[[bin]]
+name = "router-web-service"
+path = "src/main.rs"

@@ -22,6 +22,7 @@ sdkwork-api-provider-openrouter = { path = "../sdkwork-api-provider-openrouter" 
 serde_json.workspace = true
 sdkwork-api-storage-core = { path = "../sdkwork-api-storage-core" }
 sdkwork-api-storage-sqlite = { path = "../sdkwork-api-storage-sqlite" }
+tokio.workspace = true
 
 [dev-dependencies]
 axum.workspace = true
@@ -32,7 +33,6 @@ sha2.workspace = true
 sdkwork-api-ext-provider-native-mock = { path = "../sdkwork-api-ext-provider-native-mock" }
 sdkwork-api-domain-routing = { path = "../sdkwork-api-domain-routing" }
 sdkwork-api-extension-host = { path = "../sdkwork-api-extension-host" }
-tokio.workspace = true
 toml.workspace = true
 
 [lib]

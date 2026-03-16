@@ -18,12 +18,12 @@ export function RouteSimulationPage() {
   useEffect(() => {
     let cancelled = false;
 
-    void Promise.all([simulateRoute('chat_completion', 'gpt-4.1', 11), listRoutingDecisionLogs()])
+    void Promise.all([simulateRoute('chat_completion', 'gpt-4.1', 11, 'us-east'), listRoutingDecisionLogs()])
       .then(([result, logs]) => {
         if (!cancelled) {
           setSimulation(result);
           setDecisionLogs(logs.slice(0, 8));
-          setStatus('Current simulation resolved from catalog-backed routing, and recent gateway decisions were loaded.');
+          setStatus('Current simulation resolved from catalog-backed geo-aware routing, and recent gateway decisions were loaded.');
         }
       })
       .catch(() => {
@@ -65,6 +65,10 @@ export function RouteSimulationPage() {
           <strong>{simulation.selection_seed ?? 'n/a'}</strong>
         </article>
         <article className="metric-card">
+          <span className="metric-label">Requested Region</span>
+          <strong>{simulation.requested_region ?? 'n/a'}</strong>
+        </article>
+        <article className="metric-card">
           <span className="metric-label">SLO State</span>
           <strong>
             {simulation.slo_applied ? (simulation.slo_degraded ? 'degraded' : 'compliant') : 'inactive'}
@@ -93,6 +97,10 @@ export function RouteSimulationPage() {
                 <span>{assessment.health}</span>
                 <span>policy #{assessment.policy_rank + 1}</span>
                 <span>weight {assessment.weight ?? 100}</span>
+                {assessment.region !== undefined ? <span>region {assessment.region}</span> : null}
+                {assessment.region_match !== undefined ? (
+                  <span>{assessment.region_match ? 'region match' : 'region mismatch'}</span>
+                ) : null}
                 {assessment.cost !== undefined ? <span>cost {assessment.cost}</span> : null}
                 {assessment.latency_ms !== undefined ? (
                   <span>latency {assessment.latency_ms}ms</span>
@@ -126,6 +134,7 @@ export function RouteSimulationPage() {
                 <span>{log.capability}</span>
                 <span>{log.route_key}</span>
                 <span>{log.strategy}</span>
+                {log.requested_region !== undefined ? <span>region {log.requested_region}</span> : null}
                 <span>{formatSloState(log)}</span>
                 {log.selection_seed !== undefined ? <span>seed {log.selection_seed}</span> : null}
               </div>

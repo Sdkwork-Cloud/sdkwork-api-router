@@ -1,7 +1,7 @@
 use axum::body::Body;
 use axum::extract::State;
 use axum::http::{Request, StatusCode};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde_json::Value;
 use sqlx::SqlitePool;
@@ -332,6 +332,14 @@ async fn stateful_vector_stores_route_relays_to_openai_compatible_provider() {
         upstream_state.authorization.lock().unwrap().as_deref(),
         Some("Bearer sk-upstream-openai")
     );
+    support::assert_single_usage_record_and_decision_log(
+        admin_app.clone(),
+        &admin_token,
+        "vs_upstream",
+        "provider-openai-official",
+        "kb-main",
+    )
+    .await;
 
     let list_response = gateway_app
         .clone()
@@ -396,6 +404,189 @@ async fn stateful_vector_stores_route_relays_to_openai_compatible_provider() {
     assert_eq!(delete_response.status(), StatusCode::OK);
     let delete_json = read_json(delete_response).await;
     assert_eq!(delete_json["deleted"], true);
+}
+
+#[tokio::test]
+async fn stateful_vector_stores_create_usage_uses_created_vector_store_id_for_billing() {
+    let tenant_id = "tenant-vector-stores-create";
+    let project_id = "project-vector-stores-create";
+    let upstream_state = UpstreamCaptureState::default();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let upstream = Router::new()
+        .route("/v1/vector_stores", post(upstream_vector_stores_handler))
+        .with_state(upstream_state.clone());
+
+    tokio::spawn(async move {
+        axum::serve(listener, upstream).await.unwrap();
+    });
+
+    let pool = memory_pool().await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let api_key = support::issue_gateway_api_key(&pool, tenant_id, project_id).await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+
+    let create_channel = admin_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/channels")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from("{\"id\":\"openai\",\"name\":\"OpenAI\"}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(create_channel.status(), StatusCode::CREATED);
+
+    let provider_vector_store = admin_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/providers")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    "{{\"id\":\"provider-vector-stores-route\",\"channel_id\":\"openai\",\"adapter_kind\":\"openai\",\"base_url\":\"http://{address}\",\"display_name\":\"Vector Stores Route Provider\"}}"
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(provider_vector_store.status(), StatusCode::CREATED);
+
+    let provider_created = admin_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/providers")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"id\":\"provider-vector-stores-created-id\",\"channel_id\":\"openai\",\"adapter_kind\":\"openai\",\"base_url\":\"http://127.0.0.1:1\",\"display_name\":\"Vector Stores Created Id Provider\"}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(provider_created.status(), StatusCode::CREATED);
+
+    let vector_store_credential = admin_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/credentials")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    "{{\"tenant_id\":\"{tenant_id}\",\"provider_id\":\"provider-vector-stores-route\",\"key_reference\":\"cred-vector-stores-route\",\"secret_value\":\"sk-vector-stores-route\"}}"
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(vector_store_credential.status(), StatusCode::CREATED);
+
+    let created_credential = admin_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/credentials")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    "{{\"tenant_id\":\"{tenant_id}\",\"provider_id\":\"provider-vector-stores-created-id\",\"key_reference\":\"cred-vector-stores-created-id\",\"secret_value\":\"sk-vector-stores-created-id\"}}"
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(created_credential.status(), StatusCode::CREATED);
+
+    let vector_store_policy = admin_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/routing/policies")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "policy_id": "route-vector-stores-by-name",
+                        "capability": "vector_stores",
+                        "model_pattern": "kb-main",
+                        "enabled": true,
+                        "priority": 200,
+                        "ordered_provider_ids": ["provider-vector-stores-route"]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(vector_store_policy.status(), StatusCode::CREATED);
+
+    let created_policy = admin_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/routing/policies")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "policy_id": "route-vector-stores-by-created-id",
+                        "capability": "vector_stores",
+                        "model_pattern": "vs_upstream",
+                        "enabled": true,
+                        "priority": 100,
+                        "ordered_provider_ids": ["provider-vector-stores-created-id"]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(created_policy.status(), StatusCode::CREATED);
+
+    let response = gateway_app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/vector_stores")
+                .header("authorization", format!("Bearer {api_key}"))
+                .header("content-type", "application/json")
+                .body(Body::from("{\"name\":\"kb-main\"}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let response_json = read_json(response).await;
+    assert_eq!(response_json["id"], "vs_upstream");
+    assert_eq!(
+        upstream_state.authorization.lock().unwrap().as_deref(),
+        Some("Bearer sk-vector-stores-route")
+    );
+    support::assert_single_usage_record_and_decision_log(
+        admin_app,
+        &admin_token,
+        "vs_upstream",
+        "provider-vector-stores-route",
+        "kb-main",
+    )
+    .await;
 }
 
 async fn upstream_vector_stores_handler(

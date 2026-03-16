@@ -5,7 +5,9 @@ use argon2::{
 };
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use rand_core::OsRng;
-use sdkwork_api_domain_identity::{GatewayApiKeyRecord, PortalUserProfile, PortalUserRecord};
+use sdkwork_api_domain_identity::{
+    AdminUserProfile, AdminUserRecord, GatewayApiKeyRecord, PortalUserProfile, PortalUserRecord,
+};
 use sdkwork_api_domain_tenant::{Project, Tenant};
 use sdkwork_api_storage_core::AdminStore;
 use serde::{Deserialize, Serialize};
@@ -20,6 +22,20 @@ const PORTAL_JWT_ISSUER: &str = "sdkwork-portal";
 const PORTAL_JWT_AUDIENCE: &str = "sdkwork-public-portal";
 const PORTAL_JWT_TTL_SECS: u64 = 60 * 60 * 12;
 
+pub const DEFAULT_ADMIN_EMAIL: &str = "admin@sdkwork.local";
+pub const DEFAULT_ADMIN_PASSWORD: &str = "ChangeMe123!";
+pub const DEFAULT_ADMIN_DISPLAY_NAME: &str = "Admin Operator";
+
+pub const DEFAULT_PORTAL_EMAIL: &str = "portal@sdkwork.local";
+pub const DEFAULT_PORTAL_PASSWORD: &str = "ChangeMe123!";
+pub const DEFAULT_PORTAL_DISPLAY_NAME: &str = "Portal Demo";
+
+const DEFAULT_ADMIN_USER_ID: &str = "admin_local_default";
+const DEFAULT_PORTAL_USER_ID: &str = "user_local_demo";
+const DEFAULT_PORTAL_TENANT_ID: &str = "tenant_local_demo";
+const DEFAULT_PORTAL_PROJECT_ID: &str = "project_local_demo";
+
+type AdminResult<T> = std::result::Result<T, AdminIdentityError>;
 type PortalResult<T> = std::result::Result<T, PortalIdentityError>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -83,6 +99,12 @@ pub struct PortalAuthSession {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdminAuthSession {
+    pub token: String,
+    pub user: AdminUserProfile,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PortalWorkspaceSummary {
     pub user: PortalUserProfile,
     pub tenant: Tenant,
@@ -93,6 +115,18 @@ pub struct PortalWorkspaceSummary {
 pub enum PortalIdentityError {
     InvalidInput(String),
     DuplicateEmail,
+    Protected(String),
+    InvalidCredentials,
+    InactiveUser,
+    NotFound(String),
+    Storage(anyhow::Error),
+}
+
+#[derive(Debug)]
+pub enum AdminIdentityError {
+    InvalidInput(String),
+    DuplicateEmail,
+    Protected(String),
     InvalidCredentials,
     InactiveUser,
     NotFound(String),
@@ -104,6 +138,7 @@ impl std::fmt::Display for PortalIdentityError {
         match self {
             Self::InvalidInput(message) => write!(f, "{message}"),
             Self::DuplicateEmail => write!(f, "portal user already exists"),
+            Self::Protected(message) => write!(f, "{message}"),
             Self::InvalidCredentials => write!(f, "invalid email or password"),
             Self::InactiveUser => write!(f, "portal user is inactive"),
             Self::NotFound(message) => write!(f, "{message}"),
@@ -122,6 +157,35 @@ impl std::error::Error for PortalIdentityError {
 }
 
 impl From<anyhow::Error> for PortalIdentityError {
+    fn from(value: anyhow::Error) -> Self {
+        Self::Storage(value)
+    }
+}
+
+impl std::fmt::Display for AdminIdentityError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidInput(message) => write!(f, "{message}"),
+            Self::DuplicateEmail => write!(f, "admin user already exists"),
+            Self::Protected(message) => write!(f, "{message}"),
+            Self::InvalidCredentials => write!(f, "invalid email or password"),
+            Self::InactiveUser => write!(f, "admin user is inactive"),
+            Self::NotFound(message) => write!(f, "{message}"),
+            Self::Storage(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for AdminIdentityError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Storage(error) => Some(error.as_ref()),
+            _ => None,
+        }
+    }
+}
+
+impl From<anyhow::Error> for AdminIdentityError {
     fn from(value: anyhow::Error) -> Self {
         Self::Storage(value)
     }
@@ -173,6 +237,270 @@ pub fn verify_portal_jwt(token: &str, signing_secret: &str) -> Result<PortalClai
     .claims)
 }
 
+pub async fn login_admin_user(
+    store: &dyn AdminStore,
+    email: &str,
+    password: &str,
+    signing_secret: &str,
+) -> AdminResult<AdminAuthSession> {
+    validate_login_password(password).map_err(AdminIdentityError::InvalidInput)?;
+    let _ = ensure_default_admin_user(store).await?;
+
+    let normalized_email = normalize_email(email);
+    let Some(user) = store
+        .find_admin_user_by_email(&normalized_email)
+        .await
+        .map_err(AdminIdentityError::from)?
+    else {
+        return Err(AdminIdentityError::InvalidCredentials);
+    };
+
+    if !user.active {
+        return Err(AdminIdentityError::InactiveUser);
+    }
+
+    if !verify_password_hash(password, &user.password_hash, "admin password")
+        .map_err(AdminIdentityError::from)?
+    {
+        return Err(AdminIdentityError::InvalidCredentials);
+    }
+
+    admin_session_from_user(&user, signing_secret)
+}
+
+pub async fn load_admin_user_profile(
+    store: &dyn AdminStore,
+    user_id: &str,
+) -> AdminResult<Option<AdminUserProfile>> {
+    store
+        .find_admin_user_by_id(user_id)
+        .await
+        .map(|maybe_user| maybe_user.map(|user| AdminUserProfile::from(&user)))
+        .map_err(AdminIdentityError::from)
+}
+
+pub async fn list_admin_user_profiles(store: &dyn AdminStore) -> AdminResult<Vec<AdminUserProfile>> {
+    let _ = ensure_default_admin_user(store).await?;
+    store
+        .list_admin_users()
+        .await
+        .map(|users| users.iter().map(AdminUserProfile::from).collect())
+        .map_err(AdminIdentityError::from)
+}
+
+pub async fn upsert_admin_user(
+    store: &dyn AdminStore,
+    user_id: Option<&str>,
+    email: &str,
+    display_name: &str,
+    password: Option<&str>,
+    active: bool,
+) -> AdminResult<AdminUserProfile> {
+    validate_identity_profile_input(email, display_name).map_err(AdminIdentityError::InvalidInput)?;
+
+    let normalized_email = normalize_email(email);
+    let requested_id = normalize_optional_value(user_id);
+    let existing_by_id = match requested_id {
+        Some(id) => store.find_admin_user_by_id(id).await.map_err(AdminIdentityError::from)?,
+        None => None,
+    };
+
+    if let Some(existing) = store
+        .find_admin_user_by_email(&normalized_email)
+        .await
+        .map_err(AdminIdentityError::from)?
+    {
+        let matches_target = existing_by_id
+            .as_ref()
+            .map(|current| current.id == existing.id)
+            .unwrap_or(false)
+            || requested_id.is_some_and(|id| id == existing.id);
+        if !matches_target {
+            return Err(AdminIdentityError::DuplicateEmail);
+        }
+    }
+
+    let target_id = match existing_by_id
+        .as_ref()
+        .map(|user| user.id.clone())
+        .or_else(|| requested_id.map(ToOwned::to_owned))
+    {
+        Some(id) => id,
+        None => generate_entity_id("admin").map_err(AdminIdentityError::from)?,
+    };
+
+    let (password_salt, password_hash) = match password.map(str::trim).filter(|value| !value.is_empty())
+    {
+        Some(next_password) => {
+            validate_password_strength(next_password).map_err(AdminIdentityError::InvalidInput)?;
+            hash_identity_password(next_password, "admin password").map_err(AdminIdentityError::from)?
+        }
+        None => {
+            let Some(existing) = existing_by_id.as_ref() else {
+                return Err(AdminIdentityError::InvalidInput(
+                    "password is required for new admin users".to_owned(),
+                ));
+            };
+            (existing.password_salt.clone(), existing.password_hash.clone())
+        }
+    };
+
+    let created_at_ms = existing_by_id
+        .as_ref()
+        .map(|user| user.created_at_ms)
+        .unwrap_or(now_epoch_millis().map_err(AdminIdentityError::from)?);
+    let record = AdminUserRecord::new(
+        target_id,
+        normalized_email,
+        display_name.trim(),
+        password_salt,
+        password_hash,
+        active,
+        created_at_ms,
+    );
+    let saved = store
+        .insert_admin_user(&record)
+        .await
+        .map_err(map_admin_store_error)?;
+    Ok(AdminUserProfile::from(&saved))
+}
+
+pub async fn set_admin_user_active(
+    store: &dyn AdminStore,
+    user_id: &str,
+    active: bool,
+) -> AdminResult<AdminUserProfile> {
+    let Some(user) = store
+        .find_admin_user_by_id(user_id)
+        .await
+        .map_err(AdminIdentityError::from)?
+    else {
+        return Err(AdminIdentityError::NotFound(
+            "admin user not found".to_owned(),
+        ));
+    };
+
+    let updated = AdminUserRecord::new(
+        user.id,
+        user.email,
+        user.display_name,
+        user.password_salt,
+        user.password_hash,
+        active,
+        user.created_at_ms,
+    );
+    let saved = store
+        .insert_admin_user(&updated)
+        .await
+        .map_err(AdminIdentityError::from)?;
+    Ok(AdminUserProfile::from(&saved))
+}
+
+pub async fn reset_admin_user_password(
+    store: &dyn AdminStore,
+    user_id: &str,
+    new_password: &str,
+) -> AdminResult<AdminUserProfile> {
+    validate_password_strength(new_password).map_err(AdminIdentityError::InvalidInput)?;
+
+    let Some(user) = store
+        .find_admin_user_by_id(user_id)
+        .await
+        .map_err(AdminIdentityError::from)?
+    else {
+        return Err(AdminIdentityError::NotFound(
+            "admin user not found".to_owned(),
+        ));
+    };
+
+    let (password_salt, password_hash) =
+        hash_identity_password(new_password, "admin password").map_err(AdminIdentityError::from)?;
+    let updated = AdminUserRecord::new(
+        user.id,
+        user.email,
+        user.display_name,
+        password_salt,
+        password_hash,
+        user.active,
+        user.created_at_ms,
+    );
+    let saved = store
+        .insert_admin_user(&updated)
+        .await
+        .map_err(AdminIdentityError::from)?;
+    Ok(AdminUserProfile::from(&saved))
+}
+
+pub async fn change_admin_password(
+    store: &dyn AdminStore,
+    user_id: &str,
+    current_password: &str,
+    new_password: &str,
+) -> AdminResult<AdminUserProfile> {
+    validate_current_password(current_password).map_err(AdminIdentityError::InvalidInput)?;
+    validate_password_strength(new_password).map_err(AdminIdentityError::InvalidInput)?;
+
+    let Some(user) = store
+        .find_admin_user_by_id(user_id)
+        .await
+        .map_err(AdminIdentityError::from)?
+    else {
+        return Err(AdminIdentityError::NotFound(
+            "admin user not found".to_owned(),
+        ));
+    };
+
+    if !user.active {
+        return Err(AdminIdentityError::InactiveUser);
+    }
+
+    if !verify_password_hash(current_password, &user.password_hash, "admin password")
+        .map_err(AdminIdentityError::from)?
+    {
+        return Err(AdminIdentityError::InvalidCredentials);
+    }
+
+    let (password_salt, password_hash) =
+        hash_identity_password(new_password, "admin password").map_err(AdminIdentityError::from)?;
+    let updated = AdminUserRecord::new(
+        user.id,
+        user.email,
+        user.display_name,
+        password_salt,
+        password_hash,
+        user.active,
+        user.created_at_ms,
+    );
+    let saved = store
+        .insert_admin_user(&updated)
+        .await
+        .map_err(AdminIdentityError::from)?;
+    Ok(AdminUserProfile::from(&saved))
+}
+
+pub async fn delete_admin_user(store: &dyn AdminStore, user_id: &str) -> AdminResult<bool> {
+    let _ = ensure_default_admin_user(store).await?;
+
+    let Some(user) = store
+        .find_admin_user_by_id(user_id)
+        .await
+        .map_err(AdminIdentityError::from)?
+    else {
+        return Ok(false);
+    };
+
+    if user.id == DEFAULT_ADMIN_USER_ID || user.email == DEFAULT_ADMIN_EMAIL {
+        return Err(AdminIdentityError::Protected(
+            "default bootstrap admin cannot be deleted".to_owned(),
+        ));
+    }
+
+    store
+        .delete_admin_user(&user.id)
+        .await
+        .map_err(AdminIdentityError::from)
+}
+
 pub struct CreateGatewayApiKey;
 
 impl CreateGatewayApiKey {
@@ -212,6 +540,31 @@ pub async fn persist_gateway_api_key(
 
 pub async fn list_gateway_api_keys(store: &dyn AdminStore) -> Result<Vec<GatewayApiKeyRecord>> {
     store.list_gateway_api_keys().await
+}
+
+pub async fn set_gateway_api_key_active(
+    store: &dyn AdminStore,
+    hashed_key: &str,
+    active: bool,
+) -> Result<Option<GatewayApiKeyRecord>> {
+    let Some(existing) = store.find_gateway_api_key(hashed_key).await? else {
+        return Ok(None);
+    };
+
+    let updated = GatewayApiKeyRecord {
+        tenant_id: existing.tenant_id,
+        project_id: existing.project_id,
+        environment: existing.environment,
+        hashed_key: existing.hashed_key,
+        active,
+    };
+
+    let saved = store.insert_gateway_api_key(&updated).await?;
+    Ok(Some(saved))
+}
+
+pub async fn delete_gateway_api_key(store: &dyn AdminStore, hashed_key: &str) -> Result<bool> {
+    store.delete_gateway_api_key(hashed_key).await
 }
 
 pub async fn resolve_gateway_request_context(
@@ -257,7 +610,8 @@ pub async fn register_portal_user(
     let project_id = generate_entity_id("project")?;
     let user_id = generate_entity_id("user")?;
     let created_at_ms = now_epoch_millis()?;
-    let (password_salt, password_hash) = hash_portal_password(password)?;
+    let (password_salt, password_hash) =
+        hash_identity_password(password, "portal password").map_err(PortalIdentityError::from)?;
 
     let tenant = Tenant::new(&tenant_id, format!("{display_name} Workspace"));
     let project = Project::new(&tenant_id, &project_id, "default");
@@ -294,11 +648,8 @@ pub async fn login_portal_user(
     password: &str,
     signing_secret: &str,
 ) -> PortalResult<PortalAuthSession> {
-    if password.trim().is_empty() {
-        return Err(PortalIdentityError::InvalidInput(
-            "password is required".to_owned(),
-        ));
-    }
+    validate_login_password(password).map_err(PortalIdentityError::InvalidInput)?;
+    let _ = ensure_default_portal_user(store).await?;
 
     let normalized_email = normalize_email(email);
     let Some(user) = store
@@ -313,7 +664,9 @@ pub async fn login_portal_user(
         return Err(PortalIdentityError::InactiveUser);
     }
 
-    if !verify_portal_password(password, &user.password_hash)? {
+    if !verify_password_hash(password, &user.password_hash, "portal password")
+        .map_err(PortalIdentityError::from)?
+    {
         return Err(PortalIdentityError::InvalidCredentials);
     }
 
@@ -328,6 +681,190 @@ pub async fn load_portal_user_profile(
         .find_portal_user_by_id(user_id)
         .await
         .map(|maybe_user| maybe_user.map(|user| PortalUserProfile::from(&user)))
+        .map_err(PortalIdentityError::from)
+}
+
+pub async fn list_portal_user_profiles(store: &dyn AdminStore) -> PortalResult<Vec<PortalUserProfile>> {
+    let _ = ensure_default_portal_user(store).await?;
+    store
+        .list_portal_users()
+        .await
+        .map(|users| users.iter().map(PortalUserProfile::from).collect())
+        .map_err(PortalIdentityError::from)
+}
+
+pub async fn upsert_portal_user(
+    store: &dyn AdminStore,
+    user_id: Option<&str>,
+    email: &str,
+    display_name: &str,
+    password: Option<&str>,
+    workspace_tenant_id: &str,
+    workspace_project_id: &str,
+    active: bool,
+) -> PortalResult<PortalUserProfile> {
+    validate_identity_profile_input(email, display_name).map_err(PortalIdentityError::InvalidInput)?;
+    validate_workspace_scope(store, workspace_tenant_id, workspace_project_id).await?;
+
+    let normalized_email = normalize_email(email);
+    let requested_id = normalize_optional_value(user_id);
+    let existing_by_id = match requested_id {
+        Some(id) => store.find_portal_user_by_id(id).await.map_err(PortalIdentityError::from)?,
+        None => None,
+    };
+
+    if let Some(existing) = store
+        .find_portal_user_by_email(&normalized_email)
+        .await
+        .map_err(PortalIdentityError::from)?
+    {
+        let matches_target = existing_by_id
+            .as_ref()
+            .map(|current| current.id == existing.id)
+            .unwrap_or(false)
+            || requested_id.is_some_and(|id| id == existing.id);
+        if !matches_target {
+            return Err(PortalIdentityError::DuplicateEmail);
+        }
+    }
+
+    let target_id = match existing_by_id
+        .as_ref()
+        .map(|user| user.id.clone())
+        .or_else(|| requested_id.map(ToOwned::to_owned))
+    {
+        Some(id) => id,
+        None => generate_entity_id("user").map_err(PortalIdentityError::from)?,
+    };
+
+    let (password_salt, password_hash) = match password.map(str::trim).filter(|value| !value.is_empty())
+    {
+        Some(next_password) => {
+            validate_password_strength(next_password).map_err(PortalIdentityError::InvalidInput)?;
+            hash_identity_password(next_password, "portal password").map_err(PortalIdentityError::from)?
+        }
+        None => {
+            let Some(existing) = existing_by_id.as_ref() else {
+                return Err(PortalIdentityError::InvalidInput(
+                    "password is required for new portal users".to_owned(),
+                ));
+            };
+            (existing.password_salt.clone(), existing.password_hash.clone())
+        }
+    };
+
+    let created_at_ms = existing_by_id
+        .as_ref()
+        .map(|user| user.created_at_ms)
+        .unwrap_or(now_epoch_millis().map_err(PortalIdentityError::from)?);
+    let record = PortalUserRecord::new(
+        target_id,
+        normalized_email,
+        display_name.trim(),
+        password_salt,
+        password_hash,
+        workspace_tenant_id.trim(),
+        workspace_project_id.trim(),
+        active,
+        created_at_ms,
+    );
+    let saved = store
+        .insert_portal_user(&record)
+        .await
+        .map_err(map_portal_store_error)?;
+    Ok(PortalUserProfile::from(&saved))
+}
+
+pub async fn set_portal_user_active(
+    store: &dyn AdminStore,
+    user_id: &str,
+    active: bool,
+) -> PortalResult<PortalUserProfile> {
+    let Some(user) = store
+        .find_portal_user_by_id(user_id)
+        .await
+        .map_err(PortalIdentityError::from)?
+    else {
+        return Err(PortalIdentityError::NotFound(
+            "portal user not found".to_owned(),
+        ));
+    };
+
+    let updated = PortalUserRecord::new(
+        user.id,
+        user.email,
+        user.display_name,
+        user.password_salt,
+        user.password_hash,
+        user.workspace_tenant_id,
+        user.workspace_project_id,
+        active,
+        user.created_at_ms,
+    );
+    let saved = store
+        .insert_portal_user(&updated)
+        .await
+        .map_err(PortalIdentityError::from)?;
+    Ok(PortalUserProfile::from(&saved))
+}
+
+pub async fn reset_portal_user_password(
+    store: &dyn AdminStore,
+    user_id: &str,
+    new_password: &str,
+) -> PortalResult<PortalUserProfile> {
+    validate_password_strength(new_password).map_err(PortalIdentityError::InvalidInput)?;
+
+    let Some(user) = store
+        .find_portal_user_by_id(user_id)
+        .await
+        .map_err(PortalIdentityError::from)?
+    else {
+        return Err(PortalIdentityError::NotFound(
+            "portal user not found".to_owned(),
+        ));
+    };
+
+    let (password_salt, password_hash) = hash_identity_password(new_password, "portal password")
+        .map_err(PortalIdentityError::from)?;
+    let updated = PortalUserRecord::new(
+        user.id,
+        user.email,
+        user.display_name,
+        password_salt,
+        password_hash,
+        user.workspace_tenant_id,
+        user.workspace_project_id,
+        user.active,
+        user.created_at_ms,
+    );
+    let saved = store
+        .insert_portal_user(&updated)
+        .await
+        .map_err(PortalIdentityError::from)?;
+    Ok(PortalUserProfile::from(&saved))
+}
+
+pub async fn delete_portal_user(store: &dyn AdminStore, user_id: &str) -> PortalResult<bool> {
+    let _ = ensure_default_portal_user(store).await?;
+
+    let Some(user) = store
+        .find_portal_user_by_id(user_id)
+        .await
+        .map_err(PortalIdentityError::from)?
+    else {
+        return Ok(false);
+    };
+
+    if user.id == DEFAULT_PORTAL_USER_ID || user.email == DEFAULT_PORTAL_EMAIL {
+        return Err(PortalIdentityError::Protected(
+            "default demo portal user cannot be deleted".to_owned(),
+        ));
+    }
+
+    store
+        .delete_portal_user(&user.id)
+        .await
         .map_err(PortalIdentityError::from)
 }
 
@@ -428,6 +965,161 @@ pub async fn create_portal_api_key(
     .map_err(PortalIdentityError::from)
 }
 
+pub async fn change_portal_password(
+    store: &dyn AdminStore,
+    user_id: &str,
+    current_password: &str,
+    new_password: &str,
+) -> PortalResult<PortalUserProfile> {
+    validate_current_password(current_password).map_err(PortalIdentityError::InvalidInput)?;
+    validate_password_strength(new_password).map_err(PortalIdentityError::InvalidInput)?;
+
+    let Some(user) = store
+        .find_portal_user_by_id(user_id)
+        .await
+        .map_err(PortalIdentityError::from)?
+    else {
+        return Err(PortalIdentityError::NotFound(
+            "portal user not found".to_owned(),
+        ));
+    };
+
+    if !user.active {
+        return Err(PortalIdentityError::InactiveUser);
+    }
+
+    if !verify_password_hash(current_password, &user.password_hash, "portal password")
+        .map_err(PortalIdentityError::from)?
+    {
+        return Err(PortalIdentityError::InvalidCredentials);
+    }
+
+    let (password_salt, password_hash) = hash_identity_password(new_password, "portal password")
+        .map_err(PortalIdentityError::from)?;
+    let updated = PortalUserRecord::new(
+        user.id,
+        user.email,
+        user.display_name,
+        password_salt,
+        password_hash,
+        user.workspace_tenant_id,
+        user.workspace_project_id,
+        user.active,
+        user.created_at_ms,
+    );
+    let saved = store
+        .insert_portal_user(&updated)
+        .await
+        .map_err(PortalIdentityError::from)?;
+    Ok(PortalUserProfile::from(&saved))
+}
+
+async fn ensure_default_admin_user(store: &dyn AdminStore) -> AdminResult<AdminUserRecord> {
+    if let Some(user) = store
+        .find_admin_user_by_email(DEFAULT_ADMIN_EMAIL)
+        .await
+        .map_err(AdminIdentityError::from)?
+    {
+        return Ok(user);
+    }
+
+    let created_at_ms = now_epoch_millis().map_err(AdminIdentityError::from)?;
+    let (password_salt, password_hash) =
+        hash_identity_password(DEFAULT_ADMIN_PASSWORD, "admin password")
+            .map_err(AdminIdentityError::from)?;
+    let user = AdminUserRecord::new(
+        DEFAULT_ADMIN_USER_ID,
+        DEFAULT_ADMIN_EMAIL,
+        DEFAULT_ADMIN_DISPLAY_NAME,
+        password_salt,
+        password_hash,
+        true,
+        created_at_ms,
+    );
+
+    match store.insert_admin_user(&user).await {
+        Ok(saved) => Ok(saved),
+        Err(error) => {
+            if looks_like_duplicate_error(&error) {
+                store
+                    .find_admin_user_by_email(DEFAULT_ADMIN_EMAIL)
+                    .await
+                    .map_err(AdminIdentityError::from)?
+                    .ok_or_else(|| AdminIdentityError::Storage(error))
+            } else {
+                Err(AdminIdentityError::Storage(error))
+            }
+        }
+    }
+}
+
+async fn ensure_default_portal_user(store: &dyn AdminStore) -> PortalResult<PortalUserRecord> {
+    if let Some(user) = store
+        .find_portal_user_by_email(DEFAULT_PORTAL_EMAIL)
+        .await
+        .map_err(PortalIdentityError::from)?
+    {
+        return Ok(user);
+    }
+
+    let tenant = Tenant::new(DEFAULT_PORTAL_TENANT_ID, "Portal Demo Workspace");
+    let project = Project::new(
+        DEFAULT_PORTAL_TENANT_ID,
+        DEFAULT_PORTAL_PROJECT_ID,
+        "default",
+    );
+    store
+        .insert_tenant(&tenant)
+        .await
+        .map_err(PortalIdentityError::from)?;
+    store
+        .insert_project(&project)
+        .await
+        .map_err(PortalIdentityError::from)?;
+
+    let created_at_ms = now_epoch_millis().map_err(PortalIdentityError::from)?;
+    let (password_salt, password_hash) =
+        hash_identity_password(DEFAULT_PORTAL_PASSWORD, "portal password")
+            .map_err(PortalIdentityError::from)?;
+    let user = PortalUserRecord::new(
+        DEFAULT_PORTAL_USER_ID,
+        DEFAULT_PORTAL_EMAIL,
+        DEFAULT_PORTAL_DISPLAY_NAME,
+        password_salt,
+        password_hash,
+        DEFAULT_PORTAL_TENANT_ID,
+        DEFAULT_PORTAL_PROJECT_ID,
+        true,
+        created_at_ms,
+    );
+
+    match store.insert_portal_user(&user).await {
+        Ok(saved) => Ok(saved),
+        Err(error) => {
+            if looks_like_duplicate_error(&error) {
+                store
+                    .find_portal_user_by_email(DEFAULT_PORTAL_EMAIL)
+                    .await
+                    .map_err(PortalIdentityError::from)?
+                    .ok_or_else(|| PortalIdentityError::Storage(error))
+            } else {
+                Err(map_portal_store_error(error))
+            }
+        }
+    }
+}
+
+fn admin_session_from_user(
+    user: &AdminUserRecord,
+    signing_secret: &str,
+) -> AdminResult<AdminAuthSession> {
+    let token = issue_jwt(&user.id, signing_secret).map_err(AdminIdentityError::from)?;
+    Ok(AdminAuthSession {
+        token,
+        user: AdminUserProfile::from(user),
+    })
+}
+
 fn portal_session_from_user(
     user: &PortalUserRecord,
     signing_secret: &str,
@@ -468,27 +1160,31 @@ fn validate_registration_input(
     password: &str,
     display_name: &str,
 ) -> PortalResult<()> {
+    validate_identity_profile_input(email, display_name).map_err(PortalIdentityError::InvalidInput)?;
+    validate_password_strength(password).map_err(PortalIdentityError::InvalidInput)?;
+    Ok(())
+}
+
+fn validate_identity_profile_input(
+    email: &str,
+    display_name: &str,
+) -> std::result::Result<(), String> {
     let normalized_email = normalize_email(email);
     if normalized_email.is_empty() || !normalized_email.contains('@') {
-        return Err(PortalIdentityError::InvalidInput(
-            "email must be a valid address".to_owned(),
-        ));
-    }
-    if password.len() < 8 {
-        return Err(PortalIdentityError::InvalidInput(
-            "password must be at least 8 characters".to_owned(),
-        ));
+        return Err("email must be a valid address".to_owned());
     }
     if display_name.trim().is_empty() {
-        return Err(PortalIdentityError::InvalidInput(
-            "display_name is required".to_owned(),
-        ));
+        return Err("display_name is required".to_owned());
     }
     Ok(())
 }
 
 fn normalize_email(email: &str) -> String {
     email.trim().to_ascii_lowercase()
+}
+
+fn normalize_optional_value(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
 }
 
 fn generate_entity_id(prefix: &str) -> Result<String> {
@@ -499,34 +1195,114 @@ fn generate_entity_id(prefix: &str) -> Result<String> {
     Ok(format!("{prefix}_{nonce:x}"))
 }
 
-fn hash_portal_password(password: &str) -> PortalResult<(String, String)> {
+fn hash_identity_password(password: &str, context: &str) -> Result<(String, String)> {
     let salt = SaltString::generate(&mut OsRng);
     let hash = Argon2::default()
         .hash_password(password.as_bytes(), &salt)
-        .map_err(|error| PortalIdentityError::Storage(anyhow!("password hash failed: {error}")))?
+        .map_err(|error| anyhow!("{context} hash failed: {error}"))?
         .to_string();
     Ok((salt.to_string(), hash))
 }
 
-fn verify_portal_password(password: &str, password_hash: &str) -> PortalResult<bool> {
-    let parsed_hash = PasswordHash::new(password_hash).map_err(|error| {
-        PortalIdentityError::Storage(anyhow!("password hash parse failed: {error}"))
-    })?;
+fn verify_password_hash(password: &str, password_hash: &str, context: &str) -> Result<bool> {
+    let parsed_hash = PasswordHash::new(password_hash)
+        .map_err(|error| anyhow!("{context} hash parse failed: {error}"))?;
     Ok(Argon2::default()
         .verify_password(password.as_bytes(), &parsed_hash)
         .is_ok())
 }
 
+fn validate_login_password(password: &str) -> std::result::Result<(), String> {
+    if password.trim().is_empty() {
+        return Err("password is required".to_owned());
+    }
+    Ok(())
+}
+
+fn validate_current_password(password: &str) -> std::result::Result<(), String> {
+    if password.trim().is_empty() {
+        return Err("current_password is required".to_owned());
+    }
+    Ok(())
+}
+
+fn validate_password_strength(password: &str) -> std::result::Result<(), String> {
+    if password.len() < 8 {
+        return Err("password must be at least 8 characters".to_owned());
+    }
+    Ok(())
+}
+
 fn map_portal_store_error(error: anyhow::Error) -> PortalIdentityError {
-    let lowered = error.to_string().to_ascii_lowercase();
-    if lowered.contains("unique")
-        || lowered.contains("duplicate")
-        || lowered.contains("identity_users.email")
-    {
+    if looks_like_duplicate_error(&error) {
         PortalIdentityError::DuplicateEmail
     } else {
         PortalIdentityError::Storage(error)
     }
+}
+
+fn map_admin_store_error(error: anyhow::Error) -> AdminIdentityError {
+    if looks_like_duplicate_error(&error) {
+        AdminIdentityError::DuplicateEmail
+    } else {
+        AdminIdentityError::Storage(error)
+    }
+}
+
+fn looks_like_duplicate_error(error: &anyhow::Error) -> bool {
+    let lowered = error.to_string().to_ascii_lowercase();
+    lowered.contains("unique")
+        || lowered.contains("duplicate")
+        || lowered.contains("identity_users.email")
+        || lowered.contains("admin_users.email")
+}
+
+async fn validate_workspace_scope(
+    store: &dyn AdminStore,
+    workspace_tenant_id: &str,
+    workspace_project_id: &str,
+) -> PortalResult<()> {
+    let tenant_id = workspace_tenant_id.trim();
+    if tenant_id.is_empty() {
+        return Err(PortalIdentityError::InvalidInput(
+            "workspace_tenant_id is required".to_owned(),
+        ));
+    }
+
+    let project_id = workspace_project_id.trim();
+    if project_id.is_empty() {
+        return Err(PortalIdentityError::InvalidInput(
+            "workspace_project_id is required".to_owned(),
+        ));
+    }
+
+    let Some(_tenant) = store
+        .find_tenant(tenant_id)
+        .await
+        .map_err(PortalIdentityError::from)?
+    else {
+        return Err(PortalIdentityError::NotFound(
+            "workspace tenant not found".to_owned(),
+        ));
+    };
+
+    let Some(project) = store
+        .find_project(project_id)
+        .await
+        .map_err(PortalIdentityError::from)?
+    else {
+        return Err(PortalIdentityError::NotFound(
+            "workspace project not found".to_owned(),
+        ));
+    };
+
+    if project.tenant_id != tenant_id {
+        return Err(PortalIdentityError::InvalidInput(
+            "workspace project does not belong to workspace tenant".to_owned(),
+        ));
+    }
+
+    Ok(())
 }
 
 fn now_epoch_secs() -> Result<u64> {

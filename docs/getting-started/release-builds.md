@@ -1,19 +1,23 @@
 # Release Builds
 
-This page covers how to build and run release artifacts for services, browser assets, and optional desktop packages.
+This page covers how to produce and run deployable artifacts for services, browser assets, and optional desktop packages.
+
+If you are looking for developer-oriented compilation commands, start with [Build and Packaging](/getting-started/build-and-packaging). This page focuses on release outputs.
 
 ## Release Build Targets
 
-Backend services:
+Standalone services:
 
 - `admin-api-service`
 - `gateway-service`
 - `portal-api-service`
+- `router-web-service`
 
-Frontend targets:
+User-facing artifacts:
 
-- browser console static assets
-- optional Tauri desktop package
+- admin app static assets
+- portal web app static assets
+- optional admin Tauri desktop package
 
 ## Build Rust Services
 
@@ -21,86 +25,111 @@ Build all release service binaries:
 
 ```bash
 cargo build --release -p admin-api-service -p gateway-service -p portal-api-service
+cargo build --release -p router-web-service
 ```
 
 The output binaries are placed under `target/release/`.
+
+### Output paths
 
 Windows executable names:
 
 - `target/release/admin-api-service.exe`
 - `target/release/gateway-service.exe`
 - `target/release/portal-api-service.exe`
+- `target/release/router-web-service.exe`
 
 Linux and macOS executable names:
 
 - `target/release/admin-api-service`
 - `target/release/gateway-service`
 - `target/release/portal-api-service`
+- `target/release/router-web-service`
 
 ## Run Release Binaries
+
+The standalone services resolve their configuration from the local SDKWork config root unless you override it with `SDKWORK_CONFIG_DIR` or `SDKWORK_CONFIG_FILE`.
 
 ### Windows
 
 ```powershell
-$env:SDKWORK_DATABASE_URL="sqlite://sdkwork-api-server.db"
+New-Item -ItemType Directory -Force "$HOME\.sdkwork\router" | Out-Null
+$env:SDKWORK_CONFIG_FILE="$HOME\.sdkwork\router\config.yaml"
 .\target\release\admin-api-service.exe
 ```
 
 ```powershell
-$env:SDKWORK_DATABASE_URL="sqlite://sdkwork-api-server.db"
+$env:SDKWORK_CONFIG_FILE="$HOME\.sdkwork\router\config.yaml"
 .\target\release\gateway-service.exe
 ```
 
 ```powershell
-$env:SDKWORK_DATABASE_URL="sqlite://sdkwork-api-server.db"
+$env:SDKWORK_CONFIG_FILE="$HOME\.sdkwork\router\config.yaml"
 .\target\release\portal-api-service.exe
 ```
 
 ### Linux or macOS
 
 ```bash
-export SDKWORK_DATABASE_URL="sqlite://sdkwork-api-server.db"
+mkdir -p "$HOME/.sdkwork/router"
+export SDKWORK_CONFIG_FILE="$HOME/.sdkwork/router/config.yaml"
 ./target/release/admin-api-service
 ```
 
 ```bash
-export SDKWORK_DATABASE_URL="sqlite://sdkwork-api-server.db"
+export SDKWORK_CONFIG_FILE="$HOME/.sdkwork/router/config.yaml"
 ./target/release/gateway-service
 ```
 
 ```bash
-export SDKWORK_DATABASE_URL="sqlite://sdkwork-api-server.db"
+export SDKWORK_CONFIG_FILE="$HOME/.sdkwork/router/config.yaml"
 ./target/release/portal-api-service
 ```
 
-## Build Browser Console Assets
+## Build Admin App Assets
 
 Install dependencies if needed:
 
 ```bash
-pnpm --dir console install
+pnpm --dir apps/sdkwork-router-admin install
 ```
 
 Build:
 
 ```bash
-pnpm --dir console build
+pnpm --dir apps/sdkwork-router-admin build
 ```
 
-The output goes to `console/dist/`.
+The output goes to `apps/sdkwork-router-admin/dist/`.
 
 You can host those assets with any static file server or CDN. During local verification, use:
 
 ```bash
-pnpm --dir console preview
+pnpm --dir apps/sdkwork-router-admin preview
 ```
+
+## Build Portal Web App Assets
+
+Install dependencies if needed:
+
+```bash
+pnpm --dir apps/sdkwork-router-portal install
+```
+
+Build:
+
+```bash
+pnpm --dir apps/sdkwork-router-portal build
+```
+
+The output goes to `apps/sdkwork-router-portal/dist/`.
 
 ## Build the Tauri Desktop App
 
 Desktop package build:
 
 ```bash
-pnpm --dir console tauri:build
+pnpm --dir apps/sdkwork-router-admin tauri:build
 ```
 
 This produces OS-specific desktop artifacts under the Tauri build output directories.
@@ -110,9 +139,11 @@ This produces OS-specific desktop artifacts under the Tauri build output directo
 Recommended server-mode deployment shape:
 
 - run the three Rust services as independent processes
+- run `router-web-service` in front of the admin and portal APIs when you want a unified public web entry
 - use PostgreSQL for durable multi-user deployments
 - use a server-side secret backend strategy
-- host `console/dist/` separately if you need a browser-facing console
+- build `apps/sdkwork-router-admin/dist/` and `apps/sdkwork-router-portal/dist/`
+- let `router-web-service` expose those static assets under `/admin/` and `/portal/`
 
 Recommended embedded-mode deployment shape:
 
@@ -123,7 +154,8 @@ Recommended embedded-mode deployment shape:
 ## Release Verification
 
 ```bash
-cargo build --release -p admin-api-service -p gateway-service -p portal-api-service
-pnpm --dir console build
+cargo build --release -p admin-api-service -p gateway-service -p portal-api-service -p router-web-service
+pnpm --dir apps/sdkwork-router-admin build
+pnpm --dir apps/sdkwork-router-portal build
 pnpm --dir docs build
 ```

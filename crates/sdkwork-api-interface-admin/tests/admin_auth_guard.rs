@@ -2,10 +2,13 @@ use axum::body::to_bytes;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use sdkwork_api_app_credential::CredentialSecretManager;
+use sdkwork_api_secret_core::{master_key_id, SecretBackendKind};
+use sdkwork_api_storage_core::{AdminStore, Reloadable};
 use sdkwork_api_storage_sqlite::SqliteAdminStore;
 use serde_json::Value;
 use sqlx::SqlitePool;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tower::ServiceExt;
 
 async fn read_json(response: axum::response::Response) -> Value {
@@ -45,7 +48,9 @@ async fn admin_routes_require_valid_bearer_token() {
                 .method("POST")
                 .uri("/admin/auth/login")
                 .header("content-type", "application/json")
-                .body(Body::from("{\"subject\":\"admin-1\"}"))
+                .body(Body::from(
+                    "{\"email\":\"admin@sdkwork.local\",\"password\":\"ChangeMe123!\"}",
+                ))
                 .unwrap(),
         )
         .await
@@ -107,7 +112,9 @@ async fn admin_routes_use_the_configured_jwt_signing_secret() {
                 .method("POST")
                 .uri("/admin/auth/login")
                 .header("content-type", "application/json")
-                .body(Body::from("{\"subject\":\"admin-default\"}"))
+                .body(Body::from(
+                    "{\"email\":\"admin@sdkwork.local\",\"password\":\"ChangeMe123!\"}",
+                ))
                 .unwrap(),
         )
         .await
@@ -139,7 +146,9 @@ async fn admin_routes_use_the_configured_jwt_signing_secret() {
                 .method("POST")
                 .uri("/admin/auth/login")
                 .header("content-type", "application/json")
-                .body(Body::from("{\"subject\":\"admin-custom\"}"))
+                .body(Body::from(
+                    "{\"email\":\"admin@sdkwork.local\",\"password\":\"ChangeMe123!\"}",
+                ))
                 .unwrap(),
         )
         .await
@@ -177,7 +186,9 @@ async fn admin_metrics_route_reports_login_and_authenticated_requests() {
                 .method("POST")
                 .uri("/admin/auth/login")
                 .header("content-type", "application/json")
-                .body(Body::from("{\"subject\":\"admin-metrics\"}"))
+                .body(Body::from(
+                    "{\"email\":\"admin@sdkwork.local\",\"password\":\"ChangeMe123!\"}",
+                ))
                 .unwrap(),
         )
         .await
@@ -220,4 +231,266 @@ async fn admin_metrics_route_reports_login_and_authenticated_requests() {
     assert!(body.contains(
         "sdkwork_http_requests_total{service=\"admin\",method=\"GET\",route=\"/admin/projects\",status=\"200\"} 1"
     ));
+}
+
+#[tokio::test]
+async fn admin_routes_apply_rotated_live_jwt_secret_to_new_requests() {
+    let pool = memory_pool().await;
+    let live_store = Reloadable::new(Arc::new(SqliteAdminStore::new(pool)) as Arc<dyn AdminStore>);
+    let live_jwt = Reloadable::new("initial-admin-jwt-secret".to_owned());
+    let app = sdkwork_api_interface_admin::admin_router_with_state(
+        sdkwork_api_interface_admin::AdminApiState::with_live_store_and_secret_manager_and_jwt_secret_handle(
+            live_store,
+            CredentialSecretManager::database_encrypted("local-dev-master-key"),
+            live_jwt.clone(),
+        ),
+    );
+
+    let initial_login = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"email\":\"admin@sdkwork.local\",\"password\":\"ChangeMe123!\"}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(initial_login.status(), StatusCode::OK);
+    let initial_token = read_json(initial_login).await["token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let initially_authorized = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/admin/projects")
+                .header("authorization", format!("Bearer {initial_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(initially_authorized.status(), StatusCode::OK);
+
+    live_jwt.replace("rotated-admin-jwt-secret".to_owned());
+
+    let rejected = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/admin/projects")
+                .header("authorization", format!("Bearer {initial_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(rejected.status(), StatusCode::UNAUTHORIZED);
+
+    let rotated_login = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"email\":\"admin@sdkwork.local\",\"password\":\"ChangeMe123!\"}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(rotated_login.status(), StatusCode::OK);
+    let rotated_token = read_json(rotated_login).await["token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let rotated_authorized = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/admin/projects")
+                .header("authorization", format!("Bearer {rotated_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(rotated_authorized.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn admin_routes_apply_replaced_live_secret_manager_to_new_requests() {
+    let pool = memory_pool().await;
+    let store = Arc::new(SqliteAdminStore::new(pool));
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let initial_path = std::env::temp_dir().join(format!(
+        "sdkwork-admin-secret-manager-initial-{}-{unique}.json",
+        std::process::id()
+    ));
+    let rotated_path = std::env::temp_dir().join(format!(
+        "sdkwork-admin-secret-manager-rotated-{}-{unique}.json",
+        std::process::id()
+    ));
+    let live_store = Reloadable::new(store.clone() as Arc<dyn AdminStore>);
+    let live_secret_manager =
+        Reloadable::new(CredentialSecretManager::new_with_legacy_master_keys(
+            SecretBackendKind::LocalEncryptedFile,
+            "initial-master-key",
+            Vec::new(),
+            &initial_path,
+            "sdkwork-api-server",
+        ));
+    let live_jwt = Reloadable::new("initial-admin-jwt-secret".to_owned());
+    let app = sdkwork_api_interface_admin::admin_router_with_state(
+        sdkwork_api_interface_admin::AdminApiState::with_live_store_and_secret_manager_handle_and_jwt_secret_handle(
+            live_store,
+            live_secret_manager.clone(),
+            live_jwt,
+        ),
+    );
+
+    let login = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"email\":\"admin@sdkwork.local\",\"password\":\"ChangeMe123!\"}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(login.status(), StatusCode::OK);
+    let token = read_json(login).await["token"].as_str().unwrap().to_owned();
+
+    live_secret_manager.replace(CredentialSecretManager::new_with_legacy_master_keys(
+        SecretBackendKind::LocalEncryptedFile,
+        "rotated-master-key",
+        vec!["initial-master-key".to_owned()],
+        &rotated_path,
+        "sdkwork-api-server",
+    ));
+
+    let create = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/credentials")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"tenant_id\":\"tenant-1\",\"provider_id\":\"provider-openai-official\",\"key_reference\":\"cred-openai\",\"secret_value\":\"sk-upstream-openai\"}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(create.status(), StatusCode::CREATED);
+
+    let credential = store
+        .find_credential("tenant-1", "provider-openai-official", "cred-openai")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(credential.secret_backend, "local_encrypted_file");
+    assert_eq!(
+        credential.secret_local_file.as_deref(),
+        Some(rotated_path.to_string_lossy().as_ref())
+    );
+    assert_eq!(
+        credential.secret_master_key_id.as_deref(),
+        Some(master_key_id("rotated-master-key").as_str())
+    );
+
+    let _ = std::fs::remove_file(initial_path);
+    let _ = std::fs::remove_file(rotated_path);
+}
+
+#[tokio::test]
+async fn admin_password_change_requires_current_password_and_rotates_login_secret() {
+    let pool = memory_pool().await;
+    let app = sdkwork_api_interface_admin::admin_router_with_pool(pool);
+
+    let login = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"email\":\"admin@sdkwork.local\",\"password\":\"ChangeMe123!\"}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(login.status(), StatusCode::OK);
+    let token = read_json(login).await["token"].as_str().unwrap().to_owned();
+
+    let changed = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/auth/change-password")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"current_password\":\"ChangeMe123!\",\"new_password\":\"AdminPassword456!\"}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(changed.status(), StatusCode::OK);
+
+    let old_login = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"email\":\"admin@sdkwork.local\",\"password\":\"ChangeMe123!\"}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(old_login.status(), StatusCode::UNAUTHORIZED);
+
+    let new_login = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"email\":\"admin@sdkwork.local\",\"password\":\"AdminPassword456!\"}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(new_login.status(), StatusCode::OK);
 }

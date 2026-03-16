@@ -1,0 +1,39 @@
+{
+  "name": "sdkwork-router-admin-app",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.0.0",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "preview": "vite preview --host 0.0.0.0 --port 4173 --strictPort",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
+  },
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "sdkwork-router-admin-admin-api": "workspace:*",
+    "sdkwork-router-admin-auth": "workspace:*",
+    "sdkwork-router-admin-catalog": "workspace:*",
+    "sdkwork-router-admin-commons": "workspace:*",
+    "sdkwork-router-admin-core": "workspace:*",
+    "sdkwork-router-admin-coupons": "workspace:*",
+    "sdkwork-router-admin-operations": "workspace:*",
+    "sdkwork-router-admin-overview": "workspace:*",
+    "sdkwork-router-admin-tenants": "workspace:*",
+    "sdkwork-router-admin-traffic": "workspace:*",
+    "sdkwork-router-admin-types": "workspace:*",
+    "sdkwork-router-admin-users": "workspace:*"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.2.5",
+    "@types/react": "^19.0.10",
+    "@types/react-dom": "^19.0.4",
+    "@vitejs/plugin-react": "^5.0.0",
+    "turbo": "^2.5.8",
+    "typescript": "^5.8.2",
+    "vite": "^7.0.0"
+  }
+}

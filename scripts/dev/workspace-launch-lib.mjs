@@ -8,10 +8,11 @@ function requireValue(argv, index, flag) {
 
 export function parseWorkspaceArgs(argv) {
   const settings = {
-    databaseUrl: 'sqlite://sdkwork-api-server.db',
+    databaseUrl: null,
     gatewayBind: '127.0.0.1:8080',
     adminBind: '127.0.0.1:8081',
     portalBind: '127.0.0.1:8082',
+    webBind: '0.0.0.0:3001',
     install: false,
     preview: false,
     tauri: false,
@@ -39,6 +40,10 @@ export function parseWorkspaceArgs(argv) {
         settings.portalBind = requireValue(argv, index, arg);
         index += 1;
         break;
+      case '--web-bind':
+        settings.webBind = requireValue(argv, index, arg);
+        index += 1;
+        break;
       case '--install':
         settings.install = true;
         break;
@@ -64,32 +69,46 @@ export function parseWorkspaceArgs(argv) {
 }
 
 export function buildWorkspaceCommandPlan(settings) {
-  const backendArgs = [
-    'scripts/dev/start-stack.mjs',
-    '--database-url',
-    settings.databaseUrl,
+  const backendArgs = ['scripts/dev/start-stack.mjs'];
+  if (settings.databaseUrl) {
+    backendArgs.push('--database-url', settings.databaseUrl);
+  }
+  backendArgs.push(
     '--gateway-bind',
     settings.gatewayBind,
     '--admin-bind',
     settings.adminBind,
     '--portal-bind',
     settings.portalBind,
-  ];
+  );
   if (settings.dryRun) {
     backendArgs.push('--dry-run');
   }
 
-  const consoleArgs = ['scripts/dev/start-console.mjs'];
+  const adminArgs = ['scripts/dev/start-admin.mjs'];
+  const portalArgs = ['scripts/dev/start-portal.mjs'];
+  const webArgs = ['scripts/dev/start-web.mjs'];
+  webArgs.push('--bind', settings.webBind);
+
   if (settings.install) {
-    consoleArgs.push('--install');
+    adminArgs.push('--install');
+    portalArgs.push('--install');
+    webArgs.push('--install');
   }
+
   if (settings.preview) {
-    consoleArgs.push('--preview');
-  } else if (settings.tauri) {
-    consoleArgs.push('--tauri');
+    webArgs.push('--preview');
   }
+
+  if (settings.tauri) {
+    adminArgs.push('--tauri');
+    webArgs.push('--tauri');
+  }
+
   if (settings.dryRun) {
-    consoleArgs.push('--dry-run');
+    adminArgs.push('--dry-run');
+    portalArgs.push('--dry-run');
+    webArgs.push('--dry-run');
   }
 
   return {
@@ -99,10 +118,20 @@ export function buildWorkspaceCommandPlan(settings) {
       scriptPath: 'scripts/dev/start-stack.mjs',
       args: backendArgs,
     },
-    console: {
-      name: settings.preview ? 'console-preview' : settings.tauri ? 'console-tauri' : 'console-browser',
-      scriptPath: 'scripts/dev/start-console.mjs',
-      args: consoleArgs,
+    admin: {
+      name: settings.tauri ? 'admin-tauri' : 'admin-browser',
+      scriptPath: 'scripts/dev/start-admin.mjs',
+      args: adminArgs,
+    },
+    portal: {
+      name: settings.preview ? 'portal-preview' : 'portal-browser',
+      scriptPath: 'scripts/dev/start-portal.mjs',
+      args: portalArgs,
+    },
+    web: {
+      name: settings.preview ? 'web-preview' : settings.tauri ? 'web-tauri' : 'web-static',
+      scriptPath: 'scripts/dev/start-web.mjs',
+      args: webArgs,
     },
   };
 }
@@ -110,17 +139,18 @@ export function buildWorkspaceCommandPlan(settings) {
 export function workspaceHelpText() {
   return `Usage: node scripts/dev/start-workspace.mjs [options]
 
-Starts the backend services and the browser console or Tauri desktop host in one command.
+Starts the backend services plus the standalone admin and portal surfaces in one command.
 
 Options:
-  --database-url <url>   Shared SDKWORK_DATABASE_URL value for admin, gateway, and portal
+  --database-url <url>   Optional shared SDKWORK_DATABASE_URL override for admin, gateway, and portal
   --gateway-bind <bind>  SDKWORK_GATEWAY_BIND override
   --admin-bind <bind>    SDKWORK_ADMIN_BIND override
   --portal-bind <bind>   SDKWORK_PORTAL_BIND override
-  --install              Run pnpm install before starting the console
-  --preview              Build and preview the browser console instead of dev mode
-  --tauri                Start the Tauri desktop shell; browser remains reachable through Vite
-  --dry-run              Print the backend and console commands without running them
+  --web-bind <bind>      SDKWORK_WEB_BIND override for the Pingora public host
+  --install              Run pnpm install before starting the frontend apps
+  --preview              Build admin and portal, then serve them through the Pingora web host
+  --tauri                Start the admin Tauri shell and the Pingora web host for external access
+  --dry-run              Print the backend, admin, portal, and web-host commands without running them
   -h, --help             Show this help
 `;
 }

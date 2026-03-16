@@ -1,13 +1,18 @@
 import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import {
+  changePortalPassword,
   clearPortalSessionToken,
   createPortalApiKey,
   getPortalWorkspace,
   listPortalApiKeys,
   PortalApiError,
 } from 'sdkwork-api-portal-sdk';
-import type { CreatedGatewayApiKey, GatewayApiKeyRecord, PortalWorkspaceSummary } from 'sdkwork-api-types';
+import type {
+  CreatedGatewayApiKey,
+  GatewayApiKeyRecord,
+  PortalWorkspaceSummary,
+} from 'sdkwork-api-types';
 
 interface PortalDashboardPageProps {
   onLogout: () => void;
@@ -50,10 +55,14 @@ function portalErrorMessage(error: unknown): string {
 export function PortalDashboardPage({ onLogout, onNavigate }: PortalDashboardPageProps) {
   const [workspace, setWorkspace] = useState<PortalWorkspaceSummary>(emptyWorkspace);
   const [apiKeys, setApiKeys] = useState<GatewayApiKeyRecord[]>([]);
-  const [status, setStatus] = useState('Loading portal workspace...');
+  const [status, setStatus] = useState('Loading workspace and API key registry...');
   const [environment, setEnvironment] = useState('live');
   const [createdKey, setCreatedKey] = useState<CreatedGatewayApiKey | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordSubmitting, setPasswordSubmitting] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -71,7 +80,7 @@ export function PortalDashboardPage({ onLogout, onNavigate }: PortalDashboardPag
 
         setWorkspace(workspaceSnapshot);
         setApiKeys(keySnapshot);
-        setStatus('Portal workspace loaded. Plaintext API keys are only shown at creation time.');
+        setStatus('Workspace ready. Plaintext API keys are only shown once at creation time.');
       } catch (error) {
         if (cancelled) {
           return;
@@ -79,7 +88,7 @@ export function PortalDashboardPage({ onLogout, onNavigate }: PortalDashboardPag
 
         if (error instanceof PortalApiError && error.status === 401) {
           clearPortalSessionToken();
-          onNavigate('/portal/login');
+          onNavigate('/login');
           return;
         }
 
@@ -112,6 +121,32 @@ export function PortalDashboardPage({ onLogout, onNavigate }: PortalDashboardPag
     }
   }
 
+  async function handleChangePassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (newPassword !== confirmPassword) {
+      setStatus('New password confirmation does not match.');
+      return;
+    }
+
+    setPasswordSubmitting(true);
+    setStatus('Updating portal password...');
+
+    try {
+      await changePortalPassword({
+        current_password: currentPassword,
+        new_password: newPassword,
+      });
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      setStatus('Portal password updated. Use the new password on your next sign-in.');
+    } catch (error) {
+      setStatus(portalErrorMessage(error));
+    } finally {
+      setPasswordSubmitting(false);
+    }
+  }
+
   function handleLogout() {
     clearPortalSessionToken();
     onLogout();
@@ -121,36 +156,50 @@ export function PortalDashboardPage({ onLogout, onNavigate }: PortalDashboardPag
     <section className="portal-shell">
       <header className="portal-hero">
         <div>
-          <p className="eyebrow">Developer Portal</p>
-          <h2>{workspace.user.display_name || 'Workspace dashboard'}</h2>
+          <p className="portal-kicker">Developer Workspace</p>
+          <h1>{workspace.user.display_name || 'Portal dashboard'}</h1>
           <p className="portal-hero-text">
-            Self-service registration, portal login, browser access, and embedded Tauri access all
-            converge on the same `/portal/*` API boundary.
+            This application is optimized for self-service onboarding and credential lifecycle
+            management. It keeps developer workflows separate from admin operator tooling.
           </p>
         </div>
-        <div className="portal-actions">
-          <button className="button-secondary" type="button" onClick={() => onNavigate('/admin')}>
-            Open admin shell
-          </button>
-          <button className="button-primary" type="button" onClick={handleLogout}>
+        <div className="portal-hero-actions">
+          <span className="portal-chip">Session: sdkwork.portal.session-token</span>
+          <span className="portal-chip">Workspace: self-service</span>
+          <button className="portal-secondary-button" type="button" onClick={handleLogout}>
             Logout
           </button>
         </div>
       </header>
 
-      <section className="panel panel-highlight">
-        <div className="panel-heading">
+      <section className="portal-guide-grid">
+        <article className="portal-guide-card">
+          <span>1. Confirm workspace</span>
+          <p>Review the tenant and project assigned to your portal identity.</p>
+        </article>
+        <article className="portal-guide-card">
+          <span>2. Issue a key</span>
+          <p>Create a `live`, `test`, or `staging` API key for your client integration.</p>
+        </article>
+        <article className="portal-guide-card">
+          <span>3. Call the gateway</span>
+          <p>Use the issued key against your gateway `/v1/*` endpoints from an app or script.</p>
+        </article>
+      </section>
+
+      <section className="portal-panel">
+        <div className="portal-panel-heading">
           <div>
-            <p className="eyebrow">Workspace</p>
-            <h2>Portal-owned tenant and project</h2>
+            <p className="portal-kicker">Workspace Identity</p>
+            <h2>Your tenant, project, and login boundary</h2>
           </div>
-          <p className="status">{status}</p>
+          <p className="portal-status">{status}</p>
         </div>
 
-        <div className="detail-grid">
-          <article className="detail-card">
+        <div className="portal-detail-grid">
+          <article className="portal-card">
             <h3>User</h3>
-            <ul className="compact-list">
+            <ul className="portal-facts">
               <li>
                 <strong>{workspace.user.display_name || 'Pending'}</strong>
                 <span>{workspace.user.email || 'No email loaded yet'}</span>
@@ -162,9 +211,9 @@ export function PortalDashboardPage({ onLogout, onNavigate }: PortalDashboardPag
             </ul>
           </article>
 
-          <article className="detail-card">
+          <article className="portal-card">
             <h3>Tenant</h3>
-            <ul className="compact-list">
+            <ul className="portal-facts">
               <li>
                 <strong>{workspace.tenant.name || 'Pending tenant'}</strong>
                 <span>{workspace.tenant.id || 'Unavailable'}</span>
@@ -172,34 +221,40 @@ export function PortalDashboardPage({ onLogout, onNavigate }: PortalDashboardPag
             </ul>
           </article>
 
-          <article className="detail-card">
+          <article className="portal-card">
             <h3>Project</h3>
-            <ul className="compact-list">
+            <ul className="portal-facts">
               <li>
                 <strong>{workspace.project.name || 'Pending project'}</strong>
                 <span>{workspace.project.id || 'Unavailable'}</span>
               </li>
             </ul>
           </article>
+
+          <article className="portal-card portal-code-card">
+            <h3>Client usage</h3>
+            <pre>{`Base URL: /v1/*
+Authorization: Bearer <plaintext API key>
+Environment: ${environment}`}</pre>
+          </article>
         </div>
       </section>
 
-      <section className="panel">
-        <div className="panel-heading">
+      <section className="portal-panel portal-panel-accent">
+        <div className="portal-panel-heading">
           <div>
-            <p className="eyebrow">Gateway Keys</p>
-            <h2>Issue environment-specific API keys</h2>
+            <p className="portal-kicker">Gateway Keys</p>
+            <h2>Issue environment-scoped API keys</h2>
           </div>
-          <p className="status">
-            Generated plaintext keys are write-only. The list below shows hashed registry records
-            only.
+          <p className="portal-status">
+            Plaintext values are write-only. Copy them at creation time and store them securely.
           </p>
         </div>
 
-        <div className="portal-grid">
-          <form className="detail-card portal-key-form" onSubmit={handleCreateKey}>
-            <h3>Create key</h3>
-            <label className="field">
+        <div className="portal-layout-grid">
+          <form className="portal-card portal-form" onSubmit={handleCreateKey}>
+            <h3>Create API key</h3>
+            <label className="portal-field">
               <span>Environment</span>
               <select value={environment} onChange={(event) => setEnvironment(event.target.value)}>
                 <option value="live">live</option>
@@ -207,27 +262,100 @@ export function PortalDashboardPage({ onLogout, onNavigate }: PortalDashboardPag
                 <option value="staging">staging</option>
               </select>
             </label>
-            <button className="button-primary" type="submit" disabled={submitting}>
-              {submitting ? 'Issuing key...' : 'Create API key'}
+            <button className="portal-primary-button" type="submit" disabled={submitting}>
+              {submitting ? 'Issuing key...' : 'Create key'}
             </button>
             {createdKey && (
-              <div className="generated-key">
+              <div className="portal-note-card">
                 <span>Plaintext key</span>
                 <code>{createdKey.plaintext}</code>
               </div>
             )}
           </form>
 
-          <article className="detail-card">
+          <article className="portal-card">
             <h3>Issued keys</h3>
-            <ul className="compact-list">
+            <ul className="portal-facts">
               {apiKeys.map((key) => (
                 <li key={key.hashed_key}>
                   <strong>{key.environment}</strong>
                   <span>{key.hashed_key}</span>
                 </li>
               ))}
-              {!apiKeys.length && <li className="empty">No portal keys issued yet.</li>}
+              {!apiKeys.length && <li className="portal-empty">No portal keys issued yet.</li>}
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section className="portal-panel">
+        <div className="portal-panel-heading">
+          <div>
+            <p className="portal-kicker">Account Security</p>
+            <h2>Rotate your portal password</h2>
+          </div>
+          <p className="portal-status">
+            Portal credentials are isolated from operator accounts used in the admin application.
+          </p>
+        </div>
+
+        <div className="portal-layout-grid">
+          <form className="portal-card portal-form" onSubmit={handleChangePassword}>
+            <h3>Change password</h3>
+            <label className="portal-field">
+              <span>Current password</span>
+              <input
+                value={currentPassword}
+                onChange={(event) => setCurrentPassword(event.target.value)}
+                type="password"
+                autoComplete="current-password"
+                required
+              />
+            </label>
+            <label className="portal-field">
+              <span>New password</span>
+              <input
+                value={newPassword}
+                onChange={(event) => setNewPassword(event.target.value)}
+                type="password"
+                autoComplete="new-password"
+                required
+              />
+            </label>
+            <label className="portal-field">
+              <span>Confirm new password</span>
+              <input
+                value={confirmPassword}
+                onChange={(event) => setConfirmPassword(event.target.value)}
+                type="password"
+                autoComplete="new-password"
+                required
+              />
+            </label>
+            <button
+              className="portal-primary-button"
+              type="submit"
+              disabled={passwordSubmitting}
+            >
+              {passwordSubmitting ? 'Updating password...' : 'Update password'}
+            </button>
+          </form>
+
+          <article className="portal-card">
+            <h3>Quick-start demo account</h3>
+            <ul className="portal-facts">
+              <li>
+                <strong>Default email</strong>
+                <span>portal@sdkwork.local</span>
+              </li>
+              <li>
+                <strong>Default password</strong>
+                <span>ChangeMe123!</span>
+              </li>
+              <li>
+                <strong>Access boundary</strong>
+                <span>Portal APIs only</span>
+              </li>
             </ul>
           </article>
         </div>

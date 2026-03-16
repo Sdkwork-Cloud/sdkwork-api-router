@@ -12,6 +12,10 @@ The runtime config merge order is:
 
 This means environment variables always win over values from `config.yaml`, `config.yml`, or `config.json`.
 
+Runtime config file reload keeps using the original process-start environment override snapshot. Editing `config.yaml` while the service is running is supported for the reloadable fields listed below, but changing parent-shell environment variables after the process has already started is not observed.
+
+All three standalone services now use a durable node identity for shared runtime coordination. `gateway-service` and `admin-api-service` participate in extension-runtime rollout, while `gateway-service`, `admin-api-service`, and `portal-api-service` all participate in standalone config rollout. Set `SDKWORK_SERVICE_INSTANCE_ID` when you want that identity to be stable across restarts and easy to correlate in rollout status.
+
 ## Default Local Config Root
 
 The default local config root is:
@@ -60,6 +64,7 @@ If no config file exists, the services still start with these values:
 - `secret_local_file`: `<config-root>/secrets.json`
 - `enable_connector_extensions`: `true`
 - `enable_native_dynamic_extensions`: `false`
+- `extension_hot_reload_interval_secs`: `0`
 - `require_signed_connector_extensions`: `false`
 - `require_signed_native_dynamic_extensions`: `true`
 - `runtime_snapshot_interval_secs`: `0`
@@ -79,6 +84,7 @@ Supported fields:
 - `extension_paths`
 - `enable_connector_extensions`
 - `enable_native_dynamic_extensions`
+- `extension_hot_reload_interval_secs`
 - `extension_trusted_signers`
 - `require_signed_connector_extensions`
 - `require_signed_native_dynamic_extensions`
@@ -89,6 +95,38 @@ Supported fields:
 - `credential_master_key`
 - `secret_local_file`
 - `secret_keyring_service`
+
+## Runtime Reload Behavior
+
+All three standalone services poll their resolved config file set once per second.
+
+Reloadable without restart:
+
+- `extension_paths`
+- `enable_connector_extensions`
+- `enable_native_dynamic_extensions`
+- `extension_trusted_signers`
+- `require_signed_connector_extensions`
+- `require_signed_native_dynamic_extensions`
+- `extension_hot_reload_interval_secs`
+- `runtime_snapshot_interval_secs`
+- `database_url`
+- `admin_jwt_signing_secret`
+- `portal_jwt_signing_secret`
+- `gateway_bind`
+- `admin_bind`
+- `portal_bind`
+- `secret_backend`
+- `credential_master_key`
+- `credential_legacy_master_keys`
+- `secret_local_file`
+- `secret_keyring_service`
+
+Still restart-required:
+- changes made only in the parent shell after the process already started
+- binary upgrades and other out-of-process deployment changes
+
+When a restart-required field changes on disk, the running process logs that the change was detected but ignored until restart.
 
 ## YAML Example
 
@@ -102,6 +140,7 @@ extension_paths:
   - "extensions/partner"
 enable_connector_extensions: true
 enable_native_dynamic_extensions: false
+extension_hot_reload_interval_secs: 5
 extension_trusted_signers:
   sdkwork: "ZXhwaWNpdC1wdWJsaWMta2V5"
   partner: "c2Vjb25kLXB1YmxpYy1rZXk="
@@ -166,13 +205,35 @@ The most important runtime environment variables are:
 - `SDKWORK_CREDENTIAL_MASTER_KEY`
 - `SDKWORK_SECRET_LOCAL_FILE`
 - `SDKWORK_SECRET_KEYRING_SERVICE`
+- `SDKWORK_SERVICE_INSTANCE_ID`
 - `SDKWORK_EXTENSION_PATHS`
 - `SDKWORK_EXTENSION_ENABLE_CONNECTOR_EXTENSIONS`
 - `SDKWORK_EXTENSION_ENABLE_NATIVE_DYNAMIC_EXTENSIONS`
+- `SDKWORK_EXTENSION_HOT_RELOAD_INTERVAL_SECS`
 - `SDKWORK_EXTENSION_TRUSTED_SIGNERS`
 - `SDKWORK_EXTENSION_REQUIRE_SIGNATURE_FOR_CONNECTOR_EXTENSIONS`
 - `SDKWORK_EXTENSION_REQUIRE_SIGNATURE_FOR_NATIVE_DYNAMIC_EXTENSIONS`
 - `SDKWORK_RUNTIME_SNAPSHOT_INTERVAL_SECS`
+
+## Cluster Runtime Coordination
+
+Standalone services now heartbeat a shared coordination identity into the admin store.
+
+Rules:
+
+- `SDKWORK_SERVICE_INSTANCE_ID` is used as the durable node ID when present
+- otherwise the process synthesizes a node ID from service kind, process id, and startup time
+- active gateway and admin nodes are targeted for `POST /admin/extensions/runtime-rollouts`
+- active gateway, admin, and portal nodes are targeted for `POST /admin/runtime-config/rollouts`
+- rollout participants are snapshotted at creation time, so later heartbeats do not mutate an already-created rollout
+- standalone config rollout keeps its coordination ledger on the startup store snapshot by default, so `database_url` hot swaps do not move an in-flight rollout to a different database unexpectedly
+
+Example:
+
+```bash
+export SDKWORK_SERVICE_INSTANCE_ID="gateway-us-east-01"
+./target/release/gateway-service
+```
 
 ## Startup Examples
 

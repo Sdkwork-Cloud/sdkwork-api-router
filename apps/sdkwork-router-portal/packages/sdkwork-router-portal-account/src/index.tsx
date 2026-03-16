@@ -1,0 +1,1 @@
+export { PortalAccountPage } from './pages';

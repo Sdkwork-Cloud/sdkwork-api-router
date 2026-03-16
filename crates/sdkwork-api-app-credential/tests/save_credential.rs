@@ -3,6 +3,7 @@ use sdkwork_api_app_credential::{
     resolve_credential_secret, resolve_provider_secret_with_manager, save_credential,
     CredentialSecretManager,
 };
+use sdkwork_api_secret_core::{master_key_id, SecretBackendKind};
 use sdkwork_api_secret_keyring::KeyringBackend;
 use sdkwork_api_storage_sqlite::{run_migrations, SqliteAdminStore};
 use std::collections::HashMap;
@@ -144,4 +145,65 @@ async fn keyring_backend_persists_binding_and_resolves_plaintext_secret() {
     .unwrap();
 
     assert_eq!(secret.as_deref(), Some("sk-upstream-openai"));
+}
+
+#[tokio::test]
+async fn resolves_historical_credentials_after_secret_manager_reconfiguration() {
+    let pool = run_migrations("sqlite::memory:").await.unwrap();
+    let store = SqliteAdminStore::new(pool);
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let initial_path = std::env::temp_dir().join(format!(
+        "sdkwork-api-credential-initial-{}-{unique}.json",
+        std::process::id()
+    ));
+    let rotated_path = std::env::temp_dir().join(format!(
+        "sdkwork-api-credential-rotated-{}-{unique}.json",
+        std::process::id()
+    ));
+    let initial_manager =
+        CredentialSecretManager::local_encrypted_file("initial-master-key", &initial_path);
+
+    let credential = persist_credential_with_secret_and_manager(
+        &store,
+        &initial_manager,
+        "tenant-1",
+        "provider-openai-official",
+        "cred-openai",
+        "sk-upstream-openai",
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        credential.secret_local_file.as_deref(),
+        Some(initial_path.to_string_lossy().as_ref())
+    );
+    assert_eq!(
+        credential.secret_master_key_id.as_deref(),
+        Some(master_key_id("initial-master-key").as_str())
+    );
+
+    let rotated_manager = CredentialSecretManager::new_with_legacy_master_keys(
+        SecretBackendKind::LocalEncryptedFile,
+        "rotated-master-key",
+        vec!["initial-master-key".to_owned()],
+        &rotated_path,
+        "sdkwork-api-server",
+    );
+
+    let secret = resolve_provider_secret_with_manager(
+        &store,
+        &rotated_manager,
+        "tenant-1",
+        "provider-openai-official",
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(secret.as_deref(), Some("sk-upstream-openai"));
+    let _ = std::fs::remove_file(initial_path);
+    let _ = std::fs::remove_file(rotated_path);
 }

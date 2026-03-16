@@ -1,10 +1,10 @@
 # Runtime Modes
 
-SDKWork API Server supports both standalone server operation and an embedded desktop-oriented runtime model.
+SDKWork API Server supports two primary runtime shapes: standalone services and an embedded desktop-oriented model.
 
-## Server Mode
+## Standalone Server Mode
 
-Server mode is the standalone deployment shape.
+Standalone mode is the shared-service deployment shape.
 
 Characteristics:
 
@@ -26,7 +26,7 @@ Embedded mode is the desktop-oriented deployment shape.
 Characteristics:
 
 - the runtime can be hosted in-process through the runtime host abstraction
-- the Tauri shell can host the same React console as the browser
+- the Tauri shell hosts the operator console while the portal stays browser-first
 - loopback binding is the default trust boundary
 - SQLite is the preferred local persistence strategy
 
@@ -34,18 +34,21 @@ Choose this mode when:
 
 - you want a desktop-first operator experience
 - you are running locally on a single machine
-- you want browser and desktop access to share the same frontend routes
+- you want the admin console to be available in both browser and desktop form
 
 ## Browser and Tauri Together
 
 In development:
 
 - `pnpm --dir console tauri:dev` uses the Vite dev server
-- the same Vite URL stays reachable from a browser
-- `start-workspace --tauri` keeps backend services plus the desktop shell in one startup flow
+- the same admin Vite URL stays reachable from a browser
+- `start-workspace --tauri` keeps backend services plus the desktop shell in one startup flow while the portal continues on `http://127.0.0.1:5174/`
 
-## Deep Dive
+## Where To Go Next
 
-For the detailed runtime topology and extension runtime status, read:
-
-- [Detailed Runtime Modes](/architecture/runtime-modes)
+- onboarding and local startup:
+  - [Source Development](/getting-started/source-development)
+- compilation and packaging:
+  - [Build and Packaging](/getting-started/build-and-packaging)
+- deep architecture and runtime supervision:
+  - [Runtime Modes Deep Dive](/architecture/runtime-modes)

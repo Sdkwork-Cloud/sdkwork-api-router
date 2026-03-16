@@ -1,10 +1,16 @@
+#[cfg(windows)]
 use std::fs;
+#[cfg(windows)]
 use std::net::TcpListener;
+#[cfg(windows)]
 use std::path::{Path, PathBuf};
+#[cfg(windows)]
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use sdkwork_api_app_routing::RouteSelectionContext;
 use sdkwork_api_app_routing::{
-    persist_routing_policy, select_route_with_store, simulate_route, simulate_route_with_store,
+    persist_routing_policy, select_route_with_store, select_route_with_store_context,
+    simulate_route, simulate_route_with_store, simulate_route_with_store_context,
     simulate_route_with_store_seeded,
 };
 use sdkwork_api_domain_catalog::{Channel, ModelCatalogEntry, ProxyProvider};
@@ -12,9 +18,12 @@ use sdkwork_api_domain_routing::{
     ProviderHealthSnapshot, RoutingDecisionSource, RoutingPolicy, RoutingStrategy,
 };
 use sdkwork_api_extension_core::{ExtensionInstallation, ExtensionInstance, ExtensionRuntime};
+#[cfg(windows)]
 use sdkwork_api_extension_host::{
-    ensure_connector_runtime_started, load_native_dynamic_provider_adapter,
-    shutdown_all_connector_runtimes, shutdown_all_native_dynamic_runtimes, ExtensionLoadPlan,
+    ensure_connector_runtime_started, load_native_dynamic_provider_adapter, ExtensionLoadPlan,
+};
+use sdkwork_api_extension_host::{
+    shutdown_all_connector_runtimes, shutdown_all_native_dynamic_runtimes,
 };
 use sdkwork_api_storage_sqlite::{run_migrations, SqliteAdminStore};
 use serial_test::serial;
@@ -458,6 +467,403 @@ async fn route_simulation_can_use_seeded_weighted_random_strategy() {
 
 #[serial(routing_runtime)]
 #[tokio::test]
+async fn route_simulation_geo_affinity_prefers_matching_region() {
+    shutdown_all_connector_runtimes().unwrap();
+    shutdown_all_native_dynamic_runtimes().unwrap();
+
+    let pool = run_migrations("sqlite::memory:").await.unwrap();
+    let store = SqliteAdminStore::new(pool);
+
+    store
+        .insert_channel(&Channel::new("openai", "OpenAI"))
+        .await
+        .unwrap();
+    store
+        .insert_provider(
+            &ProxyProvider::new(
+                "provider-eu-west",
+                "openai",
+                "openai",
+                "https://eu-west.example/v1",
+                "EU West Provider",
+            )
+            .with_extension_id("sdkwork.provider.openai.official"),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_provider(
+            &ProxyProvider::new(
+                "provider-us-east",
+                "openai",
+                "openai",
+                "https://us-east.example/v1",
+                "US East Provider",
+            )
+            .with_extension_id("sdkwork.provider.openai.official"),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_model(&ModelCatalogEntry::new("gpt-4.1", "provider-eu-west"))
+        .await
+        .unwrap();
+    store
+        .insert_model(&ModelCatalogEntry::new("gpt-4.1", "provider-us-east"))
+        .await
+        .unwrap();
+    store
+        .insert_extension_installation(
+            &ExtensionInstallation::new(
+                "builtin-openai",
+                "sdkwork.provider.openai.official",
+                ExtensionRuntime::Builtin,
+            )
+            .with_enabled(true),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_extension_instance(
+            &ExtensionInstance::new(
+                "provider-eu-west",
+                "builtin-openai",
+                "sdkwork.provider.openai.official",
+            )
+            .with_enabled(true)
+            .with_config(serde_json::json!({
+                "routing": {
+                    "region": "eu-west"
+                }
+            })),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_extension_instance(
+            &ExtensionInstance::new(
+                "provider-us-east",
+                "builtin-openai",
+                "sdkwork.provider.openai.official",
+            )
+            .with_enabled(true)
+            .with_config(serde_json::json!({
+                "region": "us-east"
+            })),
+        )
+        .await
+        .unwrap();
+
+    let policy = RoutingPolicy::new("policy-geo-affinity", "chat_completion", "gpt-4.1")
+        .with_priority(100)
+        .with_strategy(RoutingStrategy::GeoAffinity)
+        .with_ordered_provider_ids(vec![
+            "provider-eu-west".to_owned(),
+            "provider-us-east".to_owned(),
+        ]);
+    persist_routing_policy(&store, &policy).await.unwrap();
+
+    let decision = simulate_route_with_store_context(
+        &store,
+        "chat_completion",
+        "gpt-4.1",
+        Some("us-east"),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(decision.selected_provider_id, "provider-us-east");
+    assert_eq!(decision.strategy.as_deref(), Some("geo_affinity"));
+    assert_eq!(decision.requested_region.as_deref(), Some("us-east"));
+    assert_eq!(decision.assessments.len(), 2);
+    assert_eq!(decision.assessments[0].provider_id, "provider-eu-west");
+    assert_eq!(decision.assessments[0].region.as_deref(), Some("eu-west"));
+    assert_eq!(decision.assessments[0].region_match, Some(false));
+    assert_eq!(decision.assessments[1].provider_id, "provider-us-east");
+    assert_eq!(decision.assessments[1].region.as_deref(), Some("us-east"));
+    assert_eq!(decision.assessments[1].region_match, Some(true));
+}
+
+#[serial(routing_runtime)]
+#[tokio::test]
+async fn route_simulation_geo_affinity_degrades_to_top_ranked_candidate_when_no_region_matches() {
+    shutdown_all_connector_runtimes().unwrap();
+    shutdown_all_native_dynamic_runtimes().unwrap();
+
+    let pool = run_migrations("sqlite::memory:").await.unwrap();
+    let store = SqliteAdminStore::new(pool);
+
+    store
+        .insert_channel(&Channel::new("openai", "OpenAI"))
+        .await
+        .unwrap();
+    store
+        .insert_provider(
+            &ProxyProvider::new(
+                "provider-primary",
+                "openai",
+                "openai",
+                "https://primary.example/v1",
+                "Primary Provider",
+            )
+            .with_extension_id("sdkwork.provider.openai.official"),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_provider(
+            &ProxyProvider::new(
+                "provider-secondary",
+                "openai",
+                "openai",
+                "https://secondary.example/v1",
+                "Secondary Provider",
+            )
+            .with_extension_id("sdkwork.provider.openai.official"),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_model(&ModelCatalogEntry::new("gpt-4.1", "provider-primary"))
+        .await
+        .unwrap();
+    store
+        .insert_model(&ModelCatalogEntry::new("gpt-4.1", "provider-secondary"))
+        .await
+        .unwrap();
+    store
+        .insert_extension_installation(
+            &ExtensionInstallation::new(
+                "builtin-openai",
+                "sdkwork.provider.openai.official",
+                ExtensionRuntime::Builtin,
+            )
+            .with_enabled(true),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_extension_instance(
+            &ExtensionInstance::new(
+                "provider-primary",
+                "builtin-openai",
+                "sdkwork.provider.openai.official",
+            )
+            .with_enabled(true)
+            .with_config(serde_json::json!({
+                "region": "eu-west"
+            })),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_extension_instance(
+            &ExtensionInstance::new(
+                "provider-secondary",
+                "builtin-openai",
+                "sdkwork.provider.openai.official",
+            )
+            .with_enabled(true)
+            .with_config(serde_json::json!({
+                "routing": {
+                    "region": "ap-southeast"
+                }
+            })),
+        )
+        .await
+        .unwrap();
+
+    let policy = RoutingPolicy::new("policy-geo-degraded", "chat_completion", "gpt-4.1")
+        .with_priority(100)
+        .with_strategy(RoutingStrategy::GeoAffinity)
+        .with_ordered_provider_ids(vec![
+            "provider-primary".to_owned(),
+            "provider-secondary".to_owned(),
+        ]);
+    persist_routing_policy(&store, &policy).await.unwrap();
+
+    let decision = simulate_route_with_store_context(
+        &store,
+        "chat_completion",
+        "gpt-4.1",
+        Some("us-east"),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(decision.selected_provider_id, "provider-primary");
+    assert_eq!(decision.requested_region.as_deref(), Some("us-east"));
+    assert_eq!(decision.strategy.as_deref(), Some("geo_affinity"));
+    assert!(decision
+        .selection_reason
+        .as_deref()
+        .unwrap()
+        .contains("no candidate matched"));
+    assert!(decision
+        .assessments
+        .iter()
+        .all(|assessment| assessment.region_match == Some(false)));
+}
+
+#[serial(routing_runtime)]
+#[tokio::test]
+async fn route_simulation_geo_affinity_keeps_health_precedence_over_matching_unhealthy_region() {
+    shutdown_all_connector_runtimes().unwrap();
+    shutdown_all_native_dynamic_runtimes().unwrap();
+
+    let pool = run_migrations("sqlite::memory:").await.unwrap();
+    let store = SqliteAdminStore::new(pool);
+
+    store
+        .insert_channel(&Channel::new("openai", "OpenAI"))
+        .await
+        .unwrap();
+    store
+        .insert_provider(
+            &ProxyProvider::new(
+                "provider-match-unhealthy",
+                "openai",
+                "openai",
+                "https://match-unhealthy.example/v1",
+                "Matching Unhealthy Provider",
+            )
+            .with_extension_id("sdkwork.provider.snapshot.match"),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_provider(
+            &ProxyProvider::new(
+                "provider-healthy-backup",
+                "openai",
+                "openai",
+                "https://healthy-backup.example/v1",
+                "Healthy Backup Provider",
+            )
+            .with_extension_id("sdkwork.provider.snapshot.backup"),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_model(&ModelCatalogEntry::new(
+            "gpt-4.1",
+            "provider-match-unhealthy",
+        ))
+        .await
+        .unwrap();
+    store
+        .insert_model(&ModelCatalogEntry::new(
+            "gpt-4.1",
+            "provider-healthy-backup",
+        ))
+        .await
+        .unwrap();
+    store
+        .insert_provider_health_snapshot(
+            &ProviderHealthSnapshot::new(
+                "provider-match-unhealthy",
+                "sdkwork.provider.snapshot.match",
+                "builtin",
+                100,
+            )
+            .with_running(true)
+            .with_healthy(false),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_provider_health_snapshot(
+            &ProviderHealthSnapshot::new(
+                "provider-healthy-backup",
+                "sdkwork.provider.snapshot.backup",
+                "builtin",
+                200,
+            )
+            .with_running(true)
+            .with_healthy(true),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_extension_installation(
+            &ExtensionInstallation::new(
+                "builtin-openai",
+                "sdkwork.provider.openai.official",
+                ExtensionRuntime::Builtin,
+            )
+            .with_enabled(true),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_extension_instance(
+            &ExtensionInstance::new(
+                "provider-match-unhealthy",
+                "builtin-openai",
+                "sdkwork.provider.openai.official",
+            )
+            .with_enabled(true)
+            .with_config(serde_json::json!({
+                "region": "us-east"
+            })),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_extension_instance(
+            &ExtensionInstance::new(
+                "provider-healthy-backup",
+                "builtin-openai",
+                "sdkwork.provider.openai.official",
+            )
+            .with_enabled(true)
+            .with_config(serde_json::json!({
+                "region": "eu-west"
+            })),
+        )
+        .await
+        .unwrap();
+
+    let policy = RoutingPolicy::new("policy-geo-health", "chat_completion", "gpt-4.1")
+        .with_priority(100)
+        .with_strategy(RoutingStrategy::GeoAffinity)
+        .with_ordered_provider_ids(vec![
+            "provider-match-unhealthy".to_owned(),
+            "provider-healthy-backup".to_owned(),
+        ]);
+    persist_routing_policy(&store, &policy).await.unwrap();
+
+    let decision = simulate_route_with_store_context(
+        &store,
+        "chat_completion",
+        "gpt-4.1",
+        Some("us-east"),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(decision.selected_provider_id, "provider-healthy-backup");
+    assert_eq!(decision.requested_region.as_deref(), Some("us-east"));
+    assert_eq!(
+        decision.assessments[0].provider_id,
+        "provider-healthy-backup"
+    );
+    assert_eq!(
+        decision.assessments[1].provider_id,
+        "provider-match-unhealthy"
+    );
+    assert_eq!(decision.assessments[1].region_match, Some(true));
+    assert!(decision.assessments[1]
+        .reasons
+        .iter()
+        .any(|reason| reason.contains("healthy candidate is available")));
+}
+
+#[serial(routing_runtime)]
+#[tokio::test]
 async fn route_simulation_slo_aware_prefers_eligible_candidate_over_cheaper_violating_candidate() {
     shutdown_all_connector_runtimes().unwrap();
     shutdown_all_native_dynamic_runtimes().unwrap();
@@ -741,6 +1147,42 @@ async fn select_route_with_store_persists_routing_decision_log() {
     assert_eq!(logs[0].tenant_id.as_deref(), Some("tenant-1"));
     assert_eq!(logs[0].project_id.as_deref(), Some("project-1"));
     assert_eq!(logs[0].route_key, "gpt-4.1");
+}
+
+#[serial(routing_runtime)]
+#[tokio::test]
+async fn select_route_with_store_context_persists_requested_region_in_routing_decision_log() {
+    shutdown_all_connector_runtimes().unwrap();
+    shutdown_all_native_dynamic_runtimes().unwrap();
+
+    let pool = run_migrations("sqlite::memory:").await.unwrap();
+    let store = SqliteAdminStore::new(pool);
+
+    store
+        .insert_model(&ModelCatalogEntry::new(
+            "gpt-4.1",
+            "provider-openai-official",
+        ))
+        .await
+        .unwrap();
+
+    let decision = select_route_with_store_context(
+        &store,
+        "chat_completion",
+        "gpt-4.1",
+        RouteSelectionContext::new(RoutingDecisionSource::Gateway)
+            .with_tenant_id_option(Some("tenant-1"))
+            .with_project_id_option(Some("project-1"))
+            .with_requested_region_option(Some("us-east")),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(decision.requested_region.as_deref(), Some("us-east"));
+
+    let logs = store.list_routing_decision_logs().await.unwrap();
+    assert_eq!(logs.len(), 1);
+    assert_eq!(logs[0].requested_region.as_deref(), Some("us-east"));
 }
 
 #[serial(routing_runtime)]
@@ -1031,6 +1473,7 @@ async fn route_simulation_demotes_unhealthy_runtime_backed_provider() {
     cleanup_dir(&root);
 }
 
+#[cfg(windows)]
 fn temp_extension_root(suffix: &str) -> PathBuf {
     let mut path = std::env::temp_dir();
     let millis = SystemTime::now()
@@ -1041,6 +1484,7 @@ fn temp_extension_root(suffix: &str) -> PathBuf {
     path
 }
 
+#[cfg(windows)]
 fn cleanup_dir(path: &Path) {
     let _ = fs::remove_dir_all(path);
 }
@@ -1095,6 +1539,7 @@ while ($true) {{
     )
 }
 
+#[cfg(windows)]
 fn native_dynamic_fixture_library_path() -> PathBuf {
     let current_exe = std::env::current_exe().expect("current exe");
     let directory = current_exe.parent().expect("exe dir");
