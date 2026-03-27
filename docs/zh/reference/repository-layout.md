@@ -22,8 +22,11 @@
 | `services/gateway-service` | 独立 `/v1/*` 网关二进制 |
 | `services/admin-api-service` | 独立 `/admin/*` 控制平面二进制 |
 | `services/portal-api-service` | 独立 `/portal/*` 自助门户二进制 |
-| `console/` | 浏览器与 Tauri admin 控制台及 landing 外壳 |
-| `apps/sdkwork-router-portal/` | 独立浏览器 portal 应用 |
+| `services/router-web-service` | 面向公网的 Pingora Web 宿主，负责 admin 与 portal 静态站点分发 |
+| `services/router-product-service` | 服务端模式的一体化产品宿主，统一承载 `/admin/*`、`/portal/*` 与 `/api/*` |
+| `apps/sdkwork-router-admin/` | 独立 admin 浏览器应用与 admin 自有 Tauri 宿主 |
+| `apps/sdkwork-router-portal/` | 独立 portal 浏览器应用、portal 自有 Tauri 宿主与产品入口 |
+| `console/` | 兼容保留的浏览器与 Tauri 控制台外壳，继续参与发布打包 |
 | `docs/` | VitePress 文档站 |
 
 ## 后端分层
@@ -44,16 +47,20 @@
 - `services/gateway-service`
 - `services/admin-api-service`
 - `services/portal-api-service`
+- `services/router-web-service`
+- `services/router-product-service`
 
 ## 前端分层
 
 | 路径 | 职责 |
 |---|---|
-| `console/src/` | 顶层 admin 外壳与 landing 组合 |
-| `console/packages/` | admin 控制平面模块与共享 SDK |
-| `console/src-tauri/` | Tauri 宿主和桌面打包集成 |
+| `apps/sdkwork-router-admin/src/` | 独立 admin 根外壳与主题 |
+| `apps/sdkwork-router-admin/packages/` | admin 基础包与业务模块 |
+| `apps/sdkwork-router-admin/src-tauri/` | admin 自有 Tauri 宿主与桌面打包集成 |
 | `apps/sdkwork-router-portal/src/` | 独立 portal 根外壳与主题 |
 | `apps/sdkwork-router-portal/packages/` | portal 基础包与业务模块 |
+| `console/src/` | 兼容保留的控制台应用组合层 |
+| `console/src-tauri/` | console 的 Tauri 宿主与桌面打包集成 |
 
 ## 文档与运维资产
 

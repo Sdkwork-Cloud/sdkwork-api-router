@@ -9,7 +9,10 @@
 | gateway | OpenAI 兼容数据平面与 provider 分发 | `services/gateway-service`、`crates/sdkwork-api-interface-http` |
 | admin | 运维控制平面 | `services/admin-api-service`、`crates/sdkwork-api-interface-admin` |
 | portal | 终端用户自助边界 | `services/portal-api-service`、`crates/sdkwork-api-interface-portal` |
-| console | 浏览器与 Tauri UI 外壳 | `console/` |
+| web host | 面向公网的 Web 分发与 API 代理 | `services/router-web-service`、`crates/sdkwork-api-runtime-host` |
+| product host | 桌面模式与服务端模式共用的一体化产品宿主 | `services/router-product-service`、`crates/sdkwork-api-product-runtime` |
+| admin app | 浏览器与 Tauri 管理端体验 | `apps/sdkwork-router-admin/` |
+| portal app | 浏览器与 Tauri 自助门户体验 | `apps/sdkwork-router-portal/` |
 | docs | 文档产品 | `docs/` |
 
 ## 请求流
@@ -41,9 +44,12 @@ admin 与 portal 服务整体分层相同，但它们终止在原生控制平面
 
 SDKWork 同时支持独立服务与嵌入式两类运行形态。
 
-- 三个独立服务分别监听 gateway、admin、portal HTTP 接口
-- 浏览器模式下，console 直接调用这些监听地址
-- 同一套 console 也可以由 Tauri 承载，用于桌面运行
+- 独立服务模式下，gateway、admin、portal 分别以独立二进制监听 HTTP 接口
+- `router-web-service` 负责暴露 admin 与 portal 静态站点，并代理 `/api/admin/*`、`/api/portal/*` 与 `/api/v1/*`
+- `sdkwork-api-product-runtime` 负责把独立监听器与共享 Web 宿主组合成产品级运行时
+- `router-product-service` 是服务端模式的一体化入口，用一个进程对外提供 `/admin/*`、`/portal/*` 与 `/api/*`
+- admin 与 portal 的 Tauri 宿主都嵌入同一套共享产品运行时，因此桌面模式也能暴露统一的浏览器访问 URL
+- 产品运行时支持基于 `web`、`gateway`、`admin`、`portal` 的角色切片，可部署到不同节点组成集群拓扑
 - 扩展运行时支持 builtin、connector、native-dynamic 三种形态
 - 运行时配置、监听器重绑定、存储切换与 secret-manager 轮换优先走热重载，而不是整进程重启
 
@@ -85,21 +91,28 @@ SDKWork 同时支持独立服务与嵌入式两类运行形态。
 
 ## 前端架构
 
-console 被拆分为轻量外壳和可复用业务包：
+前端控制平面产品被刻意拆成两个独立应用：
 
-- `console/src/` 负责应用组合
-- `console/packages/` 承担复用的 API、auth、routing、usage 与 workspace 模块
-- `console/src-tauri/` 负责桌面宿主集成
+- `apps/sdkwork-router-admin/` 负责超级管理后台、admin API 客户端与 admin 自有 Tauri 宿主
+- `apps/sdkwork-router-portal/` 负责用户自助工作台、portal API 客户端与服务端模式产品入口
+- `crates/sdkwork-api-runtime-host` 负责服务端模式和桌面模式共用的 Pingora Web 分发边界
+- `crates/sdkwork-api-product-runtime` 负责启动本地 API 监听器并对外发布统一的产品级 Web 表面
 
-这让浏览器版和桌面版可以共享业务实现，同时把原生差异约束在 Tauri 边界内。
+这样既能隔离管理端与自助门户的职责，又能维持统一的公网访问契约。
 
 ## 运维架构
 
-三个独立服务都暴露：
+所有独立服务都暴露：
 
 - health 端点
 - Prometheus 风格 metrics
 - 结构化请求追踪
+
+一体化产品宿主额外负责：
+
+- 统一的 `/admin/*`、`/portal/*` 与 `/api/*` 公网绑定
+- 基于环境变量的角色切片，用于集群拓扑
+- 当 `web` 角色未与 API 角色同机部署时的显式上游转发
 
 其中 admin 控制平面额外负责：
 
