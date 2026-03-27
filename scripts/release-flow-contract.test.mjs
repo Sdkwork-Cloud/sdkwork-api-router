@@ -145,6 +145,19 @@ test('release target helpers and desktop release runner resolve explicit target 
       path.join(
         rootDir,
         'target',
+        'x86_64-pc-windows-msvc',
+        'release',
+        'bundle',
+      ).replaceAll('\\', '/'),
+      path.join(
+        rootDir,
+        'target',
+        'release',
+        'bundle',
+      ).replaceAll('\\', '/'),
+      path.join(
+        rootDir,
+        'target',
         'sdkwork-router-admin-tauri',
         'x86_64-pc-windows-msvc',
         'release',
@@ -212,6 +225,33 @@ test('native desktop packager skips empty bundle roots and selects the first roo
         buildRoots: [emptyRoot, populatedRoot],
       }).replaceAll('\\', '/'),
       populatedRoot.replaceAll('\\', '/'),
+    );
+  } finally {
+    rmSync(stagingRoot, { recursive: true, force: true });
+  }
+});
+
+test('native desktop packager also accepts generic repository target bundle roots used by some CI layouts', async () => {
+  const packagerPath = path.join(rootDir, 'scripts', 'release', 'package-release-assets.mjs');
+  const packager = await import(pathToFileURL(packagerPath).href);
+
+  assert.equal(typeof packager.resolveAvailableNativeBuildRoot, 'function');
+
+  const stagingRoot = mkdtempSync(path.join(os.tmpdir(), 'sdkwork-router-release-packager-'));
+
+  try {
+    const genericTargetRoot = path.join(stagingRoot, 'target', 'x86_64-pc-windows-msvc', 'release', 'bundle');
+    const appLocalRoot = path.join(stagingRoot, 'apps', 'sdkwork-router-admin', 'src-tauri', 'target', 'x86_64-pc-windows-msvc', 'release', 'bundle');
+
+    mkdirSync(path.join(genericTargetRoot, 'nsis'), { recursive: true });
+    mkdirSync(appLocalRoot, { recursive: true });
+    writeFileSync(path.join(genericTargetRoot, 'nsis', 'sdkwork-router-admin.exe'), 'artifact', 'utf8');
+
+    assert.equal(
+      packager.resolveAvailableNativeBuildRoot({
+        buildRoots: [appLocalRoot, genericTargetRoot],
+      }).replaceAll('\\', '/'),
+      genericTargetRoot.replaceAll('\\', '/'),
     );
   } finally {
     rmSync(stagingRoot, { recursive: true, force: true });
