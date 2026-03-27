@@ -32,6 +32,12 @@ const DESKTOP_APP_DIRS = {
   console: path.join(rootDir, 'console'),
 };
 
+const DESKTOP_APP_TARGET_DIR_NAMES = {
+  admin: 'sdkwork-router-admin-tauri',
+  portal: 'sdkwork-router-portal-tauri',
+  console: 'sdkwork-api-console-tauri',
+};
+
 const NATIVE_RELEASE_DESKTOP_APP_IDS = ['admin', 'portal'];
 
 const SERVICE_BINARY_NAMES = [
@@ -119,13 +125,24 @@ export function resolveNativeBuildRoot({ appId, targetTriple = '' } = {}) {
 
 export function resolveNativeBuildRootCandidates({ appId, targetTriple = '' } = {}) {
   const roots = [];
-  const preferredRoot = resolveNativeBuildRoot({
+  const normalizedTargetTriple = String(targetTriple ?? '').trim();
+  const workspaceTargetDirName = DESKTOP_APP_TARGET_DIR_NAMES[appId];
+  if (!workspaceTargetDirName) {
+    throw new Error(`Unsupported desktop application id: ${appId}`);
+  }
+
+  const workspaceTargetRoot = path.join(rootDir, 'target', workspaceTargetDirName);
+  if (normalizedTargetTriple.length > 0) {
+    roots.push(path.join(workspaceTargetRoot, normalizedTargetTriple, 'release', 'bundle'));
+  }
+  roots.push(path.join(workspaceTargetRoot, 'release', 'bundle'));
+
+  roots.push(resolveNativeBuildRoot({
     appId,
     targetTriple,
-  });
-  roots.push(preferredRoot);
+  }));
 
-  if (String(targetTriple ?? '').trim().length > 0) {
+  if (normalizedTargetTriple.length > 0) {
     roots.push(resolveNativeBuildRoot({ appId }));
   }
 

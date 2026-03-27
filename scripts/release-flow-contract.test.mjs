@@ -143,6 +143,21 @@ test('release target helpers and desktop release runner resolve explicit target 
     [
       path.join(
         rootDir,
+        'target',
+        'sdkwork-router-admin-tauri',
+        'x86_64-pc-windows-msvc',
+        'release',
+        'bundle',
+      ).replaceAll('\\', '/'),
+      path.join(
+        rootDir,
+        'target',
+        'sdkwork-router-admin-tauri',
+        'release',
+        'bundle',
+      ).replaceAll('\\', '/'),
+      path.join(
+        rootDir,
         'apps',
         'sdkwork-router-admin',
         'src-tauri',
