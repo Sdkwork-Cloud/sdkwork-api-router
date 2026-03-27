@@ -35,7 +35,6 @@ test('repository exposes a multi-platform GitHub release workflow for tagged and
   assert.match(workflow, /cargo build --release --target \$\{\{ matrix\.target \}\} -p admin-api-service -p gateway-service -p portal-api-service -p router-web-service -p router-product-service/);
   assert.match(workflow, /node scripts\/release\/run-desktop-release-build\.mjs --app admin --target \$\{\{ matrix\.target \}\}/);
   assert.match(workflow, /node scripts\/release\/run-desktop-release-build\.mjs --app portal --target \$\{\{ matrix\.target \}\}/);
-  assert.match(workflow, /node scripts\/release\/run-desktop-release-build\.mjs --app console --target \$\{\{ matrix\.target \}\}/);
   assert.match(workflow, /node scripts\/release\/package-release-assets\.mjs native --platform \$\{\{ matrix\.platform \}\} --arch \$\{\{ matrix\.arch \}\} --target \$\{\{ matrix\.target \}\}/);
   assert.match(workflow, /pnpm --dir apps\/sdkwork-router-admin build/);
   assert.match(workflow, /pnpm --dir apps\/sdkwork-router-portal build/);

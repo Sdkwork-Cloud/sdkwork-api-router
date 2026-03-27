@@ -32,6 +32,8 @@ const DESKTOP_APP_DIRS = {
   console: path.join(rootDir, 'console'),
 };
 
+const NATIVE_RELEASE_DESKTOP_APP_IDS = ['admin', 'portal'];
+
 const SERVICE_BINARY_NAMES = [
   'admin-api-service',
   'gateway-service',
@@ -117,6 +119,10 @@ export function resolveNativeBuildRoot({ appId, targetTriple = '' } = {}) {
 
 export function listNativeServiceBinaryNames() {
   return [...SERVICE_BINARY_NAMES];
+}
+
+export function listNativeDesktopAppIds() {
+  return [...NATIVE_RELEASE_DESKTOP_APP_IDS];
 }
 
 export function buildNativeProductServerArchiveBaseName({ platformId, archId } = {}) {
@@ -259,7 +265,7 @@ function packageServiceBinaries({ platformId, archId, targetTriple, outputDir })
 }
 
 function packageDesktopBundles({ platformId, archId, targetTriple, outputDir }) {
-  for (const appId of Object.keys(DESKTOP_APP_DIRS)) {
+  for (const appId of NATIVE_RELEASE_DESKTOP_APP_IDS) {
     const buildRoot = resolveNativeBuildRoot({
       appId,
       targetTriple,

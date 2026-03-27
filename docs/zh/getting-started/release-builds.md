@@ -18,7 +18,6 @@
 
 - admin Web 应用静态资源
 - portal Web 应用静态资源
-- 可选的 console Tauri 桌面包
 - 可选的 admin Tauri 桌面包
 - 可选的 portal Tauri 桌面包
 - 内含 `router-product-service`、admin 站点和 portal 站点的按平台产品服务端归档包
@@ -151,7 +150,7 @@ pnpm --dir apps/sdkwork-router-portal tauri:build
 - Windows x64 和 arm64
 - Linux x64 和 arm64
 - macOS x64 和 arm64
-- admin、portal、console 桌面安装包
+- admin、portal 桌面安装包
 - 独立服务二进制
 - `router-product-service`
 - 按平台打包的产品服务端归档包，内含 admin 与 portal 静态站点

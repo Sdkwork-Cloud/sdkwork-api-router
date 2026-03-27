@@ -145,10 +145,6 @@ jobs:
         shell: bash
         run: node scripts/release/run-desktop-release-build.mjs --app portal --target ${{ matrix.target }}
 
-      - name: Build console desktop release
-        shell: bash
-        run: node scripts/release/run-desktop-release-build.mjs --app console --target ${{ matrix.target }}
-
       - name: Collect native release assets
         shell: bash
         run: node scripts/release/package-release-assets.mjs native --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --target ${{ matrix.target }} --output-dir artifacts/release

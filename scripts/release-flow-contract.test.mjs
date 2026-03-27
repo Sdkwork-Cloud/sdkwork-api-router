@@ -35,7 +35,6 @@ test('repository exposes a native platform and architecture release workflow', (
   assert.match(workflow, /router-product-service/);
   assert.match(workflow, /node scripts\/release\/run-desktop-release-build\.mjs --app admin --target \$\{\{ matrix\.target \}\}/);
   assert.match(workflow, /node scripts\/release\/run-desktop-release-build\.mjs --app portal --target \$\{\{ matrix\.target \}\}/);
-  assert.match(workflow, /node scripts\/release\/run-desktop-release-build\.mjs --app console --target \$\{\{ matrix\.target \}\}/);
   assert.match(workflow, /node scripts\/release\/package-release-assets\.mjs native --platform \$\{\{ matrix\.platform \}\} --arch \$\{\{ matrix\.arch \}\} --target \$\{\{ matrix\.target \}\}/);
   assert.match(workflow, /node scripts\/release\/package-release-assets\.mjs web/);
   assert.match(workflow, /release-assets-native-\$\{\{ matrix\.platform \}\}-\$\{\{ matrix\.arch \}\}/);
@@ -77,6 +76,7 @@ test('release target helpers and desktop release runner resolve explicit target 
   assert.equal(typeof runner.createDesktopReleaseBuildPlan, 'function');
   assert.equal(typeof packager.resolveNativeBuildRoot, 'function');
   assert.equal(typeof packager.listNativeServiceBinaryNames, 'function');
+  assert.equal(typeof packager.listNativeDesktopAppIds, 'function');
   assert.equal(typeof packager.buildNativeProductServerArchiveBaseName, 'function');
 
   assert.deepEqual(
@@ -138,6 +138,7 @@ test('release target helpers and desktop release runner resolve explicit target 
     packager.listNativeServiceBinaryNames().join(','),
     /router-product-service/,
   );
+  assert.deepEqual(packager.listNativeDesktopAppIds(), ['admin', 'portal']);
   assert.equal(
     packager.buildNativeProductServerArchiveBaseName({
       platformId: 'linux',

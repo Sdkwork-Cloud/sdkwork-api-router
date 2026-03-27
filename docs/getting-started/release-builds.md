@@ -160,7 +160,7 @@ Native release automation now includes:
 - Windows x64 and arm64
 - Linux x64 and arm64
 - macOS x64 and arm64
-- admin, portal, and console desktop packages
+- admin and portal desktop packages
 - standalone service binaries
 - `router-product-service`
 - platform-specific product server bundles with bundled admin and portal sites
