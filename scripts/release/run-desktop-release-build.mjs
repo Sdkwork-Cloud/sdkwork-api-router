@@ -66,7 +66,7 @@ function truncateText(value, maxLength = 4000) {
     return text;
   }
 
-  return `${text.slice(0, Math.max(0, maxLength - 12))}...[truncated]`;
+  return `[truncated]${text.slice(-Math.max(0, maxLength - 11))}`;
 }
 
 function escapeGitHubActionsCommandValue(value, { property = false } = {}) {

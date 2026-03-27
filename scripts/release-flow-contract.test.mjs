@@ -237,6 +237,14 @@ test('release target helpers and desktop release runner resolve explicit target 
     }),
     '::error title=run-desktop-release-build::[admin x86_64-unknown-linux-gnu] bundle missing 50%25%0Anext line',
   );
+  assert.match(
+    runner.buildDesktopReleaseFailureAnnotation({
+      appId: 'admin',
+      targetTriple: 'x86_64-unknown-linux-gnu',
+      error: new Error(`${'prefix-'.repeat(2000)}actual-final-error`),
+    }),
+    /actual-final-error/,
+  );
 });
 
 test('native desktop packager skips empty bundle roots and selects the first root that contains artifacts', async () => {
