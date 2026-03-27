@@ -126,10 +126,17 @@ export function resolveNativeBuildRoot({ appId, targetTriple = '' } = {}) {
 export function resolveNativeBuildRootCandidates({ appId, targetTriple = '' } = {}) {
   const roots = [];
   const normalizedTargetTriple = String(targetTriple ?? '').trim();
+  const appDir = DESKTOP_APP_DIRS[appId];
   const workspaceTargetDirName = DESKTOP_APP_TARGET_DIR_NAMES[appId];
-  if (!workspaceTargetDirName) {
+  if (!appDir || !workspaceTargetDirName) {
     throw new Error(`Unsupported desktop application id: ${appId}`);
   }
+
+  const appTargetRoot = path.join(appDir, 'target');
+  if (normalizedTargetTriple.length > 0) {
+    roots.push(path.join(appTargetRoot, normalizedTargetTriple, 'release', 'bundle'));
+  }
+  roots.push(path.join(appTargetRoot, 'release', 'bundle'));
 
   const repositoryTargetRoot = path.join(rootDir, 'target');
   if (normalizedTargetTriple.length > 0) {
