@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
@@ -189,4 +190,30 @@ test('release target helpers and desktop release runner resolve explicit target 
     }),
     'sdkwork-api-router-product-server-linux-arm64',
   );
+});
+
+test('native desktop packager skips empty bundle roots and selects the first root that contains artifacts', async () => {
+  const packagerPath = path.join(rootDir, 'scripts', 'release', 'package-release-assets.mjs');
+  const packager = await import(pathToFileURL(packagerPath).href);
+
+  assert.equal(typeof packager.resolveAvailableNativeBuildRoot, 'function');
+
+  const stagingRoot = mkdtempSync(path.join(os.tmpdir(), 'sdkwork-router-release-packager-'));
+
+  try {
+    const emptyRoot = path.join(stagingRoot, 'candidate-empty');
+    const populatedRoot = path.join(stagingRoot, 'candidate-populated');
+    mkdirSync(emptyRoot, { recursive: true });
+    mkdirSync(path.join(populatedRoot, 'nsis'), { recursive: true });
+    writeFileSync(path.join(populatedRoot, 'nsis', 'sdkwork-router-portal.exe'), 'artifact', 'utf8');
+
+    assert.equal(
+      packager.resolveAvailableNativeBuildRoot({
+        buildRoots: [emptyRoot, populatedRoot],
+      }).replaceAll('\\', '/'),
+      populatedRoot.replaceAll('\\', '/'),
+    );
+  } finally {
+    rmSync(stagingRoot, { recursive: true, force: true });
+  }
 });

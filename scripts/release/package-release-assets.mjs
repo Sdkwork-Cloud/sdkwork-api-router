@@ -161,6 +161,38 @@ export function buildNativeProductServerArchiveBaseName({ platformId, archId } =
   return `sdkwork-api-router-product-server-${platformId}-${archId}`;
 }
 
+export function resolveAvailableNativeBuildRoot({
+  appId,
+  targetTriple = '',
+  buildRoots,
+  exists = existsSync,
+  listFiles = listFilesRecursively,
+} = {}) {
+  const candidates = Array.isArray(buildRoots) && buildRoots.length > 0
+    ? buildRoots
+    : resolveNativeBuildRootCandidates({
+        appId,
+        targetTriple,
+      });
+
+  let firstExistingRoot = '';
+  for (const candidate of candidates) {
+    if (!exists(candidate)) {
+      continue;
+    }
+
+    if (firstExistingRoot.length === 0) {
+      firstExistingRoot = candidate;
+    }
+
+    if (listFiles(candidate).length > 0) {
+      return candidate;
+    }
+  }
+
+  return firstExistingRoot;
+}
+
 function resolveServiceReleaseRoot({ targetTriple = '' } = {}) {
   const normalizedTargetTriple = String(targetTriple ?? '').trim();
   const targetSegments = normalizedTargetTriple.length > 0
@@ -298,11 +330,12 @@ function packageServiceBinaries({ platformId, archId, targetTriple, outputDir })
 
 function packageDesktopBundles({ platformId, archId, targetTriple, outputDir }) {
   for (const appId of NATIVE_RELEASE_DESKTOP_APP_IDS) {
-    const buildRoots = resolveNativeBuildRootCandidates({
+    const buildRoots = resolveNativeBuildRootCandidates({ appId, targetTriple });
+    const buildRoot = resolveAvailableNativeBuildRoot({
       appId,
       targetTriple,
+      buildRoots,
     });
-    const buildRoot = buildRoots.find((candidate) => existsSync(candidate));
     if (!buildRoot) {
       throw new Error(
         `Missing desktop bundle output directory for ${appId}: ${buildRoots.join(', ')}`,
