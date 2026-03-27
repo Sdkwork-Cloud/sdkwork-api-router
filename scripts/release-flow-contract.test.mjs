@@ -59,6 +59,14 @@ test('tauri package scripts stay portable across admin, portal, and console apps
   assert.doesNotMatch(portalPackage.scripts['tauri:build'], /powershell/i);
 });
 
+test('desktop tauri configs enable bundling for native release packaging', () => {
+  const adminTauriConfig = JSON.parse(read('apps/sdkwork-router-admin/src-tauri/tauri.conf.json'));
+  const portalTauriConfig = JSON.parse(read('apps/sdkwork-router-portal/src-tauri/tauri.conf.json'));
+
+  assert.equal(adminTauriConfig.bundle?.active, true);
+  assert.equal(portalTauriConfig.bundle?.active, true);
+});
+
 test('release target helpers and desktop release runner resolve explicit target triples', async () => {
   const helperPath = path.join(rootDir, 'scripts', 'release', 'desktop-targets.mjs');
   const runnerPath = path.join(rootDir, 'scripts', 'release', 'run-desktop-release-build.mjs');

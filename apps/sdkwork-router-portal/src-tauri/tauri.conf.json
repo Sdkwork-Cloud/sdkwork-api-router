@@ -10,6 +10,7 @@
     "devUrl": "http://localhost:5174/portal/"
   },
   "bundle": {
+    "active": true,
     "resources": {
       "../dist": "embedded-sites/portal",
       "../../sdkwork-router-admin/dist": "embedded-sites/admin"
