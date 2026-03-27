@@ -564,10 +564,34 @@ function packageNativeAssets({ platform, arch, target, outputDir }) {
   });
 }
 
+export function createTarCommandPlan({
+  archivePath,
+  workingDirectory,
+  entryName,
+  platform = process.platform,
+} = {}) {
+  const args = [];
+  if (platform === 'win32') {
+    args.push('--force-local');
+  }
+  args.push('-czf', archivePath, '-C', workingDirectory, entryName);
+
+  return {
+    command: 'tar',
+    args,
+    shell: platform === 'win32',
+  };
+}
+
 function runTarCommand(archivePath, workingDirectory, entryName) {
-  const result = spawnSync('tar', ['-czf', archivePath, '-C', workingDirectory, entryName], {
+  const plan = createTarCommandPlan({
+    archivePath,
+    workingDirectory,
+    entryName,
+  });
+  const result = spawnSync(plan.command, plan.args, {
     cwd: rootDir,
-    shell: process.platform === 'win32',
+    shell: plan.shell,
     encoding: 'utf8',
   });
 

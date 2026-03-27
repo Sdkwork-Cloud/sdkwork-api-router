@@ -125,6 +125,7 @@ test('release target helpers and desktop release runner resolve explicit target 
   assert.equal(typeof packager.listNativeServiceBinaryNames, 'function');
   assert.equal(typeof packager.listNativeDesktopAppIds, 'function');
   assert.equal(typeof packager.buildNativeProductServerArchiveBaseName, 'function');
+  assert.equal(typeof packager.createTarCommandPlan, 'function');
 
   assert.deepEqual(
     helper.parseDesktopTargetTriple('aarch64-pc-windows-msvc'),
@@ -298,6 +299,19 @@ test('release target helpers and desktop release runner resolve explicit target 
       archId: 'arm64',
     }),
     'sdkwork-api-router-product-server-linux-arm64',
+  );
+  assert.deepEqual(
+    packager.createTarCommandPlan({
+      archivePath: 'C:\\release\\bundle.tar.gz',
+      workingDirectory: 'C:\\release',
+      entryName: 'bundle',
+      platform: 'win32',
+    }),
+    {
+      command: 'tar',
+      args: ['--force-local', '-czf', 'C:\\release\\bundle.tar.gz', '-C', 'C:\\release', 'bundle'],
+      shell: true,
+    },
   );
   assert.equal(
     runner.buildDesktopReleaseFailureAnnotation({
