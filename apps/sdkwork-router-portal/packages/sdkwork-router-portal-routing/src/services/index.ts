@@ -1,5 +1,5 @@
-import { formatDateTime } from 'sdkwork-router-portal-commons';
 import type {
+  PortalRoutingAssessment,
   PortalRoutingDecision,
   PortalRoutingDecisionLog,
   PortalRoutingPreferences,
@@ -13,6 +13,82 @@ import type {
   RoutingGuardrailItem,
   RoutingPresetCard,
 } from '../types';
+
+function formatRoutingDateTime(timestamp: number): string {
+  if (!timestamp) {
+    return 'Pending';
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(timestamp));
+}
+
+function normalizeRoutingAssessment(
+  assessment: Partial<PortalRoutingAssessment> | null | undefined,
+): PortalRoutingAssessment {
+  return {
+    provider_id: assessment?.provider_id ?? 'Unknown provider',
+    available: assessment?.available ?? false,
+    health: assessment?.health ?? 'unknown',
+    policy_rank: assessment?.policy_rank ?? 0,
+    weight: assessment?.weight ?? null,
+    cost: assessment?.cost ?? null,
+    latency_ms: assessment?.latency_ms ?? null,
+    region: assessment?.region ?? null,
+    region_match: assessment?.region_match ?? null,
+    slo_eligible: assessment?.slo_eligible ?? null,
+    slo_violations: Array.isArray(assessment?.slo_violations) ? assessment.slo_violations : [],
+    reasons: Array.isArray(assessment?.reasons) ? assessment.reasons : [],
+  };
+}
+
+function normalizeRoutingDecision(
+  decision: Partial<PortalRoutingDecision> | null | undefined,
+): PortalRoutingDecision {
+  return {
+    selected_provider_id: decision?.selected_provider_id ?? 'Unavailable',
+    candidate_ids: Array.isArray(decision?.candidate_ids) ? decision.candidate_ids : [],
+    matched_policy_id: decision?.matched_policy_id ?? null,
+    strategy: decision?.strategy ?? null,
+    selection_seed: decision?.selection_seed ?? null,
+    selection_reason: decision?.selection_reason ?? null,
+    requested_region: decision?.requested_region ?? null,
+    slo_applied: decision?.slo_applied ?? false,
+    slo_degraded: decision?.slo_degraded ?? false,
+    assessments: Array.isArray(decision?.assessments)
+      ? decision.assessments.map((assessment) => normalizeRoutingAssessment(assessment))
+      : [],
+  };
+}
+
+function normalizeRoutingDecisionLog(
+  log: Partial<PortalRoutingDecisionLog>,
+): PortalRoutingDecisionLog {
+  return {
+    decision_id: log.decision_id ?? 'unknown-decision',
+    decision_source: log.decision_source ?? 'unknown',
+    tenant_id: log.tenant_id ?? null,
+    project_id: log.project_id ?? null,
+    capability: log.capability ?? 'unknown',
+    route_key: log.route_key ?? 'unknown',
+    selected_provider_id: log.selected_provider_id ?? 'Unavailable',
+    matched_policy_id: log.matched_policy_id ?? null,
+    strategy: log.strategy ?? 'unknown',
+    selection_seed: log.selection_seed ?? null,
+    selection_reason: log.selection_reason ?? null,
+    requested_region: log.requested_region ?? null,
+    slo_applied: log.slo_applied ?? false,
+    slo_degraded: log.slo_degraded ?? false,
+    created_at_ms: log.created_at_ms ?? 0,
+    assessments: Array.isArray(log.assessments)
+      ? log.assessments.map((assessment) => normalizeRoutingAssessment(assessment))
+      : [],
+  };
+}
 
 export function buildRoutingStrategyLabel(
   strategy?: PortalRoutingStrategy | string | null,
@@ -111,7 +187,7 @@ function buildEvidence(
     id: log.decision_id,
     title: `${log.route_key} -> ${log.selected_provider_id}`,
     detail: `${log.decision_source} used ${log.strategy}${log.requested_region ? ` in ${log.requested_region}` : ''}.`,
-    timestamp_label: formatDateTime(log.created_at_ms),
+    timestamp_label: formatRoutingDateTime(log.created_at_ms),
   }));
 }
 
@@ -120,15 +196,19 @@ export function buildPortalRoutingViewModel(
   logs: PortalRoutingDecisionLog[],
   preview?: PortalRoutingDecision | null,
 ): PortalRoutingPageViewModel {
-  const activePreview = preview ?? summary.preview;
+  const normalizedLogs = Array.isArray(logs)
+    ? logs.map((log) => normalizeRoutingDecisionLog(log))
+    : [];
+  const normalizedSummaryPreview = normalizeRoutingDecision(summary.preview);
+  const activePreview = normalizeRoutingDecision(preview ?? normalizedSummaryPreview);
 
   return {
     summary,
     preview: activePreview,
     preset_cards: buildPresetCards(summary.preferences),
     guardrails: buildGuardrails(summary.preferences, activePreview),
-    evidence: buildEvidence(logs),
+    evidence: buildEvidence(normalizedLogs),
     provider_options: summary.provider_options,
-    logs,
+    logs: normalizedLogs,
   };
 }

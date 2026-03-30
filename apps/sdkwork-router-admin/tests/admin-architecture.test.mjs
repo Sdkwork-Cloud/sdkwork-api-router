@@ -147,6 +147,18 @@ test('shell package owns router, theme manager, header, sidebar, and settings pa
   assert.doesNotMatch(styles, /\.adminx-shell-header-center\b/);
 });
 
+test('root shell compatibility files forward to application-owned implementations', () => {
+  const rootAppRoot = read('packages/sdkwork-router-admin-shell/src/AppRoot.tsx');
+  const rootAppProviders = read('packages/sdkwork-router-admin-shell/src/AppProviders.tsx');
+  const rootThemeManager = read('packages/sdkwork-router-admin-shell/src/ThemeManager.tsx');
+
+  assert.match(rootAppRoot, /export \{ AppRoot \} from '\.\/application\/app\/AppRoot';/);
+  assert.match(rootAppProviders, /export \{ AppProviders \} from '\.\/application\/providers\/AppProviders';/);
+  assert.match(rootThemeManager, /export \{ ThemeManager \} from '\.\/application\/providers\/ThemeManager';/);
+  assert.doesNotMatch(rootAppProviders, /BrowserRouter/);
+  assert.doesNotMatch(rootThemeManager, /useEffect/);
+});
+
 test('users module exposes delete capabilities for operator and portal identities', () => {
   const rootRoutes = read('packages/sdkwork-router-admin-shell/src/AppRoutes.tsx');
   const routes = read('packages/sdkwork-router-admin-shell/src/application/router/AppRoutes.tsx');

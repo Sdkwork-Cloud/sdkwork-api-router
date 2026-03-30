@@ -984,9 +984,9 @@ export const DialogOverlay = forwardRef<
 DialogOverlay.displayName = DialogPrimitive.Overlay.displayName;
 
 const dialogSizeClassNames = {
-  small: 'max-w-md',
-  medium: 'max-w-2xl',
-  large: 'max-w-4xl',
+  small: 'adminx-dialog-panel-small',
+  medium: undefined,
+  large: 'adminx-dialog-panel-large',
 } as const;
 
 export const DialogContent = forwardRef<
@@ -1001,7 +1001,7 @@ export const DialogContent = forwardRef<
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        'fixed left-1/2 top-1/2 z-50 grid w-[calc(100%-2rem)] max-h-[calc(100dvh-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto rounded-[28px] border border-zinc-200/80 bg-white/92 p-6 shadow-2xl shadow-zinc-950/12 focus:outline-none dark:border-zinc-800 dark:bg-zinc-900/92 dark:shadow-black/30',
+        'adminx-dialog-panel fixed left-1/2 top-1/2 z-[90] grid w-[calc(100%-2rem)] max-h-[calc(100dvh-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto rounded-[28px] border border-zinc-200/80 bg-white/92 p-6 shadow-2xl shadow-zinc-950/12 focus:outline-none dark:border-zinc-800 dark:bg-zinc-900/92 dark:shadow-black/30',
         dialogSizeClassNames[size],
         className,
       )}

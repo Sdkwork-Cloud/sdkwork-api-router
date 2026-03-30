@@ -52,6 +52,8 @@ test('portal commons exposes shadcn-style checkbox, textarea, and modal primitiv
   assert.match(commons, /const dialogSizeClassNames =/);
   assert.match(commons, /size = 'medium'/);
   assert.match(commons, /function DialogIconCloseButton/);
+  assert.match(commons, /fixed inset-0 z-40 bg-\[var\(--portal-overlay\)\]/);
+  assert.match(commons, /fixed left-1\/2 top-1\/2 z-\[60\]/);
   assert.match(commons, /DialogClose asChild>[\s\S]*?<DialogIconCloseButton/);
   assert.match(commons, /<Button/);
   assert.match(commons, /variant="ghost"/);

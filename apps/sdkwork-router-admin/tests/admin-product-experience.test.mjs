@@ -29,6 +29,9 @@ test('shared admin commons expose page toolbar, dialog primitives, and form fiel
   assert.match(theme, /adminx-dialog-backdrop/);
   assert.match(theme, /adminx-dialog-panel/);
   assert.match(theme, /adminx-confirm-dialog/);
+  assert.match(commons, /<DialogOverlay \/>/);
+  assert.match(commons, /adminx-dialog-panel/);
+  assert.match(commons, /z-\[90\]/);
 });
 
 test('admin form primitives keep a shadcn-style contract and settings or auth pages consume the shared shells', () => {
