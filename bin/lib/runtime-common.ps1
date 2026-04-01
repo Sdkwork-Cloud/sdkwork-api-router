@@ -139,19 +139,19 @@ function Assert-RouterNotRunning {
 
 function Wait-RouterProcessExit {
     param(
-        [Parameter(Mandatory = $true)][int]$Pid,
+        [Parameter(Mandatory = $true)][int]$ProcessId,
         [Parameter(Mandatory = $true)][int]$WaitSeconds
     )
 
     $deadline = (Get-Date).AddSeconds($WaitSeconds)
     while ((Get-Date) -lt $deadline) {
-        if (-not (Get-Process -Id $Pid -ErrorAction SilentlyContinue)) {
+        if (-not (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)) {
             return $true
         }
         Start-Sleep -Seconds 1
     }
 
-    return -not (Get-Process -Id $Pid -ErrorAction SilentlyContinue)
+    return -not (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)
 }
 
 function Get-RouterChildProcessIds {
@@ -209,18 +209,18 @@ function Get-RouterProcessTreeIds {
 
 function Stop-RouterProcessTree {
     param(
-        [Parameter(Mandatory = $true)][int]$Pid,
+        [Parameter(Mandatory = $true)][int]$ProcessId,
         [Parameter(Mandatory = $true)][int]$WaitSeconds,
         [switch]$Force
     )
 
-    if (-not (Get-Process -Id $Pid -ErrorAction SilentlyContinue)) {
+    if (-not (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)) {
         return $true
     }
 
     if (Test-RouterWindowsPlatform) {
-        & cmd.exe /c "taskkill /PID $Pid /T" | Out-Null
-        if (Wait-RouterProcessExit -Pid $Pid -WaitSeconds $WaitSeconds) {
+        & cmd.exe /c "taskkill /PID $ProcessId /T" | Out-Null
+        if (Wait-RouterProcessExit -ProcessId $ProcessId -WaitSeconds $WaitSeconds) {
             return $true
         }
 
@@ -228,18 +228,18 @@ function Stop-RouterProcessTree {
             return $false
         }
 
-        & cmd.exe /c "taskkill /PID $Pid /T /F" | Out-Null
-        return (Wait-RouterProcessExit -Pid $Pid -WaitSeconds $WaitSeconds)
+        & cmd.exe /c "taskkill /PID $ProcessId /T /F" | Out-Null
+        return (Wait-RouterProcessExit -ProcessId $ProcessId -WaitSeconds $WaitSeconds)
     }
 
-    $processIds = @(Get-RouterProcessTreeIds -ParentPid $Pid)
-    $processIds += $Pid
+    $processIds = @(Get-RouterProcessTreeIds -ParentPid $ProcessId)
+    $processIds += $ProcessId
     $orderedProcessIds = @($processIds | Select-Object -Unique | Sort-Object -Descending)
 
     foreach ($processId in $orderedProcessIds) {
         Stop-Process -Id $processId -ErrorAction SilentlyContinue
     }
-    if (Wait-RouterProcessExit -Pid $Pid -WaitSeconds $WaitSeconds) {
+    if (Wait-RouterProcessExit -ProcessId $ProcessId -WaitSeconds $WaitSeconds) {
         return $true
     }
 
@@ -251,7 +251,26 @@ function Stop-RouterProcessTree {
         Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
     }
 
-    return (Wait-RouterProcessExit -Pid $Pid -WaitSeconds $WaitSeconds)
+    return (Wait-RouterProcessExit -ProcessId $ProcessId -WaitSeconds $WaitSeconds)
+}
+
+function Start-RouterBackgroundProcess {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter()][string[]]$ArgumentList = @(),
+        [Parameter(Mandatory = $true)][string]$WorkingDirectory,
+        [Parameter(Mandatory = $true)][string]$StdoutLog,
+        [Parameter(Mandatory = $true)][string]$StderrLog
+    )
+
+    return Start-Process `
+        -FilePath $FilePath `
+        -ArgumentList $ArgumentList `
+        -WorkingDirectory $WorkingDirectory `
+        -RedirectStandardOutput $StdoutLog `
+        -RedirectStandardError $StderrLog `
+        -NoNewWindow `
+        -PassThru
 }
 
 function Resolve-RouterHealthUrl {
@@ -277,11 +296,15 @@ function Resolve-RouterHealthUrl {
 function Wait-RouterHealthUrl {
     param(
         [Parameter(Mandatory = $true)][string]$Url,
-        [Parameter(Mandatory = $true)][int]$WaitSeconds
+        [Parameter(Mandatory = $true)][int]$WaitSeconds,
+        [int]$ProcessId = 0
     )
 
     $deadline = (Get-Date).AddSeconds($WaitSeconds)
     while ((Get-Date) -lt $deadline) {
+        if ($ProcessId -gt 0 -and -not (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)) {
+            return $false
+        }
         try {
             $response = Invoke-WebRequest -UseBasicParsing $Url -TimeoutSec 3
             if ($response.StatusCode -ge 200 -and $response.StatusCode -lt 300) {
@@ -290,6 +313,10 @@ function Wait-RouterHealthUrl {
         } catch {
         }
         Start-Sleep -Seconds 1
+    }
+
+    if ($ProcessId -gt 0 -and -not (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)) {
+        return $false
     }
 
     return $false

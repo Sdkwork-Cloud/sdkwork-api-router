@@ -53,7 +53,7 @@ if (-not (Test-RouterProcessRunning -PidValue $pidValue)) {
     return
 }
 
-$stopped = Stop-RouterProcessTree -Pid ([int]$pidValue) -WaitSeconds $WaitSeconds -Force:(-not $GracefulOnly)
+$stopped = Stop-RouterProcessTree -ProcessId ([int]$pidValue) -WaitSeconds $WaitSeconds -Force:(-not $GracefulOnly)
 if (-not $stopped) {
     Show-RouterLogTail -LogFile $stdoutLog
     Show-RouterLogTail -LogFile $stderrLog

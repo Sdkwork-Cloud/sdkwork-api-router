@@ -237,13 +237,20 @@ GATEWAY_HEALTH_URL=$(router_resolve_loopback_url "$SDKWORK_WEB_BIND" "/api/v1/he
 ADMIN_HEALTH_URL=$(router_resolve_loopback_url "$SDKWORK_WEB_BIND" "/api/admin/health")
 PORTAL_HEALTH_URL=$(router_resolve_loopback_url "$SDKWORK_WEB_BIND" "/api/portal/health")
 
-if ! router_wait_for_url "$GATEWAY_HEALTH_URL" "$WAIT_SECONDS" \
-  || ! router_wait_for_url "$ADMIN_HEALTH_URL" "$WAIT_SECONDS" \
-  || ! router_wait_for_url "$PORTAL_HEALTH_URL" "$WAIT_SECONDS"; then
+if ! router_wait_for_url "$GATEWAY_HEALTH_URL" "$WAIT_SECONDS" "$PID" \
+  || ! router_wait_for_url "$ADMIN_HEALTH_URL" "$WAIT_SECONDS" "$PID" \
+  || ! router_wait_for_url "$PORTAL_HEALTH_URL" "$WAIT_SECONDS" "$PID"; then
+  RUNTIME_EXITED=0
+  if ! router_is_pid_running "$PID"; then
+    RUNTIME_EXITED=1
+  fi
   router_tail_log "$STDOUT_LOG"
   router_tail_log "$STDERR_LOG"
   router_stop_pid "$PID" "$WAIT_SECONDS" 1 || true
   rm -f "$PID_FILE"
+  if [ "$RUNTIME_EXITED" = '1' ]; then
+    router_die "production runtime exited before health checks completed; see startup log above"
+  fi
   router_die "router-product-service failed health checks on $SDKWORK_WEB_BIND"
 fi
 

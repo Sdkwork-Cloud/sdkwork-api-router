@@ -1,0 +1,240 @@
+﻿Diagnose log at 2026-04-01T11:01:18Z
+
+AppPath: C:\Program Files\Git\mingw64\bin\git-credential-manager.exe
+InstallDir: C:\Program Files\Git\mingw64\bin\
+Version: 2.6.1+786ab03440ddc82e807a97c0e540f5247e44cec6
+
+------------
+Diagnostic: Environment
+Skipped: False
+Success: True
+Exception: None
+Log:
+OSType: Windows
+OSVersion: 10.0 (build 22631)
+Reading environment variables... OK
+ Variables:
+LESS=
+PUBLIC=C:\Users\Public
+ALLUSERSPROFILE=C:\ProgramData
+volcengine.default.base_url=https://ark.cn-beijing.volces.com/api/v3
+LOGONSERVER=\\BRAINX
+LOCALAPPDATA=C:\Users\admin\AppData\Local
+PUB_HOSTED_URL=https://pub.flutter-io.cn
+ProgramData=C:\ProgramData
+__CONDA_OPENSSL_CERT_FILE_SET=1
+CLASSPATH=.;C:\Program Files\Java\jdk-25\lib\dt.jar;C:\Program Files\Java\jdk-25\lib\tools.jar;
+SSL_CERT_FILE=D:\ProgramData\miniconda3\envs\brainx-python\Library\ssl\cacert.pem
+TMPDIR=C:\Users\admin\AppData\Local\Temp
+GSTREAMER_1_0_ROOT_MSVC_X86_64=E:\program\gstreamer\1.0\msvc_x86_64\
+WT_PROFILE_ID={61c54bbd-c2c6-5271-96e7-009a87ff44bf}
+PROCESSOR_REVISION=b701
+ACSvcPort=17532
+ProgramW6432=C:\Program Files
+PAGER=more.com
+RlsSvcPort=22112
+CONDA_DEFAULT_ENV=brainx-python
+GIT_EXEC_PATH=C:/Program Files/Git/mingw64/libexec/git-core
+CONDA_SHLVL=2
+__CONDA_OPENSSL_CERT_DIR_SET=1
+HDC_SERVER_PORT=65037
+SystemDrive=C:
+GIT_CONFIG_VALUE_0=D:\javasource\spring-ai-plus\spring-ai-plus-business\apps\sdkwork-api-router
+OS=Windows_NT
+PROCESSOR_ARCHITECTURE=x86
+UV_PYPI_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
+PATHEXT=.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC;.PY;.PYW;.CPL
+CONDA_PREFIX_1=D:\ProgramData\miniconda3
+LC_CTYPE=C.UTF-8
+PNPM_HOME=C:\Users\admin\AppData\Local\pnpm
+JAVA_HOME=C:\Program Files\Java\jdk-25
+CommonProgramW6432=C:\Program Files\Common Files
+ProgramFiles(x86)=C:\Program Files (x86)
+PyCharm Community Edition=C:\Program Files\JetBrains\PyCharm Community Edition 2024.2\bin;
+USERNAME=admin
+NVM_HOME=E:\program\nvm
+GIT_CONFIG_COUNT=1
+CommonProgramFiles=C:\Program Files (x86)\Common Files
+TERM=xterm-256color
+CUDA_PATH=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6
+ProgramFiles=C:\Program Files (x86)
+GIT_CONFIG_KEY_0=safe.directory
+PATH=C:/Program Files/Git/mingw64/libexec/git-core;C:\Program Files\Git\mingw64\bin;C:\Program Files\Git\usr\bin;C:\Users\admin\bin;C:\Users\admin\.codex\tmp\arg0\codex-arg00Haly2;E:\program\nvm\v22.20.0\node_modules\@openai\codex\node_modules\@openai\codex-win32-x64\vendor\x86_64-pc-windows-msvc\path;D:\ProgramData\miniconda3\envs\brainx-python;D:\ProgramData\miniconda3\envs\brainx-python\Library\mingw-w64\bin;D:\ProgramData\miniconda3\envs\brainx-python\Library\usr\bin;D:\ProgramData\miniconda3\envs\brainx-python\Library\bin;D:\ProgramData\miniconda3\envs\brainx-python\Scripts;D:\ProgramData\miniconda3\envs\brainx-python\bin;C:\Program Files\ImageMagick-7.1.1-Q16-HDRI;C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\bin;C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\libnvvp;C:\Python312\Scripts;C:\Python312;C:\Program Files\Common Files\Oracle\Java\javapath;C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0;C:\Windows\System32\OpenSSH;C:\Users\admin\dev\flutter\bin;C:\Program Files (x86)\NVIDIA Corporation\PhysX\Common;C:\Program Files\dotnet;D:\ProgramData\miniconda3;D:\ProgramData\miniconda3\Library\bin;D:\ProgramData\miniconda3\Scripts;C:\Program Files\Java\jdk-17\bin;D:\Program Files\nginx-1.26.2;C:\ProgramData\chocolatey\bin;D:\tools\apache-maven-3.9.8\bin;C:\Program Files\CMake\bin;C:\Program Files\NVIDIA Corporation\Nsight Compute 2024.3.0;C:\Program Files\LLVM\bin;C:\Program Files\MySQL\MySQL Server 8.4\bin;C:\Program Files\ffmpeg\bin;D:\tools\redis-windows;C:\Program Files\Pandoc;C:\Program Files\ACE Studio;C:\Users\admin\AppData\Local\Android\Sdk\platform-tools;D:\tools\HBuilderX;C:\Program Files\wkhtmltopdf\bin;c:\Users\admin\AppData\Local\Programs\cursor\resources\app\bin;C:\Program Files\Docker\Docker\resources\bin;E:\program\gstreamer\1.0\msvc_x86_64\bin;C:\Program Files\NVIDIA Corporation\NVIDIA App\NvDLISR;E:\program\DevEco Studio\sdk\default\openharmony\toolchains;E:\program\nvm;C:\nvm4w\nodejs;C:\Program Files\OpenSSL-Win64\bin;C:\Program Files\Git\cmd;C:\Program Files (x86)\Windows Kits\10\Windows Performance Toolkit;C:\Users\admin\.sdkwork\crawstudio\bin;D:\ProgramData\miniconda3\condabin;C:\Program Files\ImageMagick-7.1.1-Q16-HDRI;C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\bin;C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6\libnvvp;C:\Python312\Scripts;C:\Python312;C:\Program Files\Common Files\Oracle\Java\javapath;C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0;C:\Windows\System32\OpenSSH;C:\Users\admin\dev\flutter\bin;C:\Program Files (x86)\NVIDIA Corporation\PhysX\Common;C:\Program Files\dotnet;D:\ProgramData\miniconda3;D:\ProgramData\miniconda3\Library\bin;D:\ProgramData\miniconda3\Scripts;C:\Program Files\Java\jdk-17\bin;D:\Program Files\nginx-1.26.2;C:\Users\admin\.cargo\bin
+_CONDA_EXE=D:\ProgramData\miniconda3\Scripts\conda.exe
+WT_SESSION=b603b293-6cbb-48df-a6d6-2837225c5c44
+OneDrive=C:\Users\admin\OneDrive
+PSModulePath=C:\Users\admin\Documents\WindowsPowerShell\Modules;C:\Program Files\WindowsPowerShell\Modules;C:\Windows\system32\WindowsPowerShell\v1.0\Modules
+ACSetupSvcPort=23210
+ChocolateyInstall=C:\ProgramData\chocolatey
+volcengine_default_api_key=90034651-9602-4728-86a5-5c5a6b71a8bb
+CONDA_PROMPT_MODIFIER=(brainx-python) 
+CONDA_EXE=D:\ProgramData\miniconda3\Scripts\conda.exe
+SSL_CERT_DIR=D:\ProgramData\miniconda3\envs\brainx-python\Library\ssl\certs
+ANTHROPIC_BASE_URL=https://pomo.zanbi.fun
+SystemRoot=C:\Windows
+ComSpec=C:\Windows\system32\cmd.exe
+ChocolateyLastPathUpdate=134060927144342736
+CONDA_PYTHON_EXE=D:\ProgramData\miniconda3\python.exe
+CUDA_PATH_V12_6=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6
+PROCESSOR_LEVEL=6
+NVM_SYMLINK=C:\nvm4w\nodejs
+HOMEDRIVE=C:
+OneDriveConsumer=C:\Users\admin\OneDrive
+CODEX_SANDBOX_NETWORK_DISABLED=1
+CUDA_HOME=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6
+OPENSSL_CONF=C:\Program Files\OpenSSL-Win64\bin\openssl.cfg
+USERPROFILE=C:\Users\admin
+CODEX_MANAGED_BY_NPM=1
+GIT_PAGER=more.com
+MSYSTEM=MINGW64
+PROCESSOR_IDENTIFIER=Intel64 Family 6 Model 183 Stepping 1, GenuineIntel
+CommonProgramFiles(x86)=C:\Program Files (x86)\Common Files
+windir=C:\Windows
+SESSIONNAME=Console
+volcengine.default.api_key=90034651-9602-4728-86a5-5c5a6b71a8bb
+COMPUTERNAME=BRAINX
+CONDA_PREFIX=D:\ProgramData\miniconda3\envs\brainx-python
+DriverData=C:\Windows\System32\Drivers\DriverData
+APPDATA=C:\Users\admin\AppData\Roaming
+USERDOMAIN=BRAINX
+NOAPER_SAAS_HOME=D:\javasource\noaper-saas-all-9x
+NUMBER_OF_PROCESSORS=32
+FFMPEG_PATH=D:\tools\ffmpeg-master-latest-win64-gpl
+WSLENV=WT_SESSION:WT_PROFILE_ID:
+_CONDA_ROOT=D:\ProgramData\miniconda3
+NO_PROXY=api-dev.sdkwork.com
+USERDOMAIN_ROAMINGPROFILE=BRAINX
+CODEX_THREAD_ID=019d47e2-cddc-7600-9f26-60938d508ce8
+PLINK_PROTOCOL=ssh
+GIT_TRACE2_PARENT_SID=b7bf475d-5b1f-438b-9614-6cb5acb595b7
+HOMEPATH=\Users\admin
+ACE_STUDIO_PATH=C:\Program Files\ACE Studio
+COLORTERM=truecolor
+HOME=C:\Users\admin
+PROCESSOR_ARCHITEW6432=AMD64
+TMP=C:\Users\admin\AppData\Local\Temp
+TEMP=C:\Users\admin\AppData\Local\Temp
+ANTHROPIC_AUTH_TOKEN=sk-YMNRsT47L5xGEdcI3nGJ9CVoWjRW1QmEItaKWF4fxeUFOfjl
+
+
+------------
+Diagnostic: File system
+Skipped: False
+Success: True
+Exception: None
+Log:
+Temporary directory is 'C:\Users\admin\AppData\Local\Temp\'...
+Checking basic file I/O...
+Writing to temporary file 'C:\Users\admin\AppData\Local\Temp\327249f6a64277c9411a74df'... OK
+Reading from temporary file 'C:\Users\admin\AppData\Local\Temp\327249f6a64277c9411a74df'... OK
+Deleting temporary file 'C:\Users\admin\AppData\Local\Temp\327249f6a64277c9411a74df'... OK
+Testing IFileSystem instance...
+UserHomePath: C:\Users\CodexSandboxOffline
+UserDataDirectoryPath: C:\Users\CodexSandboxOffline\.gcm
+GetCurrentDirectory(): D:\javasource\spring-ai-plus\spring-ai-plus-business\apps\sdkwork-api-router
+
+------------
+Diagnostic: Networking
+Skipped: False
+Success: False
+Exception:
+System.Net.Http.HttpRequestException: 发送请求时出错。 ---> System.Net.WebException: 基础连接已经关闭: 接收时发生错误。 ---> System.ComponentModel.Win32Exception: 安全包中没有可用的凭证
+   在 System.Net.SSPIWrapper.AcquireCredentialsHandle(SSPIInterface SecModule, String package, CredentialUse intent, SecureCredential2 scc)
+   在 System.Net.Security.SecureChannel.AcquireCredentialsHandle(CredentialUse credUsage, SecureCredential2& secureCredential)
+   在 System.Net.Security.SecureChannel.AcquireCredentialsHandle(CredentialUse credUsage, X509Certificate2 selectedCert, Flags flags)
+   在 System.Net.Security.SecureChannel.AcquireClientCredentials(Byte[]& thumbPrint)
+   在 System.Net.Security.SecureChannel.GenerateToken(Byte[] input, Int32 offset, Int32 count, Byte[]& output)
+   在 System.Net.Security.SecureChannel.NextMessage(Byte[] incoming, Int32 offset, Int32 count)
+   在 System.Net.Security.SslState.StartSendBlob(Byte[] incoming, Int32 count, AsyncProtocolRequest asyncRequest, Boolean renegotiation)
+   在 System.Net.Security.SslState.ForceAuthentication(Boolean receiveFirst, Byte[] buffer, AsyncProtocolRequest asyncRequest, Boolean renegotiation)
+   在 System.Net.Security.SslState.ProcessAuthentication(LazyAsyncResult lazyResult)
+   在 System.Net.TlsStream.CallProcessAuthentication(Object state)
+   在 System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state, Boolean preserveSyncCtx)
+   在 System.Threading.ExecutionContext.Run(ExecutionContext executionContext, ContextCallback callback, Object state, Boolean preserveSyncCtx)
+   在 System.Threading.ExecutionContext.Run(ExecutionContext executionContext, ContextCallback callback, Object state)
+   在 System.Net.TlsStream.ProcessAuthentication(LazyAsyncResult result)
+   在 System.Net.TlsStream.BeginWrite(Byte[] buffer, Int32 offset, Int32 size, AsyncCallback asyncCallback, Object asyncState)
+   在 System.Net.TlsStream.UnsafeBeginWrite(Byte[] buffer, Int32 offset, Int32 size, AsyncCallback asyncCallback, Object asyncState)
+   在 System.Net.PooledStream.UnsafeBeginWrite(Byte[] buffer, Int32 offset, Int32 size, AsyncCallback callback, Object state)
+   在 System.Net.ConnectStream.WriteHeaders(Boolean async)
+   --- 内部异常堆栈跟踪的结尾 ---
+   在 System.Net.HttpWebRequest.EndGetResponse(IAsyncResult asyncResult)
+   在 System.Net.Http.HttpClientHandler.GetResponseCallback(IAsyncResult ar)
+   --- 内部异常堆栈跟踪的结尾 ---
+   在 System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   在 System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task)
+   在 System.Runtime.CompilerServices.TaskAwaiter`1.GetResult()
+   在 GitCredentialManager.Diagnostics.NetworkingDiagnostic.<RunInternalAsync>d__4.MoveNext()
+--- 引发异常的上一位置中堆栈跟踪的末尾 ---
+   在 System.Runtime.CompilerServices.TaskAwaiter.ThrowForNonSuccess(Task task)
+   在 System.Runtime.CompilerServices.TaskAwaiter.HandleNonSuccessAndDebuggerNotification(Task task)
+   在 System.Runtime.CompilerServices.TaskAwaiter`1.GetResult()
+   在 GitCredentialManager.Diagnostics.Diagnostic.<RunAsync>d__6.MoveNext()
+Log:
+Checking networking and HTTP stack...
+Creating HTTP client... OK
+IsNetworkAvailable: True
+Sending HEAD request to http://example.com...Sending HEAD request to https://example.com...
+------------
+Diagnostic: Git
+Skipped: False
+Success: True
+Exception: None
+Log:
+Getting Git version... OK
+Git version is '2.51.2.windows.1'
+Locating current repository...Git repository at 'D:/javasource/spring-ai-plus/spring-ai-plus-business/apps/sdkwork-api-router/.git'
+ OK
+Listing all Git configuration... OK
+Git configuration:
+file:C:/Program Files/Git/etc/gitconfig	diff.astextplain.textconv=astextplain
+file:C:/Program Files/Git/etc/gitconfig	filter.lfs.clean=git-lfs clean -- %f
+file:C:/Program Files/Git/etc/gitconfig	filter.lfs.smudge=git-lfs smudge -- %f
+file:C:/Program Files/Git/etc/gitconfig	filter.lfs.process=git-lfs filter-process
+file:C:/Program Files/Git/etc/gitconfig	filter.lfs.required=true
+file:C:/Program Files/Git/etc/gitconfig	http.sslbackend=openssl
+file:C:/Program Files/Git/etc/gitconfig	http.sslcainfo=C:/Program Files/Git/mingw64/etc/ssl/certs/ca-bundle.crt
+file:C:/Program Files/Git/etc/gitconfig	core.autocrlf=true
+file:C:/Program Files/Git/etc/gitconfig	core.fscache=true
+file:C:/Program Files/Git/etc/gitconfig	core.symlinks=false
+file:C:/Program Files/Git/etc/gitconfig	pull.rebase=false
+file:C:/Program Files/Git/etc/gitconfig	credential.helper=manager
+file:C:/Program Files/Git/etc/gitconfig	credential.https://dev.azure.com.usehttppath=true
+file:C:/Program Files/Git/etc/gitconfig	init.defaultbranch=master
+file:C:/Users/admin/.gitconfig	credential.https://gitee.com.provider=generic
+file:C:/Users/admin/.gitconfig	user.email=luolishu@zowalk.com
+file:C:/Users/admin/.gitconfig	user.name=zowork
+file:C:/Users/admin/.gitconfig	http.proxy=http://127.0.0.1:7897
+file:C:/Users/admin/.gitconfig	https.proxy=http://127.0.0.1:7897
+file:C:/Users/admin/.gitconfig	core.autocrlf=true
+file:C:/Users/admin/.gitconfig	core.longpaths=true
+file:C:/Users/admin/.gitconfig	credential.helperselector.selected=manager
+file:C:/Users/admin/.gitconfig	filter.lfs.process=git-lfs filter-process
+file:C:/Users/admin/.gitconfig	filter.lfs.required=true
+file:C:/Users/admin/.gitconfig	filter.lfs.clean=git-lfs clean -- %f
+file:C:/Users/admin/.gitconfig	filter.lfs.smudge=git-lfs smudge -- %f
+file:C:/Users/admin/.gitconfig	safe.directory=*
+file:.git/config	core.repositoryformatversion=0
+file:.git/config	core.filemode=false
+file:.git/config	core.bare=false
+file:.git/config	core.logallrefupdates=true
+file:.git/config	core.symlinks=false
+file:.git/config	core.ignorecase=true
+file:.git/config	remote.origin.url=https://github.com/Sdkwork-Cloud/sdkwork-api-router.git
+file:.git/config	remote.origin.fetch=+refs/heads/*:refs/remotes/origin/*
+file:.git/config	branch.main.remote=origin
+file:.git/config	branch.main.merge=refs/heads/main
+command line:	safe.directory=D:\javasource\spring-ai-plus\spring-ai-plus-business\apps\sdkwork-api-router
+
+
+------------
+Diagnostic: Credential storage
+Skipped: False
+Success: True
+Exception: None
+Log:
+ICredentialStore instance is of type: CredentialStore
+Writing test credential... OK
+Reading test credential... OK
+Deleting test credential... OK
+

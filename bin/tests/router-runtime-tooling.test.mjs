@@ -319,6 +319,15 @@ test('runtime-common.ps1 avoids assigning to the built-in HOST variable while re
   assert.match(script, /\$bindHost\s*=/);
 });
 
+test('runtime-common.ps1 avoids binding helper parameters to the built-in PID variable', () => {
+  const script = readFileSync(path.join(repoRoot, 'bin', 'lib', 'runtime-common.ps1'), 'utf8');
+
+  assert.doesNotMatch(script, /\[Parameter\(Mandatory = \$true\)\]\[int\]\$Pid\b/);
+  assert.match(script, /\[Parameter\(Mandatory = \$true\)\]\[int\]\$ProcessId\b/);
+  assert.match(script, /Wait-RouterProcessExit\s*{[\s\S]*?\$ProcessId/s);
+  assert.match(script, /Stop-RouterProcessTree\s*{[\s\S]*?\$ProcessId/s);
+});
+
 test('start.ps1 and stop.ps1 resolve router-product-service through a shared PowerShell binary-name helper', () => {
   const startScript = readFileSync(path.join(repoRoot, 'bin', 'start.ps1'), 'utf8');
   const stopScript = readFileSync(path.join(repoRoot, 'bin', 'stop.ps1'), 'utf8');
@@ -327,6 +336,16 @@ test('start.ps1 and stop.ps1 resolve router-product-service through a shared Pow
   assert.match(stopScript, /\$binaryName = Get-RouterBinaryName -BaseName 'router-product-service'/);
   assert.doesNotMatch(startScript, /\$binaryName = 'router-product-service\.exe'/);
   assert.doesNotMatch(stopScript, /\$binaryName = 'router-product-service\.exe'/);
+});
+
+test('PowerShell stop scripts pass ProcessId into the shared process-tree helper', () => {
+  const stopDevScript = readFileSync(path.join(repoRoot, 'bin', 'stop-dev.ps1'), 'utf8');
+  const stopScript = readFileSync(path.join(repoRoot, 'bin', 'stop.ps1'), 'utf8');
+
+  assert.match(stopDevScript, /Stop-RouterProcessTree -ProcessId \(\[int\]\$pidValue\)/);
+  assert.match(stopScript, /Stop-RouterProcessTree -ProcessId \(\[int\]\$pidValue\)/);
+  assert.doesNotMatch(stopDevScript, /Stop-RouterProcessTree -Pid /);
+  assert.doesNotMatch(stopScript, /Stop-RouterProcessTree -Pid /);
 });
 
 test('runtime-common.ps1 includes platform-aware PowerShell process and binary helpers', () => {
@@ -343,6 +362,7 @@ test('runtime-common.ps1 carries startup summary helpers with unified links, dir
 
   assert.match(script, /function Get-RouterStartupSummaryLines/);
   assert.match(script, /function Write-RouterStartupSummary/);
+  assert.match(script, /function Start-RouterBackgroundProcess/);
   assert.match(script, /Unified Access/);
   assert.match(script, /Direct Service Access/);
   assert.match(script, /\/api\/v1\/health/);
@@ -362,6 +382,25 @@ test('runtime-common.sh carries matching startup summary and seeded credential h
   assert.match(script, /ChangeMe123!/);
 });
 
+test('shell runtime launchers stop waiting for health checks once the managed child exits', () => {
+  const commonScript = readFileSync(path.join(repoRoot, 'bin', 'lib', 'runtime-common.sh'), 'utf8');
+  const startDevScript = readFileSync(path.join(repoRoot, 'bin', 'start-dev.sh'), 'utf8');
+  const startScript = readFileSync(path.join(repoRoot, 'bin', 'start.sh'), 'utf8');
+
+  assert.match(commonScript, /router_wait_for_url\(\)/);
+  assert.match(commonScript, /WATCH_PID="\$\{3:-\}"/);
+  assert.match(commonScript, /router_is_pid_running "\$WATCH_PID"/);
+  assert.match(startDevScript, /router_wait_for_url "\$GATEWAY_HEALTH_URL" "\$WAIT_SECONDS" "\$PID"/);
+  assert.match(startDevScript, /WORKSPACE_EXITED=0/);
+  assert.match(startDevScript, /if ! router_is_pid_running "\$PID"; then\s+    WORKSPACE_EXITED=1/s);
+  assert.match(startDevScript, /development workspace exited before backend health checks completed; see startup log above/);
+  assert.match(startDevScript, /development workspace exited before web surfaces became ready; see startup log above/);
+  assert.match(startScript, /router_wait_for_url "\$GATEWAY_HEALTH_URL" "\$WAIT_SECONDS" "\$PID"/);
+  assert.match(startScript, /RUNTIME_EXITED=0/);
+  assert.match(startScript, /if ! router_is_pid_running "\$PID"; then\s+    RUNTIME_EXITED=1/s);
+  assert.match(startScript, /production runtime exited before health checks completed; see startup log above/);
+});
+
 test('start-dev.ps1 defaults the managed dev entrypoint to preview mode and supports explicit browser mode', () => {
   const script = readFileSync(path.join(repoRoot, 'bin', 'start-dev.ps1'), 'utf8');
 
@@ -369,6 +408,32 @@ test('start-dev.ps1 defaults the managed dev entrypoint to preview mode and supp
   assert.match(script, /elseif \(-not \$Preview\) \{\s*\$Preview = \$true\s*\}/);
   assert.match(script, /if \(\$Browser\) \{\s*\$Preview = \$false\s*\$Tauri = \$false\s*\}/);
   assert.match(script, /if \(\$Preview\) \{ \$startArgs \+= '--preview' \}/);
+});
+
+test('PowerShell runtime launchers start background processes without opening a new console window', () => {
+  const startDevScript = readFileSync(path.join(repoRoot, 'bin', 'start-dev.ps1'), 'utf8');
+  const startScript = readFileSync(path.join(repoRoot, 'bin', 'start.ps1'), 'utf8');
+  const commonScript = readFileSync(path.join(repoRoot, 'bin', 'lib', 'runtime-common.ps1'), 'utf8');
+
+  assert.match(commonScript, /Start-Process/);
+  assert.match(commonScript, /-NoNewWindow/);
+  assert.match(commonScript, /-RedirectStandardOutput \$StdoutLog/);
+  assert.match(commonScript, /-RedirectStandardError \$StderrLog/);
+  assert.match(startDevScript, /\$process = Start-RouterBackgroundProcess/);
+  assert.match(startScript, /\$process = Start-RouterBackgroundProcess/);
+});
+
+test('PowerShell runtime launchers stop waiting for health checks once the managed child exits', () => {
+  const startDevScript = readFileSync(path.join(repoRoot, 'bin', 'start-dev.ps1'), 'utf8');
+  const startScript = readFileSync(path.join(repoRoot, 'bin', 'start.ps1'), 'utf8');
+  const commonScript = readFileSync(path.join(repoRoot, 'bin', 'lib', 'runtime-common.ps1'), 'utf8');
+
+  assert.match(commonScript, /function Wait-RouterHealthUrl/);
+  assert.match(commonScript, /\[int\]\$ProcessId = 0/);
+  assert.match(commonScript, /Get-Process -Id \$ProcessId -ErrorAction SilentlyContinue/);
+  assert.match(startDevScript, /Wait-RouterHealthUrl -Url \$gatewayHealthUrl -WaitSeconds \$WaitSeconds -ProcessId \$process\.Id/);
+  assert.match(startDevScript, /Wait-RouterHealthUrl -Url \$adminSurfaceUrl -WaitSeconds \$WaitSeconds -ProcessId \$process\.Id/);
+  assert.match(startScript, /Wait-RouterHealthUrl -Url \$gatewayHealthUrl -WaitSeconds \$WaitSeconds -ProcessId \$process\.Id/);
 });
 
 test('PowerShell source-dev wrappers use the 9980-series defaults', () => {
@@ -382,4 +447,70 @@ test('PowerShell source-dev wrappers use the 9980-series defaults', () => {
   assert.match(serversScript, /\$AdminBind = "127\.0\.0\.1:9981"/);
   assert.match(serversScript, /\$GatewayBind = "127\.0\.0\.1:9980"/);
   assert.match(serversScript, /\$PortalBind = "127\.0\.0\.1:9982"/);
+});
+
+test('repository-root wrapper scripts delegate to the managed bin entrypoints', () => {
+  const shellWrappers = [
+    'build.sh',
+    'install.sh',
+    'start-dev.sh',
+    'start.sh',
+    'stop-dev.sh',
+    'stop.sh',
+  ];
+  const powershellWrappers = [
+    'build.ps1',
+    'install.ps1',
+    'start-dev.ps1',
+    'start.ps1',
+    'stop-dev.ps1',
+    'stop.ps1',
+  ];
+
+  for (const scriptName of shellWrappers) {
+    const script = readFileSync(path.join(repoRoot, scriptName), 'utf8');
+    assert.match(script, new RegExp(`bin/${scriptName.replace('.', '\\.')}`));
+    assert.match(script, /exec "\$TARGET_SCRIPT" "\$@"/);
+  }
+
+  for (const scriptName of powershellWrappers) {
+    const script = readFileSync(path.join(repoRoot, scriptName), 'utf8');
+    assert.match(script, new RegExp(`bin\\\\${scriptName.replace('.', '\\.')}`));
+    assert.match(script, /& \$target @args/);
+    assert.match(script, /Test-Path Variable:LASTEXITCODE/);
+  }
+});
+
+test('PowerShell runtime launchers distinguish early child exits from plain health-check timeouts', () => {
+  const startDevScript = readFileSync(path.join(repoRoot, 'bin', 'start-dev.ps1'), 'utf8');
+  const startScript = readFileSync(path.join(repoRoot, 'bin', 'start.ps1'), 'utf8');
+
+  assert.match(startDevScript, /Get-Process -Id \$process\.Id -ErrorAction SilentlyContinue/);
+  assert.match(startDevScript, /development workspace exited before backend health checks completed/);
+  assert.match(startDevScript, /development workspace exited before web surfaces became ready/);
+  assert.match(startScript, /Get-Process -Id \$process\.Id -ErrorAction SilentlyContinue/);
+  assert.match(startScript, /production runtime exited before health checks completed/);
+});
+
+test('development start and stop scripts use a cooperative stop-file handshake before kill fallbacks', () => {
+  const startDevPs1 = readFileSync(path.join(repoRoot, 'bin', 'start-dev.ps1'), 'utf8');
+  const stopDevPs1 = readFileSync(path.join(repoRoot, 'bin', 'stop-dev.ps1'), 'utf8');
+  const startDevSh = readFileSync(path.join(repoRoot, 'bin', 'start-dev.sh'), 'utf8');
+  const stopDevSh = readFileSync(path.join(repoRoot, 'bin', 'stop-dev.sh'), 'utf8');
+
+  assert.match(startDevPs1, /\$stopFile = Join-Path \$runDirectory 'start-workspace\.stop'/);
+  assert.match(startDevPs1, /if \(Test-Path \$stopFile\) \{ Remove-Item \$stopFile -Force -ErrorAction SilentlyContinue \}/);
+  assert.match(startDevPs1, /'--stop-file', \$stopFile/);
+  assert.match(stopDevPs1, /\$stopFile = Join-Path \$devHome 'run\\start-workspace\.stop'/);
+  assert.match(stopDevPs1, /Set-Content -Path \$stopFile -Value/);
+  assert.match(stopDevPs1, /Wait-RouterProcessExit -ProcessId \(\[int\]\$pidValue\) -WaitSeconds \$WaitSeconds/);
+  assert.match(stopDevPs1, /Stop-RouterProcessTree -ProcessId \(\[int\]\$pidValue\)/);
+
+  assert.match(startDevSh, /^STOP_FILE="\$RUN_DIR\/start-workspace\.stop"$/m);
+  assert.match(startDevSh, /rm -f "\$STOP_FILE"/);
+  assert.match(startDevSh, /--stop-file "\$STOP_FILE"/);
+  assert.match(stopDevSh, /^STOP_FILE="\$DEV_HOME\/run\/start-workspace\.stop"$/m);
+  assert.match(stopDevSh, /: > "\$STOP_FILE"/);
+  assert.match(stopDevSh, /router_wait_for_pid_exit "\$PID" "\$WAIT_SECONDS"/);
+  assert.match(stopDevSh, /router_stop_pid "\$PID" "\$WAIT_SECONDS" "\$FORCE_MODE"/);
 });

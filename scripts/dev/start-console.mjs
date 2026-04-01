@@ -6,6 +6,10 @@ import {
   createSignalController,
   didChildExitFail,
 } from './process-supervision.mjs';
+import {
+  pnpmExecutable,
+  pnpmSpawnOptions,
+} from './pnpm-launch-lib.mjs';
 
 function parseArgs(argv) {
   const result = {
@@ -47,10 +51,6 @@ Options:
 `);
 }
 
-function pnpmExecutable() {
-  return process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
-}
-
 function runStep(args, dryRun) {
   const command = `${pnpmExecutable()} ${args.join(' ')}`;
   console.log(`[start-console] ${command}`);
@@ -60,7 +60,7 @@ function runStep(args, dryRun) {
   }
 
   const result = spawnSync(pnpmExecutable(), args, {
-    stdio: 'inherit',
+    ...pnpmSpawnOptions(),
   });
   return result.status === 0;
 }
@@ -101,7 +101,7 @@ if (settings.dryRun) {
 }
 
 const child = spawn(pnpmExecutable(), longRunningArgs, {
-  stdio: 'inherit',
+  ...pnpmSpawnOptions(),
 });
 let shuttingDown = false;
 const controller = createSignalController({

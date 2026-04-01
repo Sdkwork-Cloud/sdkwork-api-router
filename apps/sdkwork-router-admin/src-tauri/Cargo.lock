@@ -4189,6 +4189,7 @@ name = "sdkwork-api-app-billing"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "sdkwork-api-domain-billing",
  "sdkwork-api-storage-core",
  "sdkwork-api-storage-sqlite",
@@ -4205,6 +4206,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "sdkwork-api-app-commerce"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "sdkwork-api-app-coupon",
+ "sdkwork-api-domain-billing",
+ "sdkwork-api-domain-commerce",
+ "sdkwork-api-domain-coupon",
+ "sdkwork-api-storage-core",
+ "serde",
+]
+
+[[package]]
 name = "sdkwork-api-app-coupon"
 version = "0.1.0"
 dependencies = [
@@ -4218,6 +4233,7 @@ name = "sdkwork-api-app-credential"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "sdkwork-api-domain-credential",
  "sdkwork-api-secret-core",
  "sdkwork-api-secret-keyring",
@@ -4284,6 +4300,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "sdkwork-api-app-rate-limit"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "sdkwork-api-domain-rate-limit",
+ "sdkwork-api-storage-core",
+]
+
+[[package]]
 name = "sdkwork-api-app-routing"
 version = "0.1.0"
 dependencies = [
@@ -4303,6 +4329,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "futures-util",
  "sdkwork-api-app-credential",
  "sdkwork-api-app-extension",
  "sdkwork-api-app-gateway",
@@ -4368,6 +4395,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "sdkwork-api-domain-commerce"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "sdkwork-api-domain-coupon"
 version = "0.1.0"
 dependencies = [
@@ -4383,6 +4417,13 @@ dependencies = [
 
 [[package]]
 name = "sdkwork-api-domain-identity"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "sdkwork-api-domain-rate-limit"
 version = "0.1.0"
 dependencies = [
  "serde",
@@ -4460,6 +4501,7 @@ dependencies = [
  "sdkwork-api-app-extension",
  "sdkwork-api-app-gateway",
  "sdkwork-api-app-identity",
+ "sdkwork-api-app-rate-limit",
  "sdkwork-api-app-routing",
  "sdkwork-api-app-runtime",
  "sdkwork-api-app-tenant",
@@ -4469,6 +4511,7 @@ dependencies = [
  "sdkwork-api-domain-coupon",
  "sdkwork-api-domain-credential",
  "sdkwork-api-domain-identity",
+ "sdkwork-api-domain-rate-limit",
  "sdkwork-api-domain-routing",
  "sdkwork-api-domain-tenant",
  "sdkwork-api-domain-usage",
@@ -4496,9 +4539,11 @@ dependencies = [
  "sdkwork-api-app-credential",
  "sdkwork-api-app-gateway",
  "sdkwork-api-app-identity",
+ "sdkwork-api-app-rate-limit",
  "sdkwork-api-app-routing",
  "sdkwork-api-app-usage",
  "sdkwork-api-contract-openai",
+ "sdkwork-api-domain-rate-limit",
  "sdkwork-api-observability",
  "sdkwork-api-openapi",
  "sdkwork-api-provider-core",
@@ -4509,6 +4554,7 @@ dependencies = [
  "sqlx",
  "tokio",
  "tokio-stream",
+ "tower-http",
 ]
 
 [[package]]
@@ -4517,12 +4563,15 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "sdkwork-api-app-billing",
+ "sdkwork-api-app-commerce",
+ "sdkwork-api-app-coupon",
  "sdkwork-api-app-identity",
  "sdkwork-api-app-routing",
  "sdkwork-api-app-usage",
  "sdkwork-api-domain-billing",
  "sdkwork-api-domain-catalog",
  "sdkwork-api-domain-identity",
+ "sdkwork-api-domain-rate-limit",
  "sdkwork-api-domain-routing",
  "sdkwork-api-domain-usage",
  "sdkwork-api-observability",
@@ -4530,6 +4579,7 @@ dependencies = [
  "sdkwork-api-storage-sqlite",
  "serde",
  "sqlx",
+ "tower-http",
 ]
 
 [[package]]
@@ -4561,6 +4611,7 @@ dependencies = [
  "sdkwork-api-interface-portal",
  "sdkwork-api-runtime-host",
  "sdkwork-api-storage-core",
+ "serde",
  "tokio",
 ]
 
@@ -4671,9 +4722,11 @@ dependencies = [
  "async-trait",
  "sdkwork-api-domain-billing",
  "sdkwork-api-domain-catalog",
+ "sdkwork-api-domain-commerce",
  "sdkwork-api-domain-coupon",
  "sdkwork-api-domain-credential",
  "sdkwork-api-domain-identity",
+ "sdkwork-api-domain-rate-limit",
  "sdkwork-api-domain-routing",
  "sdkwork-api-domain-tenant",
  "sdkwork-api-domain-usage",
@@ -4689,9 +4742,11 @@ dependencies = [
  "async-trait",
  "sdkwork-api-domain-billing",
  "sdkwork-api-domain-catalog",
+ "sdkwork-api-domain-commerce",
  "sdkwork-api-domain-coupon",
  "sdkwork-api-domain-credential",
  "sdkwork-api-domain-identity",
+ "sdkwork-api-domain-rate-limit",
  "sdkwork-api-domain-routing",
  "sdkwork-api-domain-tenant",
  "sdkwork-api-domain-usage",
@@ -4710,9 +4765,11 @@ dependencies = [
  "async-trait",
  "sdkwork-api-domain-billing",
  "sdkwork-api-domain-catalog",
+ "sdkwork-api-domain-commerce",
  "sdkwork-api-domain-coupon",
  "sdkwork-api-domain-credential",
  "sdkwork-api-domain-identity",
+ "sdkwork-api-domain-rate-limit",
  "sdkwork-api-domain-routing",
  "sdkwork-api-domain-tenant",
  "sdkwork-api-domain-usage",

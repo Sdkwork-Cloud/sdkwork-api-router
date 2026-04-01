@@ -34,15 +34,17 @@ while [ "$#" -gt 0 ]; do
 done
 
 PID_FILE="$DEV_HOME/run/start-workspace.pid"
+STOP_FILE="$DEV_HOME/run/start-workspace.stop"
 STDOUT_LOG="$DEV_HOME/log/start-workspace.stdout.log"
 STDERR_LOG="$DEV_HOME/log/start-workspace.stderr.log"
 
 if [ "$DRY_RUN" = '1' ]; then
-  router_log "would stop development workspace using pid file $PID_FILE"
+  router_log "would stop development workspace using pid file $PID_FILE and stop file $STOP_FILE"
   exit 0
 fi
 
 if ! [ -f "$PID_FILE" ]; then
+  rm -f "$STOP_FILE"
   router_log "pid file not found, nothing to stop: $PID_FILE"
   exit 0
 fi
@@ -50,16 +52,34 @@ fi
 PID=$(tr -d '[:space:]' < "$PID_FILE" 2>/dev/null || true)
 if [ -z "$PID" ]; then
   rm -f "$PID_FILE"
+  rm -f "$STOP_FILE"
   router_log "removed empty pid file: $PID_FILE"
   exit 0
 fi
 
 if ! router_is_pid_running "$PID"; then
   rm -f "$PID_FILE"
+  rm -f "$STOP_FILE"
   router_log "process already stopped, removed stale pid file: $PID_FILE"
   exit 0
 fi
 
+: > "$STOP_FILE"
+
+if router_wait_for_pid_exit "$PID" "$WAIT_SECONDS"; then
+  rm -f "$PID_FILE"
+  rm -f "$STOP_FILE"
+  router_log "stopped development workspace pid=$PID"
+  exit 0
+fi
+
+if [ "$FORCE_MODE" != '1' ]; then
+  router_tail_log "$STDOUT_LOG"
+  router_tail_log "$STDERR_LOG"
+  router_die "failed to stop development workspace pid=$PID"
+fi
+
+router_log "graceful stop timed out for development workspace pid=$PID, falling back to process termination"
 if ! router_stop_pid "$PID" "$WAIT_SECONDS" "$FORCE_MODE"; then
   router_tail_log "$STDOUT_LOG"
   router_tail_log "$STDERR_LOG"
@@ -67,4 +87,5 @@ if ! router_stop_pid "$PID" "$WAIT_SECONDS" "$FORCE_MODE"; then
 fi
 
 rm -f "$PID_FILE"
+rm -f "$STOP_FILE"
 router_log "stopped development workspace pid=$PID"

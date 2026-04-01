@@ -197,14 +197,21 @@ router_http_ready() {
 router_wait_for_url() {
   URL="$1"
   WAIT_SECONDS="$2"
+  WATCH_PID="${3:-}"
   COUNTER=0
   while ! router_http_ready "$URL"; do
+    if [ -n "$WATCH_PID" ] && ! router_is_pid_running "$WATCH_PID"; then
+      return 1
+    fi
     if [ "$COUNTER" -ge "$WAIT_SECONDS" ]; then
       return 1
     fi
     sleep 1
     COUNTER=$((COUNTER + 1))
   done
+  if [ -n "$WATCH_PID" ] && ! router_is_pid_running "$WATCH_PID"; then
+    return 1
+  fi
   return 0
 }
 

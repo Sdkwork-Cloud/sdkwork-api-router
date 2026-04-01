@@ -17,6 +17,7 @@ function resolveLoopbackUrl(bind, pathSuffix) {
 export function parseWorkspaceArgs(argv) {
   const settings = {
     databaseUrl: null,
+    stopFile: null,
     gatewayBind: '127.0.0.1:9980',
     adminBind: '127.0.0.1:9981',
     portalBind: '127.0.0.1:9982',
@@ -34,6 +35,10 @@ export function parseWorkspaceArgs(argv) {
     switch (arg) {
       case '--database-url':
         settings.databaseUrl = requireValue(argv, index, arg);
+        index += 1;
+        break;
+      case '--stop-file':
+        settings.stopFile = requireValue(argv, index, arg);
         index += 1;
         break;
       case '--gateway-bind':
@@ -188,6 +193,7 @@ Starts the backend services plus the standalone admin and portal surfaces in one
 
 Options:
   --database-url <url>   Optional shared SDKWORK_DATABASE_URL override for admin, gateway, and portal
+  --stop-file <path>     Optional managed stop-signal file watched by the parent workspace process
   --gateway-bind <bind>  SDKWORK_GATEWAY_BIND override
   --admin-bind <bind>    SDKWORK_ADMIN_BIND override
   --portal-bind <bind>   SDKWORK_PORTAL_BIND override

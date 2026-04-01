@@ -128,12 +128,11 @@ try {
     if (Test-Path $stdoutLog) { Remove-Item $stdoutLog -Force }
     if (Test-Path $stderrLog) { Remove-Item $stderrLog -Force }
 
-    $process = Start-Process `
+    $process = Start-RouterBackgroundProcess `
         -FilePath $env:SDKWORK_ROUTER_BINARY `
         -WorkingDirectory $runtimeHome `
-        -RedirectStandardOutput $stdoutLog `
-        -RedirectStandardError $stderrLog `
-        -PassThru
+        -StdoutLog $stdoutLog `
+        -StderrLog $stderrLog
 
     Set-Content -Path $pidFile -Value $process.Id -Encoding utf8
 
@@ -141,15 +140,19 @@ try {
     $adminHealthUrl = Resolve-RouterHealthUrl -BindAddress $env:SDKWORK_WEB_BIND -PathSuffix '/api/admin/health'
     $portalHealthUrl = Resolve-RouterHealthUrl -BindAddress $env:SDKWORK_WEB_BIND -PathSuffix '/api/portal/health'
 
-    $ready = (Wait-RouterHealthUrl -Url $gatewayHealthUrl -WaitSeconds $WaitSeconds) `
-        -and (Wait-RouterHealthUrl -Url $adminHealthUrl -WaitSeconds $WaitSeconds) `
-        -and (Wait-RouterHealthUrl -Url $portalHealthUrl -WaitSeconds $WaitSeconds)
+    $ready = (Wait-RouterHealthUrl -Url $gatewayHealthUrl -WaitSeconds $WaitSeconds -ProcessId $process.Id) `
+        -and (Wait-RouterHealthUrl -Url $adminHealthUrl -WaitSeconds $WaitSeconds -ProcessId $process.Id) `
+        -and (Wait-RouterHealthUrl -Url $portalHealthUrl -WaitSeconds $WaitSeconds -ProcessId $process.Id)
 
     if (-not $ready) {
-        Stop-RouterProcessTree -Pid $process.Id -WaitSeconds $WaitSeconds -Force | Out-Null
+        $runtimeExited = -not (Get-Process -Id $process.Id -ErrorAction SilentlyContinue)
+        Stop-RouterProcessTree -ProcessId $process.Id -WaitSeconds $WaitSeconds -Force | Out-Null
         Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
         Show-RouterLogTail -LogFile $stdoutLog
         Show-RouterLogTail -LogFile $stderrLog
+        if ($runtimeExited) {
+            Throw-RouterError 'production runtime exited before health checks completed; see startup log above'
+        }
         Throw-RouterError "router-product-service failed health checks on $($env:SDKWORK_WEB_BIND)"
     }
 

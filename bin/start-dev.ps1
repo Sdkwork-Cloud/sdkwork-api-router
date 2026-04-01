@@ -27,6 +27,7 @@ $logDirectory = Join-Path $devHome 'log'
 $runDirectory = Join-Path $devHome 'run'
 $envFile = Join-Path $configDirectory 'router-dev.env'
 $pidFile = Join-Path $runDirectory 'start-workspace.pid'
+$stopFile = Join-Path $runDirectory 'start-workspace.stop'
 $stdoutLog = Join-Path $logDirectory 'start-workspace.stdout.log'
 $stderrLog = Join-Path $logDirectory 'start-workspace.stderr.log'
 $planFile = Join-Path $runDirectory 'start-workspace.plan.txt'
@@ -84,7 +85,8 @@ $startArgs = @(
     '--gateway-bind', $env:SDKWORK_GATEWAY_BIND,
     '--admin-bind', $env:SDKWORK_ADMIN_BIND,
     '--portal-bind', $env:SDKWORK_PORTAL_BIND,
-    '--web-bind', $env:SDKWORK_WEB_BIND
+    '--web-bind', $env:SDKWORK_WEB_BIND,
+    '--stop-file', $stopFile
 )
 
 if ($Install) { $startArgs += '--install' }
@@ -104,21 +106,22 @@ try {
     }
 
     if ($Foreground) {
+        if (Test-Path $stopFile) { Remove-Item $stopFile -Force -ErrorAction SilentlyContinue }
         & node @startArgs
         return
     }
 
     Assert-RouterNotRunning -PidFile $pidFile
+    if (Test-Path $stopFile) { Remove-Item $stopFile -Force -ErrorAction SilentlyContinue }
     if (Test-Path $stdoutLog) { Remove-Item $stdoutLog -Force }
     if (Test-Path $stderrLog) { Remove-Item $stderrLog -Force }
 
-    $process = Start-Process `
-        -FilePath node `
+    $process = Start-RouterBackgroundProcess `
+        -FilePath 'node' `
         -ArgumentList $startArgs `
         -WorkingDirectory $repoRoot `
-        -RedirectStandardOutput $stdoutLog `
-        -RedirectStandardError $stderrLog `
-        -PassThru
+        -StdoutLog $stdoutLog `
+        -StderrLog $stderrLog
 
     Set-Content -Path $pidFile -Value $process.Id -Encoding utf8
 
@@ -126,15 +129,20 @@ try {
     $adminHealthUrl = Resolve-RouterHealthUrl -BindAddress $env:SDKWORK_ADMIN_BIND -PathSuffix '/admin/health'
     $portalHealthUrl = Resolve-RouterHealthUrl -BindAddress $env:SDKWORK_PORTAL_BIND -PathSuffix '/portal/health'
 
-    $backendReady = (Wait-RouterHealthUrl -Url $gatewayHealthUrl -WaitSeconds $WaitSeconds) `
-        -and (Wait-RouterHealthUrl -Url $adminHealthUrl -WaitSeconds $WaitSeconds) `
-        -and (Wait-RouterHealthUrl -Url $portalHealthUrl -WaitSeconds $WaitSeconds)
+    $backendReady = (Wait-RouterHealthUrl -Url $gatewayHealthUrl -WaitSeconds $WaitSeconds -ProcessId $process.Id) `
+        -and (Wait-RouterHealthUrl -Url $adminHealthUrl -WaitSeconds $WaitSeconds -ProcessId $process.Id) `
+        -and (Wait-RouterHealthUrl -Url $portalHealthUrl -WaitSeconds $WaitSeconds -ProcessId $process.Id)
 
     if (-not $backendReady) {
-        Stop-RouterProcessTree -Pid $process.Id -WaitSeconds $WaitSeconds -Force | Out-Null
+        $workspaceExited = -not (Get-Process -Id $process.Id -ErrorAction SilentlyContinue)
+        Stop-RouterProcessTree -ProcessId $process.Id -WaitSeconds $WaitSeconds -Force | Out-Null
         Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
+        Remove-Item $stopFile -Force -ErrorAction SilentlyContinue
         Show-RouterLogTail -LogFile $stdoutLog
         Show-RouterLogTail -LogFile $stderrLog
+        if ($workspaceExited) {
+            Throw-RouterError 'development workspace exited before backend health checks completed; see startup log above'
+        }
         Throw-RouterError 'development services failed health checks'
     }
 
@@ -146,14 +154,19 @@ try {
         $portalSurfaceUrl = 'http://127.0.0.1:5174/portal/'
     }
 
-    $webReady = (Wait-RouterHealthUrl -Url $adminSurfaceUrl -WaitSeconds $WaitSeconds) `
-        -and (Wait-RouterHealthUrl -Url $portalSurfaceUrl -WaitSeconds $WaitSeconds)
+    $webReady = (Wait-RouterHealthUrl -Url $adminSurfaceUrl -WaitSeconds $WaitSeconds -ProcessId $process.Id) `
+        -and (Wait-RouterHealthUrl -Url $portalSurfaceUrl -WaitSeconds $WaitSeconds -ProcessId $process.Id)
 
     if (-not $webReady) {
-        Stop-RouterProcessTree -Pid $process.Id -WaitSeconds $WaitSeconds -Force | Out-Null
+        $workspaceExited = -not (Get-Process -Id $process.Id -ErrorAction SilentlyContinue)
+        Stop-RouterProcessTree -ProcessId $process.Id -WaitSeconds $WaitSeconds -Force | Out-Null
         Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
+        Remove-Item $stopFile -Force -ErrorAction SilentlyContinue
         Show-RouterLogTail -LogFile $stdoutLog
         Show-RouterLogTail -LogFile $stderrLog
+        if ($workspaceExited) {
+            Throw-RouterError 'development workspace exited before web surfaces became ready; see startup log above'
+        }
         Throw-RouterError 'development web surfaces failed health checks'
     }
 

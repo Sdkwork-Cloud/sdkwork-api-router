@@ -92,6 +92,7 @@ LOG_DIR="$DEV_HOME/log"
 RUN_DIR="$DEV_HOME/run"
 ENV_FILE="$CONFIG_DIR/router-dev.env"
 PID_FILE="$RUN_DIR/start-workspace.pid"
+STOP_FILE="$RUN_DIR/start-workspace.stop"
 STDOUT_LOG="$LOG_DIR/start-workspace.stdout.log"
 STDERR_LOG="$LOG_DIR/start-workspace.stderr.log"
 PLAN_FILE="$RUN_DIR/start-workspace.plan.txt"
@@ -127,7 +128,8 @@ set -- \
   --gateway-bind "$SDKWORK_GATEWAY_BIND" \
   --admin-bind "$SDKWORK_ADMIN_BIND" \
   --portal-bind "$SDKWORK_PORTAL_BIND" \
-  --web-bind "$SDKWORK_WEB_BIND"
+  --web-bind "$SDKWORK_WEB_BIND" \
+  --stop-file "$STOP_FILE"
 
 [ "$INSTALL_DEPS" = '1' ] && set -- "$@" --install
 [ "$PREVIEW_MODE" = '1' ] && set -- "$@" --preview
@@ -142,10 +144,12 @@ if [ "$DRY_RUN" = '1' ]; then
 fi
 
 if [ "$FOREGROUND" = '1' ]; then
+  rm -f "$STOP_FILE"
   exec node "$@"
 fi
 
 router_require_not_running "$PID_FILE"
+rm -f "$STOP_FILE"
 : > "$STDOUT_LOG"
 : > "$STDERR_LOG"
 
@@ -157,13 +161,21 @@ GATEWAY_HEALTH_URL=$(router_resolve_loopback_url "$SDKWORK_GATEWAY_BIND" "/healt
 ADMIN_HEALTH_URL=$(router_resolve_loopback_url "$SDKWORK_ADMIN_BIND" "/admin/health")
 PORTAL_HEALTH_URL=$(router_resolve_loopback_url "$SDKWORK_PORTAL_BIND" "/portal/health")
 
-if ! router_wait_for_url "$GATEWAY_HEALTH_URL" "$WAIT_SECONDS" \
-  || ! router_wait_for_url "$ADMIN_HEALTH_URL" "$WAIT_SECONDS" \
-  || ! router_wait_for_url "$PORTAL_HEALTH_URL" "$WAIT_SECONDS"; then
+if ! router_wait_for_url "$GATEWAY_HEALTH_URL" "$WAIT_SECONDS" "$PID" \
+  || ! router_wait_for_url "$ADMIN_HEALTH_URL" "$WAIT_SECONDS" "$PID" \
+  || ! router_wait_for_url "$PORTAL_HEALTH_URL" "$WAIT_SECONDS" "$PID"; then
+  WORKSPACE_EXITED=0
+  if ! router_is_pid_running "$PID"; then
+    WORKSPACE_EXITED=1
+  fi
   router_tail_log "$STDOUT_LOG"
   router_tail_log "$STDERR_LOG"
   router_stop_pid "$PID" "$WAIT_SECONDS" 1 || true
   rm -f "$PID_FILE"
+  rm -f "$STOP_FILE"
+  if [ "$WORKSPACE_EXITED" = '1' ]; then
+    router_die "development workspace exited before backend health checks completed; see startup log above"
+  fi
   router_die "development services failed health checks"
 fi
 
@@ -175,12 +187,20 @@ else
   DEV_PORTAL_URL='http://127.0.0.1:5174/portal/'
 fi
 
-if ! router_wait_for_url "$DEV_ADMIN_URL" "$WAIT_SECONDS" \
-  || ! router_wait_for_url "$DEV_PORTAL_URL" "$WAIT_SECONDS"; then
+if ! router_wait_for_url "$DEV_ADMIN_URL" "$WAIT_SECONDS" "$PID" \
+  || ! router_wait_for_url "$DEV_PORTAL_URL" "$WAIT_SECONDS" "$PID"; then
+  WORKSPACE_EXITED=0
+  if ! router_is_pid_running "$PID"; then
+    WORKSPACE_EXITED=1
+  fi
   router_tail_log "$STDOUT_LOG"
   router_tail_log "$STDERR_LOG"
   router_stop_pid "$PID" "$WAIT_SECONDS" 1 || true
   rm -f "$PID_FILE"
+  rm -f "$STOP_FILE"
+  if [ "$WORKSPACE_EXITED" = '1' ]; then
+    router_die "development workspace exited before web surfaces became ready; see startup log above"
+  fi
   router_die "development web surfaces failed health checks"
 fi
 

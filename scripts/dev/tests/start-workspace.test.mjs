@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 
 import {
   buildWorkspaceCommandPlan,
@@ -12,6 +14,7 @@ test('parseWorkspaceArgs returns browser-mode defaults', () => {
 
   assert.deepEqual(settings, {
     databaseUrl: null,
+    stopFile: null,
     gatewayBind: '127.0.0.1:9980',
     adminBind: '127.0.0.1:9981',
     portalBind: '127.0.0.1:9982',
@@ -28,6 +31,8 @@ test('parseWorkspaceArgs forwards install, preview, tauri, and bind overrides', 
   const settings = parseWorkspaceArgs([
     '--database-url',
     'postgres://postgres:postgres@127.0.0.1:5432/sdkwork_api_server',
+    '--stop-file',
+    '.tmp/start-workspace.stop',
     '--gateway-bind',
     '0.0.0.0:18080',
     '--admin-bind',
@@ -46,6 +51,7 @@ test('parseWorkspaceArgs forwards install, preview, tauri, and bind overrides', 
     settings.databaseUrl,
     'postgres://postgres:postgres@127.0.0.1:5432/sdkwork_api_server',
   );
+  assert.equal(settings.stopFile, '.tmp/start-workspace.stop');
   assert.equal(settings.gatewayBind, '0.0.0.0:18080');
   assert.equal(settings.adminBind, '0.0.0.0:18081');
   assert.equal(settings.portalBind, '0.0.0.0:18082');
@@ -231,7 +237,22 @@ test('parseWorkspaceArgs rejects missing values and unknown flags', () => {
   assert.throws(() => parseWorkspaceArgs(['--database-url']), {
     message: /requires a value/,
   });
+  assert.throws(() => parseWorkspaceArgs(['--stop-file']), {
+    message: /requires a value/,
+  });
   assert.throws(() => parseWorkspaceArgs(['--unknown-flag']), {
     message: /unknown option/,
   });
+});
+
+test('start-workspace monitors an optional cooperative stop file', () => {
+  const script = readFileSync(
+    path.join(import.meta.dirname, '..', 'start-workspace.mjs'),
+    'utf8',
+  );
+
+  assert.match(script, /stopFile/);
+  assert.match(script, /existsSync\(stopFile\)/);
+  assert.match(script, /stop signal file detected/);
+  assert.match(script, /controller\.shutdown\('stop-file', 0\)/);
 });

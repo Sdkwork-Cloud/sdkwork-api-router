@@ -12,26 +12,24 @@ import {
   createSignalController,
   didChildExitFail,
 } from './process-supervision.mjs';
-
-function pnpmExecutable() {
-  return process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
-}
+import {
+  pnpmExecutable,
+  pnpmSpawnOptions,
+} from './pnpm-launch-lib.mjs';
 
 function cargoExecutable() {
   return process.platform === 'win32' ? 'cargo.exe' : 'cargo';
 }
 
-function runStep(command, args, dryRun, label, env) {
+function runPnpmStep(args, dryRun, label, env) {
+  const command = pnpmExecutable();
   console.log(`[start-web] ${label}: ${command} ${args.join(' ')}`);
 
   if (dryRun) {
     return true;
   }
 
-  const result = spawnSync(command, args, {
-    stdio: 'inherit',
-    env,
-  });
+  const result = spawnSync(command, args, pnpmSpawnOptions({ env }));
   return result.status === 0;
 }
 
@@ -62,13 +60,13 @@ for (const line of webAccessLines(settings.bind)) {
 const appRoots = ['apps/sdkwork-router-admin', 'apps/sdkwork-router-portal'];
 for (const appRoot of appRoots) {
   const needInstall = settings.install || !existsSync(`${appRoot}/node_modules`);
-  if (needInstall && !runStep(pnpmExecutable(), ['--dir', appRoot, 'install'], settings.dryRun, `install ${appRoot}`, env)) {
+  if (needInstall && !runPnpmStep(['--dir', appRoot, 'install'], settings.dryRun, `install ${appRoot}`, env)) {
     process.exit(1);
   }
 }
 
 for (const appRoot of appRoots) {
-  if (!runStep(pnpmExecutable(), ['--dir', appRoot, 'build'], settings.dryRun, `build ${appRoot}`, env)) {
+  if (!runPnpmStep(['--dir', appRoot, 'build'], settings.dryRun, `build ${appRoot}`, env)) {
     process.exit(1);
   }
 }
