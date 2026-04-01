@@ -113,6 +113,7 @@ Primary English doc structure:
   - [Quickstart](./docs/getting-started/quickstart.md)
   - [Installation](./docs/getting-started/installation.md)
   - [Source Development](./docs/getting-started/source-development.md)
+  - [Script Lifecycle](./docs/getting-started/script-lifecycle.md)
   - [Build and Packaging](./docs/getting-started/build-and-packaging.md)
   - [Release Builds](./docs/getting-started/release-builds.md)
 - Architecture:
@@ -138,6 +139,7 @@ Primary Chinese doc structure:
   - [快速开始](./docs/zh/getting-started/quickstart.md)
   - [安装准备](./docs/zh/getting-started/installation.md)
   - [源码运行](./docs/zh/getting-started/source-development.md)
+  - [脚本生命周期](./docs/zh/getting-started/script-lifecycle.md)
   - [编译与打包](./docs/zh/getting-started/build-and-packaging.md)
   - [发布构建](./docs/zh/getting-started/release-builds.md)
 - 架构：
@@ -181,6 +183,7 @@ Recommended full-stack startup:
 | Workflow | Windows | Linux / macOS |
 |---|---|---|
 | browser mode | `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev\start-workspace.ps1` | `node scripts/dev/start-workspace.mjs` |
+| preview mode | `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev\start-workspace.ps1 -Preview` | `node scripts/dev/start-workspace.mjs --preview` |
 | desktop mode | `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev\start-workspace.ps1 -Tauri` | `node scripts/dev/start-workspace.mjs --tauri` |
 | dry run | `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev\start-workspace.ps1 -DryRun` | `node scripts/dev/start-workspace.mjs --dry-run` |
 
@@ -188,11 +191,12 @@ Open:
 
 - browser mode admin app: `http://127.0.0.1:5173/admin/`
 - browser mode portal app: `http://127.0.0.1:5174/portal/`
-- desktop or preview web host: `http://127.0.0.1:3001/portal/`
-- desktop or preview admin site: `http://127.0.0.1:3001/admin/`
+- desktop or preview web host: `http://127.0.0.1:9983/portal/`
+- desktop or preview admin site: `http://127.0.0.1:9983/admin/`
 
 Notes:
 
+- the source workspace helpers now default to `127.0.0.1:9980` for gateway, `127.0.0.1:9981` for admin, `127.0.0.1:9982` for portal, and `0.0.0.0:9983` for the shared web host.
 - `start-workspace --tauri` starts the admin desktop shell and the shared Pingora web host for external browser access.
 - `start-workspace --preview` builds admin and portal, then serves both sites through the Pingora web host.
 
@@ -228,7 +232,138 @@ Detailed source instructions:
 
 - [Source Development](./docs/getting-started/source-development.md)
 
+## Managed Bin Scripts
+
+The repository now includes a deployment-oriented `bin/` script set that sits above the lower-level
+`scripts/dev/*` helpers.
+
+If you want one page that explains the full `build -> install -> start -> verify -> stop -> service registration`
+lifecycle, read [Script Lifecycle](./docs/getting-started/script-lifecycle.md) first.
+
+Recommended uses:
+
+- `scripts/dev/*`
+  - direct source workflows when you want the original repo-native startup helpers
+- `bin/start-dev.sh` / `bin/start-dev.ps1`
+  - managed development startup with a writable local SQLite database under `artifacts/runtime/dev/`
+  - default dev binds moved to the `998x` range to avoid the common `808x` collisions:
+    - gateway: `127.0.0.1:9980`
+    - admin: `127.0.0.1:9981`
+    - portal: `127.0.0.1:9982`
+    - shared web host: `127.0.0.1:9983`
+  - defaults to preview mode so the built-in Pingora web host is the primary entrypoint; use `--browser` or `-Browser` when you explicitly want the standalone Vite admin and portal frontends instead
+  - prints a formatted startup summary with unified web URLs, direct service URLs, log files, and the seeded admin / portal credentials
+  - the underlying dev launchers now supervise nested child processes and wait for them to stop before exiting, so `Ctrl+C`, `bin/stop-dev.*`, and child crash handling are less likely to leave orphaned `pnpm` or `cargo` processes behind
+- `bin/build.sh` / `bin/build.ps1`
+  - release-oriented build pipeline for:
+    - Rust release binaries
+    - admin and portal browser assets
+    - console and docs browser assets
+    - admin and portal Tauri release bundles
+    - native release package output under `artifacts/release/`
+  - on Windows, the build and install pipeline automatically use a managed short cargo target directory when `CARGO_TARGET_DIR` is not set, reducing MSVC/CMake path-length failures
+  - on Windows, release builds default to `CARGO_BUILD_JOBS=1` when you do not set it explicitly, which matches the most reliable MSVC/CMake path validated for this workspace; override `CARGO_BUILD_JOBS` if you intentionally want a different concurrency trade-off
+- `bin/install.sh` / `bin/install.ps1`
+  - install the release runtime into `artifacts/install/sdkwork-api-router/current` by default
+  - copy release binaries plus admin and portal static sites
+  - stage only the production runtime assets in the install home; `build.*`, `install.*`, and `start-dev.*` remain source-tree tools
+  - generate:
+    - `config/router.env`
+    - `service/systemd/sdkwork-api-router.service`
+    - `service/systemd/install-service.sh`
+    - `service/systemd/uninstall-service.sh`
+    - `service/launchd/com.sdkwork.api-router.plist`
+    - `service/launchd/install-service.sh`
+    - `service/launchd/uninstall-service.sh`
+    - `service/windows-task/sdkwork-api-router.xml`
+    - `service/windows-task/install-service.ps1`
+    - `service/windows-task/uninstall-service.ps1`
+- `bin/start.sh` / `bin/start.ps1`
+  - production runtime entrypoint
+  - starts `router-product-service` in release mode, serving `/admin/*`, `/portal/*`, and `/api/*`
+  - uses a writable local SQLite database under the installed runtime `var/data/` directory by default
+  - prints a formatted startup summary with unified web URLs, direct service URLs, log files, and the seeded admin / portal credentials
+  - designed for direct daemon use or for foreground service-manager execution
+- `bin/stop.sh` / `bin/stop.ps1`
+  - stop the managed production runtime
+  - the PowerShell `start/stop` helpers now resolve platform-specific binary names and process-stop behavior at runtime, so the same `pwsh` entrypoints remain usable on Linux and macOS installs in addition to Windows
+
+Typical release flow:
+
+Linux or macOS:
+
+```bash
+./bin/build.sh
+./bin/install.sh
+./bin/start.sh
+```
+
+Windows:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\build.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\install.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\start.ps1
+```
+
+Dry-run examples:
+
+```bash
+./bin/build.sh --dry-run
+./bin/install.sh --dry-run
+./bin/start-dev.sh --dry-run
+./bin/start.sh --dry-run
+```
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\build.ps1 --dry-run
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\install.ps1 --dry-run
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\start-dev.ps1 -DryRun
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\start.ps1 -DryRun
+```
+
+Important runtime notes:
+
+- `bin/start.sh --foreground` and `bin/start.ps1 -Foreground` are the service-manager-friendly forms.
+- both `bin/start-dev.*` and `bin/start.*` print clickable local URLs for the unified web entrypoint plus the direct backend ports after successful startup.
+- the seeded local credentials printed by the managed startup scripts are:
+  - admin: `admin@sdkwork.local / ChangeMe123!`
+  - portal: `portal@sdkwork.local / ChangeMe123!`
+- `bin/install.*` writes native service descriptors plus register/unregister helper scripts, but still does not auto-register them during a generic install run.
+- the installed runtime home intentionally includes production `start/stop` scripts and service-management assets only.
+- the generated `config/router.env` is the primary place to override release binds, database location, and site directories.
+- `config/router.env` now quotes values so installed paths with spaces remain safe for both the shell helpers and `systemd` environment loading.
+- on Windows, `bin/install.*` resolves release binaries from the same managed short cargo target directory used by `bin/build.*` unless you explicitly provide `CARGO_TARGET_DIR`.
+- development scripts intentionally avoid the default user-home SQLite path that can become read-only in constrained environments.
+
+Daemon registration examples from the installed runtime home:
+
+Linux / systemd:
+
+```bash
+./service/systemd/install-service.sh
+./service/systemd/uninstall-service.sh
+```
+
+macOS / launchd:
+
+```bash
+./service/launchd/install-service.sh
+./service/launchd/uninstall-service.sh
+```
+
+Windows / Task Scheduler:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\service\windows-task\install-service.ps1 -StartNow
+powershell -NoProfile -ExecutionPolicy Bypass -File .\service\windows-task\uninstall-service.ps1
+```
+
 ## Release Build and Startup
+
+For the recommended managed release flow, prefer the `bin/build.*`, `bin/install.*`, `bin/start.*`,
+and `bin/stop.*` scripts above. The commands in this section remain useful when you want the
+individual lower-level build steps.
 
 Build release service binaries:
 
@@ -300,14 +435,16 @@ Detailed release instructions:
 
 ## Runtime and Operations
 
-Important endpoints:
+Typical managed-script endpoints:
 
-- gateway health: `http://127.0.0.1:8080/health`
-- admin health: `http://127.0.0.1:8081/admin/health`
-- portal health: `http://127.0.0.1:8082/portal/health`
-- gateway metrics: `http://127.0.0.1:8080/metrics`
-- admin metrics: `http://127.0.0.1:8081/metrics`
-- portal metrics: `http://127.0.0.1:8082/metrics`
+- unified admin app: `http://127.0.0.1:9983/admin/`
+- unified portal app: `http://127.0.0.1:9983/portal/`
+- unified gateway health: `http://127.0.0.1:9983/api/v1/health`
+- direct gateway health: `http://127.0.0.1:9980/health`
+- direct admin health: `http://127.0.0.1:9981/admin/health`
+- direct portal health: `http://127.0.0.1:9982/portal/health`
+
+The standalone binaries still honor the built-in local config defaults documented earlier in this README when you do not override their bind addresses.
 
 Important environment variables:
 

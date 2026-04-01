@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   buildWorkspaceCommandPlan,
   parseWorkspaceArgs,
+  workspaceAccessLines,
 } from '../workspace-launch-lib.mjs';
 
 test('parseWorkspaceArgs returns browser-mode defaults', () => {
@@ -11,10 +12,10 @@ test('parseWorkspaceArgs returns browser-mode defaults', () => {
 
   assert.deepEqual(settings, {
     databaseUrl: null,
-    gatewayBind: '127.0.0.1:8080',
-    adminBind: '127.0.0.1:8081',
-    portalBind: '127.0.0.1:8082',
-    webBind: '0.0.0.0:3001',
+    gatewayBind: '127.0.0.1:9980',
+    adminBind: '127.0.0.1:9981',
+    portalBind: '127.0.0.1:9982',
+    webBind: '0.0.0.0:9983',
     install: false,
     preview: false,
     tauri: false,
@@ -58,10 +59,10 @@ test('parseWorkspaceArgs forwards install, preview, tauri, and bind overrides', 
 test('buildWorkspaceCommandPlan keeps local config defaults when database override is absent', () => {
   const plan = buildWorkspaceCommandPlan({
     databaseUrl: null,
-    gatewayBind: '127.0.0.1:8080',
-    adminBind: '127.0.0.1:8081',
-    portalBind: '127.0.0.1:8082',
-    webBind: '0.0.0.0:3001',
+    gatewayBind: '127.0.0.1:9980',
+    adminBind: '127.0.0.1:9981',
+    portalBind: '127.0.0.1:9982',
+    webBind: '0.0.0.0:9983',
     install: false,
     preview: false,
     tauri: false,
@@ -73,11 +74,11 @@ test('buildWorkspaceCommandPlan keeps local config defaults when database overri
   assert.deepEqual(plan.backend.args, [
     'scripts/dev/start-stack.mjs',
     '--gateway-bind',
-    '127.0.0.1:8080',
+    '127.0.0.1:9980',
     '--admin-bind',
-    '127.0.0.1:8081',
+    '127.0.0.1:9981',
     '--portal-bind',
-    '127.0.0.1:8082',
+    '127.0.0.1:9982',
     '--dry-run',
   ]);
 });
@@ -167,10 +168,10 @@ test('buildWorkspaceCommandPlan forwards backend binds to preview web host', () 
 test('buildWorkspaceCommandPlan keeps browser mode on standalone admin and portal apps', () => {
   const plan = buildWorkspaceCommandPlan({
     databaseUrl: null,
-    gatewayBind: '127.0.0.1:8080',
-    adminBind: '127.0.0.1:8081',
-    portalBind: '127.0.0.1:8082',
-    webBind: '0.0.0.0:3001',
+    gatewayBind: '127.0.0.1:9980',
+    adminBind: '127.0.0.1:9981',
+    portalBind: '127.0.0.1:9982',
+    webBind: '0.0.0.0:9983',
     install: false,
     preview: false,
     tauri: false,
@@ -182,6 +183,48 @@ test('buildWorkspaceCommandPlan keeps browser mode on standalone admin and porta
   assert.deepEqual(plan.admin.args, ['scripts/dev/start-admin.mjs', '--dry-run']);
   assert.equal(plan.portal.scriptPath, 'scripts/dev/start-portal.mjs');
   assert.deepEqual(plan.portal.args, ['scripts/dev/start-portal.mjs', '--dry-run']);
+});
+
+test('workspaceAccessLines describe unified access, direct service links, and seeded credentials', () => {
+  const previewLines = workspaceAccessLines({
+    databaseUrl: null,
+    gatewayBind: '127.0.0.1:9980',
+    adminBind: '127.0.0.1:9981',
+    portalBind: '127.0.0.1:9982',
+    webBind: '127.0.0.1:9983',
+    install: false,
+    preview: true,
+    tauri: false,
+    dryRun: false,
+    help: false,
+  }).join('\n');
+
+  assert.match(previewLines, /Unified Access/);
+  assert.match(previewLines, /http:\/\/127\.0\.0\.1:9983\/admin\//);
+  assert.match(previewLines, /http:\/\/127\.0\.0\.1:9983\/portal\//);
+  assert.match(previewLines, /http:\/\/127\.0\.0\.1:9983\/api\/v1\/health/);
+  assert.match(previewLines, /http:\/\/127\.0\.0\.1:9980\/health/);
+  assert.match(previewLines, /http:\/\/127\.0\.0\.1:9981\/admin\/health/);
+  assert.match(previewLines, /http:\/\/127\.0\.0\.1:9982\/portal\/health/);
+  assert.match(previewLines, /admin@sdkwork\.local/);
+  assert.match(previewLines, /portal@sdkwork\.local/);
+
+  const browserLines = workspaceAccessLines({
+    databaseUrl: null,
+    gatewayBind: '127.0.0.1:9980',
+    adminBind: '127.0.0.1:9981',
+    portalBind: '127.0.0.1:9982',
+    webBind: '127.0.0.1:9983',
+    install: false,
+    preview: false,
+    tauri: false,
+    dryRun: false,
+    help: false,
+  }).join('\n');
+
+  assert.match(browserLines, /Frontend Access/);
+  assert.match(browserLines, /http:\/\/127\.0\.0\.1:5173\/admin\//);
+  assert.match(browserLines, /http:\/\/127\.0\.0\.1:5174\/portal\//);
 });
 
 test('parseWorkspaceArgs rejects missing values and unknown flags', () => {

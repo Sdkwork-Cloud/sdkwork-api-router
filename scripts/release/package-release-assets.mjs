@@ -21,6 +21,7 @@ import {
   normalizeDesktopArch,
   resolveDesktopReleaseTarget,
 } from './desktop-targets.mjs';
+import { resolveWorkspaceTargetDir } from '../workspace-target-dir.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -123,7 +124,12 @@ export function resolveNativeBuildRoot({ appId, targetTriple = '' } = {}) {
   );
 }
 
-export function resolveNativeBuildRootCandidates({ appId, targetTriple = '' } = {}) {
+export function resolveNativeBuildRootCandidates({
+  appId,
+  targetTriple = '',
+  env = process.env,
+  platform = process.platform,
+} = {}) {
   const roots = [];
   const normalizedTargetTriple = String(targetTriple ?? '').trim();
   const appDir = DESKTOP_APP_DIRS[appId];
@@ -138,7 +144,11 @@ export function resolveNativeBuildRootCandidates({ appId, targetTriple = '' } = 
   }
   roots.push(path.join(appTargetRoot, 'release', 'bundle'));
 
-  const repositoryTargetRoot = path.join(rootDir, 'target');
+  const repositoryTargetRoot = resolveWorkspaceTargetDir({
+    workspaceRoot: rootDir,
+    env,
+    platform,
+  });
   if (normalizedTargetTriple.length > 0) {
     roots.push(path.join(repositoryTargetRoot, normalizedTargetTriple, 'release', 'bundle'));
   }
@@ -206,13 +216,25 @@ export function resolveAvailableNativeBuildRoot({
   return firstExistingRoot;
 }
 
-function resolveServiceReleaseRoot({ targetTriple = '' } = {}) {
+function resolveServiceReleaseRoot({
+  targetTriple = '',
+  env = process.env,
+  platform = process.platform,
+} = {}) {
   const normalizedTargetTriple = String(targetTriple ?? '').trim();
   const targetSegments = normalizedTargetTriple.length > 0
     ? [normalizedTargetTriple]
     : [];
 
-  return path.join(rootDir, 'target', ...targetSegments, 'release');
+  return path.join(
+    resolveWorkspaceTargetDir({
+      workspaceRoot: rootDir,
+      env,
+      platform,
+    }),
+    ...targetSegments,
+    'release',
+  );
 }
 
 function buildWebArchiveBaseName(releaseTag) {

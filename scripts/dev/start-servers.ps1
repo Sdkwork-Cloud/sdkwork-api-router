@@ -1,8 +1,8 @@
 param(
     [string]$DatabaseUrl = "",
-    [string]$AdminBind = "127.0.0.1:8081",
-    [string]$GatewayBind = "127.0.0.1:8080",
-    [string]$PortalBind = "127.0.0.1:8082",
+    [string]$AdminBind = "127.0.0.1:9981",
+    [string]$GatewayBind = "127.0.0.1:9980",
+    [string]$PortalBind = "127.0.0.1:9982",
     [switch]$DryRun
 )
 

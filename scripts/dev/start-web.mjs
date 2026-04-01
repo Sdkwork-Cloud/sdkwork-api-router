@@ -8,6 +8,10 @@ import {
   webHelpText,
   webHostEnv,
 } from './web-launch-lib.mjs';
+import {
+  createSignalController,
+  didChildExitFail,
+} from './process-supervision.mjs';
 
 function pnpmExecutable() {
   return process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
@@ -80,7 +84,20 @@ const child = spawn(cargoExecutable(), webArgs, {
   stdio: 'inherit',
   env,
 });
+let shuttingDown = false;
+const controller = createSignalController({
+  label: 'start-web',
+  children: [child],
+  onShutdownStart: () => {
+    shuttingDown = true;
+  },
+});
+controller.register();
 
-child.on('exit', (code) => {
-  process.exit(code ?? 0);
+child.on('exit', (code, signal) => {
+  if (shuttingDown) {
+    return;
+  }
+
+  process.exit(didChildExitFail(code, signal) ? code ?? 1 : 0);
 });

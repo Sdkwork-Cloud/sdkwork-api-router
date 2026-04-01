@@ -10,13 +10,13 @@ import {
 
 test('parseWebArgs keeps public Pingora bind by default', () => {
   assert.deepEqual(parseWebArgs([]), {
-    adminTarget: '127.0.0.1:8081',
-    bind: '0.0.0.0:3001',
+    adminTarget: '127.0.0.1:9981',
+    bind: '0.0.0.0:9983',
     dryRun: false,
-    gatewayTarget: '127.0.0.1:8080',
+    gatewayTarget: '127.0.0.1:9980',
     help: false,
     install: false,
-    portalTarget: '127.0.0.1:8082',
+    portalTarget: '127.0.0.1:9982',
     preview: false,
     tauri: false,
   });
@@ -60,6 +60,7 @@ test('webAccessLines include admin and portal entrypoints', () => {
   assert.match(lines, /SDKWORK_WEB_BIND=0\.0\.0\.0:3901/);
   assert.match(lines, /\/admin\//);
   assert.match(lines, /\/portal\//);
+  assert.match(lines, /\/api\/v1\/health/);
 });
 
 test('webHostEnv uses bare host:port upstreams and honors overrides', () => {

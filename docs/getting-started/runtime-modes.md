@@ -1,51 +1,164 @@
 # Runtime Modes
 
-SDKWork API Server supports two primary runtime shapes: standalone services and an embedded desktop-oriented model.
+SDKWork API Server supports several practical runtime shapes. The important distinction is not only server versus desktop, but also whether you want raw source control or a managed script lifecycle.
 
-## Standalone Server Mode
+## Raw Standalone Service Mode
 
-Standalone mode is the shared-service deployment shape.
+This is the lowest-level shape.
 
 Characteristics:
 
 - services run as independent binaries
 - gateway, admin, and portal APIs are exposed over HTTP
-- PostgreSQL is the preferred deployment database
-- upstream credentials are expected to be managed by a server-side secret backend
+- the binaries keep their built-in defaults unless you override them
+- best when you want direct process-level control
 
-Choose this mode when:
+Typical entrypoints:
 
-- you want a browser-accessible shared environment
-- you need multiple operators or portal users
-- you are deploying behind a reverse proxy or service manager
+- `cargo run -p gateway-service`
+- `cargo run -p admin-api-service`
+- `cargo run -p portal-api-service`
 
-## Embedded Mode
+Typical default binds:
 
-Embedded mode is the desktop-oriented deployment shape.
+- gateway: `127.0.0.1:8080`
+- admin: `127.0.0.1:8081`
+- portal: `127.0.0.1:8082`
+
+## Source Browser Workspace Mode
+
+This is the raw source developer workflow.
 
 Characteristics:
 
-- the runtime can be hosted in-process through the runtime host abstraction
-- the Tauri shell hosts the operator console while the portal stays browser-first
-- loopback binding is the default trust boundary
-- SQLite is the preferred local persistence strategy
+- backend services use the updated helper defaults on `9980`, `9981`, and `9982`
+- admin and portal stay on standalone Vite dev servers
+- best for frontend iteration and hot reloading
 
-Choose this mode when:
+Entry points:
 
-- you want a desktop-first operator experience
-- you are running locally on a single machine
-- you want the admin console to be available in both browser and desktop form
+- `node scripts/dev/start-workspace.mjs`
+- `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev\start-workspace.ps1`
 
-## Browser and Tauri Together
+Primary browser URLs:
 
-In development:
+- admin: `http://127.0.0.1:5173/admin/`
+- portal: `http://127.0.0.1:5174/portal/`
 
-- `pnpm --dir console tauri:dev` uses the Vite dev server
-- the same admin Vite URL stays reachable from a browser
-- `start-workspace --tauri` keeps backend services plus the desktop shell in one startup flow while the portal continues on `http://127.0.0.1:5174/`
+## Source Preview Workspace Mode
+
+This is the raw source single-port workflow.
+
+Characteristics:
+
+- backend services stay on `9980`, `9981`, and `9982`
+- Pingora serves admin and portal through one browser-visible host
+- best when you want browser validation closer to release shape
+
+Entry points:
+
+- `node scripts/dev/start-workspace.mjs --preview`
+- `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev\start-workspace.ps1 -Preview`
+
+Primary browser URLs:
+
+- unified admin: `http://127.0.0.1:9983/admin/`
+- unified portal: `http://127.0.0.1:9983/portal/`
+
+## Source Tauri Workspace Mode
+
+This is the raw source desktop-oriented workflow.
+
+Characteristics:
+
+- backend services stay on `9980`, `9981`, and `9982`
+- admin lives in the Tauri desktop shell
+- Pingora still exposes browser access through the unified web host
+
+Entry points:
+
+- `node scripts/dev/start-workspace.mjs --tauri`
+- `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev\start-workspace.ps1 -Tauri`
+
+## Managed Development Mode
+
+This is the recommended scripted development lifecycle.
+
+Characteristics:
+
+- runtime state is managed under `artifacts/runtime/dev/`
+- startup and shutdown are PID-driven
+- default mode is preview, so one unified browser port is available immediately
+- startup logs print unified URLs, direct service URLs, credentials, and log paths
+
+Entry points:
+
+- `./bin/start-dev.sh`
+- `powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\start-dev.ps1`
+
+Use this mode when:
+
+- you want one stable command for QA, demos, or repeated local validation
+- you want a single browser entrypoint by default
+- you want the matching `bin/stop-dev.*` lifecycle
+
+## Managed Release Mode
+
+This is the production-oriented script lifecycle.
+
+Characteristics:
+
+- build, install, start, stop, and service registration are separate phases
+- the runtime is installed under a dedicated install home
+- `router-product-service` serves `/admin/*`, `/portal/*`, and `/api/*`
+- designed for direct daemon use or service-manager execution
+
+Entry points:
+
+- `./bin/build.sh`
+- `./bin/install.sh`
+- `./bin/start.sh`
+- `./bin/stop.sh`
+
+Windows equivalents:
+
+- `.\bin\build.ps1`
+- `.\bin\install.ps1`
+- `.\bin\start.ps1`
+- `.\bin\stop.ps1`
+
+## Choosing The Right Mode
+
+Choose raw standalone service mode when:
+
+- you need direct control over individual binaries
+- you are debugging one service in isolation
+
+Choose source browser workspace mode when:
+
+- you want Vite-based frontend iteration
+- you need independent browser dev servers
+
+Choose source preview mode when:
+
+- you want one browser-visible port in a source-tree workflow
+- you want browser behavior closer to release shape
+
+Choose managed development mode when:
+
+- you want the easiest repeatable local environment
+- you want PID, log, and runtime-home management
+- you want startup summaries with URLs and credentials
+
+Choose managed release mode when:
+
+- you are packaging or deploying a server runtime
+- you need systemd, launchd, or Windows Task Scheduler integration
 
 ## Where To Go Next
 
+- startup and shutdown responsibilities:
+  - [Script Lifecycle](/getting-started/script-lifecycle)
 - onboarding and local startup:
   - [Source Development](/getting-started/source-development)
 - compilation and packaging:

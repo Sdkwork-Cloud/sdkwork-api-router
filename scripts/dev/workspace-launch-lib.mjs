@@ -6,13 +6,21 @@ function requireValue(argv, index, flag) {
   return value;
 }
 
+function resolveLoopbackUrl(bind, pathSuffix) {
+  const [hostPart, port = '80'] = bind.split(/:(?=[^:]+$)/);
+  const host = !hostPart || hostPart === '0.0.0.0' || hostPart === '[::]' || hostPart === '::'
+    ? '127.0.0.1'
+    : hostPart;
+  return `http://${host}:${port}${pathSuffix}`;
+}
+
 export function parseWorkspaceArgs(argv) {
   const settings = {
     databaseUrl: null,
-    gatewayBind: '127.0.0.1:8080',
-    adminBind: '127.0.0.1:8081',
-    portalBind: '127.0.0.1:8082',
-    webBind: '0.0.0.0:3001',
+    gatewayBind: '127.0.0.1:9980',
+    adminBind: '127.0.0.1:9981',
+    portalBind: '127.0.0.1:9982',
+    webBind: '0.0.0.0:9983',
     install: false,
     preview: false,
     tauri: false,
@@ -143,6 +151,34 @@ export function buildWorkspaceCommandPlan(settings) {
       args: webArgs,
     },
   };
+}
+
+export function workspaceAccessLines(settings) {
+  const unifiedAccessEnabled = settings.preview || settings.tauri;
+  const lines = [
+    `[start-workspace] Mode: ${settings.preview ? 'preview' : settings.tauri ? 'tauri' : 'browser'}`,
+  ];
+
+  if (unifiedAccessEnabled) {
+    lines.push('[start-workspace] Unified Access');
+    lines.push(`[start-workspace]   Admin App: ${resolveLoopbackUrl(settings.webBind, '/admin/')}`);
+    lines.push(`[start-workspace]   Portal App: ${resolveLoopbackUrl(settings.webBind, '/portal/')}`);
+    lines.push(`[start-workspace]   Gateway API Health: ${resolveLoopbackUrl(settings.webBind, '/api/v1/health')}`);
+  } else {
+    lines.push('[start-workspace] Frontend Access');
+    lines.push('[start-workspace]   Admin App: http://127.0.0.1:5173/admin/');
+    lines.push('[start-workspace]   Portal App: http://127.0.0.1:5174/portal/');
+  }
+
+  lines.push('[start-workspace] Direct Service Access');
+  lines.push(`[start-workspace]   Gateway Service: ${resolveLoopbackUrl(settings.gatewayBind, '/health')}`);
+  lines.push(`[start-workspace]   Admin Service: ${resolveLoopbackUrl(settings.adminBind, '/admin/health')}`);
+  lines.push(`[start-workspace]   Portal Service: ${resolveLoopbackUrl(settings.portalBind, '/portal/health')}`);
+  lines.push('[start-workspace] Initial Credentials');
+  lines.push('[start-workspace]   Admin Console: admin@sdkwork.local / ChangeMe123!');
+  lines.push('[start-workspace]   Portal Console: portal@sdkwork.local / ChangeMe123!');
+
+  return lines;
 }
 
 export function workspaceHelpText() {

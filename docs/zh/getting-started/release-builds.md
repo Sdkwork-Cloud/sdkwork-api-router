@@ -2,40 +2,184 @@
 
 本页说明如何生成并运行可部署的服务二进制、浏览器静态资源和可选桌面包。
 
-如果你要找的是开发期编译命令，请先看 [编译与打包](/zh/getting-started/build-and-packaging)。本页聚焦发布产物。
+如果你要查看每个脚本在完整生命周期中的职责矩阵，请先阅读 [脚本生命周期](/zh/getting-started/script-lifecycle)。本页聚焦发布产物和部署流程。
 
-## 发布构建目标
+## 推荐的托管发布流程
 
-独立服务：
+推荐发布生命周期如下：
 
-- `admin-api-service`
-- `gateway-service`
-- `portal-api-service`
-- `router-web-service`
-- `router-product-service`
+1. `bin/build.*`
+2. `bin/install.*`
+3. 检查 `config/router.env`
+4. `bin/start.*`
+5. 验证启动摘要中打印的统一入口和独立入口
+6. `bin/stop.*` 或交给 service manager 托管
 
-面向用户的产物：
+### Build
 
-- admin Web 应用静态资源
-- portal Web 应用静态资源
-- 可选的 admin Tauri 桌面包
-- 可选的 portal Tauri 桌面包
-- 内含 `router-product-service`、admin 站点和 portal 站点的按平台产品服务端归档包
+Linux / macOS：
 
-## 构建 Rust 服务
+```bash
+./bin/build.sh
+```
 
-构建全部发布服务二进制：
+Windows：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\build.ps1
+```
+
+这一步会构建：
+
+- Rust release 二进制
+- admin 和 portal 静态资源
+- docs 构建产物
+- 可选桌面包
+- `artifacts/release/` 下的原生 release 包
+
+### Install
+
+Linux / macOS：
+
+```bash
+./bin/install.sh
+```
+
+Windows：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\install.ps1
+```
+
+默认安装目录：
+
+- `artifacts/install/sdkwork-api-router/current/`
+
+安装目录中的关键路径：
+
+- `bin/`
+- `config/router.env`
+- `sites/admin/dist`
+- `sites/portal/dist`
+- `var/log/`
+- `var/run/`
+- `service/systemd/`
+- `service/launchd/`
+- `service/windows-task/`
+
+### Configure
+
+检查或覆盖：
+
+- `config/router.env`
+
+这是发布态推荐的配置入口，用来调整：
+
+- release bind 地址
+- 数据库位置
+- 静态站点目录
+- 代理目标
+
+### Start
+
+Linux / macOS：
+
+```bash
+./bin/start.sh
+```
+
+Windows：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\start.ps1
+```
+
+托管发布态运行时会启动 `router-product-service`，统一承载：
+
+- `/admin/*`
+- `/portal/*`
+- `/api/*`
+
+默认绑定地址：
+
+- gateway：`127.0.0.1:9980`
+- admin：`127.0.0.1:9981`
+- portal：`127.0.0.1:9982`
+- unified web host：`0.0.0.0:9983`
+
+启动成功后脚本会打印：
+
+- 统一 admin URL
+- 统一 portal URL
+- 统一 gateway 健康检查 URL
+- 独立服务 URL
+- seeded admin / portal 本地账号
+- 日志文件位置
+
+### Stop
+
+Linux / macOS：
+
+```bash
+./bin/stop.sh
+```
+
+Windows：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\stop.ps1
+```
+
+## 前台模式与服务管理器
+
+当你要交给 systemd、launchd、Windows Task Scheduler 或任何其他 service manager 托管时，请使用前台模式：
+
+- `bin/start.sh --foreground`
+- `bin/start.ps1 -Foreground`
+
+安装步骤已经把服务注册资产放到安装目录中：
+
+- `service/systemd/`
+- `service/launchd/`
+- `service/windows-task/`
+
+从安装目录中注册或注销：
+
+- Linux / systemd：
+  - `./service/systemd/install-service.sh`
+  - `./service/systemd/uninstall-service.sh`
+- macOS / launchd：
+  - `./service/launchd/install-service.sh`
+  - `./service/launchd/uninstall-service.sh`
+- Windows / Task Scheduler：
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File .\service\windows-task\install-service.ps1 -StartNow`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File .\service\windows-task\uninstall-service.ps1`
+
+## 发布生命周期中的脚本职责
+
+| 脚本 | 生命周期角色 | 重要说明 |
+|---|---|---|
+| `bin/build.*` | 生成可发布二进制和静态资源 | 不负责安装或启动 |
+| `bin/install.*` | 准备可运行的安装目录 | 不负责启动运行时 |
+| `bin/start.*` | 启动安装后的发布运行时 | 假定安装目录已经存在 |
+| `bin/stop.*` | 停止安装后的发布运行时 | 使用安装目录中的 PID 文件 |
+
+## 更底层的发布命令
+
+当你明确想绕开托管发布生命周期、直接手动控制时，可使用下面的原生命令。
+
+### 构建 Rust 服务
 
 ```bash
 cargo build --release -p admin-api-service -p gateway-service -p portal-api-service
 cargo build --release -p router-web-service -p router-product-service
 ```
 
-输出二进制位于 `target/release/`。
+输出位于 `target/release/`。
 
 ### 输出路径
 
-Windows 可执行文件名：
+Windows 可执行文件：
 
 - `target/release/admin-api-service.exe`
 - `target/release/gateway-service.exe`
@@ -43,7 +187,7 @@ Windows 可执行文件名：
 - `target/release/router-web-service.exe`
 - `target/release/router-product-service.exe`
 
-Linux / macOS 可执行文件名：
+Linux / macOS 可执行文件：
 
 - `target/release/admin-api-service`
 - `target/release/gateway-service`
@@ -51,115 +195,57 @@ Linux / macOS 可执行文件名：
 - `target/release/router-web-service`
 - `target/release/router-product-service`
 
-## 运行发布二进制
-
-独立服务默认会从本地 SDKWork 配置根目录读取配置；如有需要，可通过 `SDKWORK_CONFIG_DIR` 或 `SDKWORK_CONFIG_FILE` 覆盖。
-
-### Windows
-
-```powershell
-New-Item -ItemType Directory -Force "$HOME\.sdkwork\router" | Out-Null
-$env:SDKWORK_CONFIG_FILE="$HOME\.sdkwork\router\config.yaml"
-.\target\release\admin-api-service.exe
-```
-
-```powershell
-$env:SDKWORK_CONFIG_FILE="$HOME\.sdkwork\router\config.yaml"
-.\target\release\gateway-service.exe
-```
-
-```powershell
-$env:SDKWORK_CONFIG_FILE="$HOME\.sdkwork\router\config.yaml"
-.\target\release\portal-api-service.exe
-```
-
-### Linux 或 macOS
-
-```bash
-mkdir -p "$HOME/.sdkwork/router"
-export SDKWORK_CONFIG_FILE="$HOME/.sdkwork/router/config.yaml"
-./target/release/admin-api-service
-```
-
-```bash
-export SDKWORK_CONFIG_FILE="$HOME/.sdkwork/router/config.yaml"
-./target/release/gateway-service
-```
-
-```bash
-export SDKWORK_CONFIG_FILE="$HOME/.sdkwork/router/config.yaml"
-./target/release/portal-api-service
-```
-
-## 构建 Admin Web 应用
+### 构建 admin 浏览器资源
 
 ```bash
 pnpm --dir apps/sdkwork-router-admin install
 pnpm --dir apps/sdkwork-router-admin build
 ```
 
-输出目录：
+输出：
 
 - `apps/sdkwork-router-admin/dist/`
 
-本地预览：
-
-```bash
-pnpm --dir apps/sdkwork-router-admin preview
-```
-
-## 构建 portal Web 应用
+### 构建 portal 浏览器资源
 
 ```bash
 pnpm --dir apps/sdkwork-router-portal install
 pnpm --dir apps/sdkwork-router-portal build
 ```
 
-输出目录：
+输出：
 
 - `apps/sdkwork-router-portal/dist/`
 
-## 构建 Tauri 桌面应用
+### 构建 Tauri 桌面包
 
 ```bash
-pnpm --dir console tauri:build
 pnpm --dir apps/sdkwork-router-admin tauri:build
-pnpm --dir apps/sdkwork-router-portal tauri:build
 ```
 
-这会在 Tauri 的平台输出目录下生成对应操作系统的桌面安装产物。
+## 发布部署说明
 
-## 发布部署建议
+推荐部署形态：
 
-推荐的服务端部署形态：
-
-- 独立运行所有 Rust 服务，或按需组合运行
-- 需要统一公网入口时，使用 `router-web-service` 承载 admin 和 portal 静态站点并代理 `/api/*`
-- 需要单一产品级服务端入口时，使用 `router-product-service` 统一承载 `/admin/*`、`/portal/*` 和 `/api/*`
+- 当你想统一承载 `/admin/*`、`/portal/*` 和 `/api/*` 时，优先使用 `router-product-service`
 - 多用户持久化部署优先使用 PostgreSQL
-- 上游密钥优先使用服务端 secret backend 策略
-- 构建 `apps/sdkwork-router-admin/dist/` 与 `apps/sdkwork-router-portal/dist/`
-- 通过 `router-web-service` 或 `router-product-service` 将这些静态资源暴露到 `/admin/` 与 `/portal/`
+- 密钥优先交由服务端 secret backend 管理
+- 将 `config/router.env` 纳入环境级变更管理
+- 优先复用托管安装目录，而不是再发明另一套运行目录结构
 
-## 自动化 GitHub 发布
+## Dry-run 示例
 
-`.github/workflows/release.yml` 支持标签触发和手动触发的 GitHub Release。
+```bash
+./bin/build.sh --dry-run
+./bin/install.sh --dry-run
+./bin/start.sh --dry-run
+```
 
-当前自动化矩阵包括：
-
-- Windows x64 和 arm64
-- Linux x64 和 arm64
-- macOS x64 和 arm64
-- admin、portal 桌面安装包
-- 独立服务二进制
-- `router-product-service`
-- 按平台打包的产品服务端归档包，内含 admin 与 portal 静态站点
-
-推荐的桌面嵌入形态：
-
-- 使用 Tauri 桌面壳
-- 本地默认保留 SQLite
-- 优先使用 OS keyring 或本地加密文件存储密钥
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\build.ps1 --dry-run
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\install.ps1 --dry-run
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\start.ps1 -DryRun
+```
 
 ## 发布校验
 
@@ -169,3 +255,12 @@ pnpm --dir apps/sdkwork-router-admin build
 pnpm --dir apps/sdkwork-router-portal build
 pnpm --dir docs build
 ```
+
+## 下一步
+
+- 查看脚本职责和生命周期：
+  - [脚本生命周期](/zh/getting-started/script-lifecycle)
+- 查看源码启动流程：
+  - [源码运行](/zh/getting-started/source-development)
+- 查看构建流水线细节：
+  - [编译与打包](/zh/getting-started/build-and-packaging)

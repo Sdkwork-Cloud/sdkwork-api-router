@@ -1,54 +1,167 @@
 # 运行模式
 
-SDKWork API Server 目前支持两种主要运行形态：独立服务模式和桌面嵌入模式。
+SDKWork API Server 支持多种实用运行形态。关键区别不仅在于服务端还是桌面端，还在于你是要源码级直接控制，还是要托管脚本生命周期。
 
-## 独立服务模式
+## 原生独立服务模式
 
-独立服务模式是共享部署形态。
-
-特点：
-
-- 各服务以独立二进制运行
-- gateway、admin、portal 都通过 HTTP 暴露
-- PostgreSQL 是更适合部署环境的首选数据库
-- 上游凭据更适合交由服务端 secret backend 管理
-
-适用场景：
-
-- 需要一个浏览器可访问的共享环境
-- 需要多个 operator 或 portal 用户
-- 需要挂在反向代理或服务管理器之后
-
-## 嵌入模式
-
-嵌入模式是面向桌面的部署形态。
+这是最低层的运行形态。
 
 特点：
 
-- 运行时可以通过 runtime host 抽象在进程内承载
-- Tauri 主要承载 operator 控制台，portal 保持浏览器优先
-- 默认信任边界是本机 loopback
-- SQLite 是更适合本地桌面场景的首选持久化方式
+- 服务以独立二进制运行
+- gateway、admin、portal API 都直接通过 HTTP 暴露
+- 如果不覆盖，二进制仍保持内建默认值
+- 适合需要对单个进程做最细粒度控制的场景
 
-适用场景：
+典型入口：
 
-- 需要桌面优先的 operator 体验
-- 在单机本地环境运行
-- 希望 admin 控制台同时具备浏览器和桌面形态
+- `cargo run -p gateway-service`
+- `cargo run -p admin-api-service`
+- `cargo run -p portal-api-service`
 
-## 浏览器与 Tauri 同时可用
+典型默认绑定：
 
-开发时：
+- gateway：`127.0.0.1:8080`
+- admin：`127.0.0.1:8081`
+- portal：`127.0.0.1:8082`
 
-- `pnpm --dir console tauri:dev` 依赖 Vite dev server
-- 同一个 admin 前端地址仍然可以从浏览器访问
-- `start-workspace --tauri` 可以在一次启动流程里拉起后端服务和桌面壳，同时让 portal 继续运行在 `http://127.0.0.1:5174/`
+## 源码 browser 工作区模式
+
+这是原生源码开发工作流。
+
+特点：
+
+- 后端服务使用更新后的辅助脚本默认值 `9980`、`9981`、`9982`
+- admin 和 portal 使用独立 Vite 开发服务
+- 最适合前端联调和热更新
+
+入口：
+
+- `node scripts/dev/start-workspace.mjs`
+- `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev\start-workspace.ps1`
+
+主要浏览器地址：
+
+- admin：`http://127.0.0.1:5173/admin/`
+- portal：`http://127.0.0.1:5174/portal/`
+
+## 源码 preview 工作区模式
+
+这是原生源码下的单端口工作流。
+
+特点：
+
+- 后端服务仍位于 `9980`、`9981`、`9982`
+- Pingora 通过一个统一的浏览器可见 Host 对外暴露 admin 和 portal
+- 适合需要更接近发布态形态的浏览器验证
+
+入口：
+
+- `node scripts/dev/start-workspace.mjs --preview`
+- `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev\start-workspace.ps1 -Preview`
+
+主要浏览器地址：
+
+- 统一 admin：`http://127.0.0.1:9983/admin/`
+- 统一 portal：`http://127.0.0.1:9983/portal/`
+
+## 源码 Tauri 工作区模式
+
+这是原生源码下的桌面优先工作流。
+
+特点：
+
+- 后端服务仍位于 `9980`、`9981`、`9982`
+- admin 运行在 Tauri 桌面壳中
+- Pingora 仍通过统一 Web Host 提供浏览器访问
+
+入口：
+
+- `node scripts/dev/start-workspace.mjs --tauri`
+- `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev\start-workspace.ps1 -Tauri`
+
+## 托管开发模式
+
+这是推荐的脚本化开发生命周期。
+
+特点：
+
+- 运行时状态由 `artifacts/runtime/dev/` 托管
+- 启停由 PID 驱动
+- 默认模式是 preview，因此一启动就能使用统一单端口浏览器入口
+- 启动日志会打印统一 URL、独立服务 URL、账号密码和日志路径
+
+入口：
+
+- `./bin/start-dev.sh`
+- `powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\start-dev.ps1`
+
+适合：
+
+- 你想要一个稳定命令用于 QA、演示或重复验证
+- 你默认希望只有一个浏览器入口
+- 你希望配套使用 `bin/stop-dev.*`
+
+## 托管发布模式
+
+这是面向生产的脚本生命周期。
+
+特点：
+
+- build、install、start、stop 和 service registration 分阶段执行
+- 运行时安装到独立安装目录
+- `router-product-service` 统一承载 `/admin/*`、`/portal/*` 和 `/api/*`
+- 适合直接作为 daemon 使用，或交给 service manager 托管
+
+入口：
+
+- `./bin/build.sh`
+- `./bin/install.sh`
+- `./bin/start.sh`
+- `./bin/stop.sh`
+
+Windows 对应：
+
+- `.\bin\build.ps1`
+- `.\bin\install.ps1`
+- `.\bin\start.ps1`
+- `.\bin\stop.ps1`
+
+## 如何选择合适的模式
+
+在这些场景下选原生独立服务模式：
+
+- 你需要直接控制单个二进制
+- 你正在隔离调试某一个服务
+
+在这些场景下选源码 browser 工作区模式：
+
+- 你需要基于 Vite 的前端联调
+- 你需要独立的浏览器开发服务
+
+在这些场景下选源码 preview 模式：
+
+- 你希望在源码工作流中使用单个浏览器可见端口
+- 你希望浏览器行为更接近发布态
+
+在这些场景下选托管开发模式：
+
+- 你想要最容易复现的本地环境
+- 你需要 PID、日志和运行目录管理
+- 你需要启动摘要、URL 和默认账号输出
+
+在这些场景下选托管发布模式：
+
+- 你在打包或部署服务端运行时
+- 你需要 systemd、launchd 或 Windows Task Scheduler 集成
 
 ## 下一步
 
-- 本地启动与接入：
+- 查看启停职责：
+  - [脚本生命周期](/zh/getting-started/script-lifecycle)
+- 查看本地启动：
   - [源码运行](/zh/getting-started/source-development)
-- 编译与打包：
+- 查看编译和打包：
   - [编译与打包](/zh/getting-started/build-and-packaging)
-- 运行时和监督机制深挖：
+- 深入理解架构和监督机制：
   - [运行模式详解](/zh/architecture/runtime-modes)

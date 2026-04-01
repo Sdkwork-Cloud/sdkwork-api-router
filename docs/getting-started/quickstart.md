@@ -2,13 +2,14 @@
 
 This page is the fastest path from clone to a verified local SDKWork stack.
 
-It follows the same structure that mature API platforms use for onboarding:
+It follows a straightforward onboarding flow:
 
 1. start the runtime
 2. verify the control plane
-3. create an end-user account
-4. issue a gateway API key
-5. make a first authenticated gateway call
+3. sign in as the seeded admin
+4. sign in as the seeded portal user
+5. create a gateway API key
+6. make the first authenticated gateway call
 
 ## Before You Start
 
@@ -24,38 +25,54 @@ You need:
 
 ## Step 1: Start the Full Stack
 
+The recommended quickstart path uses the managed development scripts because they:
+
+- avoid common `808x` conflicts by default
+- bring up the built-in unified web host automatically
+- print the clickable URLs and seeded credentials after startup
+
 Linux or macOS:
 
 ```bash
-node scripts/dev/start-workspace.mjs
+./bin/start-dev.sh
 ```
 
 Windows:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev\start-workspace.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\start-dev.ps1
 ```
 
-Default local services:
+Default managed development URLs:
 
-- gateway: `http://127.0.0.1:8080`
-- admin: `http://127.0.0.1:8081`
-- portal: `http://127.0.0.1:8082`
-- landing: `http://127.0.0.1:5173/`
-- admin app: `http://127.0.0.1:5173/admin/`
-- portal app: `http://127.0.0.1:5174/`
+- unified admin app: `http://127.0.0.1:9983/admin/`
+- unified portal app: `http://127.0.0.1:9983/portal/`
+- unified gateway health: `http://127.0.0.1:9983/api/v1/health`
+- direct gateway health: `http://127.0.0.1:9980/health`
+- direct admin health: `http://127.0.0.1:9981/admin/health`
+- direct portal health: `http://127.0.0.1:9982/portal/health`
+
+Seeded local credentials:
+
+- admin: `admin@sdkwork.local / ChangeMe123!`
+- portal: `portal@sdkwork.local / ChangeMe123!`
+
+If you specifically want the standalone Vite frontends instead of the unified web host, use:
+
+- `./bin/start-dev.sh --browser`
+- `powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\start-dev.ps1 -Browser`
 
 ## Step 2: Verify the Runtime Is Healthy
 
 ```bash
-curl http://127.0.0.1:8080/health
-curl http://127.0.0.1:8081/admin/health
-curl http://127.0.0.1:8082/portal/health
+curl http://127.0.0.1:9980/health
+curl http://127.0.0.1:9981/admin/health
+curl http://127.0.0.1:9982/portal/health
 ```
 
 Expected result: each endpoint returns `ok`.
 
-## Step 3: Log In to the Admin Control Plane
+## Step 3: Log In To The Admin Control Plane
 
 The admin API seeds a default local operator account on first use:
 
@@ -63,7 +80,7 @@ The admin API seeds a default local operator account on first use:
 - password: `ChangeMe123!`
 
 ```bash
-curl -X POST http://127.0.0.1:8081/admin/auth/login \
+curl -X POST http://127.0.0.1:9981/admin/auth/login \
   -H "Content-Type: application/json" \
   -d '{
     "email":"admin@sdkwork.local",
@@ -75,25 +92,23 @@ Then inspect the current admin identity:
 
 ```bash
 export ADMIN_JWT="<paste token>"
-curl http://127.0.0.1:8081/admin/auth/me \
+curl http://127.0.0.1:9981/admin/auth/me \
   -H "Authorization: Bearer $ADMIN_JWT"
 ```
 
-This validates that the control plane is reachable and issuing JWTs correctly. In the browser, the
-operator UI now lives at `http://127.0.0.1:5173/admin/`.
+In the browser, the admin UI is available at:
 
-## Step 4: Register a Portal User or Use the Default Portal Account
+- `http://127.0.0.1:9983/admin/`
 
-The public portal is the self-service boundary for end users. Local development also seeds a demo
-portal account:
+## Step 4: Log In To The Portal
+
+The public portal seeds a demo local account:
 
 - email: `portal@sdkwork.local`
 - password: `ChangeMe123!`
 
-Default login:
-
 ```bash
-curl -X POST http://127.0.0.1:8082/portal/auth/login \
+curl -X POST http://127.0.0.1:9982/portal/auth/login \
   -H "Content-Type: application/json" \
   -d '{
     "email":"portal@sdkwork.local",
@@ -101,43 +116,29 @@ curl -X POST http://127.0.0.1:8082/portal/auth/login \
   }'
 ```
 
-Or create a new user:
-
-```bash
-curl -X POST http://127.0.0.1:8082/portal/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email":"portal@example.com",
-    "password":"hunter2!",
-    "display_name":"Portal User"
-  }'
-```
-
-The response includes:
-
-- a portal JWT
-- the created user
-- the default tenant and project workspace
-
 Save the returned token:
 
 ```bash
 export PORTAL_JWT="<paste token>"
 ```
 
-## Step 5: Inspect the Portal Workspace
+In the browser, the portal UI is available at:
+
+- `http://127.0.0.1:9983/portal/`
+
+## Step 5: Inspect The Portal Workspace
 
 ```bash
-curl http://127.0.0.1:8082/portal/workspace \
+curl http://127.0.0.1:9982/portal/workspace \
   -H "Authorization: Bearer $PORTAL_JWT"
 ```
 
-This confirms the default workspace bootstrap for the newly created user.
+This confirms the default workspace bootstrap for the local portal account.
 
-## Step 6: Create a Gateway API Key
+## Step 6: Create A Gateway API Key
 
 ```bash
-curl -X POST http://127.0.0.1:8082/portal/api-keys \
+curl -X POST http://127.0.0.1:9982/portal/api-keys \
   -H "Authorization: Bearer $PORTAL_JWT" \
   -H "Content-Type: application/json" \
   -d '{"environment":"live"}'
@@ -149,12 +150,12 @@ The response returns a `plaintext` key one time. Save it immediately:
 export GATEWAY_KEY="<paste plaintext key>"
 ```
 
-## Step 7: Make the First Gateway Call
+## Step 7: Make The First Gateway Call
 
 Use the key against the OpenAI-compatible gateway:
 
 ```bash
-curl http://127.0.0.1:8080/v1/models \
+curl http://127.0.0.1:9980/v1/models \
   -H "Authorization: Bearer $GATEWAY_KEY"
 ```
 
@@ -164,11 +165,26 @@ Expected result:
 - a standard OpenAI-style list response
 - `data` may be empty until you configure catalog models and providers through the admin API
 
+## Step 8: Stop The Managed Development Runtime
+
+Linux or macOS:
+
+```bash
+./bin/stop-dev.sh
+```
+
+Windows:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\stop-dev.ps1
+```
+
 ## Where To Go Next
 
-- open the browser apps:
-  - admin: `http://127.0.0.1:5173/admin/`
-  - portal: `http://127.0.0.1:5174/`
+- full script responsibilities and lifecycle:
+  - [Script Lifecycle](/getting-started/script-lifecycle)
+- source-native startup options:
+  - [Source Development](/getting-started/source-development)
 - understand the three HTTP surfaces:
   - [API Reference Overview](/api-reference/overview)
 - configure models, providers, credentials, and routing:

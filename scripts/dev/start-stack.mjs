@@ -7,12 +7,16 @@ import {
   serviceEnv,
   stackHelpText,
 } from './backend-launch-lib.mjs';
+import {
+  createSignalController,
+  didChildExitFail,
+} from './process-supervision.mjs';
 
 function cargoExecutable() {
   return process.platform === 'win32' ? 'cargo.exe' : 'cargo';
 }
 
-function startService(packageName, settings, children) {
+function startService(packageName, settings, children, onFailure) {
   const env = serviceEnv(settings);
   const command = `${cargoExecutable()} run -p ${packageName}`;
   console.log(`[start-stack] ${command}`);
@@ -30,31 +34,14 @@ function startService(packageName, settings, children) {
   child.on('exit', (code, signal) => {
     if (signal) {
       console.log(`[start-stack] ${packageName} exited with signal ${signal}`);
-      return;
+    } else {
+      console.log(`[start-stack] ${packageName} exited with code ${code ?? 0}`);
     }
-    console.log(`[start-stack] ${packageName} exited with code ${code ?? 0}`);
+
+    if (didChildExitFail(code, signal)) {
+      onFailure(`${packageName} exit`, code ?? 1);
+    }
   });
-}
-
-function installSignalHandlers(children) {
-  let stopping = false;
-
-  function shutdown(signal) {
-    if (stopping) {
-      return;
-    }
-    stopping = true;
-    console.log(`[start-stack] received ${signal}, stopping child processes`);
-    for (const child of children) {
-      if (!child.killed) {
-        child.kill('SIGTERM');
-      }
-    }
-    setTimeout(() => process.exit(0), 150);
-  }
-
-  process.on('SIGINT', () => shutdown('SIGINT'));
-  process.on('SIGTERM', () => shutdown('SIGTERM'));
 }
 
 const settings = parseStackArgs(process.argv.slice(2));
@@ -70,10 +57,28 @@ console.log(`  SDKWORK_GATEWAY_BIND=${settings.gatewayBind}`);
 console.log(`  SDKWORK_PORTAL_BIND=${settings.portalBind}`);
 
 const children = [];
-installSignalHandlers(children);
-startService('admin-api-service', settings, children);
-startService('gateway-service', settings, children);
-startService('portal-api-service', settings, children);
+let exited = false;
+const controller = createSignalController({
+  label: 'start-stack',
+  children,
+  onShutdownStart: () => {
+    exited = true;
+  },
+});
+controller.register();
+
+function stopOnFailure(reason, exitCode) {
+  if (exited) {
+    return;
+  }
+
+  exited = true;
+  void controller.shutdown(reason, exitCode);
+}
+
+startService('admin-api-service', settings, children, stopOnFailure);
+startService('gateway-service', settings, children, stopOnFailure);
+startService('portal-api-service', settings, children, stopOnFailure);
 
 if (settings.dryRun) {
   process.exit(0);

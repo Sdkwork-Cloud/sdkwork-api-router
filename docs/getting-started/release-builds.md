@@ -2,29 +2,173 @@
 
 This page covers how to produce and run deployable artifacts for services, browser assets, and optional desktop packages.
 
-If you are looking for developer-oriented compilation commands, start with [Build and Packaging](/getting-started/build-and-packaging). This page focuses on release outputs.
+If you need the full responsibility matrix for every script, start with [Script Lifecycle](/getting-started/script-lifecycle). This page focuses on release outputs and deployment flow.
 
-## Release Build Targets
+## Recommended Managed Release Flow
 
-Standalone services:
+The recommended release lifecycle is:
 
-- `admin-api-service`
-- `gateway-service`
-- `portal-api-service`
-- `router-web-service`
-- `router-product-service`
+1. `bin/build.*`
+2. `bin/install.*`
+3. review `config/router.env`
+4. `bin/start.*`
+5. verify the unified and direct URLs printed at startup
+6. `bin/stop.*` or hand off to a service manager
 
-User-facing artifacts:
+### Build
 
-- admin app static assets
-- portal web app static assets
-- optional admin Tauri desktop package
-- optional portal Tauri desktop package
-- platform-specific product server bundle with `router-product-service` plus bundled admin and portal sites
+Linux or macOS:
 
-## Build Rust Services
+```bash
+./bin/build.sh
+```
 
-Build all release service binaries:
+Windows:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\build.ps1
+```
+
+This compiles:
+
+- Rust release binaries
+- admin and portal static assets
+- docs build output
+- optional desktop bundles
+- the native release package under `artifacts/release/`
+
+### Install
+
+Linux or macOS:
+
+```bash
+./bin/install.sh
+```
+
+Windows:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\install.ps1
+```
+
+By default, the install home is:
+
+- `artifacts/install/sdkwork-api-router/current/`
+
+Important install-home paths:
+
+- `bin/`
+- `config/router.env`
+- `sites/admin/dist`
+- `sites/portal/dist`
+- `var/log/`
+- `var/run/`
+- `service/systemd/`
+- `service/launchd/`
+- `service/windows-task/`
+
+### Configure
+
+Review or override:
+
+- `config/router.env`
+
+This is the supported place to change:
+
+- release bind addresses
+- database location
+- static site directories
+- proxy targets
+
+### Start
+
+Linux or macOS:
+
+```bash
+./bin/start.sh
+```
+
+Windows:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\start.ps1
+```
+
+The managed release runtime starts `router-product-service`, which serves:
+
+- `/admin/*`
+- `/portal/*`
+- `/api/*`
+
+By default, it binds:
+
+- gateway: `127.0.0.1:9980`
+- admin: `127.0.0.1:9981`
+- portal: `127.0.0.1:9982`
+- unified web host: `0.0.0.0:9983`
+
+After successful startup, the scripts print:
+
+- unified admin URL
+- unified portal URL
+- unified gateway health URL
+- direct service URLs
+- seeded local admin and portal credentials
+- log file locations
+
+### Stop
+
+Linux or macOS:
+
+```bash
+./bin/stop.sh
+```
+
+Windows:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\stop.ps1
+```
+
+## Foreground And Service-Manager Use
+
+For systemd, launchd, Windows Task Scheduler, or any other service manager, use foreground mode:
+
+- `bin/start.sh --foreground`
+- `bin/start.ps1 -Foreground`
+
+The install step already stages service registration assets:
+
+- `service/systemd/`
+- `service/launchd/`
+- `service/windows-task/`
+
+Register or unregister them from the install home:
+
+- Linux / systemd:
+  - `./service/systemd/install-service.sh`
+  - `./service/systemd/uninstall-service.sh`
+- macOS / launchd:
+  - `./service/launchd/install-service.sh`
+  - `./service/launchd/uninstall-service.sh`
+- Windows / Task Scheduler:
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File .\service\windows-task\install-service.ps1 -StartNow`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File .\service\windows-task\uninstall-service.ps1`
+
+## Script Roles In The Release Lifecycle
+
+| Script | Role in lifecycle | Important note |
+|---|---|---|
+| `bin/build.*` | creates releasable binaries and assets | does not install or start |
+| `bin/install.*` | prepares the runnable install home | does not start the runtime |
+| `bin/start.*` | starts the installed release runtime | assumes install home already exists |
+| `bin/stop.*` | stops the installed release runtime | uses the install-home PID file |
+
+## Lower-Level Release Commands
+
+Use the raw commands below when you intentionally want manual control instead of the managed release lifecycle.
+
+### Build Rust Services
 
 ```bash
 cargo build --release -p admin-api-service -p gateway-service -p portal-api-service
@@ -51,125 +195,57 @@ Linux and macOS executable names:
 - `target/release/router-web-service`
 - `target/release/router-product-service`
 
-## Run Release Binaries
-
-The standalone services resolve their configuration from the local SDKWork config root unless you override it with `SDKWORK_CONFIG_DIR` or `SDKWORK_CONFIG_FILE`.
-
-### Windows
-
-```powershell
-New-Item -ItemType Directory -Force "$HOME\.sdkwork\router" | Out-Null
-$env:SDKWORK_CONFIG_FILE="$HOME\.sdkwork\router\config.yaml"
-.\target\release\admin-api-service.exe
-```
-
-```powershell
-$env:SDKWORK_CONFIG_FILE="$HOME\.sdkwork\router\config.yaml"
-.\target\release\gateway-service.exe
-```
-
-```powershell
-$env:SDKWORK_CONFIG_FILE="$HOME\.sdkwork\router\config.yaml"
-.\target\release\portal-api-service.exe
-```
-
-### Linux or macOS
-
-```bash
-mkdir -p "$HOME/.sdkwork/router"
-export SDKWORK_CONFIG_FILE="$HOME/.sdkwork/router/config.yaml"
-./target/release/admin-api-service
-```
-
-```bash
-export SDKWORK_CONFIG_FILE="$HOME/.sdkwork/router/config.yaml"
-./target/release/gateway-service
-```
-
-```bash
-export SDKWORK_CONFIG_FILE="$HOME/.sdkwork/router/config.yaml"
-./target/release/portal-api-service
-```
-
-## Build Admin App Assets
-
-Install dependencies if needed:
+### Build Admin App Assets
 
 ```bash
 pnpm --dir apps/sdkwork-router-admin install
-```
-
-Build:
-
-```bash
 pnpm --dir apps/sdkwork-router-admin build
 ```
 
-The output goes to `apps/sdkwork-router-admin/dist/`.
+Output:
 
-You can host those assets with any static file server or CDN. During local verification, use:
+- `apps/sdkwork-router-admin/dist/`
 
-```bash
-pnpm --dir apps/sdkwork-router-admin preview
-```
-
-## Build Portal Web App Assets
-
-Install dependencies if needed:
+### Build Portal Web App Assets
 
 ```bash
 pnpm --dir apps/sdkwork-router-portal install
-```
-
-Build:
-
-```bash
 pnpm --dir apps/sdkwork-router-portal build
 ```
 
-The output goes to `apps/sdkwork-router-portal/dist/`.
+Output:
 
-## Build the Tauri Desktop App
+- `apps/sdkwork-router-portal/dist/`
 
-Desktop package build:
+### Build The Tauri Desktop App
 
 ```bash
 pnpm --dir apps/sdkwork-router-admin tauri:build
 ```
 
-This produces OS-specific desktop artifacts under the Tauri build output directories.
-
 ## Release Deployment Notes
 
-Recommended server-mode deployment shape:
+Recommended deployment shape:
 
-- either run the standalone Rust services as independent processes
-- run `router-web-service` in front of the admin and portal APIs when you want a unified public web entry
-- or run `router-product-service` when you want one integrated server binary that serves `/admin/*`, `/portal/*`, and `/api/*`
+- use `router-product-service` when you want one integrated runtime serving `/admin/*`, `/portal/*`, and `/api/*`
 - use PostgreSQL for durable multi-user deployments
 - use a server-side secret backend strategy
-- build `apps/sdkwork-router-admin/dist/` and `apps/sdkwork-router-portal/dist/`
-- let `router-web-service` or `router-product-service` expose those static assets under `/admin/` and `/portal/`
+- keep `config/router.env` under change control for environment-specific overrides
+- use the managed install home instead of inventing a second runtime layout
 
-## Automated GitHub Releases
+## Dry-Run Examples
 
-`.github/workflows/release.yml` publishes tagged or manually triggered GitHub releases.
+```bash
+./bin/build.sh --dry-run
+./bin/install.sh --dry-run
+./bin/start.sh --dry-run
+```
 
-Native release automation now includes:
-
-- Windows x64 and arm64
-- Linux x64 and arm64
-- macOS x64 and arm64
-- admin and portal desktop packages
-- standalone service binaries
-- `router-product-service`
-- platform-specific product server bundles with bundled admin and portal sites
-
-Recommended embedded-mode deployment shape:
-
-- use the Tauri desktop shell
-- keep SQLite local by default
-- prefer OS keyring or local encrypted file secret storage
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\build.ps1 --dry-run
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\install.ps1 --dry-run
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\start.ps1 -DryRun
+```
 
 ## Release Verification
 
@@ -179,3 +255,12 @@ pnpm --dir apps/sdkwork-router-admin build
 pnpm --dir apps/sdkwork-router-portal build
 pnpm --dir docs build
 ```
+
+## Next Steps
+
+- script responsibilities and lifecycle:
+  - [Script Lifecycle](/getting-started/script-lifecycle)
+- source startup flows:
+  - [Source Development](/getting-started/source-development)
+- build pipeline details:
+  - [Build and Packaging](/getting-started/build-and-packaging)

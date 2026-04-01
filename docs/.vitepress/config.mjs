@@ -1,3 +1,5 @@
+// @ts-check
+
 import { defineConfig } from 'vitepress';
 
 const englishNav = [
@@ -25,6 +27,7 @@ const englishSidebar = [
       { text: 'Quickstart', link: '/getting-started/quickstart' },
       { text: 'Installation', link: '/getting-started/installation' },
       { text: 'Source Development', link: '/getting-started/source-development' },
+      { text: 'Script Lifecycle', link: '/getting-started/script-lifecycle' },
       { text: 'Build and Packaging', link: '/getting-started/build-and-packaging' },
       { text: 'Release Builds', link: '/getting-started/release-builds' },
       { text: 'Runtime Modes', link: '/getting-started/runtime-modes' },
@@ -73,10 +76,11 @@ const chineseSidebar = [
       { text: '快速开始', link: '/zh/getting-started/quickstart' },
       { text: '安装准备', link: '/zh/getting-started/installation' },
       { text: '源码运行', link: '/zh/getting-started/source-development' },
+      { text: '脚本生命周期', link: '/zh/getting-started/script-lifecycle' },
       { text: '编译与打包', link: '/zh/getting-started/build-and-packaging' },
       { text: '发布构建', link: '/zh/getting-started/release-builds' },
       { text: '运行模式', link: '/zh/getting-started/runtime-modes' },
-      { text: '公开门户', link: '/zh/getting-started/public-portal' },
+      { text: '公共门户', link: '/zh/getting-started/public-portal' },
     ],
   },
   {
@@ -147,7 +151,7 @@ export default defineConfig({
         },
         footer: {
           message: 'SDKWork API Server documentation',
-          copyright: 'Copyright © 2026 SDKWork',
+          copyright: 'Copyright (c) 2026 SDKWork',
         },
       },
     },
@@ -167,7 +171,7 @@ export default defineConfig({
         },
         footer: {
           message: 'SDKWork API Server 文档',
-          copyright: 'Copyright © 2026 SDKWork',
+          copyright: 'Copyright (c) 2026 SDKWork',
         },
       },
     },

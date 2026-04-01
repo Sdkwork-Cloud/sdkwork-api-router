@@ -10,6 +10,9 @@ test('parseStackArgs keeps local sqlite default when no database override is pro
   const settings = parseStackArgs([]);
 
   assert.equal(settings.databaseUrl, null);
+  assert.equal(settings.gatewayBind, '127.0.0.1:9980');
+  assert.equal(settings.adminBind, '127.0.0.1:9981');
+  assert.equal(settings.portalBind, '127.0.0.1:9982');
   assert.equal(databaseDisplayValue(settings), '(local default via config loader)');
 });
 
@@ -17,9 +20,9 @@ test('serviceEnv omits SDKWORK_DATABASE_URL when local config defaults should ap
   const env = serviceEnv(
     {
       databaseUrl: null,
-      gatewayBind: '127.0.0.1:8080',
-      adminBind: '127.0.0.1:8081',
-      portalBind: '127.0.0.1:8082',
+      gatewayBind: '127.0.0.1:9980',
+      adminBind: '127.0.0.1:9981',
+      portalBind: '127.0.0.1:9982',
     },
     {
       SDKWORK_DATABASE_URL: 'postgres://should-be-removed',
@@ -27,7 +30,7 @@ test('serviceEnv omits SDKWORK_DATABASE_URL when local config defaults should ap
   );
 
   assert.equal(env.SDKWORK_DATABASE_URL, undefined);
-  assert.equal(env.SDKWORK_GATEWAY_BIND, '127.0.0.1:8080');
-  assert.equal(env.SDKWORK_ADMIN_BIND, '127.0.0.1:8081');
-  assert.equal(env.SDKWORK_PORTAL_BIND, '127.0.0.1:8082');
+  assert.equal(env.SDKWORK_GATEWAY_BIND, '127.0.0.1:9980');
+  assert.equal(env.SDKWORK_ADMIN_BIND, '127.0.0.1:9981');
+  assert.equal(env.SDKWORK_PORTAL_BIND, '127.0.0.1:9982');
 });

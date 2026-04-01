@@ -32,6 +32,7 @@ features:
 SDKWork now follows a documentation structure closer to mature API platforms such as OpenAI's official docs:
 
 - [Getting Started](/getting-started/installation): install prerequisites, run from source, compile binaries, and package browser or Tauri artifacts
+- [Script Lifecycle](/getting-started/script-lifecycle): understand what every startup script does and how build, install, start, verify, stop, and service registration fit together
 - [Architecture](/architecture/software-architecture): understand the standalone services, workspace layering, extension runtime, and module boundaries
 - [API Reference](/api-reference/overview): navigate the gateway, admin, and portal surfaces with the right base path and auth model
 - [Operations](/operations/configuration): configure, observe, and troubleshoot standalone deployments
@@ -47,6 +48,8 @@ Choose the path that matches what you need right now:
   - [Installation](/getting-started/installation)
 - Local development:
   - [Source Development](/getting-started/source-development)
+- Script responsibilities:
+  - [Script Lifecycle](/getting-started/script-lifecycle)
 - Compilation and packaging:
   - [Build and Packaging](/getting-started/build-and-packaging)
 - Deployable artifacts:
@@ -68,20 +71,30 @@ Choose the path that matches what you need right now:
 | apps/sdkwork-router-portal | browser | standalone developer self-service portal |
 | docs | `/` | VitePress documentation site |
 
-## Local Default Ports
+## Common Local Ports
+
+Managed script defaults:
 
 | Surface | Default bind |
 |---|---|
-| gateway | `127.0.0.1:8080` |
-| admin | `127.0.0.1:8081` |
-| portal | `127.0.0.1:8082` |
-| web host | `127.0.0.1:3001` |
+| gateway | `127.0.0.1:9980` |
+| admin | `127.0.0.1:9981` |
+| portal | `127.0.0.1:9982` |
+| web host | `127.0.0.1:9983` |
 | admin web app | `127.0.0.1:5173` |
 | portal web app | `127.0.0.1:5174` |
 
+Raw binary defaults remain `8080`, `8081`, and `8082` unless overridden.
+
 ## Fast Paths
 
-Run the full stack from source:
+Run the managed development stack:
+
+```bash
+./bin/start-dev.sh
+```
+
+Run the full stack from source with raw workspace control:
 
 ```bash
 node scripts/dev/start-workspace.mjs

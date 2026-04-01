@@ -7,8 +7,13 @@ import { fileURLToPath } from 'node:url';
 import {
   buildWorkspaceCommandPlan,
   parseWorkspaceArgs,
+  workspaceAccessLines,
   workspaceHelpText,
 } from './workspace-launch-lib.mjs';
+import {
+  createSignalController,
+  didChildExitFail,
+} from './process-supervision.mjs';
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = path.resolve(scriptDirectory, '..', '..');
@@ -39,32 +44,6 @@ function spawnStep(step, nodeExecutable, children) {
   return child;
 }
 
-function installSignalHandlers(children) {
-  let stopping = false;
-
-  function shutdown(signal, exitCode = 0) {
-    if (stopping) {
-      return;
-    }
-    stopping = true;
-    console.log(`[start-workspace] received ${signal}, stopping child processes`);
-    for (const child of children) {
-      if (!child.killed) {
-        child.kill('SIGTERM');
-      }
-    }
-    setTimeout(() => process.exit(exitCode), 150);
-  }
-
-  return {
-    shutdown,
-    register() {
-      process.on('SIGINT', () => shutdown('SIGINT'));
-      process.on('SIGTERM', () => shutdown('SIGTERM'));
-    },
-  };
-}
-
 let settings;
 try {
   settings = parseWorkspaceArgs(process.argv.slice(2));
@@ -91,6 +70,9 @@ console.log(`  SDKWORK_ADMIN_BIND=${settings.adminBind}`);
 console.log(`  SDKWORK_PORTAL_BIND=${settings.portalBind}`);
 console.log(`  SDKWORK_WEB_BIND=${settings.webBind}`);
 console.log(`  frontend_mode=${settings.preview ? 'preview' : settings.tauri ? 'tauri' : 'browser'}`);
+for (const line of workspaceAccessLines(settings)) {
+  console.log(line);
+}
 
 if (settings.dryRun) {
   console.log(`[start-workspace] ${plan.backend.name}: ${formatCommand(plan.nodeExecutable, plan.backend.args)}`);
@@ -107,10 +89,15 @@ if (settings.dryRun) {
 }
 
 const children = [];
-const controller = installSignalHandlers(children);
-controller.register();
-
 let exited = false;
+const controller = createSignalController({
+  label: 'start-workspace',
+  children,
+  onShutdownStart: () => {
+    exited = true;
+  },
+});
+controller.register();
 const steps = settings.preview
   ? [plan.backend, plan.web]
   : settings.tauri
@@ -124,9 +111,9 @@ for (const step of steps) {
       return;
     }
 
-    if (signal || (code ?? 0) !== 0) {
+    if (didChildExitFail(code, signal)) {
       exited = true;
-      controller.shutdown(`${step.name} exit`, code ?? 1);
+      void controller.shutdown(`${step.name} exit`, code ?? 1);
     }
   });
 }

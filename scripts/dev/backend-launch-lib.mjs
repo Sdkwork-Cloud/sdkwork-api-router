@@ -1,9 +1,9 @@
 export function parseStackArgs(argv) {
   const result = {
     databaseUrl: null,
-    gatewayBind: '127.0.0.1:8080',
-    adminBind: '127.0.0.1:8081',
-    portalBind: '127.0.0.1:8082',
+    gatewayBind: '127.0.0.1:9980',
+    adminBind: '127.0.0.1:9981',
+    portalBind: '127.0.0.1:9982',
     dryRun: false,
     help: false,
   };

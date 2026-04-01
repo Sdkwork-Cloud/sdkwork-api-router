@@ -2,6 +2,10 @@
 
 import { existsSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
+import {
+  createSignalController,
+  didChildExitFail,
+} from './process-supervision.mjs';
 
 function parseArgs(argv) {
   const result = {
@@ -99,7 +103,20 @@ if (settings.dryRun) {
 const child = spawn(pnpmExecutable(), longRunningArgs, {
   stdio: 'inherit',
 });
+let shuttingDown = false;
+const controller = createSignalController({
+  label: 'start-console',
+  children: [child],
+  onShutdownStart: () => {
+    shuttingDown = true;
+  },
+});
+controller.register();
 
-child.on('exit', (code) => {
-  process.exit(code ?? 0);
+child.on('exit', (code, signal) => {
+  if (shuttingDown) {
+    return;
+  }
+
+  process.exit(didChildExitFail(code, signal) ? code ?? 1 : 0);
 });

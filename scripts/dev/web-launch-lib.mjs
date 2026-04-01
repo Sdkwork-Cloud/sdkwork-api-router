@@ -10,13 +10,13 @@ function requireValue(argv, index, flag) {
 
 export function parseWebArgs(argv) {
   const settings = {
-    adminTarget: '127.0.0.1:8081',
-    bind: '0.0.0.0:3001',
+    adminTarget: '127.0.0.1:9981',
+    bind: '0.0.0.0:9983',
     dryRun: false,
-    gatewayTarget: '127.0.0.1:8080',
+    gatewayTarget: '127.0.0.1:9980',
     help: false,
     install: false,
-    portalTarget: '127.0.0.1:8082',
+    portalTarget: '127.0.0.1:9982',
     preview: false,
     tauri: false,
   };
@@ -70,10 +70,10 @@ export function webHelpText() {
 Builds the standalone admin and portal apps, then exposes them through the Pingora web host.
 
 Options:
-  --bind <bind> Use a specific SDKWORK_WEB_BIND value, default 0.0.0.0:3001
-  --admin-target <host:port>   Upstream target for /api/admin/*, default 127.0.0.1:8081
-  --portal-target <host:port>  Upstream target for /api/portal/*, default 127.0.0.1:8082
-  --gateway-target <host:port> Upstream target for /api/v1/*, default 127.0.0.1:8080
+  --bind <bind> Use a specific SDKWORK_WEB_BIND value, default 0.0.0.0:9983
+  --admin-target <host:port>   Upstream target for /api/admin/*, default 127.0.0.1:9981
+  --portal-target <host:port>  Upstream target for /api/portal/*, default 127.0.0.1:9982
+  --gateway-target <host:port> Upstream target for /api/v1/*, default 127.0.0.1:9980
   --install     Run pnpm install before starting
   --preview     Alias for static web-host mode
   --tauri       Build static assets for the admin Tauri host and external Pingora site
@@ -84,9 +84,9 @@ Options:
 
 export function webHostEnv(bind, targets = {}) {
   const {
-    adminTarget = '127.0.0.1:8081',
-    portalTarget = '127.0.0.1:8082',
-    gatewayTarget = '127.0.0.1:8080',
+    adminTarget = '127.0.0.1:9981',
+    portalTarget = '127.0.0.1:9982',
+    gatewayTarget = '127.0.0.1:9980',
   } = targets;
 
   return {
@@ -101,7 +101,7 @@ export function webHostEnv(bind, targets = {}) {
 }
 
 export function publicEntryUrls(bind) {
-  const [host, port = '3001'] = bind.split(':');
+  const [host, port = '9983'] = bind.split(':');
   const urls = [];
 
   if (host === '0.0.0.0') {
@@ -129,6 +129,7 @@ export function webAccessLines(bind) {
   for (const baseUrl of publicEntryUrls(bind)) {
     lines.push(`[start-web] Pingora admin: ${baseUrl}/admin/`);
     lines.push(`[start-web] Pingora portal: ${baseUrl}/portal/`);
+    lines.push(`[start-web] Pingora gateway health: ${baseUrl}/api/v1/health`);
   }
   return lines;
 }
