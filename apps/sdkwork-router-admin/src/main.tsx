@@ -1,5 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import '@sdkwork/ui-pc-react/styles.css';
 import { bootstrapShellRuntime } from 'sdkwork-router-admin-shell';
 
 import { App } from './App';

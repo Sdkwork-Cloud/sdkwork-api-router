@@ -49,6 +49,14 @@ export default defineConfig({
   },
   resolve: {
     alias: {
+      '@sdkwork/ui-pc-react/styles.css': new URL(
+        '../../../sdkwork-ui/sdkwork-ui-pc-react/src/styles/sdkwork-ui.css',
+        import.meta.url,
+      ).pathname,
+      '@sdkwork/ui-pc-react': new URL(
+        '../../../sdkwork-ui/sdkwork-ui-pc-react/src',
+        import.meta.url,
+      ).pathname,
       'sdkwork-router-admin-apirouter': new URL(
         './packages/sdkwork-router-admin-apirouter/src/index.ts',
         import.meta.url,

@@ -17,6 +17,11 @@
     "jsx": "react-jsx",
     "baseUrl": ".",
     "paths": {
+      "@sdkwork/ui-pc-react": ["../../../sdkwork-ui/sdkwork-ui-pc-react/src/index.ts"],
+      "@sdkwork/ui-pc-react/*": ["../../../sdkwork-ui/sdkwork-ui-pc-react/src/*"],
+      "@sdkwork/ui-pc-react/styles.css": [
+        "../../../sdkwork-ui/sdkwork-ui-pc-react/src/styles/sdkwork-ui.css"
+      ],
       "sdkwork-router-admin-apirouter": ["packages/sdkwork-router-admin-apirouter/src/index.ts"],
       "sdkwork-router-admin-admin-api": ["packages/sdkwork-router-admin-admin-api/src/index.ts"],
       "sdkwork-router-admin-auth": ["packages/sdkwork-router-admin-auth/src/index.tsx"],
