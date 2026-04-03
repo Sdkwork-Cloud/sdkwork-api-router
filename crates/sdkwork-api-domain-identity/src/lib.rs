@@ -487,3 +487,250 @@ impl GatewayAuthSubject {
         self
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IdentityUserRecord {
+    pub user_id: UserId,
+    pub tenant_id: TenantId,
+    pub organization_id: OrganizationId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_user_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    pub status: String,
+    pub created_at_ms: u64,
+    pub updated_at_ms: u64,
+}
+
+impl IdentityUserRecord {
+    pub fn new(user_id: UserId, tenant_id: TenantId, organization_id: OrganizationId) -> Self {
+        Self {
+            user_id,
+            tenant_id,
+            organization_id,
+            external_user_ref: None,
+            username: None,
+            display_name: None,
+            email: None,
+            status: "active".to_owned(),
+            created_at_ms: 0,
+            updated_at_ms: 0,
+        }
+    }
+
+    pub fn with_external_user_ref(mut self, external_user_ref: Option<String>) -> Self {
+        self.external_user_ref = external_user_ref;
+        self
+    }
+
+    pub fn with_username(mut self, username: Option<String>) -> Self {
+        self.username = username;
+        self
+    }
+
+    pub fn with_display_name(mut self, display_name: Option<String>) -> Self {
+        self.display_name = display_name;
+        self
+    }
+
+    pub fn with_email(mut self, email: Option<String>) -> Self {
+        self.email = email;
+        self
+    }
+
+    pub fn with_status(mut self, status: impl Into<String>) -> Self {
+        self.status = status.into();
+        self
+    }
+
+    pub fn with_created_at_ms(mut self, created_at_ms: u64) -> Self {
+        self.created_at_ms = created_at_ms;
+        self
+    }
+
+    pub fn with_updated_at_ms(mut self, updated_at_ms: u64) -> Self {
+        self.updated_at_ms = updated_at_ms;
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CanonicalApiKeyRecord {
+    pub api_key_id: ApiKeyId,
+    pub tenant_id: TenantId,
+    pub organization_id: OrganizationId,
+    pub user_id: UserId,
+    pub key_prefix: String,
+    pub key_hash: String,
+    pub display_name: String,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_used_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotated_from_api_key_id: Option<ApiKeyId>,
+    pub created_at_ms: u64,
+    pub updated_at_ms: u64,
+}
+
+impl CanonicalApiKeyRecord {
+    pub fn new(
+        api_key_id: ApiKeyId,
+        tenant_id: TenantId,
+        organization_id: OrganizationId,
+        user_id: UserId,
+        key_hash: impl Into<String>,
+    ) -> Self {
+        Self {
+            api_key_id,
+            tenant_id,
+            organization_id,
+            user_id,
+            key_prefix: String::new(),
+            key_hash: key_hash.into(),
+            display_name: String::new(),
+            status: "active".to_owned(),
+            expires_at_ms: None,
+            last_used_at_ms: None,
+            rotated_from_api_key_id: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
+        }
+    }
+
+    pub fn with_key_prefix(mut self, key_prefix: impl Into<String>) -> Self {
+        self.key_prefix = key_prefix.into();
+        self
+    }
+
+    pub fn with_display_name(mut self, display_name: impl Into<String>) -> Self {
+        self.display_name = display_name.into();
+        self
+    }
+
+    pub fn with_status(mut self, status: impl Into<String>) -> Self {
+        self.status = status.into();
+        self
+    }
+
+    pub fn with_expires_at_ms(mut self, expires_at_ms: Option<u64>) -> Self {
+        self.expires_at_ms = expires_at_ms;
+        self
+    }
+
+    pub fn with_last_used_at_ms(mut self, last_used_at_ms: Option<u64>) -> Self {
+        self.last_used_at_ms = last_used_at_ms;
+        self
+    }
+
+    pub fn with_rotated_from_api_key_id(
+        mut self,
+        rotated_from_api_key_id: Option<ApiKeyId>,
+    ) -> Self {
+        self.rotated_from_api_key_id = rotated_from_api_key_id;
+        self
+    }
+
+    pub fn with_created_at_ms(mut self, created_at_ms: u64) -> Self {
+        self.created_at_ms = created_at_ms;
+        self
+    }
+
+    pub fn with_updated_at_ms(mut self, updated_at_ms: u64) -> Self {
+        self.updated_at_ms = updated_at_ms;
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IdentityBindingRecord {
+    pub identity_binding_id: u64,
+    pub tenant_id: TenantId,
+    pub organization_id: OrganizationId,
+    pub user_id: UserId,
+    pub binding_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issuer: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platform: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_ref: Option<String>,
+    pub status: String,
+    pub created_at_ms: u64,
+    pub updated_at_ms: u64,
+}
+
+impl IdentityBindingRecord {
+    pub fn new(
+        identity_binding_id: u64,
+        tenant_id: TenantId,
+        organization_id: OrganizationId,
+        user_id: UserId,
+        binding_type: impl Into<String>,
+    ) -> Self {
+        Self {
+            identity_binding_id,
+            tenant_id,
+            organization_id,
+            user_id,
+            binding_type: binding_type.into(),
+            issuer: None,
+            subject: None,
+            platform: None,
+            owner: None,
+            external_ref: None,
+            status: "active".to_owned(),
+            created_at_ms: 0,
+            updated_at_ms: 0,
+        }
+    }
+
+    pub fn with_issuer(mut self, issuer: Option<String>) -> Self {
+        self.issuer = issuer;
+        self
+    }
+
+    pub fn with_subject(mut self, subject: Option<String>) -> Self {
+        self.subject = subject;
+        self
+    }
+
+    pub fn with_platform(mut self, platform: Option<String>) -> Self {
+        self.platform = platform;
+        self
+    }
+
+    pub fn with_owner(mut self, owner: Option<String>) -> Self {
+        self.owner = owner;
+        self
+    }
+
+    pub fn with_external_ref(mut self, external_ref: Option<String>) -> Self {
+        self.external_ref = external_ref;
+        self
+    }
+
+    pub fn with_status(mut self, status: impl Into<String>) -> Self {
+        self.status = status.into();
+        self
+    }
+
+    pub fn with_created_at_ms(mut self, created_at_ms: u64) -> Self {
+        self.created_at_ms = created_at_ms;
+        self
+    }
+
+    pub fn with_updated_at_ms(mut self, updated_at_ms: u64) -> Self {
+        self.updated_at_ms = updated_at_ms;
+        self
+    }
+}

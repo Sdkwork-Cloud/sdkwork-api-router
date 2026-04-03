@@ -7,11 +7,11 @@ use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, 
 use rand_core::OsRng;
 use sdkwork_api_domain_billing::BillingAccountingMode;
 use sdkwork_api_domain_identity::{
-    AdminUserProfile, AdminUserRecord, ApiKeyGroupRecord, GatewayApiKeyRecord, PortalUserProfile,
-    PortalUserRecord,
+    AdminUserProfile, AdminUserRecord, ApiKeyGroupRecord, GatewayApiKeyRecord, GatewayAuthSubject,
+    PortalUserProfile, PortalUserRecord,
 };
 use sdkwork_api_domain_tenant::{Project, Tenant};
-use sdkwork_api_storage_core::AdminStore;
+use sdkwork_api_storage_core::{AdminStore, IdentityKernelStore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::str::FromStr;
@@ -1010,6 +1010,54 @@ pub async fn resolve_gateway_request_context(
     }))
 }
 
+pub async fn resolve_gateway_auth_subject_from_api_key<S>(
+    store: &S,
+    plaintext_key: &str,
+) -> Result<Option<GatewayAuthSubject>>
+where
+    S: IdentityKernelStore + ?Sized,
+{
+    let hashed_key = hash_gateway_api_key(plaintext_key);
+    let Some(record) = store
+        .find_canonical_api_key_record_by_hash(&hashed_key)
+        .await?
+    else {
+        return Ok(None);
+    };
+
+    if record.status != "active" {
+        return Ok(None);
+    }
+
+    if record
+        .expires_at_ms
+        .is_some_and(|expires_at_ms| expires_at_ms <= now_epoch_millis().unwrap_or(u64::MAX))
+    {
+        return Ok(None);
+    }
+
+    let Some(user) = store.find_identity_user_record(record.user_id).await? else {
+        return Ok(None);
+    };
+    if user.status != "active" {
+        return Ok(None);
+    }
+
+    let updated = record
+        .clone()
+        .with_last_used_at_ms(Some(now_epoch_millis()?))
+        .with_updated_at_ms(now_epoch_millis()?);
+    let _ = store.insert_canonical_api_key_record(&updated).await?;
+
+    Ok(Some(GatewayAuthSubject::for_api_key(
+        record.tenant_id,
+        record.organization_id,
+        record.user_id,
+        record.api_key_id,
+        hashed_key,
+    )))
+}
+
 pub async fn register_portal_user(
     store: &dyn AdminStore,
     email: &str,
@@ -1938,8 +1986,7 @@ fn validate_default_accounting_mode_binding(
     let normalized = default_accounting_mode.to_ascii_lowercase();
     let parsed = BillingAccountingMode::from_str(&normalized).map_err(|_| {
         AdminIdentityError::InvalidInput(
-            "default_accounting_mode must be one of: platform_credit, byok, passthrough"
-                .to_owned(),
+            "default_accounting_mode must be one of: platform_credit, byok, passthrough".to_owned(),
         )
     })?;
 

@@ -173,7 +173,7 @@ Admin and portal are already much better than before, but the next commercial up
 
 ## What Was Landed In This Audit Pass
 
-This pass closes two important structural gaps:
+This pass closes three important structural gaps:
 
 ### Commercial account kernel contract freeze
 
@@ -208,6 +208,23 @@ This materially improves the database architecture, but the business path is sti
 - the gateway still writes compatibility-era `ai_usage_records`, `ai_billing_events`, and `ai_billing_ledger_entries`
 - admin and portal still read the old summary surfaces rather than the new account kernel directly
 - commerce still centers on `project_id`, `granted_units`, `bonus_units`, and `included_units` rather than payable user accounts and benefit lots
+
+### Canonical identity kernel bridge
+
+The identity side is now also beyond design-only status for the canonical gateway subject model:
+
+- the identity domain now includes explicit canonical records for `ai_user`, `ai_api_key`, and `ai_identity_binding`
+- `storage-core` now exposes an `IdentityKernelStore` facet instead of forcing canonical identity behavior into the legacy admin surface
+- SQLite migrations now create `ai_user`, `ai_api_key`, and `ai_identity_binding` with bigint scope columns and operational indexes
+- PostgreSQL now mirrors the same canonical identity schema and index set
+- SQLite now exposes real CRUD and round-trip decoding for canonical user, API key, and identity binding records
+- `sdkwork-api-app-identity` can now resolve a `GatewayAuthSubject` from a canonical API key record while preserving the older workspace-string `GatewayRequestContext` in parallel
+
+This is the right bridge state, but the full request path is still incomplete because:
+
+- the HTTP gateway still authenticates against the legacy workspace-string request context instead of the canonical subject resolver
+- there is still no canonical account lookup step from `GatewayAuthSubject` to the payable `ai_account`
+- hold, release, and settlement mutations still do not execute inside a transactional account-kernel orchestration layer
 
 ### Product-module manifest uplift
 

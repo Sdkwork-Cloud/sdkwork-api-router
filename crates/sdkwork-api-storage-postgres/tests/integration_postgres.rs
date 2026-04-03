@@ -255,6 +255,83 @@ async fn postgres_store_creates_canonical_account_kernel_tables_when_url_is_prov
 }
 
 #[tokio::test]
+async fn postgres_store_creates_canonical_identity_kernel_tables_when_url_is_provided() {
+    let Some(database_url) = std::env::var("SDKWORK_TEST_POSTGRES_URL").ok() else {
+        return;
+    };
+
+    let pool = run_migrations(&database_url).await.unwrap();
+
+    for table_name in ["ai_user", "ai_api_key", "ai_identity_binding"] {
+        let row: (String,) = sqlx::query_as(
+            "select tablename
+             from pg_tables
+             where schemaname = 'public' and tablename = $1",
+        )
+        .bind(table_name)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row.0, table_name);
+    }
+
+    assert_pg_column(
+        &pool,
+        "ai_user",
+        "organization_id",
+        "bigint",
+        false,
+        Some("0"),
+    )
+    .await;
+    assert_pg_column(
+        &pool,
+        "ai_api_key",
+        "organization_id",
+        "bigint",
+        false,
+        Some("0"),
+    )
+    .await;
+    assert_pg_column(
+        &pool,
+        "ai_identity_binding",
+        "organization_id",
+        "bigint",
+        false,
+        Some("0"),
+    )
+    .await;
+
+    let index_names: Vec<(String,)> = sqlx::query_as(
+        "select indexname
+         from pg_indexes
+         where schemaname = 'public'
+           and tablename in ('ai_user', 'ai_api_key', 'ai_identity_binding')
+         order by indexname",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let index_names = index_names
+        .into_iter()
+        .map(|(name,)| name)
+        .collect::<std::collections::HashSet<_>>();
+    for index_name in [
+        "idx_ai_user_scope",
+        "idx_ai_user_email",
+        "idx_ai_api_key_hash",
+        "idx_ai_api_key_user_status",
+        "idx_ai_identity_binding_lookup",
+    ] {
+        assert!(
+            index_names.contains(index_name),
+            "missing index {index_name}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn postgres_store_round_trips_slo_policy_fields_when_url_is_provided() {
     let Some(database_url) = std::env::var("SDKWORK_TEST_POSTGRES_URL").ok() else {
         return;

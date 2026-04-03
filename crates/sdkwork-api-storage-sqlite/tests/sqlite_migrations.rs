@@ -26,6 +26,9 @@ async fn creates_canonical_ai_tables_with_only_ai_prefixed_physical_tables() {
         "ai_admin_users",
         "ai_tenants",
         "ai_projects",
+        "ai_user",
+        "ai_api_key",
+        "ai_identity_binding",
         "ai_coupon_campaigns",
         "ai_channel",
         "ai_proxy_provider",
@@ -59,6 +62,11 @@ async fn creates_canonical_ai_tables_with_only_ai_prefixed_physical_tables() {
     }
 
     for index_name in [
+        "idx_ai_user_scope",
+        "idx_ai_user_email",
+        "idx_ai_api_key_hash",
+        "idx_ai_api_key_user_status",
+        "idx_ai_identity_binding_lookup",
         "idx_ai_proxy_provider_primary_channel",
         "idx_ai_model_model_streaming",
         "idx_ai_model_price_provider_active",

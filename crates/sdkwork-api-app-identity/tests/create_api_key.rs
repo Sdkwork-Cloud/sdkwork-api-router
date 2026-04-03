@@ -1,9 +1,13 @@
 use sdkwork_api_app_identity::CreateGatewayApiKey;
 use sdkwork_api_app_identity::{
     hash_gateway_api_key, list_gateway_api_keys, persist_gateway_api_key_with_metadata,
-    resolve_gateway_request_context,
+    resolve_gateway_auth_subject_from_api_key, resolve_gateway_request_context,
 };
-use sdkwork_api_domain_identity::{ApiKeyGroupRecord, GatewayApiKeyRecord};
+use sdkwork_api_domain_identity::{
+    ApiKeyGroupRecord, CanonicalApiKeyRecord, GatewayApiKeyRecord, GatewayAuthType,
+    IdentityUserRecord,
+};
+use sdkwork_api_storage_core::IdentityKernelStore;
 use sdkwork_api_storage_sqlite::{run_migrations, SqliteAdminStore};
 
 #[test]
@@ -219,4 +223,50 @@ async fn persisted_gateway_api_key_rejects_api_key_group_with_mismatched_environ
         error.to_string(),
         "api key group environment does not match"
     );
+}
+
+#[tokio::test]
+async fn resolving_gateway_auth_subject_uses_canonical_api_key_scope() {
+    let pool = run_migrations("sqlite::memory:").await.unwrap();
+    let store = SqliteAdminStore::new(pool);
+    let plaintext = "skw_live_canonical_identity";
+    let hashed_key = hash_gateway_api_key(plaintext);
+
+    store
+        .insert_identity_user_record(
+            &IdentityUserRecord::new(9001, 1001, 2002)
+                .with_display_name(Some("Portal User".to_owned()))
+                .with_created_at_ms(10)
+                .with_updated_at_ms(10),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_canonical_api_key_record(
+            &CanonicalApiKeyRecord::new(778899, 1001, 2002, 9001, &hashed_key)
+                .with_key_prefix("skw_live")
+                .with_display_name("Canonical key")
+                .with_created_at_ms(20)
+                .with_updated_at_ms(20),
+        )
+        .await
+        .unwrap();
+
+    let subject = resolve_gateway_auth_subject_from_api_key(&store, plaintext)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(subject.tenant_id, 1001);
+    assert_eq!(subject.organization_id, 2002);
+    assert_eq!(subject.user_id, 9001);
+    assert_eq!(subject.api_key_id, Some(778899));
+    assert_eq!(subject.api_key_hash.as_deref(), Some(hashed_key.as_str()));
+    assert_eq!(subject.auth_type, GatewayAuthType::ApiKey);
+
+    let persisted = store
+        .find_canonical_api_key_record_by_hash(&hashed_key)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(persisted.last_used_at_ms.is_some());
 }
