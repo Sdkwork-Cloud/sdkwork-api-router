@@ -1,4 +1,7 @@
-use sdkwork_api_app_billing::{create_billing_event, summarize_billing_events, summarize_billing_snapshot, CreateBillingEventInput};
+use sdkwork_api_app_billing::{
+    create_billing_event, summarize_billing_events, summarize_billing_snapshot,
+    CreateBillingEventInput,
+};
 use sdkwork_api_domain_billing::{BillingAccountingMode, LedgerEntry, QuotaPolicy};
 
 #[test]
@@ -195,7 +198,10 @@ fn summarizes_billing_events_by_project_group_capability_and_accounting_mode() {
     assert_eq!(summary.projects[1].request_count, 2);
 
     assert_eq!(summary.groups.len(), 2);
-    assert_eq!(summary.groups[0].api_key_group_id.as_deref(), Some("group-blue"));
+    assert_eq!(
+        summary.groups[0].api_key_group_id.as_deref(),
+        Some("group-blue")
+    );
     assert_eq!(summary.groups[0].event_count, 2);
     assert_eq!(summary.groups[0].project_count, 1);
     assert!((summary.groups[0].total_customer_charge - 2.39).abs() < 1e-9);

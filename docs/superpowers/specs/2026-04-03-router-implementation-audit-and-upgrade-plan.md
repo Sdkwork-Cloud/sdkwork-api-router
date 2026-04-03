@@ -98,7 +98,7 @@ Current strengths:
 Current weakness:
 
 - the gateway still records coarse usage, billing events, and ledger entries on compatibility-era paths
-- `sdkwork-api-app-billing` still summarizes `LedgerEntry` and `QuotaPolicy` around `project_id` rather than around accounts, lots, holds, and settlements
+- `sdkwork-api-app-billing` now has the first clean-slate `AccountKernelStore` read-model and hold-planning APIs, but its mutation flow is still incomplete and the legacy quota summaries are still present beside the new surface
 - there is still no immutable meter-fact to settlement pipeline in the request path
 - no account hold and release lifecycle in the app or interface layer
 - no pricing plan resolution flow that reproduces historical charges exactly at settlement time
@@ -250,7 +250,7 @@ This phase should start with domain and storage contracts plus compatibility pro
 
 Immediate next step after this audit update:
 
-- land real account-kernel business logic in `sdkwork-api-app-billing` on top of the now-working SQLite store
+- extend the new `sdkwork-api-app-billing` account service from read-models and hold planning into real hold creation, release, and settlement mutations
 - keep PostgreSQL storage parity as the next storage follow-up so the new kernel remains database-portable
 
 ### Phase 2: Gateway settlement flow

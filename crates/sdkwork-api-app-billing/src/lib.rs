@@ -1,14 +1,15 @@
 use anyhow::{ensure, Result};
 use async_trait::async_trait;
 use sdkwork_api_domain_billing::{
-    BillingEventAccountingModeSummary, BillingEventCapabilitySummary,
-    BillingEventGroupSummary, BillingEventProjectSummary, BillingEventRecord, BillingEventSummary,
-    BillingSummary, LedgerEntry, ProjectBillingSummary,
+    AccountBenefitLotRecord, AccountBenefitLotStatus, AccountBenefitType,
+    BillingEventAccountingModeSummary, BillingEventCapabilitySummary, BillingEventGroupSummary,
+    BillingEventProjectSummary, BillingEventRecord, BillingEventSummary, BillingSummary,
+    LedgerEntry, ProjectBillingSummary,
 };
 use sdkwork_api_policy_quota::{
     builtin_quota_policy_registry, QuotaPolicyExecutionInput, STRICTEST_LIMIT_QUOTA_POLICY_ID,
 };
-use sdkwork_api_storage_core::AdminStore;
+use sdkwork_api_storage_core::{AccountKernelStore, AdminStore};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub use sdkwork_api_domain_billing::{BillingAccountingMode, QuotaCheckResult, QuotaPolicy};
@@ -52,6 +53,45 @@ pub struct CreateBillingEventInput<'a> {
     pub created_at_ms: u64,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct AccountLotBalanceSnapshot {
+    pub lot_id: u64,
+    pub benefit_type: AccountBenefitType,
+    pub scope_json: Option<String>,
+    pub expires_at_ms: Option<u64>,
+    pub original_quantity: f64,
+    pub remaining_quantity: f64,
+    pub held_quantity: f64,
+    pub available_quantity: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AccountBalanceSnapshot {
+    pub account_id: u64,
+    pub available_balance: f64,
+    pub held_balance: f64,
+    pub consumed_balance: f64,
+    pub grant_balance: f64,
+    pub active_lot_count: u64,
+    pub lots: Vec<AccountLotBalanceSnapshot>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlannedHoldAllocation {
+    pub lot_id: u64,
+    pub quantity: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AccountHoldPlan {
+    pub account_id: u64,
+    pub requested_quantity: f64,
+    pub covered_quantity: f64,
+    pub shortfall_quantity: f64,
+    pub sufficient_balance: bool,
+    pub allocations: Vec<PlannedHoldAllocation>,
+}
+
 pub fn create_quota_policy(
     policy_id: &str,
     project_id: &str,
@@ -73,10 +113,22 @@ pub fn book_usage_cost(project_id: &str, units: u64, amount: f64) -> Result<Ledg
 }
 
 pub fn create_billing_event(input: CreateBillingEventInput<'_>) -> Result<BillingEventRecord> {
-    ensure!(!input.event_id.trim().is_empty(), "event_id must not be empty");
-    ensure!(!input.tenant_id.trim().is_empty(), "tenant_id must not be empty");
-    ensure!(!input.project_id.trim().is_empty(), "project_id must not be empty");
-    ensure!(!input.capability.trim().is_empty(), "capability must not be empty");
+    ensure!(
+        !input.event_id.trim().is_empty(),
+        "event_id must not be empty"
+    );
+    ensure!(
+        !input.tenant_id.trim().is_empty(),
+        "tenant_id must not be empty"
+    );
+    ensure!(
+        !input.project_id.trim().is_empty(),
+        "project_id must not be empty"
+    );
+    ensure!(
+        !input.capability.trim().is_empty(),
+        "capability must not be empty"
+    );
     ensure!(
         !input.usage_model.trim().is_empty(),
         "usage_model must not be empty"
@@ -89,8 +141,14 @@ pub fn create_billing_event(input: CreateBillingEventInput<'_>) -> Result<Billin
         !input.operation_kind.trim().is_empty(),
         "operation_kind must not be empty"
     );
-    ensure!(!input.modality.trim().is_empty(), "modality must not be empty");
-    ensure!(input.upstream_cost >= 0.0, "upstream_cost must not be negative");
+    ensure!(
+        !input.modality.trim().is_empty(),
+        "modality must not be empty"
+    );
+    ensure!(
+        input.upstream_cost >= 0.0,
+        "upstream_cost must not be negative"
+    );
     ensure!(
         input.customer_charge >= 0.0,
         "customer_charge must not be negative"
@@ -103,9 +161,7 @@ pub fn create_billing_event(input: CreateBillingEventInput<'_>) -> Result<Billin
     };
     let request_count = input.request_count.max(1);
     let total_tokens = if input.total_tokens == 0 {
-        input
-            .input_tokens
-            .saturating_add(input.output_tokens)
+        input.input_tokens.saturating_add(input.output_tokens)
     } else {
         input.total_tokens
     };
@@ -152,6 +208,116 @@ pub fn create_billing_event(input: CreateBillingEventInput<'_>) -> Result<Billin
     }
 
     Ok(event)
+}
+
+pub async fn summarize_account_balance<S>(
+    store: &S,
+    account_id: u64,
+    now_ms: u64,
+) -> Result<AccountBalanceSnapshot>
+where
+    S: AccountKernelStore + ?Sized,
+{
+    ensure!(
+        store.find_account_record(account_id).await?.is_some(),
+        "account {account_id} does not exist"
+    );
+
+    let account_lots = store
+        .list_account_benefit_lots()
+        .await?
+        .into_iter()
+        .filter(|lot| lot.account_id == account_id)
+        .collect::<Vec<_>>();
+    let active_lots = eligible_lots_for_hold(&account_lots, now_ms);
+
+    let available_balance = active_lots.iter().map(|lot| free_quantity(lot)).sum();
+    let held_balance = account_lots.iter().map(|lot| lot.held_quantity).sum();
+    let consumed_balance = account_lots
+        .iter()
+        .map(|lot| (lot.original_quantity - lot.remaining_quantity).max(0.0))
+        .sum();
+    let grant_balance = account_lots.iter().map(|lot| lot.original_quantity).sum();
+    let lots = active_lots
+        .into_iter()
+        .map(|lot| AccountLotBalanceSnapshot {
+            lot_id: lot.lot_id,
+            benefit_type: lot.benefit_type,
+            scope_json: lot.scope_json.clone(),
+            expires_at_ms: lot.expires_at_ms,
+            original_quantity: lot.original_quantity,
+            remaining_quantity: lot.remaining_quantity,
+            held_quantity: lot.held_quantity,
+            available_quantity: free_quantity(lot),
+        })
+        .collect::<Vec<_>>();
+
+    Ok(AccountBalanceSnapshot {
+        account_id,
+        available_balance,
+        held_balance,
+        consumed_balance,
+        grant_balance,
+        active_lot_count: lots.len() as u64,
+        lots,
+    })
+}
+
+pub async fn plan_account_hold<S>(
+    store: &S,
+    account_id: u64,
+    requested_quantity: f64,
+    now_ms: u64,
+) -> Result<AccountHoldPlan>
+where
+    S: AccountKernelStore + ?Sized,
+{
+    ensure!(
+        requested_quantity > 0.0,
+        "requested_quantity must be positive"
+    );
+
+    ensure!(
+        store.find_account_record(account_id).await?.is_some(),
+        "account {account_id} does not exist"
+    );
+
+    let lots = store
+        .list_account_benefit_lots()
+        .await?
+        .into_iter()
+        .filter(|lot| lot.account_id == account_id)
+        .collect::<Vec<_>>();
+    let eligible_lots = eligible_lots_for_hold(&lots, now_ms);
+    let mut remaining = requested_quantity;
+    let mut allocations = Vec::new();
+
+    for lot in eligible_lots {
+        if remaining <= 0.0 {
+            break;
+        }
+        let quantity = free_quantity(lot).min(remaining);
+        if quantity <= 0.0 {
+            continue;
+        }
+        allocations.push(PlannedHoldAllocation {
+            lot_id: lot.lot_id,
+            quantity,
+        });
+        remaining -= quantity;
+    }
+
+    let covered_quantity = requested_quantity - remaining.max(0.0);
+    let shortfall_quantity = remaining.max(0.0);
+
+    Ok(AccountHoldPlan {
+        account_id,
+        requested_quantity,
+        covered_quantity,
+        shortfall_quantity,
+        sufficient_balance: shortfall_quantity <= f64::EPSILON,
+        allocations,
+    })
 }
 
 pub async fn persist_ledger_entry(
@@ -224,9 +390,7 @@ where
         .into_iter()
         .map(|entry| entry.units)
         .sum();
-    let policies = store
-        .list_quota_policies_for_project(project_id)
-        .await?;
+    let policies = store.list_quota_policies_for_project(project_id).await?;
     let registry = builtin_quota_policy_registry();
     let plugin = registry
         .resolve(STRICTEST_LIMIT_QUOTA_POLICY_ID)
@@ -493,13 +657,15 @@ pub fn summarize_billing_events(events: &[BillingEventRecord]) -> BillingEventSu
 
     let mut accounting_mode_summaries = accounting_modes
         .into_iter()
-        .map(|(accounting_mode, summary)| BillingEventAccountingModeSummary {
-            accounting_mode,
-            event_count: summary.event_count,
-            request_count: summary.request_count,
-            total_upstream_cost: summary.total_upstream_cost,
-            total_customer_charge: summary.total_customer_charge,
-        })
+        .map(
+            |(accounting_mode, summary)| BillingEventAccountingModeSummary {
+                accounting_mode,
+                event_count: summary.event_count,
+                request_count: summary.request_count,
+                total_upstream_cost: summary.total_upstream_cost,
+                total_customer_charge: summary.total_customer_charge,
+            },
+        )
         .collect::<Vec<_>>();
     accounting_mode_summaries.sort_by(|left, right| {
         right
@@ -543,4 +709,48 @@ pub async fn summarize_billing_events_from_store(
 ) -> Result<BillingEventSummary> {
     let events = list_billing_events(store).await?;
     Ok(summarize_billing_events(&events))
+}
+
+fn eligible_lots_for_hold(
+    lots: &[AccountBenefitLotRecord],
+    now_ms: u64,
+) -> Vec<&AccountBenefitLotRecord> {
+    let mut eligible = lots
+        .iter()
+        .filter(|lot| {
+            lot.status == AccountBenefitLotStatus::Active
+                && lot
+                    .expires_at_ms
+                    .map(|expires_at_ms| expires_at_ms > now_ms)
+                    .unwrap_or(true)
+                && free_quantity(lot) > 0.0
+        })
+        .collect::<Vec<_>>();
+    eligible.sort_by(|left, right| {
+        left.expires_at_ms
+            .unwrap_or(u64::MAX)
+            .cmp(&right.expires_at_ms.unwrap_or(u64::MAX))
+            .then_with(|| right.scope_json.is_some().cmp(&left.scope_json.is_some()))
+            .then_with(|| {
+                benefit_cash_rank(left.benefit_type).cmp(&benefit_cash_rank(right.benefit_type))
+            })
+            .then_with(|| {
+                left.acquired_unit_cost
+                    .unwrap_or(f64::INFINITY)
+                    .total_cmp(&right.acquired_unit_cost.unwrap_or(f64::INFINITY))
+            })
+            .then_with(|| left.lot_id.cmp(&right.lot_id))
+    });
+    eligible
+}
+
+fn free_quantity(lot: &AccountBenefitLotRecord) -> f64 {
+    (lot.remaining_quantity - lot.held_quantity).max(0.0)
+}
+
+fn benefit_cash_rank(benefit_type: AccountBenefitType) -> u8 {
+    match benefit_type {
+        AccountBenefitType::CashCredit => 1,
+        _ => 0,
+    }
 }

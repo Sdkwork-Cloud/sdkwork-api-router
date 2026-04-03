@@ -1,0 +1,145 @@
+use sdkwork_api_app_billing::{plan_account_hold, summarize_account_balance};
+use sdkwork_api_domain_billing::{
+    AccountBenefitLotRecord, AccountBenefitSourceType, AccountBenefitType, AccountRecord,
+    AccountType,
+};
+use sdkwork_api_storage_core::AccountKernelStore;
+use sdkwork_api_storage_sqlite::{run_migrations, SqliteAdminStore};
+
+#[tokio::test]
+async fn summarizes_account_balance_from_canonical_lots() {
+    let pool = run_migrations("sqlite::memory:").await.unwrap();
+    let store = SqliteAdminStore::new(pool);
+
+    let account = AccountRecord::new(7001, 1001, 2002, 9001, AccountType::Primary)
+        .with_created_at_ms(10)
+        .with_updated_at_ms(10);
+    let expiring_promo = AccountBenefitLotRecord::new(
+        8001,
+        1001,
+        2002,
+        7001,
+        9001,
+        AccountBenefitType::PromoCredit,
+    )
+    .with_source_type(AccountBenefitSourceType::Coupon)
+    .with_original_quantity(100.0)
+    .with_remaining_quantity(80.0)
+    .with_held_quantity(10.0)
+    .with_expires_at_ms(Some(120))
+    .with_created_at_ms(11)
+    .with_updated_at_ms(11);
+    let cash_credit =
+        AccountBenefitLotRecord::new(8002, 1001, 2002, 7001, 9001, AccountBenefitType::CashCredit)
+            .with_source_type(AccountBenefitSourceType::Recharge)
+            .with_original_quantity(200.0)
+            .with_remaining_quantity(150.0)
+            .with_held_quantity(20.0)
+            .with_created_at_ms(12)
+            .with_updated_at_ms(12);
+
+    store.insert_account_record(&account).await.unwrap();
+    store
+        .insert_account_benefit_lot(&expiring_promo)
+        .await
+        .unwrap();
+    store
+        .insert_account_benefit_lot(&cash_credit)
+        .await
+        .unwrap();
+
+    let snapshot = summarize_account_balance(&store, 7001, 100).await.unwrap();
+
+    assert_eq!(snapshot.account_id, 7001);
+    assert_eq!(snapshot.grant_balance, 300.0);
+    assert_eq!(snapshot.consumed_balance, 70.0);
+    assert_eq!(snapshot.held_balance, 30.0);
+    assert_eq!(snapshot.available_balance, 200.0);
+    assert_eq!(snapshot.active_lot_count, 2);
+    assert_eq!(
+        snapshot
+            .lots
+            .iter()
+            .map(|lot| lot.lot_id)
+            .collect::<Vec<_>>(),
+        vec![8001, 8002]
+    );
+}
+
+#[tokio::test]
+async fn plans_hold_across_lots_in_spend_order_and_reports_shortfall() {
+    let pool = run_migrations("sqlite::memory:").await.unwrap();
+    let store = SqliteAdminStore::new(pool);
+
+    let account = AccountRecord::new(7101, 1001, 2002, 9001, AccountType::Primary)
+        .with_created_at_ms(10)
+        .with_updated_at_ms(10);
+    let scoped_allowance = AccountBenefitLotRecord::new(
+        8103,
+        1001,
+        2002,
+        7101,
+        9001,
+        AccountBenefitType::RequestAllowance,
+    )
+    .with_source_type(AccountBenefitSourceType::Grant)
+    .with_scope_json(Some("{\"model\":\"gpt-4.1\"}".to_owned()))
+    .with_original_quantity(20.0)
+    .with_remaining_quantity(20.0)
+    .with_held_quantity(0.0)
+    .with_expires_at_ms(Some(200))
+    .with_created_at_ms(11)
+    .with_updated_at_ms(11);
+    let promo_credit = AccountBenefitLotRecord::new(
+        8102,
+        1001,
+        2002,
+        7101,
+        9001,
+        AccountBenefitType::PromoCredit,
+    )
+    .with_source_type(AccountBenefitSourceType::Coupon)
+    .with_original_quantity(40.0)
+    .with_remaining_quantity(35.0)
+    .with_held_quantity(5.0)
+    .with_expires_at_ms(Some(200))
+    .with_created_at_ms(12)
+    .with_updated_at_ms(12);
+    let cash_credit =
+        AccountBenefitLotRecord::new(8101, 1001, 2002, 7101, 9001, AccountBenefitType::CashCredit)
+            .with_source_type(AccountBenefitSourceType::Recharge)
+            .with_original_quantity(90.0)
+            .with_remaining_quantity(80.0)
+            .with_held_quantity(0.0)
+            .with_created_at_ms(13)
+            .with_updated_at_ms(13);
+
+    store.insert_account_record(&account).await.unwrap();
+    store
+        .insert_account_benefit_lot(&cash_credit)
+        .await
+        .unwrap();
+    store
+        .insert_account_benefit_lot(&promo_credit)
+        .await
+        .unwrap();
+    store
+        .insert_account_benefit_lot(&scoped_allowance)
+        .await
+        .unwrap();
+
+    let plan = plan_account_hold(&store, 7101, 150.0, 100).await.unwrap();
+
+    assert_eq!(plan.account_id, 7101);
+    assert_eq!(plan.requested_quantity, 150.0);
+    assert_eq!(plan.covered_quantity, 130.0);
+    assert_eq!(plan.shortfall_quantity, 20.0);
+    assert!(!plan.sufficient_balance);
+    assert_eq!(
+        plan.allocations
+            .iter()
+            .map(|allocation| (allocation.lot_id, allocation.quantity))
+            .collect::<Vec<_>>(),
+        vec![(8103, 20.0), (8102, 30.0), (8101, 80.0)]
+    );
+}
