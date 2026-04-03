@@ -135,7 +135,9 @@ async fn postgres_store_creates_canonical_account_kernel_tables_when_url_is_prov
         "ai_account",
         "ai_account_benefit_lot",
         "ai_account_hold",
+        "ai_account_hold_allocation",
         "ai_account_ledger_entry",
+        "ai_account_ledger_allocation",
         "ai_request_meter_fact",
         "ai_request_meter_metric",
         "ai_request_settlement",
@@ -192,6 +194,24 @@ async fn postgres_store_creates_canonical_account_kernel_tables_when_url_is_prov
         Some("0"),
     )
     .await;
+    assert_pg_column(
+        &pool,
+        "ai_account_hold_allocation",
+        "organization_id",
+        "bigint",
+        false,
+        Some("0"),
+    )
+    .await;
+    assert_pg_column(
+        &pool,
+        "ai_account_ledger_allocation",
+        "organization_id",
+        "bigint",
+        false,
+        Some("0"),
+    )
+    .await;
 
     let index_names: Vec<(String,)> = sqlx::query_as(
         "select indexname
@@ -201,6 +221,8 @@ async fn postgres_store_creates_canonical_account_kernel_tables_when_url_is_prov
              'ai_account',
              'ai_account_benefit_lot',
              'ai_account_hold',
+             'ai_account_hold_allocation',
+             'ai_account_ledger_allocation',
              'ai_request_meter_fact',
              'ai_request_settlement',
              'ai_pricing_plan'
@@ -218,12 +240,17 @@ async fn postgres_store_creates_canonical_account_kernel_tables_when_url_is_prov
         "idx_ai_account_user_type",
         "idx_ai_account_benefit_lot_account_status_expiry",
         "idx_ai_account_hold_request",
+        "idx_ai_account_hold_allocation_hold_lot",
+        "idx_ai_account_ledger_allocation_ledger_lot",
         "idx_ai_request_meter_fact_user_created_at",
         "idx_ai_request_meter_fact_api_key_created_at",
         "idx_ai_request_settlement_request",
         "idx_ai_pricing_plan_code_version",
     ] {
-        assert!(index_names.contains(index_name), "missing index {index_name}");
+        assert!(
+            index_names.contains(index_name),
+            "missing index {index_name}"
+        );
     }
 }
 
@@ -376,7 +403,9 @@ async fn assert_pg_column(
     assert_eq!(row.1 == "YES", nullable);
     match default_contains {
         Some(expected) => assert!(
-            row.2.as_deref().is_some_and(|value| value.contains(expected)),
+            row.2
+                .as_deref()
+                .is_some_and(|value| value.contains(expected)),
             "expected default for {table_name}.{column_name} to contain {expected:?}, got {:?}",
             row.2
         ),

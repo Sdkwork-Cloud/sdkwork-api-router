@@ -1,5 +1,6 @@
 use sdkwork_api_domain_billing::{
-    AccountBenefitLotRecord, AccountBenefitSourceType, AccountBenefitType, AccountHoldRecord,
+    AccountBenefitLotRecord, AccountBenefitSourceType, AccountBenefitType,
+    AccountHoldAllocationRecord, AccountHoldRecord, AccountLedgerAllocationRecord,
     AccountLedgerEntryRecord, AccountLedgerEntryType, AccountRecord, AccountType,
     PricingPlanRecord, PricingRateRecord, RequestSettlementRecord,
 };
@@ -44,6 +45,15 @@ async fn sqlite_store_round_trips_canonical_account_kernel_records() {
     .with_quantity(42.5)
     .with_amount(42.5)
     .with_created_at_ms(36);
+    let hold_allocation = AccountHoldAllocationRecord::new(8401, 1001, 2002, 8101, 8001)
+        .with_allocated_quantity(42.5)
+        .with_captured_quantity(40.0)
+        .with_released_quantity(2.5)
+        .with_created_at_ms(36)
+        .with_updated_at_ms(41);
+    let ledger_allocation = AccountLedgerAllocationRecord::new(8501, 1001, 2002, 8201, 8001)
+        .with_quantity_delta(-40.0)
+        .with_created_at_ms(41);
     let fact = RequestMeterFactRecord::new(
         6001,
         1001,
@@ -92,6 +102,14 @@ async fn sqlite_store_round_trips_canonical_account_kernel_records() {
         .insert_account_ledger_entry_record(&ledger_entry)
         .await
         .unwrap();
+    store
+        .insert_account_hold_allocation(&hold_allocation)
+        .await
+        .unwrap();
+    store
+        .insert_account_ledger_allocation(&ledger_allocation)
+        .await
+        .unwrap();
     store.insert_request_meter_fact(&fact).await.unwrap();
     store.insert_request_meter_metric(&metric).await.unwrap();
     store.insert_pricing_plan_record(&plan).await.unwrap();
@@ -109,11 +127,19 @@ async fn sqlite_store_round_trips_canonical_account_kernel_records() {
     assert_eq!(store.list_account_benefit_lots().await.unwrap().len(), 1);
     assert_eq!(store.list_account_holds().await.unwrap().len(), 1);
     assert_eq!(
+        store.list_account_hold_allocations().await.unwrap().len(),
+        1
+    );
+    assert_eq!(
         store
             .list_account_ledger_entry_records()
             .await
             .unwrap()
             .len(),
+        1
+    );
+    assert_eq!(
+        store.list_account_ledger_allocations().await.unwrap().len(),
         1
     );
     assert_eq!(store.list_request_meter_facts().await.unwrap().len(), 1);

@@ -1,9 +1,9 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use sdkwork_api_domain_billing::{
-    AccountBenefitLotRecord, AccountHoldRecord, AccountLedgerEntryRecord, AccountRecord,
-    BillingEventRecord, LedgerEntry, PricingPlanRecord, PricingRateRecord, QuotaPolicy,
-    RequestSettlementRecord,
+    AccountBenefitLotRecord, AccountHoldAllocationRecord, AccountHoldRecord,
+    AccountLedgerAllocationRecord, AccountLedgerEntryRecord, AccountRecord, BillingEventRecord,
+    LedgerEntry, PricingPlanRecord, PricingRateRecord, QuotaPolicy, RequestSettlementRecord,
 };
 use sdkwork_api_domain_catalog::{
     Channel, ChannelModelRecord, ModelCatalogEntry, ModelPriceRecord, ProxyProvider,
@@ -916,6 +916,23 @@ pub trait AccountKernelStore: AdminStore {
         ))
     }
 
+    async fn insert_account_hold_allocation(
+        &self,
+        _record: &AccountHoldAllocationRecord,
+    ) -> Result<AccountHoldAllocationRecord> {
+        Err(unsupported_account_kernel_method(
+            self.dialect(),
+            "insert_account_hold_allocation",
+        ))
+    }
+
+    async fn list_account_hold_allocations(&self) -> Result<Vec<AccountHoldAllocationRecord>> {
+        Err(unsupported_account_kernel_method(
+            self.dialect(),
+            "list_account_hold_allocations",
+        ))
+    }
+
     async fn insert_account_ledger_entry_record(
         &self,
         _record: &AccountLedgerEntryRecord,
@@ -930,6 +947,23 @@ pub trait AccountKernelStore: AdminStore {
         Err(unsupported_account_kernel_method(
             self.dialect(),
             "list_account_ledger_entry_records",
+        ))
+    }
+
+    async fn insert_account_ledger_allocation(
+        &self,
+        _record: &AccountLedgerAllocationRecord,
+    ) -> Result<AccountLedgerAllocationRecord> {
+        Err(unsupported_account_kernel_method(
+            self.dialect(),
+            "insert_account_ledger_allocation",
+        ))
+    }
+
+    async fn list_account_ledger_allocations(&self) -> Result<Vec<AccountLedgerAllocationRecord>> {
+        Err(unsupported_account_kernel_method(
+            self.dialect(),
+            "list_account_ledger_allocations",
         ))
     }
 

@@ -9,7 +9,9 @@ async fn creates_canonical_account_kernel_tables() {
         "ai_account",
         "ai_account_benefit_lot",
         "ai_account_hold",
+        "ai_account_hold_allocation",
         "ai_account_ledger_entry",
+        "ai_account_ledger_allocation",
         "ai_request_meter_fact",
         "ai_request_meter_metric",
         "ai_request_settlement",
@@ -86,6 +88,24 @@ async fn canonical_account_kernel_tables_keep_bigint_scope_columns_and_defaults(
         Some("0"),
     )
     .await;
+    assert_has_column(
+        &pool,
+        "ai_account_hold_allocation",
+        "organization_id",
+        "INTEGER",
+        true,
+        Some("0"),
+    )
+    .await;
+    assert_has_column(
+        &pool,
+        "ai_account_ledger_allocation",
+        "organization_id",
+        "INTEGER",
+        true,
+        Some("0"),
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -96,9 +116,11 @@ async fn canonical_account_kernel_tables_create_operational_indexes() {
         "idx_ai_account_user_type",
         "idx_ai_account_benefit_lot_account_status_expiry",
         "idx_ai_account_hold_request",
+        "idx_ai_account_hold_allocation_hold_lot",
         "idx_ai_request_meter_fact_user_created_at",
         "idx_ai_request_meter_fact_api_key_created_at",
         "idx_ai_request_settlement_request",
+        "idx_ai_account_ledger_allocation_ledger_lot",
         "idx_ai_pricing_plan_code_version",
     ] {
         let row: (String,) =

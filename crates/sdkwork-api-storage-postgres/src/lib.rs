@@ -1,6 +1,8 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use sdkwork_api_domain_billing::{BillingAccountingMode, BillingEventRecord, LedgerEntry, QuotaPolicy};
+use sdkwork_api_domain_billing::{
+    BillingAccountingMode, BillingEventRecord, LedgerEntry, QuotaPolicy,
+};
 use sdkwork_api_domain_catalog::{
     normalize_provider_extension_id, Channel, ChannelModelRecord, ModelCapability,
     ModelCatalogEntry, ModelPriceRecord, ProviderChannelBinding, ProxyProvider,
@@ -1140,6 +1142,28 @@ pub async fn run_migrations(url: &str) -> Result<PgPool> {
     .execute(&pool)
     .await?;
     sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_account_hold_allocation (
+            hold_allocation_id BIGINT PRIMARY KEY NOT NULL,
+            tenant_id BIGINT NOT NULL,
+            organization_id BIGINT NOT NULL DEFAULT 0,
+            hold_id BIGINT NOT NULL,
+            lot_id BIGINT NOT NULL,
+            allocated_quantity DOUBLE PRECISION NOT NULL DEFAULT 0,
+            captured_quantity DOUBLE PRECISION NOT NULL DEFAULT 0,
+            released_quantity DOUBLE PRECISION NOT NULL DEFAULT 0,
+            created_at_ms BIGINT NOT NULL DEFAULT 0,
+            updated_at_ms BIGINT NOT NULL DEFAULT 0
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_account_hold_allocation_hold_lot
+         ON ai_account_hold_allocation (tenant_id, organization_id, hold_id, lot_id)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
         "CREATE TABLE IF NOT EXISTS ai_account_ledger_entry (
             ledger_entry_id BIGINT PRIMARY KEY NOT NULL,
             tenant_id BIGINT NOT NULL,
@@ -1160,6 +1184,25 @@ pub async fn run_migrations(url: &str) -> Result<PgPool> {
     sqlx::query(
         "CREATE INDEX IF NOT EXISTS idx_ai_account_ledger_entry_account_created_at
          ON ai_account_ledger_entry (tenant_id, organization_id, account_id, created_at_ms DESC)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_account_ledger_allocation (
+            ledger_allocation_id BIGINT PRIMARY KEY NOT NULL,
+            tenant_id BIGINT NOT NULL,
+            organization_id BIGINT NOT NULL DEFAULT 0,
+            ledger_entry_id BIGINT NOT NULL,
+            lot_id BIGINT NOT NULL,
+            quantity_delta DOUBLE PRECISION NOT NULL DEFAULT 0,
+            created_at_ms BIGINT NOT NULL DEFAULT 0
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_account_ledger_allocation_ledger_lot
+         ON ai_account_ledger_allocation (tenant_id, organization_id, ledger_entry_id, lot_id)",
     )
     .execute(&pool)
     .await?;

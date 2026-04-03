@@ -8,9 +8,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use sdkwork_api_domain_billing::{
     AccountBenefitLotRecord, AccountBenefitLotStatus, AccountBenefitSourceType, AccountBenefitType,
-    AccountHoldRecord, AccountHoldStatus, AccountLedgerEntryRecord, AccountLedgerEntryType,
-    AccountRecord, AccountStatus, AccountType, BillingAccountingMode, BillingEventRecord,
-    LedgerEntry, PricingPlanRecord, PricingRateRecord, QuotaPolicy, RequestSettlementRecord,
+    AccountHoldAllocationRecord, AccountHoldRecord, AccountHoldStatus,
+    AccountLedgerAllocationRecord, AccountLedgerEntryRecord, AccountLedgerEntryType, AccountRecord,
+    AccountStatus, AccountType, BillingAccountingMode, BillingEventRecord, LedgerEntry,
+    PricingPlanRecord, PricingRateRecord, QuotaPolicy, RequestSettlementRecord,
     RequestSettlementStatus,
 };
 use sdkwork_api_domain_catalog::{
@@ -598,6 +599,28 @@ pub async fn run_migrations(url: &str) -> Result<SqlitePool> {
     .execute(&pool)
     .await?;
     sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_account_hold_allocation (
+            hold_allocation_id INTEGER PRIMARY KEY NOT NULL,
+            tenant_id INTEGER NOT NULL,
+            organization_id INTEGER NOT NULL DEFAULT 0,
+            hold_id INTEGER NOT NULL,
+            lot_id INTEGER NOT NULL,
+            allocated_quantity REAL NOT NULL DEFAULT 0,
+            captured_quantity REAL NOT NULL DEFAULT 0,
+            released_quantity REAL NOT NULL DEFAULT 0,
+            created_at_ms INTEGER NOT NULL DEFAULT 0,
+            updated_at_ms INTEGER NOT NULL DEFAULT 0
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_account_hold_allocation_hold_lot
+         ON ai_account_hold_allocation (tenant_id, organization_id, hold_id, lot_id)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
         "CREATE TABLE IF NOT EXISTS ai_account_ledger_entry (
             ledger_entry_id INTEGER PRIMARY KEY NOT NULL,
             tenant_id INTEGER NOT NULL,
@@ -618,6 +641,25 @@ pub async fn run_migrations(url: &str) -> Result<SqlitePool> {
     sqlx::query(
         "CREATE INDEX IF NOT EXISTS idx_ai_account_ledger_entry_account_created_at
          ON ai_account_ledger_entry (tenant_id, organization_id, account_id, created_at_ms DESC)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_account_ledger_allocation (
+            ledger_allocation_id INTEGER PRIMARY KEY NOT NULL,
+            tenant_id INTEGER NOT NULL,
+            organization_id INTEGER NOT NULL DEFAULT 0,
+            ledger_entry_id INTEGER NOT NULL,
+            lot_id INTEGER NOT NULL,
+            quantity_delta REAL NOT NULL DEFAULT 0,
+            created_at_ms INTEGER NOT NULL DEFAULT 0
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_account_ledger_allocation_ledger_lot
+         ON ai_account_ledger_allocation (tenant_id, organization_id, ledger_entry_id, lot_id)",
     )
     .execute(&pool)
     .await?;
@@ -7583,6 +7625,57 @@ impl AccountKernelStore for SqliteAdminStore {
         rows.into_iter().map(decode_account_hold_row).collect()
     }
 
+    async fn insert_account_hold_allocation(
+        &self,
+        record: &AccountHoldAllocationRecord,
+    ) -> Result<AccountHoldAllocationRecord> {
+        sqlx::query(
+            "INSERT INTO ai_account_hold_allocation (
+                hold_allocation_id, tenant_id, organization_id, hold_id, lot_id,
+                allocated_quantity, captured_quantity, released_quantity,
+                created_at_ms, updated_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(hold_allocation_id) DO UPDATE SET
+                tenant_id = excluded.tenant_id,
+                organization_id = excluded.organization_id,
+                hold_id = excluded.hold_id,
+                lot_id = excluded.lot_id,
+                allocated_quantity = excluded.allocated_quantity,
+                captured_quantity = excluded.captured_quantity,
+                released_quantity = excluded.released_quantity,
+                created_at_ms = excluded.created_at_ms,
+                updated_at_ms = excluded.updated_at_ms",
+        )
+        .bind(i64::try_from(record.hold_allocation_id)?)
+        .bind(i64::try_from(record.tenant_id)?)
+        .bind(i64::try_from(record.organization_id)?)
+        .bind(i64::try_from(record.hold_id)?)
+        .bind(i64::try_from(record.lot_id)?)
+        .bind(record.allocated_quantity)
+        .bind(record.captured_quantity)
+        .bind(record.released_quantity)
+        .bind(i64::try_from(record.created_at_ms)?)
+        .bind(i64::try_from(record.updated_at_ms)?)
+        .execute(&self.pool)
+        .await?;
+        Ok(record.clone())
+    }
+
+    async fn list_account_hold_allocations(&self) -> Result<Vec<AccountHoldAllocationRecord>> {
+        let rows = sqlx::query(
+            "SELECT hold_allocation_id, tenant_id, organization_id, hold_id, lot_id,
+                    allocated_quantity, captured_quantity, released_quantity,
+                    created_at_ms, updated_at_ms
+             FROM ai_account_hold_allocation
+             ORDER BY created_at_ms DESC, hold_allocation_id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(decode_account_hold_allocation_row)
+            .collect()
+    }
+
     async fn insert_account_ledger_entry_record(
         &self,
         record: &AccountLedgerEntryRecord,
@@ -7633,6 +7726,49 @@ impl AccountKernelStore for SqliteAdminStore {
         .await?;
         rows.into_iter()
             .map(decode_account_ledger_entry_row)
+            .collect()
+    }
+
+    async fn insert_account_ledger_allocation(
+        &self,
+        record: &AccountLedgerAllocationRecord,
+    ) -> Result<AccountLedgerAllocationRecord> {
+        sqlx::query(
+            "INSERT INTO ai_account_ledger_allocation (
+                ledger_allocation_id, tenant_id, organization_id, ledger_entry_id, lot_id,
+                quantity_delta, created_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(ledger_allocation_id) DO UPDATE SET
+                tenant_id = excluded.tenant_id,
+                organization_id = excluded.organization_id,
+                ledger_entry_id = excluded.ledger_entry_id,
+                lot_id = excluded.lot_id,
+                quantity_delta = excluded.quantity_delta,
+                created_at_ms = excluded.created_at_ms",
+        )
+        .bind(i64::try_from(record.ledger_allocation_id)?)
+        .bind(i64::try_from(record.tenant_id)?)
+        .bind(i64::try_from(record.organization_id)?)
+        .bind(i64::try_from(record.ledger_entry_id)?)
+        .bind(i64::try_from(record.lot_id)?)
+        .bind(record.quantity_delta)
+        .bind(i64::try_from(record.created_at_ms)?)
+        .execute(&self.pool)
+        .await?;
+        Ok(record.clone())
+    }
+
+    async fn list_account_ledger_allocations(&self) -> Result<Vec<AccountLedgerAllocationRecord>> {
+        let rows = sqlx::query(
+            "SELECT ledger_allocation_id, tenant_id, organization_id, ledger_entry_id, lot_id,
+                    quantity_delta, created_at_ms
+             FROM ai_account_ledger_allocation
+             ORDER BY created_at_ms DESC, ledger_allocation_id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(decode_account_ledger_allocation_row)
             .collect()
     }
 
@@ -8246,6 +8382,21 @@ fn decode_account_hold_row(row: SqliteRow) -> Result<AccountHoldRecord> {
     .with_updated_at_ms(u64::try_from(row.try_get::<i64, _>("updated_at_ms")?)?))
 }
 
+fn decode_account_hold_allocation_row(row: SqliteRow) -> Result<AccountHoldAllocationRecord> {
+    Ok(AccountHoldAllocationRecord::new(
+        u64::try_from(row.try_get::<i64, _>("hold_allocation_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("tenant_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("organization_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("hold_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("lot_id")?)?,
+    )
+    .with_allocated_quantity(row.try_get::<f64, _>("allocated_quantity")?)
+    .with_captured_quantity(row.try_get::<f64, _>("captured_quantity")?)
+    .with_released_quantity(row.try_get::<f64, _>("released_quantity")?)
+    .with_created_at_ms(u64::try_from(row.try_get::<i64, _>("created_at_ms")?)?)
+    .with_updated_at_ms(u64::try_from(row.try_get::<i64, _>("updated_at_ms")?)?))
+}
+
 fn decode_account_ledger_entry_row(row: SqliteRow) -> Result<AccountLedgerEntryRecord> {
     Ok(AccountLedgerEntryRecord::new(
         u64::try_from(row.try_get::<i64, _>("ledger_entry_id")?)?,
@@ -8268,6 +8419,18 @@ fn decode_account_ledger_entry_row(row: SqliteRow) -> Result<AccountLedgerEntryR
     .with_benefit_type(row.try_get::<Option<String>, _>("benefit_type")?)
     .with_quantity(row.try_get::<f64, _>("quantity")?)
     .with_amount(row.try_get::<f64, _>("amount")?)
+    .with_created_at_ms(u64::try_from(row.try_get::<i64, _>("created_at_ms")?)?))
+}
+
+fn decode_account_ledger_allocation_row(row: SqliteRow) -> Result<AccountLedgerAllocationRecord> {
+    Ok(AccountLedgerAllocationRecord::new(
+        u64::try_from(row.try_get::<i64, _>("ledger_allocation_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("tenant_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("organization_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("ledger_entry_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("lot_id")?)?,
+    )
+    .with_quantity_delta(row.try_get::<f64, _>("quantity_delta")?)
     .with_created_at_ms(u64::try_from(row.try_get::<i64, _>("created_at_ms")?)?))
 }
 
