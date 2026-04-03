@@ -2,6 +2,8 @@ use anyhow::{bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use sdkwork_api_app_credential::{resolve_provider_secret_with_manager, CredentialSecretManager};
 use sdkwork_api_app_routing::{select_route_with_store_context, RouteSelectionContext};
+use sdkwork_api_cache_core::{cache_get_or_insert_with, CacheStore, CacheTag};
+use sdkwork_api_cache_memory::MemoryCacheStore;
 use sdkwork_api_contract_openai::assistants::{
     AssistantObject, CreateAssistantRequest, DeleteAssistantResponse, ListAssistantsResponse,
     UpdateAssistantRequest,
@@ -53,6 +55,10 @@ use sdkwork_api_contract_openai::models::{DeleteModelResponse, ListModelsRespons
 use sdkwork_api_contract_openai::moderations::{
     CreateModerationRequest, ModerationCategoryScores, ModerationResponse, ModerationResult,
 };
+use sdkwork_api_contract_openai::music::{
+    CreateMusicLyricsRequest, CreateMusicRequest, DeleteMusicResponse, MusicLyricsObject,
+    MusicObject, MusicTracksResponse,
+};
 use sdkwork_api_contract_openai::realtime::{CreateRealtimeSessionRequest, RealtimeSessionObject};
 use sdkwork_api_contract_openai::responses::{
     CompactResponseRequest, CountResponseInputTokensRequest, CreateResponseRequest,
@@ -90,7 +96,7 @@ use sdkwork_api_contract_openai::webhooks::{
 use sdkwork_api_domain_catalog::ProxyProvider;
 use sdkwork_api_domain_routing::{RoutingDecision, RoutingDecisionSource};
 use sdkwork_api_extension_core::{
-    ExtensionKind, ExtensionManifest, ExtensionProtocol, ExtensionRuntime,
+    ExtensionKind, ExtensionManifest, ExtensionModality, ExtensionProtocol, ExtensionRuntime,
 };
 use sdkwork_api_extension_host::{
     discover_extension_packages, ensure_connector_runtime_started, shutdown_all_connector_runtimes,
@@ -103,14 +109,14 @@ use sdkwork_api_provider_core::{ProviderRequest, ProviderRequestOptions, Provide
 use sdkwork_api_provider_ollama::OllamaProviderAdapter;
 use sdkwork_api_provider_openai::OpenAiProviderAdapter;
 use sdkwork_api_provider_openrouter::OpenRouterProviderAdapter;
-use sdkwork_api_storage_core::AdminStore;
+use sdkwork_api_storage_core::{AdminStore, Reloadable};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
 use std::fs;
 use std::future::Future;
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, UNIX_EPOCH};
 use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;
@@ -121,10 +127,18 @@ tokio::task_local! {
     static REQUEST_ROUTING_REGION: Option<String>;
 }
 
+tokio::task_local! {
+    static REQUEST_API_KEY_GROUP_ID: Option<String>;
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlannedExecutionUsageContext {
     pub provider_id: String,
     pub channel_id: Option<String>,
+    pub api_key_group_id: Option<String>,
+    pub applied_routing_profile_id: Option<String>,
+    pub compiled_routing_snapshot_id: Option<String>,
+    pub fallback_reason: Option<String>,
     pub latency_ms: Option<u64>,
     pub reference_amount: Option<f64>,
 }
@@ -218,28 +232,81 @@ pub fn delete_model(
 
 pub async fn list_models_from_store(
     store: &dyn AdminStore,
-    _tenant_id: &str,
-    _project_id: &str,
+    tenant_id: &str,
+    project_id: &str,
 ) -> Result<ListModelsResponse> {
-    let models = store.list_models().await?;
-    Ok(ListModelsResponse::new(
-        models
-            .into_iter()
-            .map(|entry| ModelObject::new(entry.external_name, entry.provider_id))
-            .collect(),
-    ))
+    let Some(cache_store) = capability_catalog_cache_store() else {
+        let models = store.list_models().await?;
+        return Ok(ListModelsResponse::new(
+            models
+                .into_iter()
+                .map(|entry| ModelObject::new(entry.external_name, entry.provider_id))
+                .collect(),
+        ));
+    };
+    let cache_key = capability_catalog_list_cache_key(tenant_id, project_id);
+    let payload = cache_get_or_insert_with(
+        cache_store.as_ref(),
+        CAPABILITY_CATALOG_CACHE_NAMESPACE,
+        &cache_key,
+        Some(CAPABILITY_CATALOG_CACHE_TTL_MS),
+        &[CacheTag::new(CAPABILITY_CATALOG_CACHE_TAG_ALL_MODELS)],
+        || async {
+            let models = store.list_models().await?;
+            let cached = CachedCapabilityCatalogList {
+                models: models
+                    .into_iter()
+                    .map(|entry| CachedCapabilityCatalogModel {
+                        id: entry.external_name,
+                        owned_by: entry.provider_id,
+                    })
+                    .collect(),
+            };
+            Ok(serde_json::to_vec(&cached)?)
+        },
+    )
+    .await?;
+    let cached: CachedCapabilityCatalogList = serde_json::from_slice(&payload)
+        .context("failed to decode capability catalog list cache payload")?;
+    Ok(cached.into_response())
 }
 
 pub async fn get_model_from_store(
     store: &dyn AdminStore,
-    _tenant_id: &str,
-    _project_id: &str,
+    tenant_id: &str,
+    project_id: &str,
     model_id: &str,
 ) -> Result<Option<ModelObject>> {
-    Ok(store
-        .find_model(model_id)
-        .await?
-        .map(|entry| ModelObject::new(entry.external_name, entry.provider_id)))
+    let Some(cache_store) = capability_catalog_cache_store() else {
+        return Ok(store
+            .find_model(model_id)
+            .await?
+            .map(|entry| ModelObject::new(entry.external_name, entry.provider_id)));
+    };
+    let cache_key = capability_catalog_model_cache_key(tenant_id, project_id, model_id);
+    let payload = cache_get_or_insert_with(
+        cache_store.as_ref(),
+        CAPABILITY_CATALOG_CACHE_NAMESPACE,
+        &cache_key,
+        Some(CAPABILITY_CATALOG_CACHE_TTL_MS),
+        &[
+            CacheTag::new(CAPABILITY_CATALOG_CACHE_TAG_ALL_MODELS),
+            CacheTag::new(format!("model:{model_id}")),
+        ],
+        || async {
+            let cached = store.find_model(model_id).await?.map(|entry| {
+                CachedCapabilityCatalogModel {
+                    id: entry.external_name,
+                    owned_by: entry.provider_id,
+                }
+            });
+            Ok(serde_json::to_vec(&cached)?)
+        },
+    )
+    .await?;
+    let cached: Option<CachedCapabilityCatalogModel> = serde_json::from_slice(&payload)
+        .context("failed to decode capability catalog model cache payload")?;
+    Ok(cached.map(CachedCapabilityCatalogModel::into_model_object))
 }
 
 pub async fn delete_model_from_store(
@@ -264,19 +331,21 @@ pub async fn delete_model_from_store(
                 &api_key,
                 ProviderRequest::ModelsDelete(model_id),
             )
-            .await?;
+              .await?;
 
-            if let Some(response) = response {
-                let _ = store.delete_model(model_id).await?;
-                return Ok(Some(response));
-            }
-        }
-    }
+              if let Some(response) = response {
+                  let _ = store.delete_model(model_id).await?;
+                  invalidate_capability_catalog_cache().await;
+                  return Ok(Some(response));
+              }
+          }
+      }
 
-    if store.delete_model(model_id).await? {
-        return Ok(Some(serde_json::to_value(DeleteModelResponse::deleted(
-            model_id,
-        ))?));
+      if store.delete_model(model_id).await? {
+          invalidate_capability_catalog_cache().await;
+          return Ok(Some(serde_json::to_value(DeleteModelResponse::deleted(
+              model_id,
+          ))?));
     }
 
     Ok(None)
@@ -400,29 +469,115 @@ async fn provider_execution_descriptor_for_provider(
     })
 }
 
-static ROUTING_DECISION_CACHE: OnceLock<Mutex<HashMap<String, RoutingDecision>>> = OnceLock::new();
+pub const ROUTING_DECISION_CACHE_NAMESPACE: &str = "gateway_route_decisions";
+const ROUTING_DECISION_CACHE_TTL_MS: u64 = 30_000;
+static ROUTING_DECISION_CACHE_STORE: OnceLock<Reloadable<Arc<dyn CacheStore>>> = OnceLock::new();
+pub const CAPABILITY_CATALOG_CACHE_NAMESPACE: &str = "gateway_capability_catalog";
+const CAPABILITY_CATALOG_CACHE_TTL_MS: u64 = 30_000;
+const CAPABILITY_CATALOG_CACHE_TAG_ALL_MODELS: &str = "models:all";
+static CAPABILITY_CATALOG_CACHE_STORE: OnceLock<Reloadable<Option<Arc<dyn CacheStore>>>> =
+    OnceLock::new();
 
-fn routing_decision_cache() -> &'static Mutex<HashMap<String, RoutingDecision>> {
-    ROUTING_DECISION_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CachedCapabilityCatalogModel {
+    id: String,
+    owned_by: String,
+}
+
+impl CachedCapabilityCatalogModel {
+    fn into_model_object(self) -> ModelObject {
+        ModelObject::new(self.id, self.owned_by)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CachedCapabilityCatalogList {
+    models: Vec<CachedCapabilityCatalogModel>,
+}
+
+impl CachedCapabilityCatalogList {
+    fn into_response(self) -> ListModelsResponse {
+        ListModelsResponse::new(
+            self.models
+                .into_iter()
+                .map(CachedCapabilityCatalogModel::into_model_object)
+                .collect(),
+        )
+    }
+}
+
+fn routing_decision_cache_store_handle() -> &'static Reloadable<Arc<dyn CacheStore>> {
+    ROUTING_DECISION_CACHE_STORE.get_or_init(|| {
+        Reloadable::new(Arc::new(MemoryCacheStore::default()) as Arc<dyn CacheStore>)
+    })
+}
+
+fn routing_decision_cache_store() -> Arc<dyn CacheStore> {
+    routing_decision_cache_store_handle().snapshot()
+}
+
+pub fn configure_route_decision_cache_store(cache_store: Arc<dyn CacheStore>) {
+    routing_decision_cache_store_handle().replace(cache_store);
+}
+
+fn capability_catalog_cache_store_handle() -> &'static Reloadable<Option<Arc<dyn CacheStore>>> {
+    CAPABILITY_CATALOG_CACHE_STORE.get_or_init(|| Reloadable::new(None))
+}
+
+fn capability_catalog_cache_store() -> Option<Arc<dyn CacheStore>> {
+    capability_catalog_cache_store_handle().snapshot()
+}
+
+pub fn configure_capability_catalog_cache_store(cache_store: Arc<dyn CacheStore>) {
+    capability_catalog_cache_store_handle().replace(Some(cache_store));
+}
+
+pub fn clear_capability_catalog_cache_store() {
+    capability_catalog_cache_store_handle().replace(None);
+}
+
+pub async fn invalidate_capability_catalog_cache() {
+    if let Some(cache_store) = capability_catalog_cache_store() {
+        if let Err(error) = cache_store
+            .invalidate_tag(
+                CAPABILITY_CATALOG_CACHE_NAMESPACE,
+                CAPABILITY_CATALOG_CACHE_TAG_ALL_MODELS,
+            )
+            .await
+        {
+            eprintln!("capability catalog cache invalidation failed: {error}");
+        }
+    }
+}
+
+fn capability_catalog_list_cache_key(tenant_id: &str, project_id: &str) -> String {
+    format!("{tenant_id}|{project_id}|list")
+}
+
+fn capability_catalog_model_cache_key(tenant_id: &str, project_id: &str, model_id: &str) -> String {
+    format!("{tenant_id}|{project_id}|model|{model_id}")
 }
 
 fn routing_decision_cache_key(
     tenant_id: &str,
     project_id: Option<&str>,
+    api_key_group_id: Option<&str>,
     capability: &str,
     route_key: &str,
     requested_region: Option<&str>,
 ) -> String {
     format!(
-        "{tenant_id}|{}|{capability}|{route_key}|{}",
+        "{tenant_id}|{}|{}|{capability}|{route_key}|{}",
         project_id.unwrap_or_default(),
+        api_key_group_id.unwrap_or_default(),
         requested_region.unwrap_or_default()
     )
 }
 
-fn cache_routing_decision(
+async fn cache_routing_decision(
     tenant_id: &str,
     project_id: Option<&str>,
+    api_key_group_id: Option<&str>,
     capability: &str,
     route_key: &str,
     requested_region: Option<&str>,
@@ -431,20 +586,36 @@ fn cache_routing_decision(
     let key = routing_decision_cache_key(
         tenant_id,
         project_id,
+        api_key_group_id,
         capability,
         route_key,
         requested_region,
     );
-    let mut cache = match routing_decision_cache().lock() {
-        Ok(cache) => cache,
-        Err(poisoned) => poisoned.into_inner(),
+    let payload = match serde_json::to_vec(decision) {
+        Ok(payload) => payload,
+        Err(error) => {
+            eprintln!("routing decision cache serialization failed: {error}");
+            return;
+        }
     };
-    cache.insert(key, decision.clone());
+    if let Err(error) = routing_decision_cache_store()
+        .put(
+            ROUTING_DECISION_CACHE_NAMESPACE,
+            &key,
+            payload,
+            Some(ROUTING_DECISION_CACHE_TTL_MS),
+            &[],
+        )
+        .await
+    {
+        eprintln!("routing decision cache write failed: {error}");
+    }
 }
 
-fn take_cached_routing_decision(
+async fn take_cached_routing_decision(
     tenant_id: &str,
     project_id: Option<&str>,
+    api_key_group_id: Option<&str>,
     capability: &str,
     route_key: &str,
     requested_region: Option<&str>,
@@ -452,15 +623,35 @@ fn take_cached_routing_decision(
     let key = routing_decision_cache_key(
         tenant_id,
         project_id,
+        api_key_group_id,
         capability,
         route_key,
         requested_region,
     );
-    let mut cache = match routing_decision_cache().lock() {
-        Ok(cache) => cache,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    cache.remove(&key)
+    let cache_store = routing_decision_cache_store();
+    let entry = match cache_store
+        .get(ROUTING_DECISION_CACHE_NAMESPACE, &key)
+        .await
+    {
+        Ok(entry) => entry,
+        Err(error) => {
+            eprintln!("routing decision cache read failed: {error}");
+            return None;
+        }
+    }?;
+    if let Err(error) = cache_store
+        .delete(ROUTING_DECISION_CACHE_NAMESPACE, &key)
+        .await
+    {
+        eprintln!("routing decision cache delete failed: {error}");
+    }
+    match serde_json::from_slice(entry.value()) {
+        Ok(decision) => Some(decision),
+        Err(error) => {
+            eprintln!("routing decision cache decode failed: {error}");
+            None
+        }
+    }
 }
 
 async fn select_gateway_route(
@@ -471,6 +662,7 @@ async fn select_gateway_route(
     route_key: &str,
 ) -> Result<RoutingDecision> {
     let requested_region = current_request_routing_region();
+    let api_key_group_id = current_request_api_key_group_id();
     let decision = select_route_with_store_context(
         store,
         capability,
@@ -478,17 +670,20 @@ async fn select_gateway_route(
         RouteSelectionContext::new(RoutingDecisionSource::Gateway)
             .with_tenant_id_option(Some(tenant_id))
             .with_project_id_option(project_id)
+            .with_api_key_group_id_option(api_key_group_id.as_deref())
             .with_requested_region_option(requested_region.as_deref()),
     )
     .await?;
     cache_routing_decision(
         tenant_id,
         project_id,
+        api_key_group_id.as_deref(),
         capability,
         route_key,
         requested_region.as_deref(),
         &decision,
-    );
+    )
+    .await;
     Ok(decision)
 }
 
@@ -499,13 +694,11 @@ pub async fn planned_execution_provider_id_for_route(
     capability: &str,
     route_key: &str,
 ) -> Result<String> {
-    Ok(
-        planned_execution_usage_context_for_route(
-            store, tenant_id, project_id, capability, route_key,
-        )
-        .await?
-        .provider_id,
+    Ok(planned_execution_usage_context_for_route(
+        store, tenant_id, project_id, capability, route_key,
     )
+    .await?
+    .provider_id)
 }
 
 pub async fn planned_execution_usage_context_for_route(
@@ -516,13 +709,17 @@ pub async fn planned_execution_usage_context_for_route(
     route_key: &str,
 ) -> Result<PlannedExecutionUsageContext> {
     let requested_region = current_request_routing_region();
+    let api_key_group_id = current_request_api_key_group_id();
     let decision = match take_cached_routing_decision(
         tenant_id,
         Some(project_id),
+        api_key_group_id.as_deref(),
         capability,
         route_key,
         requested_region.as_deref(),
-    ) {
+    )
+    .await
+    {
         Some(decision) => decision,
         None => {
             select_route_with_store_context(
@@ -532,6 +729,7 @@ pub async fn planned_execution_usage_context_for_route(
                 RouteSelectionContext::new(RoutingDecisionSource::Gateway)
                     .with_tenant_id_option(Some(tenant_id))
                     .with_project_id_option(Some(project_id))
+                    .with_api_key_group_id_option(api_key_group_id.as_deref())
                     .with_requested_region_option(requested_region.as_deref()),
             )
             .await?
@@ -545,6 +743,10 @@ pub async fn planned_execution_usage_context_for_route(
         return Ok(PlannedExecutionUsageContext {
             provider_id: LOCAL_PROVIDER_ID.to_owned(),
             channel_id: None,
+            api_key_group_id,
+            applied_routing_profile_id: decision.applied_routing_profile_id,
+            compiled_routing_snapshot_id: decision.compiled_routing_snapshot_id,
+            fallback_reason: decision.fallback_reason,
             latency_ms: selected_assessment.and_then(|assessment| assessment.latency_ms),
             reference_amount: selected_assessment.and_then(|assessment| assessment.cost),
         });
@@ -555,6 +757,10 @@ pub async fn planned_execution_usage_context_for_route(
         return Ok(PlannedExecutionUsageContext {
             provider_id: target.provider_id,
             channel_id: Some(provider.channel_id),
+            api_key_group_id,
+            applied_routing_profile_id: decision.applied_routing_profile_id,
+            compiled_routing_snapshot_id: decision.compiled_routing_snapshot_id,
+            fallback_reason: decision.fallback_reason,
             latency_ms: selected_assessment.and_then(|assessment| assessment.latency_ms),
             reference_amount: selected_assessment.and_then(|assessment| assessment.cost),
         });
@@ -569,6 +775,10 @@ pub async fn planned_execution_usage_context_for_route(
         Ok(PlannedExecutionUsageContext {
             provider_id: target.provider_id,
             channel_id: Some(provider.channel_id),
+            api_key_group_id,
+            applied_routing_profile_id: decision.applied_routing_profile_id,
+            compiled_routing_snapshot_id: decision.compiled_routing_snapshot_id,
+            fallback_reason: decision.fallback_reason,
             latency_ms: selected_assessment.and_then(|assessment| assessment.latency_ms),
             reference_amount: selected_assessment.and_then(|assessment| assessment.cost),
         })
@@ -576,6 +786,10 @@ pub async fn planned_execution_usage_context_for_route(
         Ok(PlannedExecutionUsageContext {
             provider_id: LOCAL_PROVIDER_ID.to_owned(),
             channel_id: Some(provider.channel_id),
+            api_key_group_id,
+            applied_routing_profile_id: decision.applied_routing_profile_id,
+            compiled_routing_snapshot_id: decision.compiled_routing_snapshot_id,
+            fallback_reason: decision.fallback_reason,
             latency_ms: selected_assessment.and_then(|assessment| assessment.latency_ms),
             reference_amount: selected_assessment.and_then(|assessment| assessment.cost),
         })
@@ -594,8 +808,27 @@ where
         .await
 }
 
+pub async fn with_request_api_key_group_id<T, F>(api_key_group_id: Option<String>, future: F) -> T
+where
+    F: Future<Output = T>,
+{
+    REQUEST_API_KEY_GROUP_ID
+        .scope(
+            api_key_group_id.and_then(|group_id| normalize_api_key_group_id(&group_id)),
+            future,
+        )
+        .await
+}
+
 pub fn current_request_routing_region() -> Option<String> {
     REQUEST_ROUTING_REGION.try_with(Clone::clone).ok().flatten()
+}
+
+pub fn current_request_api_key_group_id() -> Option<String> {
+    REQUEST_API_KEY_GROUP_ID
+        .try_with(Clone::clone)
+        .ok()
+        .flatten()
 }
 
 fn normalize_routing_region(region: &str) -> Option<String> {
@@ -604,6 +837,15 @@ fn normalize_routing_region(region: &str) -> Option<String> {
         None
     } else {
         Some(normalized)
+    }
+}
+
+fn normalize_api_key_group_id(api_key_group_id: &str) -> Option<String> {
+    let normalized = api_key_group_id.trim();
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized.to_owned())
     }
 }
 
@@ -4565,6 +4807,158 @@ pub async fn relay_list_vector_store_file_batch_files_from_store(
     .await
 }
 
+pub async fn relay_music_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    project_id: &str,
+    request: &CreateMusicRequest,
+) -> Result<Option<Value>> {
+    let decision = select_gateway_route(store, tenant_id, Some(project_id), "music", &request.model)
+        .await?;
+    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
+        return Ok(None);
+    };
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request_for_provider(store, &provider, &api_key, ProviderRequest::Music(request))
+        .await
+}
+
+pub async fn relay_list_music_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    project_id: &str,
+) -> Result<Option<Value>> {
+    let decision = select_gateway_route(store, tenant_id, Some(project_id), "music", "music").await?;
+    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
+        return Ok(None);
+    };
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request_for_provider(store, &provider, &api_key, ProviderRequest::MusicList)
+        .await
+}
+
+pub async fn relay_get_music_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    project_id: &str,
+    music_id: &str,
+) -> Result<Option<Value>> {
+    let decision = select_gateway_route(store, tenant_id, Some(project_id), "music", music_id).await?;
+    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
+        return Ok(None);
+    };
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request_for_provider(
+        store,
+        &provider,
+        &api_key,
+        ProviderRequest::MusicRetrieve(music_id),
+    )
+    .await
+}
+
+pub async fn relay_delete_music_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    project_id: &str,
+    music_id: &str,
+) -> Result<Option<Value>> {
+    let decision = select_gateway_route(store, tenant_id, Some(project_id), "music", music_id).await?;
+    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
+        return Ok(None);
+    };
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request_for_provider(
+        store,
+        &provider,
+        &api_key,
+        ProviderRequest::MusicDelete(music_id),
+    )
+    .await
+}
+
+pub async fn relay_music_content_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    project_id: &str,
+    music_id: &str,
+) -> Result<Option<ProviderStreamOutput>> {
+    let decision = select_gateway_route(store, tenant_id, Some(project_id), "music", music_id).await?;
+    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
+        return Ok(None);
+    };
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_stream_provider_request_for_provider(
+        store,
+        &provider,
+        &api_key,
+        ProviderRequest::MusicContent(music_id),
+    )
+    .await
+}
+
+pub async fn relay_music_lyrics_from_store(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    project_id: &str,
+    request: &CreateMusicLyricsRequest,
+) -> Result<Option<Value>> {
+    let decision = select_gateway_route(store, tenant_id, Some(project_id), "music", "lyrics").await?;
+    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
+        return Ok(None);
+    };
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
+    else {
+        return Ok(None);
+    };
+
+    execute_json_provider_request_for_provider(
+        store,
+        &provider,
+        &api_key,
+        ProviderRequest::MusicLyrics(request),
+    )
+    .await
+}
+
 pub async fn relay_video_from_store(
     store: &dyn AdminStore,
     secret_manager: &CredentialSecretManager,
@@ -5417,6 +5811,77 @@ pub fn create_upload(
     ))
 }
 
+pub fn create_music(
+    _tenant_id: &str,
+    _project_id: &str,
+    request: &CreateMusicRequest,
+) -> Result<MusicTracksResponse> {
+    Ok(MusicTracksResponse::new(vec![
+        MusicObject::new("music_1")
+            .with_status("completed")
+            .with_model(&request.model)
+            .with_title(request.title.clone().unwrap_or_else(|| "SDKWork Track".to_owned()))
+            .with_audio_url("https://example.com/music.mp3")
+            .with_lyrics(
+                request
+                    .lyrics
+                    .clone()
+                    .unwrap_or_else(|| "We rise with the skyline".to_owned()),
+            )
+            .with_duration_seconds(request.duration_seconds.unwrap_or(123.0)),
+    ]))
+}
+
+pub fn list_music(_tenant_id: &str, _project_id: &str) -> Result<MusicTracksResponse> {
+    Ok(MusicTracksResponse::new(vec![
+        MusicObject::new("music_1")
+            .with_status("completed")
+            .with_model("suno-v4")
+            .with_title("SDKWork Track")
+            .with_audio_url("https://example.com/music.mp3")
+            .with_duration_seconds(123.0),
+    ]))
+}
+
+pub fn get_music(_tenant_id: &str, _project_id: &str, music_id: &str) -> Result<MusicObject> {
+    Ok(MusicObject::new(music_id)
+        .with_status("completed")
+        .with_model("suno-v4")
+        .with_title("SDKWork Track")
+        .with_audio_url("https://example.com/music.mp3")
+        .with_duration_seconds(123.0))
+}
+
+pub fn delete_music(
+    _tenant_id: &str,
+    _project_id: &str,
+    music_id: &str,
+) -> Result<DeleteMusicResponse> {
+    Ok(DeleteMusicResponse::deleted(music_id))
+}
+
+pub fn music_content(_tenant_id: &str, _project_id: &str, _music_id: &str) -> Result<Vec<u8>> {
+    Ok(vec![0x49, 0x44, 0x33, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x21])
+}
+
+pub fn create_music_lyrics(
+    _tenant_id: &str,
+    _project_id: &str,
+    request: &CreateMusicLyricsRequest,
+) -> Result<MusicLyricsObject> {
+    Ok(MusicLyricsObject::new(
+        "lyrics_1",
+        "completed",
+        &request.prompt,
+    )
+    .with_title(
+        request
+            .title
+            .clone()
+            .unwrap_or_else(|| "SDKWork Lyrics".to_owned()),
+    ))
+}
+
 pub fn create_video(
     _tenant_id: &str,
     _project_id: &str,
@@ -6219,7 +6684,12 @@ pub fn builtin_extension_host() -> ExtensionHost {
             ExtensionKind::Provider,
             "0.1.0",
             ExtensionRuntime::Builtin,
-        ),
+        )
+        .with_supported_modality(ExtensionModality::Image)
+        .with_supported_modality(ExtensionModality::Audio)
+        .with_supported_modality(ExtensionModality::Video)
+        .with_supported_modality(ExtensionModality::File)
+        .with_supported_modality(ExtensionModality::Embedding),
         "openai",
         |base_url| Box::new(OpenAiProviderAdapter::new(base_url)),
     ));
@@ -6229,7 +6699,12 @@ pub fn builtin_extension_host() -> ExtensionHost {
             ExtensionKind::Provider,
             "0.1.0",
             ExtensionRuntime::Builtin,
-        ),
+        )
+        .with_supported_modality(ExtensionModality::Image)
+        .with_supported_modality(ExtensionModality::Audio)
+        .with_supported_modality(ExtensionModality::Video)
+        .with_supported_modality(ExtensionModality::File)
+        .with_supported_modality(ExtensionModality::Embedding),
         "openrouter",
         |base_url| Box::new(OpenRouterProviderAdapter::new(base_url)),
     ));
@@ -6239,7 +6714,12 @@ pub fn builtin_extension_host() -> ExtensionHost {
             ExtensionKind::Provider,
             "0.1.0",
             ExtensionRuntime::Builtin,
-        ),
+        )
+        .with_supported_modality(ExtensionModality::Image)
+        .with_supported_modality(ExtensionModality::Audio)
+        .with_supported_modality(ExtensionModality::Video)
+        .with_supported_modality(ExtensionModality::File)
+        .with_supported_modality(ExtensionModality::Embedding),
         "ollama",
         |base_url| Box::new(OllamaProviderAdapter::new(base_url)),
     ));
@@ -6615,14 +7095,15 @@ async fn execute_json_provider_request_for_provider_with_options(
         return Ok(None);
     }
 
-    execute_json_provider_request_with_options(
-        &descriptor.runtime_key,
-        descriptor.base_url,
-        &descriptor.api_key,
-        request,
-        options,
-    )
-    .await
+    let host = build_extension_host_from_store(store).await?;
+    let Some(adapter) = host.resolve_provider(&descriptor.runtime_key, descriptor.base_url) else {
+        return Ok(None);
+    };
+
+    let response = adapter
+        .execute_with_options(&descriptor.api_key, request, options)
+        .await?;
+    Ok(response.into_json())
 }
 
 async fn execute_stream_provider_request_for_provider(
@@ -6652,14 +7133,15 @@ async fn execute_stream_provider_request_for_provider_with_options(
         return Ok(None);
     }
 
-    execute_stream_provider_request_with_options(
-        &descriptor.runtime_key,
-        descriptor.base_url,
-        &descriptor.api_key,
-        request,
-        options,
-    )
-    .await
+    let host = build_extension_host_from_store(store).await?;
+    let Some(adapter) = host.resolve_provider(&descriptor.runtime_key, descriptor.base_url) else {
+        return Ok(None);
+    };
+
+    let response = adapter
+        .execute_with_options(&descriptor.api_key, request, options)
+        .await?;
+    Ok(response.into_stream())
 }
 
 async fn execute_json_provider_request(
@@ -6803,5 +7285,173 @@ fn normalize_local_speech_format(format: &str) -> Result<&'static str> {
         "flac" => Ok("flac"),
         "pcm" => Ok("pcm"),
         _ => bail!("unsupported local speech response_format: {format}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        cache_routing_decision, configure_route_decision_cache_store,
+        configured_extension_discovery_policy, current_request_api_key_group_id,
+        routing_decision_cache_key, take_cached_routing_decision, with_request_api_key_group_id,
+        with_request_routing_region, RoutingDecision, ROUTING_DECISION_CACHE_NAMESPACE,
+    };
+    use sdkwork_api_cache_core::CacheStore;
+    use sdkwork_api_cache_memory::MemoryCacheStore;
+    use std::path::Path;
+    use std::sync::Arc;
+
+    #[test]
+    fn configured_extension_discovery_policy_reads_native_dynamic_env_configuration() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "sdkwork-app-gateway-policy-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("unix time")
+                .as_millis()
+        ));
+        std::fs::create_dir_all(&temp_root).unwrap();
+        let _guard = ExtensionEnvGuard::set(
+            &[
+                (
+                    "SDKWORK_EXTENSION_PATHS",
+                    std::env::join_paths([temp_root.as_path()])
+                        .unwrap()
+                        .to_string_lossy()
+                        .as_ref(),
+                ),
+                ("SDKWORK_EXTENSION_ENABLE_CONNECTOR_EXTENSIONS", "false"),
+                ("SDKWORK_EXTENSION_ENABLE_NATIVE_DYNAMIC_EXTENSIONS", "true"),
+                (
+                    "SDKWORK_EXTENSION_REQUIRE_SIGNATURE_FOR_NATIVE_DYNAMIC_EXTENSIONS",
+                    "true",
+                ),
+            ],
+            &temp_root,
+        );
+
+        let policy = configured_extension_discovery_policy();
+
+        assert_eq!(policy.search_paths, vec![temp_root]);
+        assert!(!policy.enable_connector_extensions);
+        assert!(policy.enable_native_dynamic_extensions);
+        assert!(policy.require_signed_native_dynamic_extensions);
+    }
+
+    #[tokio::test]
+    async fn request_api_key_group_scope_exposes_group_id_inside_gateway_execution() {
+        let value = with_request_api_key_group_id(Some("group-live".to_owned()), async {
+            current_request_api_key_group_id()
+        })
+        .await;
+
+        assert_eq!(value.as_deref(), Some("group-live"));
+        assert_eq!(current_request_api_key_group_id(), None);
+    }
+
+    #[tokio::test]
+    async fn route_decision_cache_uses_configured_cache_store_and_consumes_entries_once() {
+        let cache_store: Arc<dyn CacheStore> = Arc::new(MemoryCacheStore::default());
+        configure_route_decision_cache_store(cache_store.clone());
+
+        with_request_routing_region(Some("us-east".to_owned()), async {
+            let decision = RoutingDecision::new(
+                "provider-openrouter",
+                vec!["provider-openrouter".to_owned()],
+            );
+            let cache_key = routing_decision_cache_key(
+                "tenant-1",
+                Some("project-1"),
+                Some("group-1"),
+                "chat",
+                "gpt-4.1",
+                Some("us-east"),
+            );
+
+            cache_routing_decision(
+                "tenant-1",
+                Some("project-1"),
+                Some("group-1"),
+                "chat",
+                "gpt-4.1",
+                Some("us-east"),
+                &decision,
+            )
+            .await;
+
+            assert!(cache_store
+                .get(ROUTING_DECISION_CACHE_NAMESPACE, &cache_key)
+                .await
+                .unwrap()
+                .is_some());
+
+            let cached = take_cached_routing_decision(
+                "tenant-1",
+                Some("project-1"),
+                Some("group-1"),
+                "chat",
+                "gpt-4.1",
+                Some("us-east"),
+            )
+            .await
+            .expect("cached routing decision");
+            let second = take_cached_routing_decision(
+                "tenant-1",
+                Some("project-1"),
+                Some("group-1"),
+                "chat",
+                "gpt-4.1",
+                Some("us-east"),
+            )
+            .await;
+
+            assert_eq!(cached.selected_provider_id, "provider-openrouter");
+            assert!(second.is_none());
+        })
+        .await;
+    }
+
+    struct ExtensionEnvGuard {
+        previous: Vec<(&'static str, Option<String>)>,
+        cleanup_dir: std::path::PathBuf,
+    }
+
+    impl ExtensionEnvGuard {
+        fn set(overrides: &[(&'static str, &str)], cleanup_dir: &Path) -> Self {
+            let keys = [
+                "SDKWORK_EXTENSION_PATHS",
+                "SDKWORK_EXTENSION_ENABLE_CONNECTOR_EXTENSIONS",
+                "SDKWORK_EXTENSION_ENABLE_NATIVE_DYNAMIC_EXTENSIONS",
+                "SDKWORK_EXTENSION_REQUIRE_SIGNATURE_FOR_NATIVE_DYNAMIC_EXTENSIONS",
+            ];
+            let previous = keys
+                .into_iter()
+                .map(|key| (key, std::env::var(key).ok()))
+                .collect::<Vec<_>>();
+
+            for key in keys {
+                std::env::remove_var(key);
+            }
+            for (key, value) in overrides {
+                std::env::set_var(key, value);
+            }
+
+            Self {
+                previous,
+                cleanup_dir: cleanup_dir.to_path_buf(),
+            }
+        }
+    }
+
+    impl Drop for ExtensionEnvGuard {
+        fn drop(&mut self) {
+            for (key, value) in &self.previous {
+                match value {
+                    Some(value) => std::env::set_var(key, value),
+                    None => std::env::remove_var(key),
+                }
+            }
+            let _ = std::fs::remove_dir_all(&self.cleanup_dir);
+        }
     }
 }

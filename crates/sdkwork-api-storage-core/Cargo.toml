@@ -20,5 +20,8 @@ sdkwork-api-domain-usage = { path = "../sdkwork-api-domain-usage" }
 sdkwork-api-extension-core = { path = "../sdkwork-api-extension-core" }
 sdkwork-api-secret-core = { path = "../sdkwork-api-secret-core" }
 
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
 [lib]
 path = "src/lib.rs"

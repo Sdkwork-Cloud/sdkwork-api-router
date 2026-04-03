@@ -55,6 +55,31 @@ SDKWork supports both standalone and embedded runtime shapes.
 
 For the runtime deep dive, see [Runtime Modes Deep Dive](/architecture/runtime-modes).
 
+## Plugin-First Direction
+
+The current architecture is evolving toward a plugin-first standard rather than a fixed product core with a few special-case extension points.
+
+That direction applies to:
+
+- infrastructure drivers
+  - storage
+  - cache
+  - secret backends
+- runtime packages
+  - builtin providers
+  - connector runtimes
+  - native-dynamic runtimes
+- policy engines
+  - routing
+  - quota
+  - billing
+- product modules
+  - admin features
+  - portal features
+  - media workflow surfaces
+
+The detailed target standard lives in [Plugin-First Architecture](/architecture/plugin-first-architecture).
+
 ## Configuration and Secret Boundaries
 
 Configuration is loaded through `sdkwork-api-config` and then applied to the process and runtime handles.
@@ -131,3 +156,4 @@ The admin control plane additionally owns:
 - config and observability:
   - [Configuration](/operations/configuration)
   - [Health and Metrics](/operations/health-and-metrics)
+  - [Plugin-First Architecture](/architecture/plugin-first-architecture)

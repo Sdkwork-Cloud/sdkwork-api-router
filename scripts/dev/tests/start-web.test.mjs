@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 
 import {
   parseWebArgs,
@@ -77,4 +79,26 @@ test('webHostEnv uses bare host:port upstreams and honors overrides', () => {
   assert.doesNotMatch(env.SDKWORK_ADMIN_PROXY_TARGET, /^http:\/\//);
   assert.doesNotMatch(env.SDKWORK_PORTAL_PROXY_TARGET, /^http:\/\//);
   assert.doesNotMatch(env.SDKWORK_GATEWAY_PROXY_TARGET, /^http:\/\//);
+});
+
+test('preview launchers can reuse existing dist output on Windows spawn EPERM build failures', () => {
+  const scriptPaths = [
+    path.join(import.meta.dirname, '..', 'start-admin.mjs'),
+    path.join(import.meta.dirname, '..', 'start-portal.mjs'),
+    path.join(import.meta.dirname, '..', 'start-web.mjs'),
+  ];
+
+  for (const scriptPath of scriptPaths) {
+    const script = readFileSync(scriptPath, 'utf8');
+    assert.match(script, /shouldReuseExistingFrontendDist/);
+    assert.match(script, /reusing existing dist/i);
+  }
+});
+
+test('start-web only emits raw spawn error stacks when the Windows EPERM fallback cannot recover', () => {
+  const script = readFileSync(path.join(import.meta.dirname, '..', 'start-web.mjs'), 'utf8');
+
+  assert.match(script, /const reuseExistingDist = shouldReuseExistingFrontendDist/);
+  assert.match(script, /if \(result\.error && !reuseExistingDist\)/);
+  assert.match(script, /console\.warn\(\`\[start-web\] \$\{label\} failed with Windows spawn EPERM; reusing existing dist at \$\{distDir\}`\)/);
 });

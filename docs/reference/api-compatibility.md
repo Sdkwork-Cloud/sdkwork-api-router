@@ -25,6 +25,7 @@ Currently implemented gateway families include:
 - `/v1/uploads`
 - `/v1/audio/*`
 - `/v1/images/*`
+- `/v1/music`
 - `/v1/assistants`
 - `/v1/threads`
 - `/v1/conversations`
@@ -34,6 +35,8 @@ Currently implemented gateway families include:
 - `/v1/webhooks`
 - `/v1/evals`
 - `/v1/videos`
+
+The `music` family is exposed as resource-oriented `/v1/music*` routes instead of provider-specific transport paths, so routing, billing, and plugin adapters stay aligned with the same capability-first gateway model used by images and videos.
 
 The control plane also exposes:
 

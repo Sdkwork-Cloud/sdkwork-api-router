@@ -15,12 +15,15 @@ test('remaining portal workspaces keep compact controls while preserving focused
   const creditsPage = read('packages/sdkwork-router-portal-credits/src/pages/index.tsx');
   const accountPage = read('packages/sdkwork-router-portal-account/src/pages/index.tsx');
 
-  assert.match(usagePage, /MetricCard/);
+  assert.match(usagePage, /StatCard/);
   assert.match(usagePage, /Total requests/);
   assert.match(usagePage, /Average latency/);
   assert.match(usagePage, /data-slot="portal-usage-filter-bar"/);
-  assert.match(usagePage, /Manage keys/);
-  assert.match(usagePage, /Review billing/);
+  assert.match(usagePage, /data-slot="portal-usage-table"/);
+  assert.match(usagePage, /data-slot="portal-usage-pagination"/);
+  assert.doesNotMatch(usagePage, /Manage keys/);
+  assert.doesNotMatch(usagePage, /Review billing/);
+  assert.doesNotMatch(usagePage, /WorkspacePanel/);
   assert.doesNotMatch(usagePage, /ToolbarDisclosure/);
   assert.doesNotMatch(usagePage, /ToolbarSearchField/);
   assert.doesNotMatch(usagePage, /<Tabs/);
@@ -28,7 +31,7 @@ test('remaining portal workspaces keep compact controls while preserving focused
 
   assert.match(billingPage, /data-slot="portal-billing-toolbar"/);
   assert.match(billingPage, /<Dialog/);
-  assert.match(billingPage, /Open credits/);
+  assert.match(billingPage, /Open redeem/);
   assert.match(billingPage, /Open usage/);
   assert.match(billingPage, /Open account/);
   assert.match(billingPage, /Checkout preview/);
@@ -38,21 +41,32 @@ test('remaining portal workspaces keep compact controls while preserving focused
   assert.match(billingPage, /Pending payment queue/);
   assert.doesNotMatch(billingPage, /<Tabs/);
 
-  assert.match(creditsPage, /portal-credits-toolbar/);
-  assert.match(creditsPage, /MetricCard/);
-  assert.match(creditsPage, /Eligible offers/);
-  assert.match(creditsPage, /Potential bonus units/);
-  assert.match(creditsPage, /Ledger entries/);
-  assert.match(creditsPage, /Quota pressure/);
-  assert.match(creditsPage, /<Dialog/);
-  assert.match(creditsPage, /Redeem credits/);
-  assert.match(creditsPage, /Search offers or ledger/);
-  assert.match(creditsPage, /Offer state/);
+  assert.match(creditsPage, /data-slot="portal-redeem-entry-card"/);
+  assert.match(creditsPage, /data-slot="portal-redeem-invite-card"/);
+  assert.match(creditsPage, /data-slot="portal-redeem-history-table"/);
+  assert.match(creditsPage, /Redeem/);
+  assert.match(creditsPage, /Redeem code/);
+  assert.match(creditsPage, /Redeem history/);
+  assert.match(creditsPage, /Invite rewards/);
+  assert.match(creditsPage, /Copy invite link/);
+  assert.match(creditsPage, /Copy invite code/);
+  assert.match(
+    creditsPage,
+    /data-slot="portal-redeem-page"[\s\S]*?data-slot="portal-redeem-entry-card"[\s\S]*?data-slot="portal-redeem-invite-card"[\s\S]*?data-slot="portal-redeem-history-table"/,
+  );
   assert.doesNotMatch(creditsPage, /<Tabs/);
+  assert.doesNotMatch(creditsPage, /portal-redeem-toolbar/);
+  assert.doesNotMatch(creditsPage, /portal-redeem-filter-bar/);
+  assert.doesNotMatch(creditsPage, /portal-redeem-invite-filter-bar/);
+  assert.doesNotMatch(creditsPage, /portal-redeem-invite-table/);
 
   assert.match(accountPage, /portal-account-toolbar/);
-  assert.match(accountPage, /Search ledger/);
-  assert.doesNotMatch(accountPage, /<Tabs/);
+  assert.match(accountPage, /Search account history/);
+  assert.match(accountPage, /<Tabs/);
+  assert.match(accountPage, /TabsTrigger value="all"/);
+  assert.match(accountPage, /portal-account-history-header/);
+  assert.doesNotMatch(accountPage, /Open credits/);
+  assert.doesNotMatch(accountPage, /Review billing/);
 });
 
 test('usage contracts and financial evidence stay aligned with real server data', () => {
@@ -76,58 +90,90 @@ test('usage contracts and financial evidence stay aligned with real server data'
   assert.match(readme, /sdkwork-router-portal-routing/);
   assert.match(readme, /sdkwork-router-portal-user/);
   assert.match(readme, /User[\s\S]*profile and password rotation/);
-  assert.match(readme, /Account[\s\S]*cash balance, credits, billing ledger, and runway posture/);
+  assert.match(readme, /Account[\s\S]*cash balance, billing ledger, and runway posture/);
 });
 
 test('portal toolbars keep search first and pin actions to one right-aligned row', () => {
   const commons = read('packages/sdkwork-router-portal-commons/src/index.tsx');
+  const frameworkForm = read('packages/sdkwork-router-portal-commons/src/framework/form.tsx');
   const usagePage = read('packages/sdkwork-router-portal-usage/src/pages/index.tsx');
   const accountPage = read('packages/sdkwork-router-portal-account/src/pages/index.tsx');
   const billingPage = read('packages/sdkwork-router-portal-billing/src/pages/index.tsx');
   const creditsPage = read('packages/sdkwork-router-portal-credits/src/pages/index.tsx');
   const gatewayPage = read('packages/sdkwork-router-portal-gateway/src/pages/index.tsx');
   const routingPage = read('packages/sdkwork-router-portal-routing/src/pages/index.tsx');
-  const apiKeysToolbar = read(
-    'packages/sdkwork-router-portal-api-keys/src/components/PortalApiKeyManagerToolbar.tsx',
-  );
+  const apiKeysPage = read('packages/sdkwork-router-portal-api-keys/src/pages/index.tsx');
 
-  assert.match(commons, /export function ToolbarInline/);
+  assert.doesNotMatch(commons, /export \* from '\.\/framework'/);
+  assert.doesNotMatch(frameworkForm, /export function ToolbarInline/);
+  assert.doesNotMatch(frameworkForm, /export function ToolbarSearchField/);
+  assert.match(frameworkForm, /FilterBar/);
+  assert.match(frameworkForm, /FilterBarSection/);
+  assert.match(frameworkForm, /FilterBarActions/);
 
   assert.match(
     usagePage,
-    /<ToolbarInline[\s\S]*?data-slot="portal-usage-filter-bar"[\s\S]*?<ToolbarField label=\{t\('API key'\)\}[\s\S]*?ml-auto flex shrink-0 items-center gap-2\.5 whitespace-nowrap/,
+    /<FilterBar[\s\S]*?data-slot="portal-usage-filter-bar"[\s\S]*?<FilterBarSection[\s\S]*?<FilterField[\s\S]*?label=\{t\('API key'\)\}[\s\S]*?<FilterBarActions/,
+  );
+  assert.match(
+    usagePage,
+    /data-slot="portal-usage-filter-bar"[\s\S]*?wrap=\{false\}/,
+  );
+  assert.match(
+    usagePage,
+    /data-slot="portal-usage-filter-bar"[\s\S]*?<FilterBarActions className="gap-2\.5 whitespace-nowrap shrink-0" wrap=\{false\}>/,
   );
   assert.match(
     accountPage,
-    /portal-account-toolbar[\s\S]*?<ToolbarInline[\s\S]*?<ToolbarSearchField[\s\S]*?ml-auto flex shrink-0 items-center gap-2\.5 whitespace-nowrap[\s\S]*?Open credits/,
+    /portal-account-history-header[\s\S]*?portal-account-history-tabs[\s\S]*?portal-account-toolbar[\s\S]*?<SearchInput/,
+  );
+  assert.doesNotMatch(accountPage, /portal-account-toolbar[\s\S]*?<FilterBar/);
+  assert.doesNotMatch(accountPage, /portal-account-toolbar[\s\S]*?<FilterBarActions/);
+  assert.match(
+    apiKeysPage,
+    /<FilterBar[\s\S]*?data-slot="portal-api-key-toolbar"[\s\S]*?<FilterBarSection[\s\S]*?<SearchInput[\s\S]*?placeholder=\{t\('Search API keys'\)\}[\s\S]*?<FilterBarSection[\s\S]*?<SelectTrigger[\s\S]*?<SelectValue placeholder=\{t\('Environment'\)\}[\s\S]*?<FilterBarActions[\s\S]*?Create API key/,
   );
   assert.match(
-    apiKeysToolbar,
-    /<ToolbarInline[\s\S]*?<ToolbarSearchField[\s\S]*?ml-auto flex shrink-0 items-center gap-2\.5 whitespace-nowrap[\s\S]*?Create API key/,
+    apiKeysPage,
+    /data-slot="portal-api-key-toolbar"[\s\S]*?wrap=\{false\}/,
   );
+  assert.match(
+    apiKeysPage,
+    /data-slot="portal-api-key-toolbar"[\s\S]*?<FilterBarSection className="min-w-0 flex-\[1_1_20rem\]" grow=\{false\} wrap=\{false\}>/,
+  );
+  assert.match(
+    apiKeysPage,
+    /data-slot="portal-api-key-toolbar"[\s\S]*?<FilterBarSection className="min-w-\[11rem\] shrink-0" grow=\{false\} wrap=\{false\}>/,
+  );
+  assert.match(
+    apiKeysPage,
+    /data-slot="portal-api-key-toolbar"[\s\S]*?<FilterBarActions className="gap-2\.5 whitespace-nowrap shrink-0" wrap=\{false\}>/,
+  );
+  assert.doesNotMatch(apiKeysPage, /data-slot="portal-api-key-status"/);
+  assert.doesNotMatch(apiKeysPage, /Open usage/);
+  assert.doesNotMatch(apiKeysPage, /Refresh inventory/);
   assert.match(
     billingPage,
-    /portal-billing-toolbar[\s\S]*?<ToolbarInline[\s\S]*?<ToolbarSearchField[\s\S]*?<ToolbarField[\s\S]*?label=\{t\('Order lane'\)\}[\s\S]*?ml-auto flex shrink-0 items-center gap-2\.5 whitespace-nowrap/,
+    /portal-billing-toolbar[\s\S]*?<FilterBar[\s\S]*?<FilterBarSection[\s\S]*?<FilterField[\s\S]*?label=\{t\('Search order lifecycle'\)\}[\s\S]*?<SearchInput[\s\S]*?placeholder=\{t\('Search order lifecycle'\)\}[\s\S]*?<FilterBarSection[\s\S]*?<FilterField[\s\S]*?label=\{t\('Order lane'\)\}[\s\S]*?<FilterBarActions/,
   );
-  assert.match(
-    creditsPage,
-    /portal-credits-toolbar[\s\S]*?<ToolbarInline[\s\S]*?<ToolbarSearchField[\s\S]*?<ToolbarField[\s\S]*?label=\{t\('View mode'\)\}[\s\S]*?<ToolbarField[\s\S]*?label=\{t\('Offer state'\)\}[\s\S]*?ml-auto flex shrink-0 items-center gap-2\.5 whitespace-nowrap/,
-  );
+  assert.doesNotMatch(creditsPage, /data-slot="portal-redeem-filter-bar"/);
+  assert.doesNotMatch(creditsPage, /data-slot="portal-redeem-invite-filter-bar"/);
+  assert.doesNotMatch(creditsPage, /<FilterBar/);
   assert.match(
     gatewayPage,
-    /<ToolbarInline[\s\S]*?data-slot="portal-gateway-filter-bar"[\s\S]*?<ToolbarSearchField[\s\S]*?label=\{t\('Search gateway evidence'\)\}[\s\S]*?placeholder=\{t\('Search gateway evidence'\)\}[\s\S]*?<ToolbarField label=\{t\('Workbench lane'\)\}[\s\S]*?<ToolbarField label=\{t\('Operational focus'\)\}[\s\S]*?ml-auto flex shrink-0 items-center gap-2\.5 whitespace-nowrap/,
+    /<FilterBar[\s\S]*?data-slot="portal-gateway-filter-bar"[\s\S]*?<FilterBarSection[\s\S]*?<FilterField[\s\S]*?label=\{t\('Search gateway evidence'\)\}[\s\S]*?<SearchInput[\s\S]*?placeholder=\{t\('Search gateway evidence'\)\}[\s\S]*?<FilterBarSection[\s\S]*?<FilterField[\s\S]*?label=\{t\('Workbench lane'\)\}[\s\S]*?<FilterBarSection[\s\S]*?<FilterField[\s\S]*?label=\{t\('Operational focus'\)\}[\s\S]*?<FilterBarActions/,
   );
   assert.match(
     routingPage,
-    /<ToolbarInline[\s\S]*?data-slot="portal-routing-filter-bar"[\s\S]*?<ToolbarSearchField[\s\S]*?label=\{t\('Search routing evidence'\)\}[\s\S]*?placeholder=\{t\('Search routing evidence'\)\}[\s\S]*?<ToolbarField label=\{t\('Workbench lane'\)\}[\s\S]*?<ToolbarField[\s\S]*?label=\{t\('Operational focus'\)\}[\s\S]*?ml-auto flex shrink-0 items-center gap-2\.5 whitespace-nowrap/,
+    /<FilterBar[\s\S]*?data-slot="portal-routing-filter-bar"[\s\S]*?<FilterBarSection[\s\S]*?<FilterField[\s\S]*?label=\{t\('Search routing evidence'\)\}[\s\S]*?<SearchInput[\s\S]*?placeholder=\{t\('Search routing evidence'\)\}[\s\S]*?<FilterBarSection[\s\S]*?<FilterField[\s\S]*?label=\{t\('Workbench lane'\)\}[\s\S]*?<FilterBarSection[\s\S]*?<FilterField[\s\S]*?label=\{t\('Operational focus'\)\}[\s\S]*?<FilterBarActions/,
   );
   assert.match(
     routingPage,
-    /data-slot="portal-routing-toolbar"[\s\S]*?className="ml-auto flex shrink-0 items-center gap-2\.5 whitespace-nowrap"/,
+    /data-slot="portal-routing-filter-bar"[\s\S]*?<FilterBarActions className="gap-2\.5 whitespace-nowrap"/,
   );
   assert.doesNotMatch(
     routingPage,
-    /data-slot="portal-routing-toolbar" className="flex flex-wrap gap-2"/,
+    /data-slot="portal-routing-filter-bar"[\s\S]*?ml-auto flex shrink-0 items-center gap-2\.5 whitespace-nowrap/,
   );
 });
 
@@ -137,13 +183,13 @@ test('routing and gateway workbench filters localize search and filter labels th
   const routingPage = read('packages/sdkwork-router-portal-routing/src/pages/index.tsx');
 
   assert.match(gatewayPage, /usePortalI18n/);
-  assert.match(gatewayPage, /label=\{t\('Search gateway evidence'\)\}/);
+  assert.match(gatewayPage, /SearchInput/);
   assert.match(gatewayPage, /placeholder=\{t\('Search gateway evidence'\)\}/);
   assert.match(gatewayPage, /label=\{t\('Workbench lane'\)\}/);
   assert.match(gatewayPage, /label=\{t\('Operational focus'\)\}/);
 
   assert.match(routingPage, /usePortalI18n/);
-  assert.match(routingPage, /label=\{t\('Search routing evidence'\)\}/);
+  assert.match(routingPage, /SearchInput/);
   assert.match(routingPage, /placeholder=\{t\('Search routing evidence'\)\}/);
   assert.match(routingPage, /label=\{t\('Workbench lane'\)\}/);
   assert.match(routingPage, /label=\{t\('Operational focus'\)\}/);
@@ -214,14 +260,19 @@ test('gateway workbench configuration and row statuses localize through shared p
   const gatewayPage = read('packages/sdkwork-router-portal-gateway/src/pages/index.tsx');
 
   assert.match(gatewayPage, /translatePortalText/);
-  assert.match(gatewayPage, /<Pill tone="seed">\{t\(config\.laneLabel\)\}<\/Pill>/);
-  assert.match(gatewayPage, /detail=\{t\(config\.detail\)\}/);
+  assert.match(
+    gatewayPage,
+    /<Badge variant="outline">\{t\(config\.laneLabel\)\}<\/Badge>/,
+  );
+  assert.match(gatewayPage, /description=\{t\(config\.detail\)\}/);
   assert.match(gatewayPage, /\{WORKBENCH_LANE_OPTIONS\.map\(\(option\) => \([\s\S]*?\{t\(option\.label\)\}/);
   assert.match(gatewayPage, /\{config\.focusOptions\.map\(\(option\) => \([\s\S]*?\{t\(option\.label\)\}/);
-  assert.match(gatewayPage, /label:\s*t\(config\.subjectLabel\)/);
-  assert.match(gatewayPage, /label:\s*t\(config\.scopeLabel\)/);
-  assert.match(gatewayPage, /label:\s*t\(config\.meterLabel\)/);
-  assert.match(gatewayPage, /label:\s*t\(config\.detailLabel\)/);
+  assert.match(gatewayPage, /header:\s*t\(config\.subjectLabel\)/);
+  assert.match(gatewayPage, /header:\s*t\(config\.scopeLabel\)/);
+  assert.match(gatewayPage, /header:\s*t\(config\.meterLabel\)/);
+  assert.match(gatewayPage, /header:\s*t\(config\.detailLabel\)/);
+  assert.match(gatewayPage, /cell:\s*\(row\)\s*=>\s*row\.subject/);
+  assert.match(gatewayPage, /cell:\s*\(row\)\s*=>\s*row\.scope/);
   assert.match(gatewayPage, /\{t\(config\.emptyTitle\)\}/);
   assert.match(gatewayPage, /\{t\(config\.emptyDetail\)\}/);
   assert.match(gatewayPage, /return translatePortalText\('Healthy'\)/);
@@ -239,18 +290,27 @@ test('gateway workbench configuration and row statuses localize through shared p
 
 test('portal form primitives keep a shadcn-style contract and portal settings flows stay on shared form shells', () => {
   const commons = read('packages/sdkwork-router-portal-commons/src/index.tsx');
-  const configCenter = read('packages/sdkwork-router-portal-core/src/components/ConfigCenter.tsx');
+  const frameworkEntry = read('packages/sdkwork-router-portal-commons/src/framework/entry.ts');
+  const frameworkForm = read('packages/sdkwork-router-portal-commons/src/framework/form.tsx');
+  const settingsCenter = read('packages/sdkwork-router-portal-core/src/components/PortalSettingsCenter.tsx');
   const routingPage = read('packages/sdkwork-router-portal-routing/src/pages/index.tsx');
+  const createForm = read(
+    'packages/sdkwork-router-portal-api-keys/src/components/PortalApiKeyCreateForm.tsx',
+  );
 
-  assert.match(commons, /file:border-0 file:bg-transparent file:text-sm file:font-medium/);
-  assert.match(commons, /disabled:cursor-not-allowed disabled:opacity-50/);
-  assert.match(commons, /appearance-none/);
-  assert.match(commons, /export function SearchInput/);
-  assert.match(commons, /paddingLeft:\s*['"]2\.75rem['"]/);
-  assert.match(configCenter, /FormField/);
-  assert.match(configCenter, /SearchInput/);
-  assert.doesNotMatch(configCenter, /<Search className="absolute left-3 top-1\/2/);
-  assert.doesNotMatch(configCenter, /<label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">/);
+  assert.doesNotMatch(commons, /export \* from '\.\/framework'/);
+  assert.match(frameworkEntry, /Input/);
+  assert.match(frameworkEntry, /Label/);
+  assert.match(frameworkForm, /SettingsField/);
+  assert.match(frameworkForm, /export function SearchInput/);
+  assert.doesNotMatch(frameworkForm, /export function FormField/);
+  assert.match(frameworkForm, /paddingLeft:\s*['"]2\.75rem['"]/);
+  assert.match(settingsCenter, /SettingsField/);
+  assert.match(settingsCenter, /SearchInput/);
+  assert.match(createForm, /SettingsField/);
+  assert.match(routingPage, /SettingsField/);
+  assert.doesNotMatch(settingsCenter, /<Search className="absolute left-3 top-1\/2/);
+  assert.doesNotMatch(settingsCenter, /<label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">/);
   assert.match(routingPage, /Label/);
   assert.doesNotMatch(routingPage, /<label className="flex items-center gap-3 text-sm font-medium text-zinc-700 dark:text-zinc-300">/);
 });

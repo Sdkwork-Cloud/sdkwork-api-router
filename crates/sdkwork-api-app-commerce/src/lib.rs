@@ -71,6 +71,41 @@ pub struct PortalRechargePack {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PortalRechargeOption {
+    pub id: String,
+    pub label: String,
+    pub amount_cents: u64,
+    pub amount_label: String,
+    pub granted_units: u64,
+    pub effective_ratio_label: String,
+    pub note: String,
+    pub recommended: bool,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PortalCustomRechargeRule {
+    pub id: String,
+    pub label: String,
+    pub min_amount_cents: u64,
+    pub max_amount_cents: u64,
+    pub units_per_cent: u64,
+    pub effective_ratio_label: String,
+    pub note: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PortalCustomRechargePolicy {
+    pub enabled: bool,
+    pub min_amount_cents: u64,
+    pub max_amount_cents: u64,
+    pub step_amount_cents: u64,
+    pub suggested_amount_cents: u64,
+    pub rules: Vec<PortalCustomRechargeRule>,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PortalCommerceCoupon {
     pub id: String,
     pub code: String,
@@ -91,6 +126,9 @@ pub struct PortalCommerceCoupon {
 pub struct PortalCommerceCatalog {
     pub plans: Vec<PortalSubscriptionPlan>,
     pub packs: Vec<PortalRechargePack>,
+    pub recharge_options: Vec<PortalRechargeOption>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_recharge_policy: Option<PortalCustomRechargePolicy>,
     pub coupons: Vec<PortalCommerceCoupon>,
 }
 
@@ -102,6 +140,8 @@ pub struct PortalCommerceQuoteRequest {
     pub coupon_code: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_remaining_units: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_amount_cents: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -127,9 +167,15 @@ pub struct PortalCommerceQuote {
     pub granted_units: u64,
     pub bonus_units: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub amount_cents: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub projected_remaining_units: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub applied_coupon: Option<PortalAppliedCoupon>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pricing_rule_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effective_ratio_label: Option<String>,
     pub source: String,
 }
 
@@ -194,6 +240,26 @@ struct RechargePackSeed {
 }
 
 #[derive(Debug, Clone, Copy)]
+struct RechargeOptionSeed {
+    id: &'static str,
+    label: &'static str,
+    amount_cents: u64,
+    granted_units: u64,
+    note: &'static str,
+    recommended: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CustomRechargeRuleSeed {
+    id: &'static str,
+    label: &'static str,
+    min_amount_cents: u64,
+    max_amount_cents: u64,
+    units_per_cent: u64,
+    note: &'static str,
+}
+
+#[derive(Debug, Clone, Copy)]
 struct CouponSeed {
     id: &'static str,
     code: &'static str,
@@ -212,6 +278,8 @@ pub async fn load_portal_commerce_catalog(
     Ok(PortalCommerceCatalog {
         plans: subscription_plan_catalog(),
         packs: recharge_pack_catalog(),
+        recharge_options: recharge_option_catalog(),
+        custom_recharge_policy: Some(build_custom_recharge_policy()),
         coupons: load_coupon_catalog(store).await?,
     })
 }
@@ -270,6 +338,17 @@ pub async fn preview_portal_commerce_quote(
                 request.current_remaining_units,
                 applied_coupon,
             ))
+        }
+        "custom_recharge" => {
+            let custom_amount_cents =
+                resolve_custom_recharge_amount_cents(target_id, request.custom_amount_cents)?;
+            let applied_coupon =
+                load_optional_applied_coupon(store, request.coupon_code.as_deref()).await?;
+            build_custom_recharge_quote(
+                custom_amount_cents,
+                request.current_remaining_units,
+                applied_coupon,
+            )
         }
         "coupon_redemption" => {
             let coupon = find_coupon_definition(store, target_id).await?;
@@ -577,6 +656,48 @@ fn recharge_pack_catalog() -> Vec<PortalRechargePack> {
         .collect()
 }
 
+fn recharge_option_catalog() -> Vec<PortalRechargeOption> {
+    recharge_option_seeds()
+        .into_iter()
+        .map(|seed| PortalRechargeOption {
+            id: seed.id.to_owned(),
+            label: seed.label.to_owned(),
+            amount_cents: seed.amount_cents,
+            amount_label: format_quote_price_label(seed.amount_cents),
+            granted_units: seed.granted_units,
+            effective_ratio_label: format_effective_ratio_label(
+                seed.granted_units / seed.amount_cents.max(1),
+            ),
+            note: seed.note.to_owned(),
+            recommended: seed.recommended,
+            source: "workspace_seed".to_owned(),
+        })
+        .collect()
+}
+
+fn build_custom_recharge_policy() -> PortalCustomRechargePolicy {
+    PortalCustomRechargePolicy {
+        enabled: true,
+        min_amount_cents: custom_recharge_min_amount_cents(),
+        max_amount_cents: custom_recharge_max_amount_cents(),
+        step_amount_cents: custom_recharge_step_amount_cents(),
+        suggested_amount_cents: custom_recharge_suggested_amount_cents(),
+        rules: custom_recharge_rule_seeds()
+            .into_iter()
+            .map(|rule| PortalCustomRechargeRule {
+                id: rule.id.to_owned(),
+                label: rule.label.to_owned(),
+                min_amount_cents: rule.min_amount_cents,
+                max_amount_cents: rule.max_amount_cents,
+                units_per_cent: rule.units_per_cent,
+                effective_ratio_label: format_effective_ratio_label(rule.units_per_cent),
+                note: rule.note.to_owned(),
+            })
+            .collect(),
+        source: "workspace_seed".to_owned(),
+    }
+}
+
 async fn load_coupon_catalog(store: &dyn AdminStore) -> CommerceResult<Vec<PortalCommerceCoupon>> {
     Ok(load_coupon_definitions(store)
         .await?
@@ -672,7 +793,9 @@ where
         .unwrap_or_else(|| format!("portal_commerce_{project_id}"));
     let next_limit = match quote.target_kind.as_str() {
         "subscription_plan" => current_limit.max(target_units),
-        "recharge_pack" | "coupon_redemption" => current_limit.saturating_add(target_units),
+        "recharge_pack" | "custom_recharge" | "coupon_redemption" => {
+            current_limit.saturating_add(target_units)
+        }
         _ => current_limit,
     };
 
@@ -893,6 +1016,7 @@ async fn load_order_settlement_quote(
             target_id: order.target_id.clone(),
             coupon_code: order.applied_coupon_code.clone(),
             current_remaining_units: None,
+            custom_amount_cents: None,
         },
     )
     .await?;
@@ -907,8 +1031,11 @@ async fn load_order_settlement_quote(
         payable_price_label: order.payable_price_label.clone(),
         granted_units: order.granted_units,
         bonus_units: order.bonus_units,
+        amount_cents: settlement_preview.amount_cents,
         projected_remaining_units: None,
         applied_coupon: settlement_preview.applied_coupon,
+        pricing_rule_label: settlement_preview.pricing_rule_label,
+        effective_ratio_label: settlement_preview.effective_ratio_label,
         source: order.source.clone(),
     })
 }
@@ -921,6 +1048,9 @@ fn build_checkout_session(order: &CommerceOrderRecord) -> PortalCommerceCheckout
         }
         ("recharge_pack", "pending_payment") => {
             "Settle this checkout to apply the recharge pack and restore workspace quota headroom."
+        }
+        ("custom_recharge", "pending_payment") => {
+            "Settle this checkout to apply the custom recharge amount and restore workspace quota headroom."
         }
         ("coupon_redemption", "fulfilled") => {
             "This order required no external payment and was fulfilled immediately at redemption time."
@@ -1056,6 +1186,7 @@ fn build_priced_quote(
         payable_price_label: format_quote_price_label(payable_cents),
         granted_units,
         bonus_units,
+        amount_cents: None,
         projected_remaining_units,
         applied_coupon: applied_coupon.map(|coupon| PortalAppliedCoupon {
             code: coupon.coupon.code,
@@ -1064,8 +1195,32 @@ fn build_priced_quote(
             discount_percent: coupon.benefit.discount_percent,
             bonus_units: coupon.benefit.bonus_units,
         }),
+        pricing_rule_label: None,
+        effective_ratio_label: None,
         source: source.to_owned(),
     }
+}
+
+fn build_custom_recharge_quote(
+    amount_cents: u64,
+    current_remaining_units: Option<u64>,
+    applied_coupon: Option<CommerceCouponDefinition>,
+) -> CommerceResult<PortalCommerceQuote> {
+    let rule = resolve_custom_recharge_rule(amount_cents)?;
+    let mut quote = build_priced_quote(
+        "custom_recharge",
+        &custom_recharge_target_id(amount_cents),
+        "Custom recharge",
+        amount_cents,
+        amount_cents.saturating_mul(rule.units_per_cent),
+        "workspace_seed",
+        current_remaining_units,
+        applied_coupon,
+    );
+    quote.amount_cents = Some(amount_cents);
+    quote.pricing_rule_label = Some("Tiered custom recharge".to_owned());
+    quote.effective_ratio_label = Some(format_effective_ratio_label(rule.units_per_cent));
+    Ok(quote)
 }
 
 fn build_redemption_quote(
@@ -1086,6 +1241,7 @@ fn build_redemption_quote(
         payable_price_label: "$0.00".to_owned(),
         granted_units: 0,
         bonus_units: coupon.benefit.bonus_units,
+        amount_cents: None,
         projected_remaining_units,
         applied_coupon: Some(PortalAppliedCoupon {
             code: coupon.coupon.code,
@@ -1094,6 +1250,8 @@ fn build_redemption_quote(
             discount_percent: coupon.benefit.discount_percent,
             bonus_units: coupon.benefit.bonus_units,
         }),
+        pricing_rule_label: None,
+        effective_ratio_label: None,
         source,
     }
 }
@@ -1127,6 +1285,112 @@ fn format_catalog_price_label(price_cents: u64) -> String {
 
 fn format_quote_price_label(price_cents: u64) -> String {
     format!("${:.2}", price_cents as f64 / 100.0)
+}
+
+fn format_integer_with_commas(value: u64) -> String {
+    let digits = value.to_string();
+    let mut formatted = String::with_capacity(digits.len() + digits.len() / 3);
+
+    for (index, character) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index) % 3 == 0 {
+            formatted.push(',');
+        }
+        formatted.push(character);
+    }
+
+    formatted
+}
+
+fn format_effective_ratio_label(units_per_cent: u64) -> String {
+    format!(
+        "{} units / $1",
+        format_integer_with_commas(units_per_cent.saturating_mul(100))
+    )
+}
+
+fn custom_recharge_min_amount_cents() -> u64 {
+    1_000
+}
+
+fn custom_recharge_max_amount_cents() -> u64 {
+    200_000
+}
+
+fn custom_recharge_step_amount_cents() -> u64 {
+    500
+}
+
+fn custom_recharge_suggested_amount_cents() -> u64 {
+    5_000
+}
+
+fn custom_recharge_target_id(amount_cents: u64) -> String {
+    format!("custom-{amount_cents}")
+}
+
+fn parse_custom_recharge_target_amount(target_id: &str) -> Option<u64> {
+    target_id
+        .strip_prefix("custom-")
+        .and_then(|value| value.parse::<u64>().ok())
+}
+
+fn resolve_custom_recharge_amount_cents(
+    target_id: &str,
+    request_amount_cents: Option<u64>,
+) -> CommerceResult<u64> {
+    let amount_from_target = parse_custom_recharge_target_amount(target_id);
+
+    if let (Some(target_amount_cents), Some(request_amount_cents)) =
+        (amount_from_target, request_amount_cents)
+    {
+        if target_amount_cents != request_amount_cents {
+            return Err(CommerceError::InvalidInput(
+                "custom recharge amount does not match target_id".to_owned(),
+            ));
+        }
+    }
+
+    let amount_cents = request_amount_cents
+        .or(amount_from_target)
+        .ok_or_else(|| {
+            CommerceError::InvalidInput(
+                "custom_amount_cents is required for custom_recharge".to_owned(),
+            )
+        })?;
+
+    validate_custom_recharge_amount_cents(amount_cents)?;
+    Ok(amount_cents)
+}
+
+fn validate_custom_recharge_amount_cents(amount_cents: u64) -> CommerceResult<()> {
+    let min_amount_cents = custom_recharge_min_amount_cents();
+    let max_amount_cents = custom_recharge_max_amount_cents();
+    let step_amount_cents = custom_recharge_step_amount_cents();
+
+    if amount_cents < min_amount_cents || amount_cents > max_amount_cents {
+        return Err(CommerceError::InvalidInput(format!(
+            "custom_amount_cents must stay between {min_amount_cents} and {max_amount_cents}"
+        )));
+    }
+
+    if amount_cents % step_amount_cents != 0 {
+        return Err(CommerceError::InvalidInput(format!(
+            "custom_amount_cents must increase in steps of {step_amount_cents}"
+        )));
+    }
+
+    Ok(())
+}
+
+fn resolve_custom_recharge_rule(amount_cents: u64) -> CommerceResult<CustomRechargeRuleSeed> {
+    custom_recharge_rule_seeds()
+        .into_iter()
+        .find(|rule| amount_cents >= rule.min_amount_cents && amount_cents <= rule.max_amount_cents)
+        .ok_or_else(|| {
+            CommerceError::InvalidInput(format!(
+                "no custom recharge rule applies to amount {amount_cents}"
+            ))
+        })
 }
 
 fn parse_discount_percent(label: &str) -> Option<u8> {
@@ -1216,6 +1480,80 @@ fn recharge_pack_seeds() -> Vec<RechargePackSeed> {
             points: 500_000,
             price_cents: 16_500,
             note: "For scheduled releases and campaign traffic.",
+        },
+    ]
+}
+
+fn recharge_option_seeds() -> Vec<RechargeOptionSeed> {
+    vec![
+        RechargeOptionSeed {
+            id: "recharge-10",
+            label: "Starter top-up",
+            amount_cents: 1_000,
+            granted_units: 25_000,
+            note: "Fastest way to restore balance for prototyping and short tests.",
+            recommended: false,
+        },
+        RechargeOptionSeed {
+            id: "recharge-50",
+            label: "Growth top-up",
+            amount_cents: 5_000,
+            granted_units: 140_000,
+            note: "Best balance between instant headroom and effective recharge ratio.",
+            recommended: true,
+        },
+        RechargeOptionSeed {
+            id: "recharge-100",
+            label: "Scale top-up",
+            amount_cents: 10_000,
+            granted_units: 300_000,
+            note: "Designed for sustained production traffic and larger daily workloads.",
+            recommended: false,
+        },
+        RechargeOptionSeed {
+            id: "recharge-200",
+            label: "Campaign top-up",
+            amount_cents: 20_000,
+            granted_units: 660_000,
+            note: "Most efficient preset for launches, campaigns, and heavy concurrency windows.",
+            recommended: false,
+        },
+    ]
+}
+
+fn custom_recharge_rule_seeds() -> Vec<CustomRechargeRuleSeed> {
+    vec![
+        CustomRechargeRuleSeed {
+            id: "tier-entry",
+            label: "Entry tier",
+            min_amount_cents: 1_000,
+            max_amount_cents: 4_500,
+            units_per_cent: 25,
+            note: "Entry custom recharges restore balance quickly while preserving the starter ratio.",
+        },
+        CustomRechargeRuleSeed {
+            id: "tier-growth",
+            label: "Growth tier",
+            min_amount_cents: 5_000,
+            max_amount_cents: 9_500,
+            units_per_cent: 28,
+            note: "Growth custom recharges match the recommended balance-to-headroom ratio.",
+        },
+        CustomRechargeRuleSeed {
+            id: "tier-scale",
+            label: "Scale tier",
+            min_amount_cents: 10_000,
+            max_amount_cents: 19_500,
+            units_per_cent: 30,
+            note: "Scale custom recharges keep larger recurring traffic windows cost-efficient.",
+        },
+        CustomRechargeRuleSeed {
+            id: "tier-campaign",
+            label: "Campaign tier",
+            min_amount_cents: 20_000,
+            max_amount_cents: 200_000,
+            units_per_cent: 33,
+            note: "Campaign custom recharges maximize the effective ratio for larger top-ups.",
         },
     ]
 }

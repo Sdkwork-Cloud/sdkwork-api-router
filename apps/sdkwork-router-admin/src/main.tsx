@@ -4,6 +4,7 @@ import '@sdkwork/ui-pc-react/styles.css';
 import { bootstrapShellRuntime } from 'sdkwork-router-admin-shell';
 
 import { App } from './App';
+import './theme.css';
 
 async function mountApp() {
   await bootstrapShellRuntime();

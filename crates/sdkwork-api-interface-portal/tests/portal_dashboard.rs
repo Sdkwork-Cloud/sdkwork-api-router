@@ -1,5 +1,6 @@
 use axum::body::{to_bytes, Body};
 use axum::http::{Request, StatusCode};
+use sdkwork_api_domain_billing::{BillingAccountingMode, BillingEventRecord};
 use serde_json::Value;
 use sqlx::SqlitePool;
 use tower::ServiceExt;
@@ -222,6 +223,132 @@ async fn portal_dashboard_and_usage_views_are_project_scoped() {
 }
 
 #[tokio::test]
+async fn portal_billing_event_views_are_project_scoped() {
+    let pool = memory_pool().await;
+    let store = sdkwork_api_storage_sqlite::SqliteAdminStore::new(pool.clone());
+    let app = sdkwork_api_interface_portal::portal_router_with_pool(pool);
+    let token = portal_token(app.clone()).await;
+    let workspace = portal_workspace(app.clone(), &token).await;
+    let tenant_id = workspace["tenant"]["id"].as_str().unwrap().to_owned();
+    let project_id = workspace["project"]["id"].as_str().unwrap().to_owned();
+
+    store
+        .insert_billing_event(
+            &BillingEventRecord::new(
+                "evt_portal_1",
+                &tenant_id,
+                &project_id,
+                "responses",
+                "gpt-4.1",
+                "gpt-4.1",
+                "provider-openrouter",
+                BillingAccountingMode::PlatformCredit,
+                100,
+            )
+            .with_api_key_group_id("group-live")
+            .with_operation("responses.create", "text")
+            .with_request_facts(Some("key-live"), Some("openai"), Some("resp_1"), Some(500))
+            .with_units(120)
+            .with_token_usage(80, 40, 120)
+            .with_financials(0.12, 0.24),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_billing_event(
+            &BillingEventRecord::new(
+                "evt_portal_2",
+                &tenant_id,
+                &project_id,
+                "images",
+                "gpt-image-1",
+                "gpt-image-1",
+                "provider-openai",
+                BillingAccountingMode::Byok,
+                200,
+            )
+            .with_api_key_group_id("group-live")
+            .with_operation("images.generate", "image")
+            .with_request_facts(Some("key-live"), Some("openai"), Some("img_1"), Some(800))
+            .with_units(40)
+            .with_request_count(1)
+            .with_media_usage(2, 0.0, 0.0, 0.0)
+            .with_financials(0.0, 0.0),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_billing_event(
+            &BillingEventRecord::new(
+                "evt_portal_foreign",
+                "tenant-other",
+                "project-other",
+                "audio",
+                "gpt-4o-mini-transcribe",
+                "gpt-4o-mini-transcribe",
+                "provider-other",
+                BillingAccountingMode::PlatformCredit,
+                300,
+            )
+            .with_operation("audio.transcriptions.create", "audio")
+            .with_request_facts(Some("key-foreign"), Some("openai"), Some("aud_1"), Some(900))
+            .with_units(60)
+            .with_request_count(2)
+            .with_media_usage(0, 35.0, 0.0, 0.0)
+            .with_financials(0.35, 0.70),
+        )
+        .await
+        .unwrap();
+
+    let billing_events_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/portal/billing/events")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(billing_events_response.status(), StatusCode::OK);
+    let billing_events_json = read_json(billing_events_response).await;
+    assert_eq!(billing_events_json.as_array().unwrap().len(), 2);
+    assert_eq!(billing_events_json[0]["project_id"], project_id);
+    assert_eq!(billing_events_json[0]["event_id"], "evt_portal_2");
+    assert_eq!(billing_events_json[1]["event_id"], "evt_portal_1");
+
+    let billing_summary_response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/portal/billing/events/summary")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(billing_summary_response.status(), StatusCode::OK);
+    let billing_summary_json = read_json(billing_summary_response).await;
+    assert_eq!(billing_summary_json["total_events"], 2);
+    assert_eq!(billing_summary_json["project_count"], 1);
+    assert_eq!(billing_summary_json["group_count"], 1);
+    assert_eq!(billing_summary_json["capability_count"], 2);
+    assert_eq!(billing_summary_json["total_units"], 160);
+    assert_eq!(billing_summary_json["total_tokens"], 120);
+    assert_eq!(billing_summary_json["total_image_count"], 2);
+    assert_eq!(billing_summary_json["total_audio_seconds"], 0.0);
+    assert_eq!(billing_summary_json["projects"][0]["project_id"], project_id);
+    assert_eq!(billing_summary_json["groups"][0]["api_key_group_id"], "group-live");
+    assert_eq!(billing_summary_json["accounting_modes"][0]["accounting_mode"], "platform_credit");
+    assert_eq!(billing_summary_json["accounting_modes"][1]["accounting_mode"], "byok");
+}
+
+#[tokio::test]
 async fn new_portal_dashboard_routes_require_authentication() {
     let pool = memory_pool().await;
     let app = sdkwork_api_interface_portal::portal_router_with_pool(pool);
@@ -230,6 +357,8 @@ async fn new_portal_dashboard_routes_require_authentication() {
         "/portal/dashboard",
         "/portal/usage/records",
         "/portal/usage/summary",
+        "/portal/billing/events",
+        "/portal/billing/events/summary",
         "/portal/billing/summary",
         "/portal/billing/ledger",
     ] {

@@ -6,6 +6,7 @@ import type {
   PortalRoutingSummary,
   PortalRoutingStrategy,
 } from 'sdkwork-router-portal-types';
+import { formatDateTime } from 'sdkwork-router-portal-commons/format-core';
 import { translatePortalText } from 'sdkwork-router-portal-commons/i18n-core';
 
 import type {
@@ -14,19 +15,6 @@ import type {
   RoutingGuardrailItem,
   RoutingPresetCard,
 } from '../types';
-
-function formatRoutingDateTime(timestamp: number): string {
-  if (!timestamp) {
-    return translatePortalText('Pending');
-  }
-
-  return new Intl.DateTimeFormat(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(new Date(timestamp));
-}
 
 function normalizeRoutingAssessment(
   assessment: Partial<PortalRoutingAssessment> | null | undefined,
@@ -54,9 +42,12 @@ function normalizeRoutingDecision(
     selected_provider_id: decision?.selected_provider_id ?? translatePortalText('Unavailable'),
     candidate_ids: Array.isArray(decision?.candidate_ids) ? decision.candidate_ids : [],
     matched_policy_id: decision?.matched_policy_id ?? null,
+    applied_routing_profile_id: decision?.applied_routing_profile_id ?? null,
+    compiled_routing_snapshot_id: decision?.compiled_routing_snapshot_id ?? null,
     strategy: decision?.strategy ?? null,
     selection_seed: decision?.selection_seed ?? null,
     selection_reason: decision?.selection_reason ?? null,
+    fallback_reason: decision?.fallback_reason ?? null,
     requested_region: decision?.requested_region ?? null,
     slo_applied: decision?.slo_applied ?? false,
     slo_degraded: decision?.slo_degraded ?? false,
@@ -74,13 +65,17 @@ function normalizeRoutingDecisionLog(
     decision_source: log.decision_source ?? 'unknown',
     tenant_id: log.tenant_id ?? null,
     project_id: log.project_id ?? null,
+    api_key_group_id: log.api_key_group_id ?? null,
     capability: log.capability ?? 'unknown',
     route_key: log.route_key ?? 'unknown',
     selected_provider_id: log.selected_provider_id ?? translatePortalText('Unavailable'),
     matched_policy_id: log.matched_policy_id ?? null,
+    applied_routing_profile_id: log.applied_routing_profile_id ?? null,
+    compiled_routing_snapshot_id: log.compiled_routing_snapshot_id ?? null,
     strategy: log.strategy ?? 'unknown',
     selection_seed: log.selection_seed ?? null,
     selection_reason: log.selection_reason ?? null,
+    fallback_reason: log.fallback_reason ?? null,
     requested_region: log.requested_region ?? null,
     slo_applied: log.slo_applied ?? false,
     slo_degraded: log.slo_degraded ?? false,
@@ -107,6 +102,76 @@ export function buildRoutingStrategyLabel(
       return translatePortalText('Platform fallback');
     default:
       return translatePortalText('Adaptive routing');
+  }
+}
+
+function humanizeRoutingToken(value?: string | null): string {
+  const normalized = value?.trim();
+
+  if (!normalized) {
+    return '';
+  }
+
+  return normalized
+    .split(/[_./-]+/)
+    .filter(Boolean)
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(' ');
+}
+
+export function buildRoutingCapabilityLabel(
+  capability?: string | null,
+): string {
+  switch (capability?.trim().toLowerCase()) {
+    case 'chat':
+    case 'chat_completion':
+    case 'chat_completions':
+      return translatePortalText('Chat completions');
+    case 'responses':
+      return translatePortalText('Responses');
+    case 'embeddings':
+      return translatePortalText('Embeddings');
+    case 'image_generation':
+    case 'images':
+      return translatePortalText('Image generation');
+    case 'music':
+    case 'music_generation':
+      return translatePortalText('Music generation');
+    case 'audio':
+    case 'audio_transcription':
+      return translatePortalText('Audio transcription');
+    case 'multimodal':
+      return translatePortalText('Multimodal reasoning');
+    default:
+      return humanizeRoutingToken(capability) || translatePortalText('Unknown capability');
+  }
+}
+
+export function buildRoutingDecisionSourceLabel(
+  source?: string | null,
+): string {
+  switch (source?.trim().toLowerCase()) {
+    case 'gateway':
+      return translatePortalText('Live traffic');
+    case 'admin_simulation':
+      return translatePortalText('Control plane simulation');
+    case 'portal_simulation':
+      return translatePortalText('Preview request');
+    default:
+      return humanizeRoutingToken(source) || translatePortalText('Unknown source');
+  }
+}
+
+export function buildRoutingAssessmentHealthLabel(
+  health?: string | null,
+): string {
+  switch (health?.trim().toLowerCase()) {
+    case 'healthy':
+      return translatePortalText('Healthy');
+    case 'unhealthy':
+      return translatePortalText('Unhealthy');
+    default:
+      return translatePortalText('Unknown');
   }
 }
 
@@ -161,7 +226,7 @@ function buildGuardrails(
     {
       id: 'provider-default',
       label: translatePortalText('Default provider'),
-      value: preferences.default_provider_id ?? 'Auto',
+      value: preferences.default_provider_id ?? translatePortalText('Auto'),
       detail: translatePortalText(
         'A default provider acts as the stable fallback when multiple candidates remain eligible.',
       ),
@@ -170,7 +235,7 @@ function buildGuardrails(
       id: 'cost',
       label: translatePortalText('Max cost'),
       value: preferences.max_cost === null || preferences.max_cost === undefined
-        ? 'Open'
+        ? translatePortalText('Open')
         : `$${preferences.max_cost.toFixed(2)}`,
       detail: translatePortalText(
         'Keep a cost ceiling visible so route posture reflects commercial intent, not only technical possibility.',
@@ -180,7 +245,7 @@ function buildGuardrails(
       id: 'latency',
       label: translatePortalText('Max latency'),
       value: preferences.max_latency_ms === null || preferences.max_latency_ms === undefined
-        ? 'Open'
+        ? translatePortalText('Open')
         : `${preferences.max_latency_ms}ms`,
       detail: translatePortalText(
         'Latency guardrails let the workspace make reliability posture explicit before traffic starts flowing.',
@@ -189,7 +254,7 @@ function buildGuardrails(
     {
       id: 'region',
       label: translatePortalText('Preferred region'),
-      value: preview.requested_region ?? preferences.preferred_region ?? 'Auto',
+      value: preview.requested_region ?? preferences.preferred_region ?? translatePortalText('Auto'),
       detail: translatePortalText(
         'The active route preview should always show the region signal that influenced provider selection.',
       ),
@@ -202,15 +267,20 @@ function buildEvidence(
 ): RoutingEvidenceItem[] {
   return logs.slice(0, 4).map((log) => ({
     id: log.decision_id,
-    title: `${log.route_key} -> ${log.selected_provider_id}`,
+    title: translatePortalText('{routeKey} -> {providerId}', {
+      routeKey: log.route_key,
+      providerId: log.selected_provider_id,
+    }),
     detail: translatePortalText('{source} used {strategy}{regionSuffix}.', {
-      source: log.decision_source,
+      source: buildRoutingDecisionSourceLabel(log.decision_source),
       strategy: buildRoutingStrategyLabel(log.strategy),
       regionSuffix: log.requested_region
         ? translatePortalText(' in {region}', { region: log.requested_region })
         : '',
     }),
-    timestamp_label: formatRoutingDateTime(log.created_at_ms),
+    timestamp_label: formatDateTime(log.created_at_ms),
+    snapshot_id: log.compiled_routing_snapshot_id ?? null,
+    fallback_reason: log.fallback_reason ?? null,
   }));
 }
 

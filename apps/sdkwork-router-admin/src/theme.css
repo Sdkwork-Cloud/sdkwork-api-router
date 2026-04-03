@@ -1,0 +1,302 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+@source "./";
+@source "../packages";
+
+@theme {
+  --color-primary-50: var(--theme-primary-50);
+  --color-primary-100: var(--theme-primary-100);
+  --color-primary-200: var(--theme-primary-200);
+  --color-primary-300: var(--theme-primary-300);
+  --color-primary-400: var(--theme-primary-400);
+  --color-primary-500: var(--theme-primary-500);
+  --color-primary-600: var(--theme-primary-600);
+  --color-primary-700: var(--theme-primary-700);
+  --color-primary-800: var(--theme-primary-800);
+  --color-primary-900: var(--theme-primary-900);
+  --color-primary-950: var(--theme-primary-950);
+}
+
+:root {
+  --theme-primary-50: #eff6ff;
+  --theme-primary-100: #dbeafe;
+  --theme-primary-200: #bfdbfe;
+  --theme-primary-300: #93c5fd;
+  --theme-primary-400: #60a5fa;
+  --theme-primary-500: #3b82f6;
+  --theme-primary-600: #2563eb;
+  --theme-primary-700: #1d4ed8;
+  --theme-primary-800: #1e40af;
+  --theme-primary-900: #1e3a8a;
+  --theme-primary-950: #172554;
+
+  --admin-accent-rgb: 59 130 246;
+  --admin-accent-strong-rgb: 37 99 235;
+  --admin-shell-background:
+    radial-gradient(circle at top, rgb(var(--admin-accent-rgb) / 0.14), transparent 32%),
+    radial-gradient(circle at top right, rgb(var(--admin-accent-strong-rgb) / 0.08), transparent 34%),
+    radial-gradient(circle at left, rgba(15, 23, 42, 0.08), transparent 38%),
+    linear-gradient(180deg, #f4f4f5 0%, #f8fafc 100%);
+  --admin-content-background: rgba(244, 244, 245, 0.36);
+  --admin-header-background: rgba(255, 255, 255, 0.72);
+  --admin-header-control-background: rgba(9, 9, 11, 0.04);
+  --admin-header-control-hover: rgba(9, 9, 11, 0.065);
+  --admin-sidebar-background:
+    linear-gradient(180deg, rgba(19, 21, 26, 0.98) 0%, rgba(11, 12, 16, 0.99) 100%);
+  --admin-sidebar-text: #d4d4d8;
+  --admin-sidebar-text-muted: #a1a1aa;
+  --admin-sidebar-text-subtle: #71717a;
+  --admin-sidebar-divider: rgba(255, 255, 255, 0.06);
+  --admin-sidebar-item-hover: rgba(255, 255, 255, 0.05);
+  --admin-sidebar-item-active: rgba(255, 255, 255, 0.08);
+  --admin-sidebar-item-surface: rgba(255, 255, 255, 0.04);
+  --admin-sidebar-item-surface-strong: rgba(255, 255, 255, 0.08);
+  --admin-sidebar-item-border: rgba(255, 255, 255, 0.08);
+  --admin-sidebar-item-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --admin-sidebar-icon: #71717a;
+  --admin-sidebar-icon-hover: #d4d4d8;
+  --admin-sidebar-popover-background: rgba(9, 9, 11, 0.96);
+  --admin-sidebar-popover-border: rgba(255, 255, 255, 0.1);
+  --admin-sidebar-popover-shadow: 0 20px 48px rgba(9, 9, 11, 0.34);
+  --admin-sidebar-edge-background: rgba(9, 9, 11, 0.96);
+  --admin-sidebar-edge-hover: #18181b;
+  --admin-sidebar-edge-text: #e4e4e7;
+  --admin-sidebar-edge-shadow: 0 10px 24px rgba(9, 9, 11, 0.26);
+  --admin-border-color: rgba(24, 24, 27, 0.1);
+  --admin-contrast-border: rgba(255, 255, 255, 0.1);
+  --admin-text-primary: #18181b;
+  --admin-text-secondary: rgba(24, 24, 27, 0.74);
+  --admin-text-muted: rgba(24, 24, 27, 0.56);
+  --admin-text-on-contrast: #f8fafc;
+  --admin-text-muted-on-contrast: rgba(226, 232, 240, 0.74);
+  --admin-success-border: rgba(16, 185, 129, 0.2);
+  --admin-success-background: rgba(16, 185, 129, 0.1);
+  --admin-success-text: #6ee7b7;
+  --admin-danger-background: rgba(244, 63, 94, 0.1);
+  --admin-danger-text: #fda4af;
+  --admin-danger-text-hover: #fecdd3;
+  --admin-shadow-strong: 0 32px 84px rgba(9, 9, 11, 0.28);
+  --admin-select-content-radius: 0.875rem;
+
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    "PingFang SC",
+    "Microsoft YaHei",
+    sans-serif;
+  color: var(--admin-text-primary);
+  background: var(--admin-shell-background);
+  line-height: 1.5;
+  font-weight: 400;
+  color-scheme: light;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+[data-theme="tech-blue"] {
+  --theme-primary-50: #eff6ff;
+  --theme-primary-100: #dbeafe;
+  --theme-primary-200: #bfdbfe;
+  --theme-primary-300: #93c5fd;
+  --theme-primary-400: #60a5fa;
+  --theme-primary-500: #3b82f6;
+  --theme-primary-600: #2563eb;
+  --theme-primary-700: #1d4ed8;
+  --theme-primary-800: #1e40af;
+  --theme-primary-900: #1e3a8a;
+  --theme-primary-950: #172554;
+  --admin-accent-rgb: 59 130 246;
+  --admin-accent-strong-rgb: 37 99 235;
+}
+
+[data-theme="lobster"] {
+  --theme-primary-50: #fff7ed;
+  --theme-primary-100: #ffedd5;
+  --theme-primary-200: #fed7aa;
+  --theme-primary-300: #fdba74;
+  --theme-primary-400: #fb923c;
+  --theme-primary-500: #f97316;
+  --theme-primary-600: #ea580c;
+  --theme-primary-700: #c2410c;
+  --theme-primary-800: #9a3412;
+  --theme-primary-900: #7c2d12;
+  --theme-primary-950: #431407;
+  --admin-accent-rgb: 249 115 22;
+  --admin-accent-strong-rgb: 234 88 12;
+}
+
+[data-theme="green-tech"] {
+  --theme-primary-50: #ecfdf5;
+  --theme-primary-100: #d1fae5;
+  --theme-primary-200: #a7f3d0;
+  --theme-primary-300: #6ee7b7;
+  --theme-primary-400: #34d399;
+  --theme-primary-500: #10b981;
+  --theme-primary-600: #059669;
+  --theme-primary-700: #047857;
+  --theme-primary-800: #065f46;
+  --theme-primary-900: #064e3b;
+  --theme-primary-950: #022c22;
+  --admin-accent-rgb: 16 185 129;
+  --admin-accent-strong-rgb: 5 150 105;
+}
+
+[data-theme="zinc"] {
+  --theme-primary-50: #fafafa;
+  --theme-primary-100: #f4f4f5;
+  --theme-primary-200: #e4e4e7;
+  --theme-primary-300: #d4d4d8;
+  --theme-primary-400: #a1a1aa;
+  --theme-primary-500: #71717a;
+  --theme-primary-600: #52525b;
+  --theme-primary-700: #3f3f46;
+  --theme-primary-800: #27272a;
+  --theme-primary-900: #18181b;
+  --theme-primary-950: #09090b;
+  --admin-accent-rgb: 113 113 122;
+  --admin-accent-strong-rgb: 82 82 91;
+}
+
+[data-theme="violet"] {
+  --theme-primary-50: #f5f3ff;
+  --theme-primary-100: #ede9fe;
+  --theme-primary-200: #ddd6fe;
+  --theme-primary-300: #c4b5fd;
+  --theme-primary-400: #a78bfa;
+  --theme-primary-500: #8b5cf6;
+  --theme-primary-600: #7c3aed;
+  --theme-primary-700: #6d28d9;
+  --theme-primary-800: #5b21b6;
+  --theme-primary-900: #4c1d95;
+  --theme-primary-950: #2e1065;
+  --admin-accent-rgb: 139 92 246;
+  --admin-accent-strong-rgb: 124 58 237;
+}
+
+[data-theme="rose"] {
+  --theme-primary-50: #fff1f2;
+  --theme-primary-100: #ffe4e6;
+  --theme-primary-200: #fecdd3;
+  --theme-primary-300: #fda4af;
+  --theme-primary-400: #fb7185;
+  --theme-primary-500: #f43f5e;
+  --theme-primary-600: #e11d48;
+  --theme-primary-700: #be123c;
+  --theme-primary-800: #9f1239;
+  --theme-primary-900: #881337;
+  --theme-primary-950: #4c0519;
+  --admin-accent-rgb: 244 63 94;
+  --admin-accent-strong-rgb: 225 29 72;
+}
+
+:root.dark {
+  color-scheme: dark;
+  --admin-shell-background:
+    radial-gradient(circle at top, rgb(var(--admin-accent-rgb) / 0.14), transparent 28%),
+    radial-gradient(circle at top right, rgb(var(--admin-accent-strong-rgb) / 0.1), transparent 32%),
+    radial-gradient(circle at left, rgba(255, 255, 255, 0.04), transparent 36%),
+    linear-gradient(180deg, #09090b 0%, #09090b 100%);
+  --admin-content-background: rgba(9, 9, 11, 0.28);
+  --admin-header-background: rgba(9, 9, 11, 0.78);
+  --admin-header-control-background: rgba(255, 255, 255, 0.05);
+  --admin-header-control-hover: rgba(255, 255, 255, 0.09);
+  --admin-sidebar-background:
+    linear-gradient(180deg, rgba(19, 21, 26, 0.98) 0%, rgba(11, 12, 16, 0.99) 100%);
+  --admin-sidebar-text: #d4d4d8;
+  --admin-sidebar-text-muted: #a1a1aa;
+  --admin-sidebar-text-subtle: #71717a;
+  --admin-sidebar-divider: rgba(255, 255, 255, 0.06);
+  --admin-sidebar-item-hover: rgba(255, 255, 255, 0.05);
+  --admin-sidebar-item-active: rgba(255, 255, 255, 0.08);
+  --admin-sidebar-item-surface: rgba(255, 255, 255, 0.04);
+  --admin-sidebar-item-surface-strong: rgba(255, 255, 255, 0.08);
+  --admin-sidebar-item-border: rgba(255, 255, 255, 0.08);
+  --admin-sidebar-item-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --admin-sidebar-icon: #71717a;
+  --admin-sidebar-icon-hover: #d4d4d8;
+  --admin-sidebar-popover-background: rgba(9, 9, 11, 0.96);
+  --admin-sidebar-popover-border: rgba(255, 255, 255, 0.1);
+  --admin-sidebar-popover-shadow: 0 20px 48px rgba(9, 9, 11, 0.34);
+  --admin-sidebar-edge-background: rgba(9, 9, 11, 0.96);
+  --admin-sidebar-edge-hover: #18181b;
+  --admin-sidebar-edge-text: #e4e4e7;
+  --admin-sidebar-edge-shadow: 0 10px 24px rgba(9, 9, 11, 0.26);
+  --admin-border-color: rgba(255, 255, 255, 0.09);
+  --admin-contrast-border: rgba(255, 255, 255, 0.1);
+  --admin-text-primary: #f5f5f5;
+  --admin-text-secondary: rgba(244, 244, 245, 0.72);
+  --admin-text-muted: rgba(228, 228, 231, 0.56);
+  --admin-text-on-contrast: #f8fafc;
+  --admin-text-muted-on-contrast: rgba(191, 205, 228, 0.74);
+  --admin-success-border: rgba(16, 185, 129, 0.2);
+  --admin-success-background: rgba(16, 185, 129, 0.1);
+  --admin-success-text: #6ee7b7;
+  --admin-danger-background: rgba(244, 63, 94, 0.1);
+  --admin-danger-text: #fda4af;
+  --admin-danger-text-hover: #fecdd3;
+  --admin-shadow-strong: 0 32px 84px rgba(3, 7, 18, 0.42);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  min-height: 100vh;
+  color: var(--admin-text-primary);
+  background: var(--admin-shell-background);
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+[data-sdk-ui="select-trigger"] {
+  min-width: 0;
+}
+
+[data-sdk-ui="select-trigger"] > span {
+  display: block;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+[data-sdk-ui="select-content"] {
+  border-radius: var(--admin-select-content-radius);
+  max-width: min(32rem, calc(100vw - 2rem));
+}
+
+[data-sdk-ui="select-item"] {
+  overflow: hidden;
+  border-radius: calc(var(--admin-select-content-radius) - 0.125rem);
+}
+
+[data-sdk-ui="select-item"] > :last-child {
+  display: block;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}

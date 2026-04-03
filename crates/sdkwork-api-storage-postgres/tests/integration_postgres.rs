@@ -1,4 +1,4 @@
-use sdkwork_api_domain_billing::QuotaPolicy;
+use sdkwork_api_domain_billing::{BillingAccountingMode, BillingEventRecord, QuotaPolicy};
 use sdkwork_api_domain_catalog::{
     Channel, ModelCatalogEntry, ProviderChannelBinding, ProxyProvider,
 };
@@ -10,6 +10,7 @@ use sdkwork_api_domain_routing::{
 use sdkwork_api_domain_usage::UsageRecord;
 use sdkwork_api_secret_core::encrypt;
 use sdkwork_api_storage_postgres::{run_migrations, PostgresAdminStore};
+use sqlx::PgPool;
 
 #[tokio::test]
 async fn postgres_store_persists_catalog_and_credentials_when_url_is_provided() {
@@ -120,6 +121,110 @@ async fn postgres_store_persists_routing_policies_when_url_is_provided() {
         Some("provider-openai-official")
     );
     assert_eq!(stored.strategy, RoutingStrategy::WeightedRandom);
+}
+
+#[tokio::test]
+async fn postgres_store_creates_canonical_account_kernel_tables_when_url_is_provided() {
+    let Some(database_url) = std::env::var("SDKWORK_TEST_POSTGRES_URL").ok() else {
+        return;
+    };
+
+    let pool = run_migrations(&database_url).await.unwrap();
+
+    for table_name in [
+        "ai_account",
+        "ai_account_benefit_lot",
+        "ai_account_hold",
+        "ai_account_ledger_entry",
+        "ai_request_meter_fact",
+        "ai_request_meter_metric",
+        "ai_request_settlement",
+        "ai_pricing_plan",
+        "ai_pricing_rate",
+    ] {
+        let row: (String,) = sqlx::query_as(
+            "select tablename
+             from pg_tables
+             where schemaname = 'public' and tablename = $1",
+        )
+        .bind(table_name)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row.0, table_name);
+    }
+
+    assert_pg_column(&pool, "ai_account", "tenant_id", "bigint", false, None).await;
+    assert_pg_column(
+        &pool,
+        "ai_account",
+        "organization_id",
+        "bigint",
+        false,
+        Some("0"),
+    )
+    .await;
+    assert_pg_column(&pool, "ai_account", "user_id", "bigint", false, None).await;
+    assert_pg_column(
+        &pool,
+        "ai_request_meter_fact",
+        "organization_id",
+        "bigint",
+        false,
+        Some("0"),
+    )
+    .await;
+    assert_pg_column(
+        &pool,
+        "ai_request_meter_fact",
+        "account_id",
+        "bigint",
+        false,
+        None,
+    )
+    .await;
+    assert_pg_column(
+        &pool,
+        "ai_request_settlement",
+        "organization_id",
+        "bigint",
+        false,
+        Some("0"),
+    )
+    .await;
+
+    let index_names: Vec<(String,)> = sqlx::query_as(
+        "select indexname
+         from pg_indexes
+         where schemaname = 'public'
+           and tablename in (
+             'ai_account',
+             'ai_account_benefit_lot',
+             'ai_account_hold',
+             'ai_request_meter_fact',
+             'ai_request_settlement',
+             'ai_pricing_plan'
+           )
+         order by indexname",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let index_names = index_names
+        .into_iter()
+        .map(|(name,)| name)
+        .collect::<std::collections::HashSet<_>>();
+    for index_name in [
+        "idx_ai_account_user_type",
+        "idx_ai_account_benefit_lot_account_status_expiry",
+        "idx_ai_account_hold_request",
+        "idx_ai_request_meter_fact_user_created_at",
+        "idx_ai_request_meter_fact_api_key_created_at",
+        "idx_ai_request_settlement_request",
+        "idx_ai_pricing_plan_code_version",
+    ] {
+        assert!(index_names.contains(index_name), "missing index {index_name}");
+    }
 }
 
 #[tokio::test]
@@ -246,6 +351,39 @@ async fn postgres_store_persists_provider_health_snapshots_when_url_is_provided(
     assert!(snapshots.iter().any(|entry| entry == &snapshot));
 }
 
+async fn assert_pg_column(
+    pool: &PgPool,
+    table_name: &str,
+    column_name: &str,
+    data_type: &str,
+    nullable: bool,
+    default_contains: Option<&str>,
+) {
+    let row: (String, String, Option<String>) = sqlx::query_as(
+        "select data_type, is_nullable, column_default
+         from information_schema.columns
+         where table_schema = 'public'
+           and table_name = $1
+           and column_name = $2",
+    )
+    .bind(table_name)
+    .bind(column_name)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+
+    assert_eq!(row.0, data_type);
+    assert_eq!(row.1 == "YES", nullable);
+    match default_contains {
+        Some(expected) => assert!(
+            row.2.as_deref().is_some_and(|value| value.contains(expected)),
+            "expected default for {table_name}.{column_name} to contain {expected:?}, got {:?}",
+            row.2
+        ),
+        None => {}
+    }
+}
+
 #[tokio::test]
 async fn postgres_store_persists_quota_policies_when_url_is_provided() {
     let Some(database_url) = std::env::var("SDKWORK_TEST_POSTGRES_URL").ok() else {
@@ -261,6 +399,51 @@ async fn postgres_store_persists_quota_policies_when_url_is_provided() {
 
     let policies = store.list_quota_policies().await.unwrap();
     assert!(policies.iter().any(|entry| entry == &policy));
+}
+
+#[tokio::test]
+async fn postgres_store_persists_billing_events_when_url_is_provided() {
+    let Some(database_url) = std::env::var("SDKWORK_TEST_POSTGRES_URL").ok() else {
+        return;
+    };
+
+    let pool = run_migrations(&database_url).await.unwrap();
+    let store = PostgresAdminStore::new(pool);
+
+    let event = BillingEventRecord::new(
+        "evt-postgres-1",
+        "tenant-1",
+        "project-1",
+        "responses",
+        "gpt-4.1",
+        "gpt-4.1",
+        "provider-openrouter",
+        BillingAccountingMode::PlatformCredit,
+        1_717_171_717,
+    )
+    .with_api_key_group_id("group-blue")
+    .with_operation("responses.create", "multimodal")
+    .with_request_facts(
+        Some("key-live"),
+        Some("openai"),
+        Some("resp_123"),
+        Some(850),
+    )
+    .with_units(240)
+    .with_token_usage(120, 80, 200)
+    .with_cache_token_usage(30, 10)
+    .with_media_usage(2, 3.5, 0.0, 12.0)
+    .with_financials(0.42, 0.89)
+    .with_routing_evidence(
+        Some("route-profile-1"),
+        Some("snapshot-1"),
+        Some("latency_guardrail"),
+    );
+
+    store.insert_billing_event(&event).await.unwrap();
+
+    let events = store.list_billing_events().await.unwrap();
+    assert!(events.iter().any(|entry| entry == &event));
 }
 
 #[tokio::test]

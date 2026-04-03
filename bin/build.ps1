@@ -1,4 +1,33 @@
+Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
 $scriptDir = Split-Path -Parent $PSCommandPath
-& node (Join-Path $scriptDir 'router-ops.mjs') build @args
+$translatedArgs = @('build')
+
+for ($index = 0; $index -lt $args.Count; $index += 1) {
+    $token = [string]$args[$index]
+    switch -Regex ($token) {
+        '^(?i)-Install$' {
+            $translatedArgs += '--install'
+            continue
+        }
+        '^(?i)-SkipDocs$' {
+            $translatedArgs += '--skip-docs'
+            continue
+        }
+        '^(?i)-SkipConsole$' {
+            $translatedArgs += '--skip-console'
+            continue
+        }
+        '^(?i)-DryRun$' {
+            $translatedArgs += '--dry-run'
+            continue
+        }
+        default {
+            $translatedArgs += $token
+        }
+    }
+}
+
+& node (Join-Path $scriptDir 'router-ops.mjs') @translatedArgs
 exit $LASTEXITCODE

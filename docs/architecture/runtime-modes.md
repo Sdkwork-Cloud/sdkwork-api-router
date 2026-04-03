@@ -43,6 +43,7 @@ The current repository includes:
 - a standalone `portal-api-service` with dedicated JWT signing config and bind address
 - SQLite-backed control-plane persistence for identity, catalog, usage, and billing slices
 - PostgreSQL-backed control-plane persistence for the same admin store contract
+- the shared control-plane persistence contract now also projects smaller storage facets for identity, tenant, catalog, credential, routing, usage, billing, and extension coordination workloads while preserving `AdminStore` as the compatibility facade
 - encrypted upstream credential persistence and runtime secret resolution
 - stateful OpenAI-compatible upstream relay for chat completions, responses, embeddings, and chat SSE when provider configuration is present
 - runtime config modeling for storage dialect inference plus secret backend strategy selection
@@ -66,7 +67,7 @@ The current repository includes:
 - filesystem extension discovery through `sdkwork-extension.toml` package manifests loaded from configured search paths
 - persisted extension installation and instance records for configuration-driven mounting
 - authenticated admin visibility for discovered extension packages and normalized runtime statuses across connector and native dynamic runtimes
-- discovery-time validation of manifest permissions, bindings, capabilities, entrypoints, and connector health contracts
+- discovery-time validation of manifest permissions, bindings, capabilities, entrypoints, supported modalities, runtime compatibility versions, config schema versions, and connector health contracts
 - discovery-time trust verification for external extension packages, including publisher identity, ed25519 signature checks, and trusted-signer policy evaluation
 - provider runtime dispatch keyed by `ProxyProvider.extension_id`, with `adapter_kind` kept as a compatibility alias for older records and protocol classification
 - real provider dispatch now consumes persisted extension load state so instance-level `base_url` overrides are honored and disabled installations or instances short-circuit to local fallback
@@ -95,7 +96,7 @@ The current extension runtime now separates three concerns:
 
 | Layer | Responsibility |
 |---|---|
-| `ExtensionManifest` | Package identity, compatibility, and capability declaration |
+| `ExtensionManifest` | Package identity plus runtime compatibility, capability declaration, modality coverage, and config schema metadata |
 | `ExtensionInstallation` | Installed runtime choice, trust or entrypoint state, enablement, and package-level config |
 | `ExtensionInstance` | Mounted environment-specific config such as `base_url`, credential reference, and per-instance settings |
 
@@ -179,7 +180,7 @@ The runtime now also supports two manifest sources:
 Discovered package observability now includes:
 
 1. normalized distribution and crate naming
-2. manifest validation results for explicit permissions, channel bindings, capabilities, and runtime contract completeness
+2. manifest validation results for explicit permissions, channel bindings, capabilities, supported modalities, `runtime_compat_version`, and `config_schema_version`
 3. trust verification results for signature presence, publisher trust, signature validity, and load eligibility
 
 Discovered provider manifests become executable only when:

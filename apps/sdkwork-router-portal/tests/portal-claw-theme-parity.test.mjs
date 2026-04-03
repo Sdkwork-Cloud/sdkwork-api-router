@@ -61,13 +61,16 @@ test('portal ThemeManager follows the claw-studio root contract instead of route
   );
 
   assert.match(themeManager, /root\.setAttribute\('data-theme', themeColor\)/);
-  assert.match(themeManager, /root\.classList\.add\('dark'\)/);
-  assert.match(themeManager, /root\.classList\.remove\('dark'\)/);
+  assert.match(themeManager, /SdkworkThemeProvider/);
+  assert.match(themeManager, /createSdkworkTheme/);
+  assert.match(themeManager, /root\.classList\.toggle\('dark', resolvedColorMode === 'dark'\)/);
   assert.match(themeManager, /window\.matchMedia\('\(prefers-color-scheme: dark\)'\)/);
   assert.doesNotMatch(themeManager, /data-theme-mode/);
   assert.doesNotMatch(themeManager, /data-sidebar-collapsed/);
   assert.doesNotMatch(themeManager, /theme-dark/);
   assert.doesNotMatch(themeManager, /theme-light/);
+  assert.doesNotMatch(themeManager, /root\.classList\.add\('dark'\)/);
+  assert.doesNotMatch(themeManager, /root\.classList\.remove\('dark'\)/);
 });
 
 test('portal sidebar collapse heuristics and persisted preference mirror claw-studio', () => {

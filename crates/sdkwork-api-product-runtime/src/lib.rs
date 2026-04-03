@@ -3,8 +3,11 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use sdkwork_api_app_credential::CredentialSecretManager;
+use sdkwork_api_app_gateway::{
+    configure_capability_catalog_cache_store, configure_route_decision_cache_store,
+};
 use sdkwork_api_app_runtime::{
-    build_admin_store_from_config, resolve_service_runtime_node_id,
+    build_admin_store_from_config, build_cache_runtime_from_config, resolve_service_runtime_node_id,
     start_extension_runtime_rollout_supervision, start_standalone_runtime_supervision,
     StandaloneListenerHost, StandaloneRuntimeSupervision, StandaloneServiceKind,
     StandaloneServiceReloadHandles,
@@ -200,6 +203,9 @@ impl RouterProductRuntime {
             .map(ProductRuntimeRole::as_str)
             .map(str::to_owned)
             .collect::<Vec<_>>();
+        let cache_runtime = build_cache_runtime_from_config(&config).await?;
+        configure_route_decision_cache_store(cache_runtime.cache_store());
+        configure_capability_catalog_cache_store(cache_runtime.cache_store());
         let live_store = Reloadable::new(build_admin_store_from_config(&config).await?);
         let live_secret_manager =
             Reloadable::new(CredentialSecretManager::new_with_legacy_master_keys(

@@ -1,6 +1,8 @@
 import {
   cancelPortalCommerceOrder,
   createPortalCommerceOrder,
+  getPortalBillingEventSummary,
+  getPortalBillingEvents,
   getPortalCommerceCheckoutSession,
   getPortalCommerceCatalog,
   getPortalCommerceMembership,
@@ -20,9 +22,11 @@ import type {
 import type { BillingPageData } from '../types';
 
 export async function loadBillingPageData(): Promise<BillingPageData> {
-  const [summary, usage_records, catalog, orders, membership] = await Promise.all([
+  const [summary, usage_records, billing_event_summary, billing_events, catalog, orders, membership] = await Promise.all([
     getPortalBillingSummary(),
     listPortalUsageRecords(),
+    getPortalBillingEventSummary(),
+    getPortalBillingEvents(),
     getPortalCommerceCatalog(),
     listPortalCommerceOrders(),
     getPortalCommerceMembership(),
@@ -31,6 +35,8 @@ export async function loadBillingPageData(): Promise<BillingPageData> {
   return {
     summary,
     usage_records,
+    billing_events,
+    billing_event_summary,
     plans: catalog.plans,
     packs: catalog.packs,
     orders,

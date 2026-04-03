@@ -1,46 +1,79 @@
 import { useDeferredValue, useEffect, useMemo, useState } from 'react';
-import type { FormEvent, ReactNode } from 'react';
+import type { ChangeEvent, FormEvent, ReactNode } from 'react';
 
 import {
-  Checkbox,
+  usePortalI18n,
+} from 'sdkwork-router-portal-commons';
+import { Button } from 'sdkwork-router-portal-commons/framework/actions';
+import {
+  Badge,
   DataTable,
+} from 'sdkwork-router-portal-commons/framework/display';
+import {
+  Checkbox,
+  Input,
+  Label,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from 'sdkwork-router-portal-commons/framework/entry';
+import { EmptyState } from 'sdkwork-router-portal-commons/framework/feedback';
+import {
+  FilterBar,
+  FilterBarActions,
+  FilterBarSection,
+  FilterField,
+  SearchInput,
+  SettingsField,
+} from 'sdkwork-router-portal-commons/framework/form';
+import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  EmptyState,
-  FormField,
-  InlineButton,
-  Input,
-  Label,
-  Pill,
-  Select,
-  Surface,
-  ToolbarField,
-  ToolbarInline,
-  ToolbarSearchField,
-  usePortalI18n,
-} from 'sdkwork-router-portal-commons';
+} from 'sdkwork-router-portal-commons/framework/overlays';
+import { ManagementWorkbench } from 'sdkwork-router-portal-commons/framework/workbench';
+import {
+  SectionHeader,
+  WorkspacePanel,
+} from 'sdkwork-router-portal-commons/framework/workspace';
 import { portalErrorMessage } from 'sdkwork-router-portal-portal-api';
 import type {
+  PortalCompiledRoutingSnapshotRecord,
   PortalRoutingDecision,
   PortalRoutingDecisionLog,
   PortalRoutingPreferences,
   PortalRoutingProviderOption,
   PortalRoutingSummary,
+  RoutingProfileRecord,
 } from 'sdkwork-router-portal-types';
 
-import { RoutingCardGrid } from '../components';
+import {
+  PortalRoutingProfilesDialog,
+  PortalRoutingSnapshotsDialog,
+  RoutingCardGrid,
+} from '../components';
 import type { RoutingCardItem } from '../components';
 import {
+  issuePortalRoutingProfile,
+  loadPortalRoutingProfiles,
+  loadPortalRoutingSnapshots,
   loadPortalRoutingDecisionLogs,
   loadPortalRoutingSummary,
   runPortalRoutingPreview,
   updatePortalRoutingPreferences,
 } from '../repository';
-import { buildPortalRoutingViewModel, buildRoutingStrategyLabel } from '../services';
+import {
+  buildRoutingAssessmentHealthLabel,
+  buildPortalRoutingViewModel,
+  buildRoutingCapabilityLabel,
+  buildRoutingDecisionSourceLabel,
+  buildRoutingStrategyLabel,
+} from '../services';
 import type { PortalRoutingPageProps } from '../types';
 
 type RoutingFormState = {
@@ -87,15 +120,19 @@ type RoutingWorkbenchConfig = {
 
 type TranslateFn = (text: string, values?: Record<string, string | number>) => string;
 
-const WORKBENCH_OPTIONS: Array<{ value: RoutingWorkbenchLane; label: string }> = [
-  { value: 'providers', label: 'Provider roster' },
-  { value: 'presets', label: 'Preset catalog' },
-  { value: 'evidence', label: 'Evidence stream' },
-];
+const WORKBENCH_OPTIONS: RoutingWorkbenchLane[] = ['providers', 'presets', 'evidence'];
+
+const AUTO_REGION_SELECT_VALUE = '__portal-routing-auto-region__';
+const AUTO_PROVIDER_SELECT_VALUE = '__portal-routing-auto-provider__';
+const DEFAULT_ROUTING_CAPABILITY = 'chat_completion';
+const RELIABILITY_LATENCY_TARGET_MS = '250';
 
 function toFormState(summary: PortalRoutingSummary): RoutingFormState {
   return {
-    preset_id: summary.preferences.preset_id || 'platform_default',
+    preset_id:
+      summary.preferences.preset_id === 'platform_default'
+        ? ''
+        : (summary.preferences.preset_id ?? ''),
     strategy: summary.preferences.strategy,
     ordered_provider_ids: summary.provider_options.map((provider) => provider.provider_id),
     default_provider_id: summary.preferences.default_provider_id ?? null,
@@ -109,6 +146,25 @@ function toFormState(summary: PortalRoutingSummary): RoutingFormState {
         : String(summary.preferences.max_latency_ms),
     require_healthy: summary.preferences.require_healthy,
     preferred_region: summary.preferences.preferred_region ?? '',
+  };
+}
+
+function toFormStateFromProfile(profile: RoutingProfileRecord): RoutingFormState {
+  return {
+    preset_id: profile.slug,
+    strategy: profile.strategy as PortalRoutingPreferences['strategy'],
+    ordered_provider_ids: [...profile.ordered_provider_ids],
+    default_provider_id: profile.default_provider_id ?? null,
+    max_cost:
+      profile.max_cost === null || profile.max_cost === undefined
+        ? ''
+        : String(profile.max_cost),
+    max_latency_ms:
+      profile.max_latency_ms === null || profile.max_latency_ms === undefined
+        ? ''
+        : String(profile.max_latency_ms),
+    require_healthy: profile.require_healthy,
+    preferred_region: profile.preferred_region ?? '',
   };
 }
 
@@ -140,7 +196,7 @@ function toPreviewFormState(
   )[0];
 
   return {
-    capability: latestLog?.capability ?? 'chat_completion',
+    capability: '',
     model: summary.latest_model_hint,
     requested_region: summary.preferences.preferred_region ?? '',
     selection_seed:
@@ -160,7 +216,7 @@ function syncPreviewFormState(
   }
 
   return {
-    capability: current.capability || 'chat_completion',
+    capability: current.capability,
     model: current.model || summary.latest_model_hint,
     requested_region: current.requested_region,
     selection_seed: current.selection_seed,
@@ -180,6 +236,60 @@ function reorderProviders(
   });
 }
 
+function reorderProviderIds(
+  orderedProviderIds: string[],
+  providerId: string,
+  direction: -1 | 1,
+): string[] {
+  const currentIndex = orderedProviderIds.indexOf(providerId);
+  const nextIndex = currentIndex + direction;
+
+  if (currentIndex === -1 || nextIndex < 0 || nextIndex >= orderedProviderIds.length) {
+    return orderedProviderIds;
+  }
+
+  const nextOrder = [...orderedProviderIds];
+  const [moved] = nextOrder.splice(currentIndex, 1);
+  nextOrder.splice(nextIndex, 0, moved);
+  return nextOrder;
+}
+
+function applyPresetState(current: RoutingFormState, presetId: string): RoutingFormState {
+  switch (presetId) {
+    case 'predictable':
+      return {
+        ...current,
+        preset_id: 'predictable',
+        strategy: 'deterministic_priority',
+        require_healthy: false,
+      };
+    case 'distribution':
+      return {
+        ...current,
+        preset_id: 'distribution',
+        strategy: 'weighted_random',
+        require_healthy: false,
+      };
+    case 'reliability':
+      return {
+        ...current,
+        preset_id: 'reliability',
+        strategy: 'slo_aware',
+        require_healthy: true,
+        max_latency_ms: current.max_latency_ms || RELIABILITY_LATENCY_TARGET_MS,
+      };
+    case 'regional':
+      return {
+        ...current,
+        preset_id: 'regional',
+        strategy: 'geo_affinity',
+        preferred_region: current.preferred_region || 'us-east',
+      };
+    default:
+      return current;
+  }
+}
+
 function searchMatches(query: string, values: Array<string | null | undefined>): boolean {
   if (!query) {
     return true;
@@ -194,14 +304,14 @@ function evidenceStatusTone(log: PortalRoutingDecisionLog) {
   }
 
   if (log.slo_applied) {
-    return 'positive';
+    return 'success';
   }
 
   if (log.decision_source.toLowerCase().includes('preview')) {
-    return 'accent';
+    return 'default';
   }
 
-  return 'default';
+  return 'secondary';
 }
 
 function evidenceFocus(log: PortalRoutingDecisionLog): string {
@@ -216,56 +326,62 @@ function evidenceFocus(log: PortalRoutingDecisionLog): string {
   return 'live';
 }
 
-function buildWorkbenchConfig(lane: RoutingWorkbenchLane): RoutingWorkbenchConfig {
+function buildWorkbenchConfig(
+  lane: RoutingWorkbenchLane,
+  t: TranslateFn,
+): RoutingWorkbenchConfig {
   switch (lane) {
     case 'presets':
       return {
-        laneLabel: 'Preset catalog',
-        scopeLabel: 'Strategy',
-        detailLabel: 'Operational detail',
-        actionsLabel: 'Actions',
-        detail:
-          'Preset catalog converts backend routing strategy enums into product choices that an operator can apply without reading implementation details.',
-        emptyTitle: 'No routing presets in this slice',
-        emptyDetail: 'Adjust the operational focus or search to reveal a different routing preset.',
+        laneLabel: t('Preset catalog'),
+        scopeLabel: t('Strategy'),
+        detailLabel: t('Operational detail'),
+        actionsLabel: t('Actions'),
+        detail: t(
+          'Preset catalog converts routing strategy values into product choices that an operator can apply without reading implementation details.',
+        ),
+        emptyTitle: t('No routing presets in this slice'),
+        emptyDetail: t('Adjust the operational focus or search to reveal a different routing preset.'),
         focusOptions: [
-          { value: 'all', label: 'All presets' },
-          { value: 'active', label: 'Active preset' },
-          { value: 'available', label: 'Available presets' },
+          { value: 'all', label: t('All presets') },
+          { value: 'active', label: t('Active preset') },
+          { value: 'available', label: t('Available presets') },
         ],
       };
     case 'evidence':
       return {
-        laneLabel: 'Evidence stream',
-        scopeLabel: 'Routing signal',
-        detailLabel: 'Selection detail',
-        actionsLabel: 'Trace',
-        detail:
+        laneLabel: t('Evidence stream'),
+        scopeLabel: t('Routing signal'),
+        detailLabel: t('Selection detail'),
+        actionsLabel: t('Trace'),
+        detail: t(
           'Evidence stream keeps preview and live routing traces on one operational table instead of splitting them across tabs.',
-        emptyTitle: 'No routing evidence in this slice',
-        emptyDetail: 'Run a preview or send live traffic and routing evidence will appear here.',
+        ),
+        emptyTitle: t('No routing evidence in this slice'),
+        emptyDetail: t('Run a preview or send live traffic and routing evidence will appear here.'),
         focusOptions: [
-          { value: 'all', label: 'All evidence' },
-          { value: 'preview', label: 'Preview traces' },
-          { value: 'live', label: 'Live traces' },
-          { value: 'guardrailed', label: 'Guardrailed' },
+          { value: 'all', label: t('All evidence') },
+          { value: 'preview', label: t('Preview traces') },
+          { value: 'live', label: t('Live traces') },
+          { value: 'guardrailed', label: t('Guardrailed') },
         ],
       };
     case 'providers':
     default:
       return {
-        laneLabel: 'Provider roster',
-        scopeLabel: 'Channel and order',
-        detailLabel: 'Routing role',
-        actionsLabel: 'Actions',
-        detail:
+        laneLabel: t('Provider roster'),
+        scopeLabel: t('Channel and order'),
+        detailLabel: t('Routing role'),
+        actionsLabel: t('Actions'),
+        detail: t(
           'Provider roster keeps ordered fallback, default provider, and channel coverage inside one workbench so operations can adjust posture without digging through forms.',
-        emptyTitle: 'No providers in this slice',
-        emptyDetail: 'Routing provider options will appear once the project summary is available.',
+        ),
+        emptyTitle: t('No providers in this slice'),
+        emptyDetail: t('Routing provider options will appear once the project summary is available.'),
         focusOptions: [
-          { value: 'all', label: 'All providers' },
-          { value: 'default', label: 'Default provider' },
-          { value: 'ordered', label: 'Ordered providers' },
+          { value: 'all', label: t('All providers') },
+          { value: 'default', label: t('Default provider') },
+          { value: 'ordered', label: t('Ordered providers') },
         ],
       };
   }
@@ -281,7 +397,7 @@ function buildPreviewOutcomeCards(
       label: t('Selected provider'),
       value: preview.selected_provider_id,
       detail: t('The provider chosen by the latest routing preview.'),
-      tone: 'positive' as const,
+      tone: 'success',
     },
     {
       id: 'preview-reason',
@@ -306,7 +422,25 @@ function buildPreviewOutcomeCards(
       detail: preview.matched_policy_id
         ? t('Matched policy {policyId}.', { policyId: preview.matched_policy_id })
         : t('No routing policy matched the current preview inputs.'),
-      tone: preview.slo_degraded ? 'warning' : preview.slo_applied ? 'positive' : 'default',
+      tone: preview.slo_degraded ? 'warning' : preview.slo_applied ? 'success' : 'secondary',
+    },
+    {
+      id: 'preview-snapshot',
+      label: t('Compiled snapshot'),
+      value: preview.compiled_routing_snapshot_id ?? t('No snapshot captured'),
+      detail: t(
+        'Selection evidence is linked to the compiled route state when a snapshot id is available.',
+      ),
+      tone: preview.compiled_routing_snapshot_id ? 'default' : 'secondary',
+    },
+    {
+      id: 'preview-fallback',
+      label: t('Fallback posture'),
+      value: preview.fallback_reason ?? t('No fallback used'),
+      detail: t(
+        'Fallback reasoning is preserved so operators can distinguish degraded routing from normal preference selection.',
+      ),
+      tone: preview.fallback_reason ? 'warning' : 'secondary',
     },
   ];
 }
@@ -323,6 +457,17 @@ export function PortalRoutingPage({ onNavigate }: PortalRoutingPageProps) {
   const [previewing, setPreviewing] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [previewDialogOpen, setPreviewDialogOpen] = useState(false);
+  const [profilesDialogOpen, setProfilesDialogOpen] = useState(false);
+  const [snapshotsDialogOpen, setSnapshotsDialogOpen] = useState(false);
+  const [snapshotSearchQuery, setSnapshotSearchQuery] = useState('');
+  const [routingProfiles, setRoutingProfiles] = useState<RoutingProfileRecord[]>([]);
+  const [routingSnapshots, setRoutingSnapshots] = useState<PortalCompiledRoutingSnapshotRecord[]>(
+    [],
+  );
+  const [loadingRoutingProfiles, setLoadingRoutingProfiles] = useState(false);
+  const [loadingRoutingSnapshots, setLoadingRoutingSnapshots] = useState(false);
+  const [profileStatus, setProfileStatus] = useState('');
+  const [snapshotStatus, setSnapshotStatus] = useState('');
   const [workbenchLane, setWorkbenchLane] = useState<RoutingWorkbenchLane>('providers');
   const [focusFilter, setFocusFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -333,6 +478,7 @@ export function PortalRoutingPage({ onNavigate }: PortalRoutingPageProps) {
       loadPortalRoutingSummary(),
       loadPortalRoutingDecisionLogs(),
     ]);
+
     setSummary(nextSummary);
     setPreview(nextSummary.preview);
     setForm(toFormState(nextSummary));
@@ -362,7 +508,71 @@ export function PortalRoutingPage({ onNavigate }: PortalRoutingPageProps) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [t]);
+
+  useEffect(() => {
+    if (!profilesDialogOpen) {
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingRoutingProfiles(true);
+    setProfileStatus(t('Loading routing profiles...'));
+
+    void loadPortalRoutingProfiles()
+      .then((profiles) => {
+        if (!cancelled) {
+          setRoutingProfiles(profiles);
+          setProfileStatus('');
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setProfileStatus(portalErrorMessage(error));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoadingRoutingProfiles(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [profilesDialogOpen, t]);
+
+  useEffect(() => {
+    if (!snapshotsDialogOpen) {
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingRoutingSnapshots(true);
+    setSnapshotStatus(t('Loading compiled snapshots...'));
+
+    void loadPortalRoutingSnapshots()
+      .then((snapshots) => {
+        if (!cancelled) {
+          setRoutingSnapshots(snapshots);
+          setSnapshotStatus('');
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setSnapshotStatus(portalErrorMessage(error));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoadingRoutingSnapshots(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [snapshotsDialogOpen, t]);
 
   const viewModel = useMemo(() => {
     if (!summary) {
@@ -370,7 +580,7 @@ export function PortalRoutingPage({ onNavigate }: PortalRoutingPageProps) {
     }
 
     return buildPortalRoutingViewModel(summary, decisionLogs, preview);
-  }, [decisionLogs, preview, summary]);
+  }, [decisionLogs, preview, summary, t]);
 
   const orderedProviders = useMemo(() => {
     if (!viewModel || !form) {
@@ -393,7 +603,7 @@ export function PortalRoutingPage({ onNavigate }: PortalRoutingPageProps) {
         detail: t(
           'Routing strategy is translated into user-facing posture language instead of raw enum names.',
         ),
-        tone: 'positive' as const,
+        tone: 'success' as const,
       },
       {
         id: 'summary-default',
@@ -423,8 +633,8 @@ export function PortalRoutingPage({ onNavigate }: PortalRoutingPageProps) {
   }, [decisionLogs.length, form, previewForm, t, viewModel]);
 
   const workbenchConfig = useMemo(
-    () => buildWorkbenchConfig(workbenchLane),
-    [workbenchLane],
+    () => buildWorkbenchConfig(workbenchLane, t),
+    [t, workbenchLane],
   );
 
   const workbenchRows = useMemo<RoutingWorkbenchRow[]>(() => {
@@ -444,73 +654,29 @@ export function PortalRoutingPage({ onNavigate }: PortalRoutingPageProps) {
         ),
         scope: buildRoutingStrategyLabel(preset.strategy),
         status: (
-          <Pill tone={preset.active ? 'positive' : 'default'}>
+          <Badge variant={preset.active ? 'success' : 'secondary'}>
             {preset.active ? t('Active') : t('Available')}
-          </Pill>
+          </Badge>
         ),
         detail: t(preset.detail),
         actions: (
-          <InlineButton
+          <Button
             onClick={() => {
-              if (preset.id === 'predictable') {
-                setForm((current) =>
-                  current
-                    ? {
-                        ...current,
-                        preset_id: 'predictable',
-                        strategy: 'deterministic_priority',
-                        require_healthy: false,
-                      }
-                    : current,
-                );
-              } else if (preset.id === 'distribution') {
-                setForm((current) =>
-                  current
-                    ? {
-                        ...current,
-                        preset_id: 'distribution',
-                        strategy: 'weighted_random',
-                        require_healthy: false,
-                      }
-                    : current,
-                );
-              } else if (preset.id === 'reliability') {
-                setForm((current) =>
-                  current
-                    ? {
-                        ...current,
-                        preset_id: 'reliability',
-                        strategy: 'slo_aware',
-                        require_healthy: true,
-                        max_latency_ms: current.max_latency_ms || '250',
-                      }
-                    : current,
-                );
-              } else if (preset.id === 'regional') {
-                setForm((current) =>
-                  current
-                    ? {
-                        ...current,
-                        preset_id: 'regional',
-                        strategy: 'geo_affinity',
-                        preferred_region: current.preferred_region || 'us-east',
-                      }
-                    : current,
-                );
-              }
-
+              setForm((current) => (current ? applyPresetState(current, preset.id) : current));
               setStatus(
                 t(
                   'Preset applied locally. Save posture when the updated routing shape looks right.',
                 ),
               );
             }}
-            tone={preset.active ? 'secondary' : 'primary'}
+            variant={preset.active ? 'secondary' : 'primary'}
           >
             {preset.active ? t('Active preset') : t('Apply preset')}
-          </InlineButton>
+          </Button>
         ),
-        searchText: [preset.title, preset.detail, preset.id, preset.strategy].join(' ').toLowerCase(),
+        searchText: [preset.title, preset.detail, preset.id, preset.strategy]
+          .join(' ')
+          .toLowerCase(),
       }));
     }
 
@@ -534,30 +700,40 @@ export function PortalRoutingPage({ onNavigate }: PortalRoutingPageProps) {
             <div className="space-y-1">
               <div>{buildRoutingStrategyLabel(log.strategy)}</div>
               <div className="text-xs text-zinc-500 dark:text-zinc-400">
-                {log.capability}
+                {buildRoutingCapabilityLabel(log.capability)}
                 {log.requested_region ? ` / ${log.requested_region}` : ''}
               </div>
             </div>
           ),
-          status: (
-            <Pill tone={evidenceStatusTone(log)}>
-              {log.slo_degraded
-                ? t('Degraded')
-                : log.slo_applied
+        status: (
+          <Badge variant={evidenceStatusTone(log)}>
+            {log.slo_degraded
+              ? t('Degraded')
+              : log.slo_applied
                   ? t('Guardrailed')
                   : log.decision_source.toLowerCase().includes('preview')
                     ? t('Preview')
                     : t('Live')}
-            </Pill>
+            </Badge>
           ),
           detail:
-            log.selection_reason
+            log.fallback_reason
+            ?? log.selection_reason
             ?? log.assessments[0]?.reasons[0]
             ?? t('Selection evidence is available from the current routing trace.'),
           actions: (
-            <div className="space-y-1 text-xs text-zinc-500 dark:text-zinc-400">
-              <div>{log.decision_source}</div>
+            <div className="space-y-2 text-xs text-zinc-500 dark:text-zinc-400">
+              <div>{buildRoutingDecisionSourceLabel(log.decision_source)}</div>
               <div>{log.matched_policy_id ?? t('No matched policy')}</div>
+              <div>{log.fallback_reason ?? t('No fallback used')}</div>
+              {log.compiled_routing_snapshot_id ? (
+                <Button
+                  onClick={() => openSnapshotEvidence(log.compiled_routing_snapshot_id)}
+                  variant="ghost"
+                >
+                  {t('Open snapshot evidence')}
+                </Button>
+              ) : null}
             </div>
           ),
           searchText: [
@@ -565,9 +741,13 @@ export function PortalRoutingPage({ onNavigate }: PortalRoutingPageProps) {
             log.selected_provider_id,
             log.strategy,
             log.decision_source,
+            buildRoutingDecisionSourceLabel(log.decision_source),
             log.selection_reason,
+            log.fallback_reason,
+            log.compiled_routing_snapshot_id,
             log.requested_region,
             log.capability,
+            buildRoutingCapabilityLabel(log.capability),
           ]
             .filter(Boolean)
             .join(' ')
@@ -596,87 +776,84 @@ export function PortalRoutingPage({ onNavigate }: PortalRoutingPageProps) {
           </div>
         ),
         status: (
-          <Pill tone={isDefault ? 'accent' : 'positive'}>
+          <Badge variant={isDefault ? 'default' : 'success'}>
             {isDefault ? t('Default') : t('Ordered')}
-          </Pill>
+          </Badge>
         ),
         detail: isDefault
-          ? t('Default provider stays available as the stable fallback when several providers remain eligible.')
-          : t('Ordered providers keep deterministic failover readable for operators and support teams.'),
+          ? t(
+              'Default provider stays available as the stable fallback when several providers remain eligible.',
+            )
+          : t(
+              'Ordered providers keep deterministic failover readable for operators and support teams.',
+            ),
         actions: (
           <div className="flex flex-wrap gap-2">
-            <InlineButton
+            <Button
               disabled={index === 0}
               onClick={() => {
-                setForm((current) => {
-                  if (!current) {
-                    return current;
-                  }
-
-                  const currentIndex = current.ordered_provider_ids.indexOf(provider.provider_id);
-                  if (currentIndex <= 0) {
-                    return current;
-                  }
-
-                  const orderedProviderIds = [...current.ordered_provider_ids];
-                  const [moved] = orderedProviderIds.splice(currentIndex, 1);
-                  orderedProviderIds.splice(currentIndex - 1, 0, moved);
-                  return { ...current, ordered_provider_ids: orderedProviderIds };
-                });
+                setForm((current) =>
+                  current
+                    ? {
+                        ...current,
+                        ordered_provider_ids: reorderProviderIds(
+                          current.ordered_provider_ids,
+                          provider.provider_id,
+                          -1,
+                        ),
+                      }
+                    : current,
+                );
                 setStatus(
                   t(
                     'Provider order changed locally. Save posture to publish the new fallback order.',
                   ),
                 );
               }}
-              tone="ghost"
+              variant="ghost"
             >
               {t('Move up')}
-            </InlineButton>
-            <InlineButton
+            </Button>
+            <Button
               disabled={index === orderedProviders.length - 1}
               onClick={() => {
-                setForm((current) => {
-                  if (!current) {
-                    return current;
-                  }
-
-                  const currentIndex = current.ordered_provider_ids.indexOf(provider.provider_id);
-                  if (
-                    currentIndex === -1
-                    || currentIndex >= current.ordered_provider_ids.length - 1
-                  ) {
-                    return current;
-                  }
-
-                  const orderedProviderIds = [...current.ordered_provider_ids];
-                  const [moved] = orderedProviderIds.splice(currentIndex, 1);
-                  orderedProviderIds.splice(currentIndex + 1, 0, moved);
-                  return { ...current, ordered_provider_ids: orderedProviderIds };
-                });
+                setForm((current) =>
+                  current
+                    ? {
+                        ...current,
+                        ordered_provider_ids: reorderProviderIds(
+                          current.ordered_provider_ids,
+                          provider.provider_id,
+                          1,
+                        ),
+                      }
+                    : current,
+                );
                 setStatus(
                   t(
                     'Provider order changed locally. Save posture to publish the new fallback order.',
                   ),
                 );
               }}
-              tone="ghost"
+              variant="ghost"
             >
               {t('Move down')}
-            </InlineButton>
-            <InlineButton
+            </Button>
+            <Button
               onClick={() => {
                 setForm((current) =>
-                  current ? { ...current, default_provider_id: provider.provider_id } : current,
+                  current
+                    ? { ...current, default_provider_id: provider.provider_id }
+                    : current,
                 );
                 setStatus(
                   t('Default provider updated locally. Save posture to publish the change.'),
                 );
               }}
-              tone={isDefault ? 'secondary' : 'primary'}
+              variant={isDefault ? 'secondary' : 'primary'}
             >
               {isDefault ? t('Default provider') : t('Set default')}
-            </InlineButton>
+            </Button>
           </div>
         ),
         searchText: [
@@ -690,7 +867,7 @@ export function PortalRoutingPage({ onNavigate }: PortalRoutingPageProps) {
           .toLowerCase(),
       };
     });
-  }, [form, orderedProviders, t, viewModel, workbenchLane]);
+  }, [form, openSnapshotEvidence, orderedProviders, t, viewModel, workbenchLane]);
 
   const visibleWorkbenchRows = useMemo(
     () =>
@@ -723,7 +900,7 @@ export function PortalRoutingPage({ onNavigate }: PortalRoutingPageProps) {
         ordered_provider_ids: form.ordered_provider_ids,
         default_provider_id: form.default_provider_id,
         max_cost: numericOrNull(form.max_cost),
-        max_latency_ms: numericOrNull(form.max_latency_ms),
+        max_latency_ms: integerOrNull(form.max_latency_ms),
         require_healthy: form.require_healthy,
         preferred_region: form.preferred_region || null,
       });
@@ -751,7 +928,7 @@ export function PortalRoutingPage({ onNavigate }: PortalRoutingPageProps) {
     setStatus(t('Previewing the active route...'));
 
     try {
-      const capability = previewForm.capability.trim() || 'chat_completion';
+      const capability = previewForm.capability.trim() || DEFAULT_ROUTING_CAPABILITY;
       const model = previewForm.model.trim() || summary.latest_model_hint;
       const requested_region = previewForm.requested_region.trim() || form.preferred_region || null;
       const selection_seed = integerOrNull(previewForm.selection_seed);
@@ -786,16 +963,80 @@ export function PortalRoutingPage({ onNavigate }: PortalRoutingPageProps) {
     }
   }
 
+  async function refreshRoutingProfilesAfterMutation(successMessage: string): Promise<void> {
+    setLoadingRoutingProfiles(true);
+
+    try {
+      const profiles = await loadPortalRoutingProfiles();
+      setRoutingProfiles(profiles);
+      setProfileStatus(successMessage);
+      setStatus(successMessage);
+    } finally {
+      setLoadingRoutingProfiles(false);
+    }
+  }
+
+  async function handleCreateRoutingProfile(input: {
+    name: string;
+    slug?: string | null;
+    description?: string | null;
+    active?: boolean;
+    strategy?: string;
+    ordered_provider_ids?: string[];
+    default_provider_id?: string | null;
+    max_cost?: number | null;
+    max_latency_ms?: number | null;
+    require_healthy?: boolean;
+    preferred_region?: string | null;
+  }): Promise<void> {
+    setProfileStatus(t('Saving...'));
+
+    try {
+      await issuePortalRoutingProfile(input);
+      await refreshRoutingProfilesAfterMutation(
+        t('Routing profile saved. API key groups can now bind to it.'),
+      );
+    } catch (error) {
+      const message = portalErrorMessage(error);
+      setStatus(message);
+      throw error;
+    }
+  }
+
+  function handleApplyRoutingProfile(profile: RoutingProfileRecord): void {
+    setForm(toFormStateFromProfile(profile));
+    setPreviewForm((current) =>
+      current
+        ? {
+            ...current,
+            requested_region: profile.preferred_region ?? '',
+          }
+        : current,
+    );
+    setProfilesDialogOpen(false);
+    setStatus(
+      t('Profile loaded into the current routing posture. Save posture when you are ready to publish it.'),
+    );
+  }
+
+  function openSnapshotEvidence(searchValue?: string | null): void {
+    setSnapshotSearchQuery(searchValue ?? '');
+    setSnapshotsDialogOpen(true);
+  }
+
   if (!viewModel || !form || !previewForm) {
     return (
-      <Surface detail={status} title={t('Routing')}>
+      <WorkspacePanel
+        description={status}
+        title={t('Preparing routing workbench')}
+      >
         <EmptyState
-          detail={t(
+          description={t(
             'Routing posture will appear once the portal finishes loading project summary, provider options, and decision evidence.',
           )}
           title={t('Preparing routing workbench')}
         />
-      </Surface>
+      </WorkspacePanel>
     );
   }
 
@@ -804,10 +1045,10 @@ export function PortalRoutingPage({ onNavigate }: PortalRoutingPageProps) {
   const guardrailCards: RoutingCardItem[] = viewModel.guardrails.map((item) => {
     const tone: RoutingCardItem['tone'] =
       item.id === 'provider-default'
-        ? 'accent'
+        ? 'default'
         : item.value === 'Open'
-          ? 'default'
-          : 'positive';
+          ? 'secondary'
+          : 'success';
 
     return {
       id: item.id,
@@ -819,9 +1060,74 @@ export function PortalRoutingPage({ onNavigate }: PortalRoutingPageProps) {
   });
   const latestSignals = viewModel.evidence.slice(0, 3);
   const previewAssessments = viewModel.preview.assessments.slice(0, 4);
+  const previewStatusTone =
+    viewModel.preview.slo_degraded
+      ? 'warning'
+      : viewModel.preview.slo_applied
+        ? 'success'
+        : 'outline';
+  const previewStatusLabel = viewModel.preview.slo_degraded
+    ? t('Degraded fallback')
+    : viewModel.preview.slo_applied
+      ? t('Guardrails applied')
+      : t('Preview only');
+
+  const headerActions = (
+    <div
+      data-slot="portal-routing-toolbar"
+      className="flex flex-wrap items-center gap-2"
+    >
+      <Button onClick={() => setEditDialogOpen(true)} variant="primary">
+        {t('Edit posture')}
+      </Button>
+      <Button onClick={() => setPreviewDialogOpen(true)} variant="secondary">
+        {t('Run preview')}
+      </Button>
+      <Button onClick={() => setProfilesDialogOpen(true)} variant="secondary">
+        {t('Manage routing profiles')}
+      </Button>
+      <Button onClick={() => setSnapshotsDialogOpen(true)} variant="secondary">
+        {t('View compiled snapshots')}
+      </Button>
+      <Button onClick={() => onNavigate('usage')} variant="secondary">
+        {t('Open usage')}
+      </Button>
+      <Button onClick={() => onNavigate('api-keys')} variant="ghost">
+        {t('Validate with a key')}
+      </Button>
+    </div>
+  );
 
   return (
     <>
+      <PortalRoutingProfilesDialog
+        currentPosture={{
+          strategy: form.strategy,
+          ordered_provider_ids: form.ordered_provider_ids,
+          default_provider_id: form.default_provider_id,
+          max_cost: numericOrNull(form.max_cost),
+          max_latency_ms: integerOrNull(form.max_latency_ms),
+          require_healthy: form.require_healthy,
+          preferred_region: form.preferred_region || null,
+        }}
+        loadingProfiles={loadingRoutingProfiles}
+        onApplyProfile={handleApplyRoutingProfile}
+        onCreateProfile={handleCreateRoutingProfile}
+        onOpenChange={setProfilesDialogOpen}
+        open={profilesDialogOpen}
+        profileStatus={profileStatus}
+        profiles={routingProfiles}
+      />
+
+      <PortalRoutingSnapshotsDialog
+        loadingSnapshots={loadingRoutingSnapshots}
+        onOpenChange={setSnapshotsDialogOpen}
+        open={snapshotsDialogOpen}
+        snapshotStatus={snapshotStatus}
+        snapshots={routingSnapshots}
+        suggestedSearchQuery={snapshotSearchQuery}
+      />
+
       <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
         <DialogContent>
           <DialogHeader>
@@ -834,101 +1140,129 @@ export function PortalRoutingPage({ onNavigate }: PortalRoutingPageProps) {
           </DialogHeader>
 
           <form className="grid gap-4 md:grid-cols-2" onSubmit={(event) => void handleSave(event)}>
-            <FormField label={t('Routing profile label')}>
+            <SettingsField label={t('Routing profile label')} layout="vertical">
               <Input
-                onChange={(event) => setForm({ ...form, preset_id: event.target.value })}
-                placeholder="predictable"
+                onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                  setForm({ ...form, preset_id: event.target.value })
+                }
+                placeholder={t('Example: Balanced production posture')}
                 value={form.preset_id}
               />
-            </FormField>
-            <FormField label={t('Strategy')}>
+            </SettingsField>
+            <SettingsField label={t('Strategy')} layout="vertical">
               <Select
-                onChange={(event) =>
+                onValueChange={(value) =>
                   setForm({
                     ...form,
-                    strategy: event.target.value as PortalRoutingPreferences['strategy'],
+                    strategy: value as PortalRoutingPreferences['strategy'],
                   })
                 }
                 value={form.strategy}
               >
-                <option value="deterministic_priority">{t('Predictable order')}</option>
-                <option value="weighted_random">{t('Traffic distribution')}</option>
-                <option value="slo_aware">{t('Reliability guardrails')}</option>
-                <option value="geo_affinity">{t('Regional preference')}</option>
+                <SelectTrigger>
+                  <SelectValue placeholder={t('Strategy')} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="deterministic_priority">{t('Predictable order')}</SelectItem>
+                  <SelectItem value="weighted_random">{t('Traffic distribution')}</SelectItem>
+                  <SelectItem value="slo_aware">{t('Reliability guardrails')}</SelectItem>
+                  <SelectItem value="geo_affinity">{t('Regional preference')}</SelectItem>
+                </SelectContent>
               </Select>
-            </FormField>
-            <FormField label={t('Max cost')}>
+            </SettingsField>
+            <SettingsField label={t('Max cost')} layout="vertical">
               <Input
-                onChange={(event) => setForm({ ...form, max_cost: event.target.value })}
-                placeholder="0.30"
+                onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                  setForm({ ...form, max_cost: event.target.value })
+                }
+                placeholder={t('Example: 0.30 USD ceiling')}
                 value={form.max_cost}
               />
-            </FormField>
-            <FormField label={t('Max latency ms')}>
+            </SettingsField>
+            <SettingsField label={t('Max latency ms')} layout="vertical">
               <Input
-                onChange={(event) => setForm({ ...form, max_latency_ms: event.target.value })}
-                placeholder="250"
+                onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                  setForm({ ...form, max_latency_ms: event.target.value })
+                }
+                placeholder={t('Example: 250 ms target')}
                 value={form.max_latency_ms}
               />
-            </FormField>
-            <FormField label={t('Preferred region')}>
+            </SettingsField>
+            <SettingsField label={t('Preferred region')} layout="vertical">
               <Select
-                onChange={(event) => setForm({ ...form, preferred_region: event.target.value })}
-                value={form.preferred_region}
-              >
-                <option value="">{t('Auto')}</option>
-                <option value="us-east">us-east</option>
-                <option value="us-west">us-west</option>
-                <option value="eu-west">eu-west</option>
-                <option value="ap-southeast">ap-southeast</option>
-              </Select>
-            </FormField>
-            <FormField label={t('Default provider')}>
-              <Select
-                onChange={(event) =>
+                onValueChange={(value) =>
                   setForm({
                     ...form,
-                    default_provider_id: event.target.value || null,
+                    preferred_region:
+                      value === AUTO_REGION_SELECT_VALUE ? '' : value,
                   })
                 }
-                value={form.default_provider_id ?? ''}
+                value={form.preferred_region || AUTO_REGION_SELECT_VALUE}
               >
-                <option value="">{t('Auto fallback')}</option>
-                {orderedProviders.map((provider) => (
-                  <option key={provider.provider_id} value={provider.provider_id}>
-                    {provider.display_name}
-                  </option>
-                ))}
+                <SelectTrigger>
+                  <SelectValue placeholder={t('Preferred region')} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={AUTO_REGION_SELECT_VALUE}>{t('Auto')}</SelectItem>
+                  <SelectItem value="us-east">us-east</SelectItem>
+                  <SelectItem value="us-west">us-west</SelectItem>
+                  <SelectItem value="eu-west">eu-west</SelectItem>
+                  <SelectItem value="ap-southeast">ap-southeast</SelectItem>
+                </SelectContent>
               </Select>
-            </FormField>
+            </SettingsField>
+            <SettingsField label={t('Default provider')} layout="vertical">
+              <Select
+                onValueChange={(value) =>
+                  setForm({
+                    ...form,
+                    default_provider_id:
+                      value === AUTO_PROVIDER_SELECT_VALUE ? null : value,
+                  })
+                }
+                value={form.default_provider_id ?? AUTO_PROVIDER_SELECT_VALUE}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder={t('Default provider')} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={AUTO_PROVIDER_SELECT_VALUE}>{t('Auto fallback')}</SelectItem>
+                  {orderedProviders.map((provider) => (
+                    <SelectItem key={provider.provider_id} value={provider.provider_id}>
+                      {provider.display_name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </SettingsField>
             <div className="rounded-[24px] border border-zinc-200 bg-zinc-50/80 p-4 dark:border-zinc-800 dark:bg-zinc-900/60 md:col-span-2">
               <Label className="flex items-center gap-3 text-sm font-medium text-zinc-700 dark:text-zinc-300">
                 <Checkbox
                   checked={form.require_healthy}
-                  onChange={(event) =>
+                  onCheckedChange={(nextChecked) =>
                     setForm({
                       ...form,
-                      require_healthy: event.target.checked,
+                      require_healthy: nextChecked === true,
                     })
-                      }
-                    />
-                    <span>{t('Require healthy providers')}</span>
-                  </Label>
-                  <p className="mt-2 text-sm leading-6 text-zinc-500 dark:text-zinc-400">
-                    {t(
-                      'Reliability guardrails bias routing toward healthy, lower-risk providers before traffic leaves the workspace.',
-                    )}
-                  </p>
-                </div>
-                <DialogFooter className="md:col-span-2">
-                  <InlineButton onClick={() => setEditDialogOpen(false)} tone="ghost">
-                    {t('Cancel')}
-                  </InlineButton>
-                  <InlineButton disabled={saving} tone="primary" type="submit">
-                    {saving ? t('Saving...') : t('Save posture')}
-                  </InlineButton>
-                </DialogFooter>
-              </form>
+                  }
+                />
+                <span>{t('Require healthy providers')}</span>
+              </Label>
+              <p className="mt-2 text-sm leading-6 text-zinc-500 dark:text-zinc-400">
+                {t(
+                  'Reliability guardrails bias routing toward healthy, lower-risk providers before traffic leaves the workspace.',
+                )}
+              </p>
+            </div>
+            <DialogFooter className="md:col-span-2">
+              <Button onClick={() => setEditDialogOpen(false)} variant="ghost">
+                {t('Cancel')}
+              </Button>
+              <Button disabled={saving} variant="primary" type="submit">
+                {saving ? t('Saving...') : t('Save posture')}
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
 
@@ -944,190 +1278,95 @@ export function PortalRoutingPage({ onNavigate }: PortalRoutingPageProps) {
           </DialogHeader>
 
           <form className="grid gap-4 md:grid-cols-2" onSubmit={(event) => void handlePreview(event)}>
-            <FormField label={t('Capability')}>
+            <SettingsField label={t('Capability')} layout="vertical">
               <Input
-                onChange={(event) =>
+                onChange={(event: ChangeEvent<HTMLInputElement>) =>
                   setPreviewForm({ ...previewForm, capability: event.target.value })
                 }
-                placeholder="chat_completion"
+                placeholder={t('Example: Chat completions')}
                 value={previewForm.capability}
               />
-            </FormField>
-            <FormField label={t('Requested model')}>
+            </SettingsField>
+            <SettingsField label={t('Requested model')} layout="vertical">
               <Input
-                onChange={(event) =>
+                onChange={(event: ChangeEvent<HTMLInputElement>) =>
                   setPreviewForm({ ...previewForm, model: event.target.value })
                 }
                 placeholder={viewModel.summary.latest_model_hint}
                 value={previewForm.model}
               />
-            </FormField>
-            <FormField label={t('Requested region')}>
+            </SettingsField>
+            <SettingsField label={t('Requested region')} layout="vertical">
               <Select
-                onChange={(event) =>
-                  setPreviewForm({ ...previewForm, requested_region: event.target.value })
+                onValueChange={(value) =>
+                  setPreviewForm({
+                    ...previewForm,
+                    requested_region:
+                      value === AUTO_REGION_SELECT_VALUE ? '' : value,
+                  })
                 }
-                value={previewForm.requested_region}
+                value={previewForm.requested_region || AUTO_REGION_SELECT_VALUE}
               >
-                <option value="">{t('Auto')}</option>
-                <option value="us-east">us-east</option>
-                <option value="us-west">us-west</option>
-                <option value="eu-west">eu-west</option>
-                <option value="ap-southeast">ap-southeast</option>
+                <SelectTrigger>
+                  <SelectValue placeholder={t('Requested region')} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={AUTO_REGION_SELECT_VALUE}>{t('Auto')}</SelectItem>
+                  <SelectItem value="us-east">us-east</SelectItem>
+                  <SelectItem value="us-west">us-west</SelectItem>
+                  <SelectItem value="eu-west">eu-west</SelectItem>
+                  <SelectItem value="ap-southeast">ap-southeast</SelectItem>
+                </SelectContent>
               </Select>
-            </FormField>
-            <FormField label={t('Selection seed')}>
+            </SettingsField>
+            <SettingsField label={t('Selection seed')} layout="vertical">
               <Input
                 inputMode="numeric"
-                onChange={(event) =>
+                onChange={(event: ChangeEvent<HTMLInputElement>) =>
                   setPreviewForm({ ...previewForm, selection_seed: event.target.value })
                 }
                 placeholder={t('Optional deterministic seed')}
                 value={previewForm.selection_seed}
               />
-            </FormField>
+            </SettingsField>
             <DialogFooter className="md:col-span-2">
-              <InlineButton onClick={() => setPreviewDialogOpen(false)} tone="ghost">
+              <Button onClick={() => setPreviewDialogOpen(false)} variant="ghost">
                 {t('Close')}
-              </InlineButton>
-              <InlineButton disabled={previewing} tone="primary" type="submit">
+              </Button>
+              <Button disabled={previewing} variant="primary" type="submit">
                 {previewing ? t('Running preview...') : t('Run preview')}
-              </InlineButton>
+              </Button>
             </DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
 
-      <div className="grid gap-4">
-        <Surface
-          actions={(
-            <div
-              data-slot="portal-routing-toolbar"
-              className="ml-auto flex shrink-0 items-center gap-2.5 whitespace-nowrap"
-            >
-              <InlineButton onClick={() => setEditDialogOpen(true)} tone="primary">
-                {t('Edit posture')}
-              </InlineButton>
-              <InlineButton onClick={() => setPreviewDialogOpen(true)} tone="secondary">
-                {t('Run preview')}
-              </InlineButton>
-              <InlineButton onClick={() => onNavigate('usage')} tone="secondary">
-                {t('Open usage')}
-              </InlineButton>
-              <InlineButton onClick={() => onNavigate('api-keys')} tone="ghost">
-                {t('Validate with a key')}
-              </InlineButton>
-            </div>
-          )}
-          detail={status}
-          title={t('Routing posture')}
-        >
-          <RoutingCardGrid items={summaryCards} />
-        </Surface>
-
-        <Surface detail={t(workbenchConfig.detail)} title={t('Routing workbench')}>
-          <div className="grid gap-4">
-            <div className="flex flex-wrap items-center gap-3 text-sm text-zinc-500 dark:text-zinc-400">
-              <Pill tone="seed">{t(workbenchConfig.laneLabel)}</Pill>
-              <span>{t('{visible} of {total} rows visible', {
-                visible: visibleWorkbenchRows.length,
-                total: workbenchRows.length,
-              })}</span>
-              <span>{t('Focus: {focus}', { focus: focusLabel })}</span>
-            </div>
-
-            <p className="text-sm leading-6 text-zinc-600 dark:text-zinc-300">
-              {t(
-                'Routing workbench keeps Provider roster, Preset catalog, and Evidence stream inside one operator table while edit and preview actions stay inside focused dialogs.',
-              )}
-            </p>
-
-            <ToolbarInline
-              data-slot="portal-routing-filter-bar"
-            >
-              <ToolbarSearchField
-                className="min-w-[15rem] flex-[0_1_20rem]"
-                label={t('Search routing evidence')}
-                onChange={(event) => setSearchQuery(event.target.value)}
-                placeholder={t('Search routing evidence')}
-                value={searchQuery}
-              />
-              <ToolbarField label={t('Workbench lane')} className="min-w-[12rem] shrink-0">
-                <Select
-                  onChange={(event) => {
-                    setWorkbenchLane(event.target.value as RoutingWorkbenchLane);
-                    setFocusFilter('all');
-                  }}
-                  value={workbenchLane}
-                >
-                  {WORKBENCH_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {t(option.label)}
-                    </option>
-                  ))}
-                </Select>
-              </ToolbarField>
-
-              <ToolbarField
-                label={t('Operational focus')}
-                className="min-w-[12rem] shrink-0"
-              >
-                <Select
-                  onChange={(event) => setFocusFilter(event.target.value)}
-                  value={focusFilter}
-                >
-                  {workbenchConfig.focusOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {t(option.label)}
-                    </option>
-                  ))}
-                </Select>
-              </ToolbarField>
-
-              <div className="ml-auto flex shrink-0 items-center gap-2.5 whitespace-nowrap">
-                <InlineButton
-                  onClick={() => {
-                    setFocusFilter('all');
-                    setSearchQuery('');
-                  }}
-                  tone="secondary"
-                >
-                  {t('Clear filters')}
-                </InlineButton>
-              </div>
-            </ToolbarInline>
-
-            <DataTable
-              columns={[
-                { key: 'subject', label: t('Subject'), render: (row) => row.subject },
-                { key: 'scope', label: t(workbenchConfig.scopeLabel), render: (row) => row.scope },
-                { key: 'status', label: t('Status'), render: (row) => row.status },
-                { key: 'detail', label: t(workbenchConfig.detailLabel), render: (row) => row.detail },
-                {
-                  key: 'actions',
-                  label: t(workbenchConfig.actionsLabel),
-                  render: (row) => row.actions,
-                },
-              ]}
-              empty={(
-                <div className="mx-auto flex max-w-[34rem] flex-col items-center gap-2 text-center">
-                  <strong className="text-base font-semibold text-zinc-950 dark:text-zinc-50">
-                    {t(workbenchConfig.emptyTitle)}
-                  </strong>
-                  <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                    {t(workbenchConfig.emptyDetail)}
-                  </p>
-                </div>
-              )}
-              getKey={(row) => row.id}
-              rows={visibleWorkbenchRows}
-            />
+      <div className="space-y-6">
+        <SectionHeader
+          actions={headerActions}
+        description={status}
+        eyebrow={t('Routing posture')}
+        meta={(
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="default">{buildRoutingStrategyLabel(form.strategy)}</Badge>
+            <Badge variant="outline">{`${t('Evidence entries')}: ${decisionLogs.length}`}</Badge>
           </div>
-        </Surface>
+        )}
+        title={t('Routing')}
+        />
 
-        <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
-          <Surface
-            detail={t(
+        <div className="grid gap-6 xl:grid-cols-[0.94fr_1.06fr]">
+          <WorkspacePanel
+            description={t(
+              'Routing strategy, default provider, preview model, and evidence count stay visible before operators edit posture or run previews.',
+            )}
+            title={t('Routing posture')}
+          >
+            <RoutingCardGrid items={summaryCards} />
+          </WorkspacePanel>
+
+          <WorkspacePanel
+            description={t(
               'Guardrail posture keeps cost, latency, regional preference, and the latest routing signals readable before you publish changes.',
             )}
             title={t('Guardrail posture')}
@@ -1135,7 +1374,7 @@ export function PortalRoutingPage({ onNavigate }: PortalRoutingPageProps) {
             <div className="grid gap-4">
               <RoutingCardGrid columns="xl:grid-cols-2" items={guardrailCards} />
 
-              <section className="rounded-[24px] border border-zinc-200 bg-zinc-50/80 p-5 dark:border-zinc-800 dark:bg-zinc-900/60">
+              <section className="grid gap-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="space-y-1">
                     <strong className="text-lg font-semibold text-zinc-950 dark:text-zinc-50">
@@ -1147,131 +1386,293 @@ export function PortalRoutingPage({ onNavigate }: PortalRoutingPageProps) {
                       )}
                     </p>
                   </div>
-                  <Pill tone="accent">{t('{count} signals', { count: latestSignals.length })}</Pill>
+                  <Badge variant="default">{t('{count} signals', { count: latestSignals.length })}</Badge>
                 </div>
 
-                <div className="mt-4 grid gap-3">
-                  {latestSignals.length ? (
-                    latestSignals.map((item) => (
+                {latestSignals.length ? (
+                  <div className="grid gap-3">
+                    {latestSignals.map((item) => (
                       <article
                         key={item.id}
                         className="rounded-[20px] border border-zinc-200 bg-white/90 p-4 dark:border-zinc-800 dark:bg-zinc-950/70"
                       >
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div className="space-y-1">
-                            <strong className="text-sm font-semibold text-zinc-950 dark:text-zinc-50">
-                              {item.title}
-                            </strong>
-                            <p className="text-xs uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400">
-                              {item.timestamp_label}
-                            </p>
-                          </div>
+                        <div className="space-y-1">
+                          <strong className="text-sm font-semibold text-zinc-950 dark:text-zinc-50">
+                            {item.title}
+                          </strong>
+                          <p className="text-xs uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400">
+                            {item.timestamp_label}
+                          </p>
                         </div>
                         <p className="mt-3 text-sm leading-6 text-zinc-600 dark:text-zinc-300">
                           {item.detail}
                         </p>
+                        {item.fallback_reason ? (
+                          <p className="mt-2 text-sm leading-6 text-zinc-500 dark:text-zinc-400">
+                            {item.fallback_reason}
+                          </p>
+                        ) : null}
+                        {item.snapshot_id ? (
+                          <div className="mt-3">
+                            <Button
+                              onClick={() => openSnapshotEvidence(item.snapshot_id)}
+                              variant="ghost"
+                            >
+                              {t('Open snapshot evidence')}
+                            </Button>
+                          </div>
+                        ) : null}
                       </article>
-                    ))
-                  ) : (
-                    <EmptyState
-                      detail={t('Run a preview or wait for live traffic to collect routing signals.')}
-                      title={t('No routing signals yet')}
-                    />
-                  )}
-                </div>
+                    ))}
+                  </div>
+                ) : (
+                  <EmptyState
+                    description={t('Run a preview or wait for live traffic to collect routing signals.')}
+                    title={t('No routing signals yet')}
+                  />
+                )}
               </section>
             </div>
-          </Surface>
+          </WorkspacePanel>
+        </div>
 
-          <Surface
-            detail={t(
-              'Preview outcome keeps the selected provider, fallback path, and provider assessments visible before traffic posture is saved.',
-            )}
-            title={t('Preview outcome')}
-          >
-            <div className="grid gap-4">
-              <RoutingCardGrid columns="xl:grid-cols-2" items={previewOutcomeCards} />
+        <ManagementWorkbench
+          description={t(workbenchConfig.detail)}
+          detail={{
+            children: (
+              <div className="grid gap-4">
+                <RoutingCardGrid columns="xl:grid-cols-2" items={previewOutcomeCards} />
 
-              <section className="rounded-[24px] border border-zinc-200 bg-zinc-50/80 p-5 dark:border-zinc-800 dark:bg-zinc-900/60">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="space-y-1">
-                    <strong className="text-lg font-semibold text-zinc-950 dark:text-zinc-50">
-                      {t('Candidate assessments')}
-                    </strong>
-                    <p className="text-sm leading-6 text-zinc-600 dark:text-zinc-300">
+                {viewModel.preview.compiled_routing_snapshot_id ? (
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      onClick={() =>
+                        openSnapshotEvidence(viewModel.preview.compiled_routing_snapshot_id)
+                      }
+                      variant="secondary"
+                    >
+                      {t('Open snapshot evidence')}
+                    </Button>
+                  </div>
+                ) : null}
+
+                <section className="grid gap-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="space-y-1">
+                      <strong className="text-lg font-semibold text-zinc-950 dark:text-zinc-50">
+                        {t('Candidate assessments')}
+                      </strong>
+                      <p className="text-sm leading-6 text-zinc-600 dark:text-zinc-300">
                       {t(
                         'Selection evidence stays operationally readable so support teams can validate health, latency, and policy posture before rollout.',
                       )}
                     </p>
                   </div>
-                  <Pill
-                    tone={
-                      viewModel.preview.slo_degraded
-                        ? 'warning'
-                        : viewModel.preview.slo_applied
-                          ? 'positive'
-                          : 'seed'
-                    }
-                  >
-                    {viewModel.preview.slo_degraded
-                      ? t('Degraded fallback')
-                      : viewModel.preview.slo_applied
-                        ? t('Guardrails applied')
-                        : t('Preview only')}
-                  </Pill>
-                </div>
+                    <Badge variant={previewStatusTone}>
+                      {previewStatusLabel}
+                    </Badge>
+                  </div>
 
-                <div className="mt-4 grid gap-3">
                   {previewAssessments.length ? (
-                    previewAssessments.map((assessment) => (
-                      <article
-                        key={assessment.provider_id}
-                        className="rounded-[20px] border border-zinc-200 bg-white/90 p-4 dark:border-zinc-800 dark:bg-zinc-950/70"
-                      >
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div className="space-y-1">
-                            <strong className="text-sm font-semibold text-zinc-950 dark:text-zinc-50">
-                              {assessment.provider_id}
-                            </strong>
-                            <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                              {assessment.region ? `${assessment.region} / ` : ''}
-                              {assessment.available ? t('Available') : t('Not available')}
-                            </p>
+                    <div className="grid gap-3">
+                      {previewAssessments.map((assessment) => (
+                        <article
+                          key={assessment.provider_id}
+                          className="rounded-[20px] border border-zinc-200 bg-white/90 p-4 dark:border-zinc-800 dark:bg-zinc-950/70"
+                        >
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div className="space-y-1">
+                              <strong className="text-sm font-semibold text-zinc-950 dark:text-zinc-50">
+                                {assessment.provider_id}
+                              </strong>
+                              <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                                {assessment.region ? `${assessment.region} / ` : ''}
+                                {assessment.available ? t('Available') : t('Not available')}
+                              </p>
+                            </div>
+                            <Badge variant={assessment.available ? 'success' : 'warning'}>
+                              {buildRoutingAssessmentHealthLabel(assessment.health)}
+                            </Badge>
                           </div>
-                          <Pill tone={assessment.available ? 'positive' : 'warning'}>
-                            {t(assessment.health)}
-                          </Pill>
-                        </div>
 
-                        <div className="mt-3 flex flex-wrap gap-2 text-xs text-zinc-500 dark:text-zinc-400">
-                          <span>{`Rank ${assessment.policy_rank}`}</span>
-                          <span>
-                            {`Latency ${assessment.latency_ms === null || assessment.latency_ms === undefined ? 'n/a' : `${assessment.latency_ms}ms`}`}
-                          </span>
-                          <span>
-                            {`Cost ${assessment.cost === null || assessment.cost === undefined ? 'n/a' : `$${assessment.cost.toFixed(4)}`}`}
-                          </span>
-                        </div>
+                          <div className="mt-3 flex flex-wrap gap-2 text-xs text-zinc-500 dark:text-zinc-400">
+                            <span>{t('Rank {rank}', { rank: assessment.policy_rank })}</span>
+                            <span>
+                              {t('Latency {latency}', {
+                                latency:
+                                  assessment.latency_ms === null || assessment.latency_ms === undefined
+                                    ? t('No sample')
+                                    : `${assessment.latency_ms}ms`,
+                              })}
+                            </span>
+                            <span>
+                              {t('Cost {cost}', {
+                                cost:
+                                  assessment.cost === null || assessment.cost === undefined
+                                    ? t('No sample')
+                                    : `$${assessment.cost.toFixed(4)}`,
+                              })}
+                            </span>
+                          </div>
 
-                        <p className="mt-3 text-sm leading-6 text-zinc-600 dark:text-zinc-300">
-                          {assessment.reasons[0]
-                            ?? assessment.slo_violations[0]
-                            ?? t('The preview did not expose additional assessment detail for this provider.')}
-                        </p>
-                      </article>
-                    ))
+                          <p className="mt-3 text-sm leading-6 text-zinc-600 dark:text-zinc-300">
+                            {assessment.reasons[0]
+                              ?? assessment.slo_violations[0]
+                              ?? t('The preview did not expose additional assessment detail for this provider.')}
+                          </p>
+                        </article>
+                      ))}
+                    </div>
                   ) : (
                     <EmptyState
-                      detail={t('Run a preview to inspect provider-level candidate assessments.')}
+                      description={t('Run a preview to inspect provider-level candidate assessments.')}
                       title={t('No preview assessments yet')}
                     />
                   )}
-                </div>
-              </section>
+                </section>
+              </div>
+            ),
+            description: t(
+              'Preview outcome keeps the selected provider, fallback path, and provider assessments visible before traffic posture is saved.',
+            ),
+            summary: (
+              <Badge variant={previewStatusTone}>
+                {previewStatusLabel}
+              </Badge>
+            ),
+            title: t('Preview outcome'),
+          }}
+          detailWidth={430}
+          eyebrow={t('Routing posture')}
+        filters={(
+          <div className="grid gap-4">
+            <div className="flex flex-wrap items-center gap-3 text-sm text-zinc-500 dark:text-zinc-400">
+                <Badge variant="outline">{t(workbenchConfig.laneLabel)}</Badge>
+                <span>{t('{visible} of {total} rows visible', {
+                  visible: visibleWorkbenchRows.length,
+                  total: workbenchRows.length,
+                })}</span>
+                <span>{t('Focus: {focus}', { focus: focusLabel })}</span>
+              </div>
+
+              <p className="text-sm leading-6 text-zinc-600 dark:text-zinc-300">
+                {t(
+                  'Routing workbench keeps Provider roster, Preset catalog, and Evidence stream inside one operator table while edit and preview actions stay inside focused dialogs.',
+                )}
+              </p>
+
+              <FilterBar data-slot="portal-routing-filter-bar">
+                <FilterBarSection className="min-w-[15rem] flex-[0_1_20rem]" grow={false}>
+                  <FilterField
+                    className="w-full"
+                    controlClassName="min-w-0"
+                    label={t('Search routing evidence')}
+                  >
+                    <SearchInput
+                      onChange={(event) => setSearchQuery(event.target.value)}
+                      placeholder={t('Search routing evidence')}
+                      value={searchQuery}
+                    />
+                  </FilterField>
+                </FilterBarSection>
+                <FilterBarSection className="min-w-[12rem] shrink-0" grow={false}>
+                  <FilterField className="w-full" label={t('Workbench lane')}>
+                    <Select
+                      onValueChange={(value) => {
+                        setWorkbenchLane(value as RoutingWorkbenchLane);
+                        setFocusFilter('all');
+                      }}
+                      value={workbenchLane}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder={t('Workbench lane')} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {WORKBENCH_OPTIONS.map((option) => (
+                          <SelectItem key={option} value={option}>
+                            {option === 'providers'
+                              ? t('Provider roster')
+                              : option === 'presets'
+                                ? t('Preset catalog')
+                                : t('Evidence stream')}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </FilterField>
+                </FilterBarSection>
+
+                <FilterBarSection className="min-w-[12rem] shrink-0" grow={false}>
+                  <FilterField className="w-full" label={t('Operational focus')}>
+                    <Select
+                      onValueChange={setFocusFilter}
+                      value={focusFilter}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder={t('Operational focus')} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {workbenchConfig.focusOptions.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {t(option.label)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </FilterField>
+                </FilterBarSection>
+
+                <FilterBarActions className="gap-2.5 whitespace-nowrap">
+                  <Button
+                    onClick={() => {
+                      setFocusFilter('all');
+                      setSearchQuery('');
+                    }}
+                    variant="secondary"
+                  >
+                    {t('Clear filters')}
+                  </Button>
+                </FilterBarActions>
+              </FilterBar>
             </div>
-          </Surface>
-        </div>
+          )}
+          main={{
+            children: (
+              <DataTable
+                columns={[
+                  { id: 'subject', header: t('Subject'), cell: (row) => row.subject },
+                  { id: 'scope', header: t(workbenchConfig.scopeLabel), cell: (row) => row.scope },
+                  { id: 'status', header: t('Status'), cell: (row) => row.status },
+                  { id: 'detail', header: t(workbenchConfig.detailLabel), cell: (row) => row.detail },
+                  {
+                    id: 'actions',
+                    header: t(workbenchConfig.actionsLabel),
+                    cell: (row) => row.actions,
+                  },
+                ]}
+                emptyState={(
+                  <div className="mx-auto flex max-w-[34rem] flex-col items-center gap-2 text-center">
+                    <strong className="text-base font-semibold text-zinc-950 dark:text-zinc-50">
+                      {t(workbenchConfig.emptyTitle)}
+                    </strong>
+                    <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                      {t(workbenchConfig.emptyDetail)}
+                    </p>
+                  </div>
+                )}
+                getRowId={(row) => row.id}
+                rows={visibleWorkbenchRows}
+              />
+            ),
+            description: t(workbenchConfig.detail),
+            title: t('Routing workbench'),
+          }}
+          title={t('Routing workbench')}
+        />
       </div>
     </>
   );
 }
+
+
+

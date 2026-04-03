@@ -9,22 +9,39 @@ function read(relativePath) {
   return readFileSync(path.join(appRoot, relativePath), 'utf8');
 }
 
-test('portal shell keeps sidebar navigation compact and product-led', () => {
-  const sidebar = read('packages/sdkwork-router-portal-core/src/components/Sidebar.tsx');
-  const profileDock = read('packages/sdkwork-router-portal-core/src/components/SidebarProfileDock.tsx');
+test('portal navigation rail follows claw-studio grouped business navigation and collapsed affordances', () => {
+  const navigationRail = read('packages/sdkwork-router-portal-core/src/components/PortalNavigationRail.tsx');
   const routes = read('packages/sdkwork-router-portal-core/src/routes.ts');
+  const appRoutes = read('packages/sdkwork-router-portal-core/src/application/router/AppRoutes.tsx');
 
-  assert.doesNotMatch(sidebar, /Active workspace/);
-  assert.match(sidebar, /routeGroups\.map/);
-  assert.match(sidebar, /resolvePortalPath/);
-  assert.match(sidebar, /Collapse sidebar|Expand sidebar/);
-  assert.match(profileDock, /data-slot="portal-sidebar-footer-settings"/);
-  assert.match(profileDock, /data-slot="portal-sidebar-user-control"/);
-  assert.doesNotMatch(profileDock, /Active workspace/);
+  assert.match(navigationRail, /portalSidebarRoutes/);
+  assert.match(navigationRail, /resolvePortalPath/);
+  assert.match(navigationRail, /Operations/);
+  assert.match(navigationRail, /Access/);
+  assert.match(navigationRail, /Revenue/);
+  assert.match(navigationRail, /mx-auto h-11 w-11 justify-center/);
+  assert.match(navigationRail, /group relative flex items-center rounded-2xl/);
+  assert.match(navigationRail, /data-slot="sidebar-edge-control"/);
+  assert.match(navigationRail, /data-slot="sidebar-user-control"/);
+  assert.doesNotMatch(navigationRail, /Active workspace/);
+  assert.doesNotMatch(navigationRail, /Route signals/);
+  assert.doesNotMatch(navigationRail, /<NavigationRail|NavigationRail\s*\}\s*from/);
+  assert.doesNotMatch(navigationRail, /Developer portal/);
+  assert.doesNotMatch(navigationRail, /SDKWork Router/);
   assert.match(routes, /Dashboard/);
   assert.match(routes, /Routing/);
   assert.match(routes, /API Keys/);
-  assert.doesNotMatch(sidebar, /Route signals/);
+  assert.match(routes, /Redeem/);
+  assert.match(routes, /key:\s*'gateway'[\s\S]*?sidebarVisible:\s*false/);
+  assert.match(routes, /key:\s*'routing'[\s\S]*?sidebarVisible:\s*false/);
+  assert.match(routes, /key:\s*'billing'[\s\S]*?sidebarVisible:\s*false/);
+  assert.match(routes, /export const portalSidebarRoutes/);
+  assert.match(routes, /group:\s*'operations'/);
+  assert.match(routes, /group:\s*'access'/);
+  assert.match(routes, /group:\s*'revenue'/);
+  assert.match(routes, /key:\s*'credits'/);
+  assert.match(routes, /key:\s*'account'/);
+  assert.match(appRoutes, /'credits',/);
 });
 
 test('dashboard exposes module posture instead of a route-signal map', () => {

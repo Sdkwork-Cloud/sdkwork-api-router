@@ -35,8 +35,18 @@ done
 
 PID_FILE="$DEV_HOME/run/start-workspace.pid"
 STOP_FILE="$DEV_HOME/run/start-workspace.stop"
+STATE_FILE="$DEV_HOME/run/start-workspace.state.env"
 STDOUT_LOG="$DEV_HOME/log/start-workspace.stdout.log"
 STDERR_LOG="$DEV_HOME/log/start-workspace.stderr.log"
+
+if router_is_windows; then
+  PS_SCRIPT="$(router_windows_path "$SCRIPT_DIR/stop-dev.ps1")"
+  set --
+  [ "$DRY_RUN" = '1' ] && set -- "$@" -DryRun
+  [ "$WAIT_SECONDS" != '30' ] && set -- "$@" -WaitSeconds "$WAIT_SECONDS"
+  [ "$FORCE_MODE" = '0' ] && set -- "$@" -GracefulOnly
+  exec powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PS_SCRIPT" "$@"
+fi
 
 if [ "$DRY_RUN" = '1' ]; then
   router_log "would stop development workspace using pid file $PID_FILE and stop file $STOP_FILE"
@@ -45,21 +55,16 @@ fi
 
 if ! [ -f "$PID_FILE" ]; then
   rm -f "$STOP_FILE"
+  router_remove_managed_state "$STATE_FILE"
   router_log "pid file not found, nothing to stop: $PID_FILE"
   exit 0
 fi
 
-PID=$(tr -d '[:space:]' < "$PID_FILE" 2>/dev/null || true)
+PID=$(router_get_running_pid "$PID_FILE" "$STATE_FILE")
 if [ -z "$PID" ]; then
   rm -f "$PID_FILE"
   rm -f "$STOP_FILE"
-  router_log "removed empty pid file: $PID_FILE"
-  exit 0
-fi
-
-if ! router_is_pid_running "$PID"; then
-  rm -f "$PID_FILE"
-  rm -f "$STOP_FILE"
+  router_remove_managed_state "$STATE_FILE"
   router_log "process already stopped, removed stale pid file: $PID_FILE"
   exit 0
 fi
@@ -69,6 +74,7 @@ fi
 if router_wait_for_pid_exit "$PID" "$WAIT_SECONDS"; then
   rm -f "$PID_FILE"
   rm -f "$STOP_FILE"
+  router_remove_managed_state "$STATE_FILE"
   router_log "stopped development workspace pid=$PID"
   exit 0
 fi
@@ -88,4 +94,5 @@ fi
 
 rm -f "$PID_FILE"
 rm -f "$STOP_FILE"
+router_remove_managed_state "$STATE_FILE"
 router_log "stopped development workspace pid=$PID"

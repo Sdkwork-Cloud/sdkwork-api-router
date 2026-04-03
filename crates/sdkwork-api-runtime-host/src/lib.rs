@@ -1,6 +1,8 @@
+#[cfg(windows)]
+use std::sync::Arc;
 use std::{
     fs,
-    net::{SocketAddr, TcpListener, TcpStream},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream},
     path::{Path, PathBuf},
     thread,
     time::Duration,
@@ -8,13 +10,27 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
-use bytes::Bytes;
-use http::{uri::PathAndQuery, Uri};
-use pingora_core::{
-    server::Server, upstreams::peer::HttpPeer, Error, ErrorType, Result as PingoraResult,
+#[cfg(windows)]
+use axum::{
+    body::Body,
+    extract::{Request as AxumRequest, State},
+    response::Response as AxumResponse,
+    Router,
 };
+use bytes::Bytes;
+#[cfg(windows)]
+use http::{
+    header::{self, HeaderName, HeaderValue},
+    HeaderMap, Method, StatusCode,
+};
+use http::{uri::PathAndQuery, Uri};
+#[cfg(not(windows))]
+use pingora_core::server::Server;
+use pingora_core::{upstreams::peer::HttpPeer, Error, ErrorType, Result as PingoraResult};
 use pingora_http::ResponseHeader;
-use pingora_proxy::{http_proxy_service, ProxyHttp, Session};
+#[cfg(not(windows))]
+use pingora_proxy::http_proxy_service;
+use pingora_proxy::{ProxyHttp, Session};
 
 const BROWSER_CORS_ALLOW_ORIGIN: &str = "*";
 const BROWSER_CORS_ALLOW_METHODS: &str = "GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD";
@@ -60,6 +76,13 @@ pub struct SiteAsset {
     pub cache_control: String,
 }
 
+#[cfg_attr(windows, allow(dead_code))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RuntimeHostBackend {
+    Pingora,
+    Axum,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EmbeddedRuntime {
     base_url: String,
@@ -99,9 +122,9 @@ impl RuntimeHostConfig {
             bind_addr,
             PathBuf::from("apps/sdkwork-router-admin/dist"),
             PathBuf::from("apps/sdkwork-router-portal/dist"),
-            "127.0.0.1:8081",
-            "127.0.0.1:8082",
-            "127.0.0.1:8080",
+            "127.0.0.1:9981",
+            "127.0.0.1:9982",
+            "127.0.0.1:9980",
         )
     }
 }
@@ -291,7 +314,29 @@ fn guess_content_type(path: &Path) -> &'static str {
     }
 }
 
+#[cfg_attr(windows, allow(dead_code))]
+fn selected_runtime_backend() -> RuntimeHostBackend {
+    if cfg!(windows) {
+        RuntimeHostBackend::Axum
+    } else {
+        RuntimeHostBackend::Pingora
+    }
+}
+
 pub fn serve_public_web(config: RuntimeHostConfig) -> Result<()> {
+    #[cfg(windows)]
+    {
+        serve_public_web_axum(config)
+    }
+
+    #[cfg(not(windows))]
+    {
+        serve_public_web_pingora(config)
+    }
+}
+
+#[cfg(not(windows))]
+fn serve_public_web_pingora(config: RuntimeHostConfig) -> Result<()> {
     let mut server = Server::new(None).map_err(|error| anyhow!(error.to_string()))?;
     server.bootstrap();
 
@@ -302,11 +347,306 @@ pub fn serve_public_web(config: RuntimeHostConfig) -> Result<()> {
     server.run_forever();
 }
 
+#[cfg(windows)]
+#[derive(Clone)]
+struct RuntimeHostState {
+    config: RuntimeHostConfig,
+    client: reqwest::Client,
+}
+
+#[cfg(windows)]
+fn serve_public_web_axum(config: RuntimeHostConfig) -> Result<()> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("failed to build tokio runtime for runtime host")?;
+
+    runtime.block_on(serve_public_web_axum_async(config))
+}
+
+#[cfg(windows)]
+async fn serve_public_web_axum_async(config: RuntimeHostConfig) -> Result<()> {
+    let bind_addr = config.bind_addr.clone();
+    let listener = tokio::net::TcpListener::bind(&bind_addr)
+        .await
+        .with_context(|| format!("failed to bind runtime host listener to {bind_addr}"))?;
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .context("failed to build runtime host reverse proxy client")?;
+    let state = Arc::new(RuntimeHostState { config, client });
+
+    axum::serve(listener, build_runtime_host_router(state))
+        .await
+        .with_context(|| format!("runtime host listener exited for {bind_addr}"))
+}
+
+#[cfg(windows)]
+fn build_runtime_host_router(state: Arc<RuntimeHostState>) -> Router {
+    Router::new()
+        .fallback(runtime_host_handler)
+        .with_state(state)
+}
+
+#[cfg(windows)]
+async fn runtime_host_handler(
+    State(state): State<Arc<RuntimeHostState>>,
+    request: AxumRequest,
+) -> AxumResponse {
+    let request_path = request.uri().path().to_owned();
+
+    match classify_request(&request_path) {
+        RuntimeRoute::Redirect(location) => redirect_response(&location),
+        RuntimeRoute::Static { site, request_path } => {
+            let site_root = match site {
+                RuntimeSite::Admin => &state.config.admin_site_dir,
+                RuntimeSite::Portal => &state.config.portal_site_dir,
+            };
+
+            match serve_static_asset_http(request.method(), site, &request_path, site_root) {
+                Ok(response) => response,
+                Err(_) => not_found_response(),
+            }
+        }
+        RuntimeRoute::Proxy {
+            upstream,
+            request_path,
+        } => {
+            if request.method() == Method::OPTIONS {
+                return browser_cors_preflight_response();
+            }
+
+            match proxy_request(state, request, &upstream, &request_path).await {
+                Ok(response) => response,
+                Err(error) => bad_gateway_response(error),
+            }
+        }
+        RuntimeRoute::NotFound => not_found_response(),
+    }
+}
+
+#[cfg(windows)]
+async fn proxy_request(
+    state: Arc<RuntimeHostState>,
+    request: AxumRequest,
+    upstream: &str,
+    request_path: &str,
+) -> Result<AxumResponse> {
+    let (parts, body) = request.into_parts();
+    let upstream_addr = upstream_target(&state.config, upstream);
+    let upstream_url = build_upstream_url(upstream_addr, request_path, parts.uri.query());
+    let mut upstream_request = state.client.request(parts.method, &upstream_url);
+
+    for (name, value) in &parts.headers {
+        if should_skip_request_header(name) {
+            continue;
+        }
+        upstream_request = upstream_request.header(name, value);
+    }
+
+    let upstream_response = upstream_request
+        .body(reqwest::Body::wrap_stream(body.into_data_stream()))
+        .send()
+        .await
+        .with_context(|| format!("failed to proxy request to {upstream_url}"))?;
+
+    Ok(proxied_response(upstream_response))
+}
+
+#[cfg(windows)]
+fn build_upstream_url(target: &str, request_path: &str, query: Option<&str>) -> String {
+    let base = if target.contains("://") {
+        target.trim_end_matches('/').to_owned()
+    } else {
+        format!("http://{}", target.trim_end_matches('/'))
+    };
+    let mut url = format!("{base}{request_path}");
+    if let Some(query) = query {
+        url.push('?');
+        url.push_str(query);
+    }
+    url
+}
+
+#[cfg(windows)]
+fn proxied_response(upstream_response: reqwest::Response) -> AxumResponse {
+    let status = upstream_response.status();
+    let headers = upstream_response.headers().clone();
+    let mut response = AxumResponse::builder()
+        .status(status)
+        .body(Body::from_stream(upstream_response.bytes_stream()))
+        .expect("valid proxied response");
+
+    for (name, value) in &headers {
+        if should_skip_response_header(name) {
+            continue;
+        }
+        response.headers_mut().append(name, value.clone());
+    }
+    apply_browser_cors_http_headers(response.headers_mut());
+
+    response
+}
+
+#[cfg(windows)]
+fn redirect_response(location: &str) -> AxumResponse {
+    let mut response = AxumResponse::builder()
+        .status(StatusCode::FOUND)
+        .body(Body::empty())
+        .expect("valid redirect response");
+    response.headers_mut().insert(
+        header::LOCATION,
+        HeaderValue::from_str(location).expect("valid redirect location"),
+    );
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    response
+        .headers_mut()
+        .insert(header::CONTENT_LENGTH, HeaderValue::from_static("0"));
+    response
+}
+
+#[cfg(windows)]
+fn browser_cors_preflight_response() -> AxumResponse {
+    let mut response = AxumResponse::builder()
+        .status(StatusCode::NO_CONTENT)
+        .body(Body::empty())
+        .expect("valid preflight response");
+    response
+        .headers_mut()
+        .insert(header::CONTENT_LENGTH, HeaderValue::from_static("0"));
+    apply_browser_cors_http_headers(response.headers_mut());
+    response
+}
+
+#[cfg(windows)]
+fn bad_gateway_response(error: anyhow::Error) -> AxumResponse {
+    let mut response = AxumResponse::builder()
+        .status(StatusCode::BAD_GATEWAY)
+        .body(Body::from(format!("bad gateway: {error:#}")))
+        .expect("valid bad gateway response");
+    apply_browser_cors_http_headers(response.headers_mut());
+    response
+}
+
+#[cfg(windows)]
+fn not_found_response() -> AxumResponse {
+    AxumResponse::builder()
+        .status(StatusCode::NOT_FOUND)
+        .body(Body::empty())
+        .expect("valid not found response")
+}
+
+#[cfg(windows)]
+fn serve_static_asset_http(
+    method: &Method,
+    site: RuntimeSite,
+    request_path: &str,
+    site_root: &Path,
+) -> Result<AxumResponse> {
+    if method != Method::GET && method != Method::HEAD {
+        bail!("static site only allows GET and HEAD");
+    }
+
+    let asset = resolve_static_asset(site, request_path, site_root)?;
+    if !asset.filesystem_path.is_file() {
+        bail!("static asset does not exist");
+    }
+
+    let body = read_static_asset_body(&asset)?;
+    let content_length = body.len().to_string();
+    let mut response = AxumResponse::builder()
+        .status(StatusCode::OK)
+        .body(if method == Method::HEAD {
+            Body::empty()
+        } else {
+            Body::from(body)
+        })
+        .expect("valid static asset response");
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_str(asset.content_type.as_str()).expect("valid content type"),
+    );
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_str(asset.cache_control.as_str()).expect("valid cache control"),
+    );
+    response.headers_mut().insert(
+        header::CONTENT_LENGTH,
+        HeaderValue::from_str(content_length.as_str()).expect("valid content length"),
+    );
+
+    Ok(response)
+}
+
+#[cfg(windows)]
+fn apply_browser_cors_http_headers(headers: &mut HeaderMap) {
+    headers.insert(
+        HeaderName::from_static("access-control-allow-origin"),
+        HeaderValue::from_static(BROWSER_CORS_ALLOW_ORIGIN),
+    );
+    headers.insert(
+        HeaderName::from_static("access-control-allow-methods"),
+        HeaderValue::from_static(BROWSER_CORS_ALLOW_METHODS),
+    );
+    headers.insert(
+        HeaderName::from_static("access-control-allow-headers"),
+        HeaderValue::from_static(BROWSER_CORS_ALLOW_HEADERS),
+    );
+    headers.insert(
+        HeaderName::from_static("access-control-expose-headers"),
+        HeaderValue::from_static(BROWSER_CORS_EXPOSE_HEADERS),
+    );
+    headers.insert(
+        HeaderName::from_static("access-control-max-age"),
+        HeaderValue::from_static(BROWSER_CORS_MAX_AGE),
+    );
+    headers.insert(header::VARY, HeaderValue::from_static("origin"));
+}
+
+fn upstream_target<'a>(config: &'a RuntimeHostConfig, upstream: &str) -> &'a str {
+    match upstream {
+        "admin" => config.admin_upstream.as_str(),
+        "portal" => config.portal_upstream.as_str(),
+        "gateway" => config.gateway_upstream.as_str(),
+        _ => config.portal_upstream.as_str(),
+    }
+}
+
+#[cfg(windows)]
+fn should_skip_request_header(name: &HeaderName) -> bool {
+    name == header::HOST || is_hop_by_hop_header(name)
+}
+
+#[cfg(windows)]
+fn should_skip_response_header(name: &HeaderName) -> bool {
+    is_hop_by_hop_header(name)
+}
+
+#[cfg(windows)]
+fn is_hop_by_hop_header(name: &HeaderName) -> bool {
+    matches!(
+        name.as_str().to_ascii_lowercase().as_str(),
+        "connection"
+            | "keep-alive"
+            | "proxy-authenticate"
+            | "proxy-authorization"
+            | "te"
+            | "trailer"
+            | "transfer-encoding"
+            | "upgrade"
+            | "proxy-connection"
+    )
+}
+
+#[cfg_attr(windows, allow(dead_code))]
 #[derive(Debug, Clone)]
 struct RuntimeHostProxy {
     config: RuntimeHostConfig,
 }
 
+#[cfg_attr(windows, allow(dead_code))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RuntimeRequestContext {
     route: RuntimeRoute,
@@ -380,16 +720,8 @@ impl ProxyHttp for RuntimeHostProxy {
         ctx: &mut Self::CTX,
     ) -> PingoraResult<Box<HttpPeer>> {
         let target = match &ctx.route {
-            RuntimeRoute::Proxy { upstream, .. } if upstream == "admin" => {
-                self.config.admin_upstream.as_str()
-            }
-            RuntimeRoute::Proxy { upstream, .. } if upstream == "portal" => {
-                self.config.portal_upstream.as_str()
-            }
-            RuntimeRoute::Proxy { upstream, .. } if upstream == "gateway" => {
-                self.config.gateway_upstream.as_str()
-            }
-            _ => self.config.portal_upstream.as_str(),
+            RuntimeRoute::Proxy { upstream, .. } => upstream_target(&self.config, upstream),
+            _ => upstream_target(&self.config, "portal"),
         };
 
         Ok(Box::new(HttpPeer::new(target, false, String::new())))
@@ -409,6 +741,7 @@ impl ProxyHttp for RuntimeHostProxy {
     }
 }
 
+#[cfg_attr(windows, allow(dead_code))]
 fn apply_browser_cors_headers(header: &mut ResponseHeader) -> PingoraResult<()> {
     header.insert_header("access-control-allow-origin", BROWSER_CORS_ALLOW_ORIGIN)?;
     header.insert_header("access-control-allow-methods", BROWSER_CORS_ALLOW_METHODS)?;
@@ -419,12 +752,14 @@ fn apply_browser_cors_headers(header: &mut ResponseHeader) -> PingoraResult<()> 
     Ok(())
 }
 
+#[cfg_attr(windows, allow(dead_code))]
 async fn respond_browser_cors_preflight(session: &mut Session) -> PingoraResult<()> {
     let mut header = ResponseHeader::build(204, Some(0))?;
     apply_browser_cors_headers(&mut header)?;
     session.write_response_header(Box::new(header), true).await
 }
 
+#[cfg_attr(windows, allow(dead_code))]
 async fn write_redirect_response(session: &mut Session, location: &str) -> PingoraResult<()> {
     let header = build_redirect_response_header(location)?;
     session
@@ -433,6 +768,7 @@ async fn write_redirect_response(session: &mut Session, location: &str) -> Pingo
     session.write_response_body(Some(Bytes::new()), true).await
 }
 
+#[cfg_attr(windows, allow(dead_code))]
 fn build_redirect_response_header(location: &str) -> PingoraResult<ResponseHeader> {
     let mut header = ResponseHeader::build(302, Some(4))?;
     header.insert_header("location", location)?;
@@ -441,6 +777,7 @@ fn build_redirect_response_header(location: &str) -> PingoraResult<ResponseHeade
     Ok(header)
 }
 
+#[cfg_attr(windows, allow(dead_code))]
 async fn serve_static_asset(
     session: &mut Session,
     site: RuntimeSite,
@@ -457,8 +794,7 @@ async fn serve_static_asset(
         bail!("static asset does not exist");
     }
 
-    let body = fs::read(&asset.filesystem_path)
-        .with_context(|| format!("failed to read {}", asset.filesystem_path.display()))?;
+    let body = read_static_asset_body(&asset)?;
     let mut header = ResponseHeader::build(200, Some(4))?;
     header.insert_header("content-type", asset.content_type.as_str())?;
     header.insert_header("cache-control", asset.cache_control.as_str())?;
@@ -480,6 +816,12 @@ async fn serve_static_asset(
     Ok(())
 }
 
+fn read_static_asset_body(asset: &SiteAsset) -> Result<Vec<u8>> {
+    fs::read(&asset.filesystem_path)
+        .with_context(|| format!("failed to read {}", asset.filesystem_path.display()))
+}
+
+#[cfg_attr(windows, allow(dead_code))]
 fn rewrite_request_path(session: &mut Session, request_path: &str) -> PingoraResult<()> {
     let current_uri = session.req_header().uri.clone();
     let mut parts = current_uri.into_parts();
@@ -511,9 +853,25 @@ fn uses_ephemeral_port(bind_addr: &str) -> bool {
         .unwrap_or_else(|_| bind_addr.ends_with(":0"))
 }
 
+fn listener_probe_addr(bind_addr: &str) -> String {
+    bind_addr
+        .parse::<SocketAddr>()
+        .map(|socket_addr| match socket_addr.ip() {
+            IpAddr::V4(ipv4_addr) if ipv4_addr.is_unspecified() => {
+                SocketAddr::from((Ipv4Addr::LOCALHOST, socket_addr.port())).to_string()
+            }
+            IpAddr::V6(ipv6_addr) if ipv6_addr.is_unspecified() => {
+                SocketAddr::from((Ipv6Addr::LOCALHOST, socket_addr.port())).to_string()
+            }
+            _ => socket_addr.to_string(),
+        })
+        .unwrap_or_else(|_| bind_addr.to_owned())
+}
+
 fn wait_for_listener(bind_addr: &str) -> Result<()> {
+    let probe_addr = listener_probe_addr(bind_addr);
     for _ in 0..40 {
-        if TcpStream::connect(bind_addr).is_ok() {
+        if TcpStream::connect(&probe_addr).is_ok() {
             return Ok(());
         }
         thread::sleep(Duration::from_millis(50));
@@ -525,7 +883,8 @@ fn wait_for_listener(bind_addr: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_browser_cors_headers, build_redirect_response_header, BROWSER_CORS_ALLOW_HEADERS,
+        apply_browser_cors_headers, build_redirect_response_header, listener_probe_addr,
+        selected_runtime_backend, RuntimeHostBackend, BROWSER_CORS_ALLOW_HEADERS,
         BROWSER_CORS_ALLOW_METHODS, BROWSER_CORS_ALLOW_ORIGIN, BROWSER_CORS_EXPOSE_HEADERS,
         BROWSER_CORS_MAX_AGE,
     };
@@ -566,5 +925,29 @@ mod tests {
             header.headers.get("access-control-max-age").unwrap(),
             BROWSER_CORS_MAX_AGE
         );
+    }
+
+    #[test]
+    fn listener_probe_addr_rewrites_unspecified_ipv4_to_loopback() {
+        assert_eq!(listener_probe_addr("0.0.0.0:9983"), "127.0.0.1:9983");
+    }
+
+    #[test]
+    fn listener_probe_addr_rewrites_unspecified_ipv6_to_loopback() {
+        assert_eq!(listener_probe_addr("[::]:9983"), "[::1]:9983");
+    }
+
+    #[test]
+    fn listener_probe_addr_preserves_specific_bind_addresses() {
+        assert_eq!(listener_probe_addr("127.0.0.1:9983"), "127.0.0.1:9983");
+    }
+
+    #[test]
+    fn runtime_backend_matches_supported_platform_strategy() {
+        if cfg!(windows) {
+            assert_eq!(selected_runtime_backend(), RuntimeHostBackend::Axum);
+        } else {
+            assert_eq!(selected_runtime_backend(), RuntimeHostBackend::Pingora);
+        }
     }
 }

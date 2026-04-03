@@ -6,11 +6,15 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+async-trait.workspace = true
 axum.workspace = true
 futures-util.workspace = true
 sdkwork-api-app-credential = { path = "../sdkwork-api-app-credential" }
 sdkwork-api-app-extension = { path = "../sdkwork-api-app-extension" }
 sdkwork-api-app-gateway = { path = "../sdkwork-api-app-gateway" }
+sdkwork-api-cache-core = { path = "../sdkwork-api-cache-core" }
+sdkwork-api-cache-memory = { path = "../sdkwork-api-cache-memory" }
+sdkwork-api-cache-redis = { path = "../sdkwork-api-cache-redis" }
 sdkwork-api-config = { path = "../sdkwork-api-config" }
 sdkwork-api-storage-postgres = { path = "../sdkwork-api-storage-postgres" }
 sdkwork-api-storage-core = { path = "../sdkwork-api-storage-core" }

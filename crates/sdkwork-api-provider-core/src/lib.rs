@@ -33,6 +33,7 @@ use sdkwork_api_contract_openai::images::{
     CreateImageEditRequest, CreateImageRequest, CreateImageVariationRequest,
 };
 use sdkwork_api_contract_openai::moderations::CreateModerationRequest;
+use sdkwork_api_contract_openai::music::{CreateMusicLyricsRequest, CreateMusicRequest};
 use sdkwork_api_contract_openai::realtime::CreateRealtimeSessionRequest;
 use sdkwork_api_contract_openai::responses::{
     CompactResponseRequest, CountResponseInputTokensRequest, CreateResponseRequest,
@@ -126,6 +127,12 @@ pub enum ProviderRequest<'a> {
     ResponsesCompact(&'a CompactResponseRequest),
     Embeddings(&'a CreateEmbeddingRequest),
     Moderations(&'a CreateModerationRequest),
+    Music(&'a CreateMusicRequest),
+    MusicList,
+    MusicRetrieve(&'a str),
+    MusicDelete(&'a str),
+    MusicContent(&'a str),
+    MusicLyrics(&'a CreateMusicLyricsRequest),
     ImagesGenerations(&'a CreateImageRequest),
     ImagesEdits(&'a CreateImageEditRequest),
     ImagesVariations(&'a CreateImageVariationRequest),

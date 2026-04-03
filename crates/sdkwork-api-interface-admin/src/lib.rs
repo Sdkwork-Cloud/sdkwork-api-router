@@ -10,12 +10,12 @@ use axum::{
     http::request::Parts,
     http::StatusCode,
     response::Html,
-    routing::{delete, get, post, put},
+    routing::{delete, get, patch, post, put},
     Json, Router,
 };
 use sdkwork_api_app_billing::{
-    create_quota_policy, list_ledger_entries, list_quota_policies, persist_quota_policy,
-    summarize_billing_from_store,
+    create_quota_policy, list_billing_events, list_ledger_entries, list_quota_policies,
+    persist_quota_policy, summarize_billing_events_from_store, summarize_billing_from_store,
 };
 use sdkwork_api_app_catalog::{
     delete_channel as delete_catalog_channel, delete_channel_model as delete_catalog_channel_model,
@@ -39,24 +39,28 @@ use sdkwork_api_app_extension::{
     list_provider_health_snapshots, persist_extension_installation, persist_extension_instance,
     PersistExtensionInstanceInput,
 };
-use sdkwork_api_app_gateway::{
-    reload_extension_host_with_scope, ConfiguredExtensionHostReloadScope,
-};
+  use sdkwork_api_app_gateway::{
+      invalidate_capability_catalog_cache, reload_extension_host_with_scope,
+      ConfiguredExtensionHostReloadScope,
+  };
 use sdkwork_api_app_identity::{
-    change_admin_password, delete_admin_user, delete_gateway_api_key, delete_portal_user,
-    list_admin_user_profiles, list_gateway_api_keys, list_portal_user_profiles,
-    load_admin_user_profile, login_admin_user, persist_gateway_api_key, reset_admin_user_password,
-    reset_portal_user_password, set_admin_user_active, set_gateway_api_key_active,
-    set_portal_user_active, update_gateway_api_key_metadata, upsert_admin_user, upsert_portal_user,
-    verify_jwt, AdminIdentityError, Claims, CreatedGatewayApiKey, PortalIdentityError,
+    change_admin_password, create_api_key_group, delete_admin_user, delete_api_key_group,
+    delete_gateway_api_key, delete_portal_user, list_admin_user_profiles, list_api_key_groups,
+    list_gateway_api_keys, list_portal_user_profiles, load_admin_user_profile, login_admin_user,
+    reset_admin_user_password, reset_portal_user_password, set_admin_user_active,
+    set_api_key_group_active, set_gateway_api_key_active, set_portal_user_active,
+    update_api_key_group, update_gateway_api_key_metadata, upsert_admin_user, upsert_portal_user,
+    verify_jwt, AdminIdentityError, ApiKeyGroupInput, Claims, CreatedGatewayApiKey,
+    PortalIdentityError,
 };
 use sdkwork_api_app_rate_limit::{
     create_rate_limit_policy, list_rate_limit_policies, persist_rate_limit_policy,
 };
 use sdkwork_api_app_routing::{
-    create_routing_policy, list_routing_decision_logs, list_routing_policies,
-    persist_routing_policy, select_route_with_store_context, CreateRoutingPolicyInput,
-    RouteSelectionContext,
+    create_routing_policy, create_routing_profile, list_compiled_routing_snapshots,
+    list_routing_decision_logs, list_routing_policies, list_routing_profiles,
+    persist_routing_policy, persist_routing_profile, select_route_with_store_context,
+    CreateRoutingPolicyInput, CreateRoutingProfileInput, RouteSelectionContext,
 };
 use sdkwork_api_app_runtime::{
     create_extension_runtime_rollout_with_request, create_standalone_config_rollout,
@@ -71,17 +75,20 @@ use sdkwork_api_app_tenant::{
 };
 use sdkwork_api_app_usage::list_usage_records;
 use sdkwork_api_app_usage::summarize_usage_records_from_store;
-use sdkwork_api_domain_billing::{BillingSummary, LedgerEntry, QuotaPolicy};
+use sdkwork_api_domain_billing::{BillingEventRecord, BillingEventSummary, BillingSummary, LedgerEntry, QuotaPolicy};
 use sdkwork_api_domain_catalog::{
     Channel, ChannelModelRecord, ModelCapability, ModelCatalogEntry, ModelPriceRecord,
     ProviderChannelBinding, ProxyProvider,
 };
 use sdkwork_api_domain_coupon::CouponCampaign;
 use sdkwork_api_domain_credential::UpstreamCredential;
-use sdkwork_api_domain_identity::{AdminUserProfile, GatewayApiKeyRecord, PortalUserProfile};
+use sdkwork_api_domain_identity::{
+    AdminUserProfile, ApiKeyGroupRecord, GatewayApiKeyRecord, PortalUserProfile,
+};
 use sdkwork_api_domain_rate_limit::{RateLimitPolicy, RateLimitWindowSnapshot};
 use sdkwork_api_domain_routing::{
-    ProviderHealthSnapshot, RoutingDecisionLog, RoutingDecisionSource, RoutingPolicy,
+    CompiledRoutingSnapshotRecord, ProviderHealthSnapshot, RoutingCandidateAssessment,
+    RoutingDecisionLog, RoutingDecisionSource, RoutingPolicy, RoutingProfileRecord,
     RoutingStrategy,
 };
 use sdkwork_api_domain_tenant::{Project, Tenant};
@@ -544,6 +551,8 @@ struct CreateApiKeyRequest {
     expires_at_ms: Option<u64>,
     #[serde(default)]
     plaintext_key: Option<String>,
+    #[serde(default)]
+    api_key_group_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -556,6 +565,48 @@ struct UpdateApiKeyRequest {
     notes: Option<String>,
     #[serde(default)]
     expires_at_ms: Option<u64>,
+    #[serde(default)]
+    api_key_group_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateApiKeyGroupRequest {
+    tenant_id: String,
+    project_id: String,
+    environment: String,
+    name: String,
+    #[serde(default)]
+    slug: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    color: Option<String>,
+    #[serde(default)]
+    default_capability_scope: Option<String>,
+    #[serde(default)]
+    default_accounting_mode: Option<String>,
+    #[serde(default)]
+    default_routing_profile_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateApiKeyGroupRequest {
+    tenant_id: String,
+    project_id: String,
+    environment: String,
+    name: String,
+    #[serde(default)]
+    slug: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    color: Option<String>,
+    #[serde(default)]
+    default_capability_scope: Option<String>,
+    #[serde(default)]
+    default_accounting_mode: Option<String>,
+    #[serde(default)]
+    default_routing_profile_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -605,6 +656,33 @@ struct CreateRoutingPolicyRequest {
 }
 
 #[derive(Debug, Deserialize)]
+struct CreateRoutingProfileRequest {
+    profile_id: String,
+    tenant_id: String,
+    project_id: String,
+    name: String,
+    slug: String,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default = "default_true")]
+    active: bool,
+    #[serde(default)]
+    strategy: Option<RoutingStrategy>,
+    #[serde(default)]
+    ordered_provider_ids: Vec<String>,
+    #[serde(default)]
+    default_provider_id: Option<String>,
+    #[serde(default)]
+    max_cost: Option<f64>,
+    #[serde(default)]
+    max_latency_ms: Option<u64>,
+    #[serde(default)]
+    require_healthy: bool,
+    #[serde(default)]
+    preferred_region: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct CreateQuotaPolicyRequest {
     policy_id: String,
     project_id: String,
@@ -639,6 +717,12 @@ struct RoutingSimulationRequest {
     capability: String,
     model: String,
     #[serde(default)]
+    tenant_id: Option<String>,
+    #[serde(default)]
+    project_id: Option<String>,
+    #[serde(default)]
+    api_key_group_id: Option<String>,
+    #[serde(default)]
     requested_region: Option<String>,
     #[serde(default)]
     selection_seed: Option<u64>,
@@ -651,19 +735,29 @@ struct RoutingSimulationResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     matched_policy_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    applied_routing_profile_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    compiled_routing_snapshot_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     strategy: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     selection_seed: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     selection_reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    fallback_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     requested_region: Option<String>,
     #[serde(default)]
     slo_applied: bool,
     #[serde(default)]
     slo_degraded: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    selected_candidate: Option<RoutingCandidateAssessment>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    assessments: Vec<sdkwork_api_domain_routing::RoutingCandidateAssessment>,
+    rejected_candidates: Vec<RoutingCandidateAssessment>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    assessments: Vec<RoutingCandidateAssessment>,
 }
 
 #[derive(Debug, Serialize)]
@@ -859,6 +953,15 @@ pub fn admin_router() -> Router {
         .route("/admin/tenants", get(|| async { "tenants" }))
         .route("/admin/projects", get(|| async { "projects" }))
         .route("/admin/api-keys", get(|| async { "api-keys" }))
+        .route("/admin/api-key-groups", get(|| async { "api-key-groups" }))
+        .route(
+            "/admin/api-key-groups/{group_id}",
+            patch(|| async { "api-key-groups" }).delete(|| async { "api-key-groups" }),
+        )
+        .route(
+            "/admin/api-key-groups/{group_id}/status",
+            post(|| async { "api-key-groups-status" }),
+        )
         .route("/admin/channels", get(|| async { "channels" }))
         .route("/admin/providers", get(|| async { "providers" }))
         .route("/admin/credentials", get(|| async { "credentials" }))
@@ -896,6 +999,11 @@ pub fn admin_router() -> Router {
         )
         .route("/admin/usage/records", get(|| async { "usage-records" }))
         .route("/admin/usage/summary", get(|| async { "usage-summary" }))
+        .route("/admin/billing/events", get(|| async { "billing-events" }))
+        .route(
+            "/admin/billing/events/summary",
+            get(|| async { "billing-events-summary" }),
+        )
         .route("/admin/billing/ledger", get(|| async { "billing-ledger" }))
         .route(
             "/admin/billing/summary",
@@ -910,6 +1018,8 @@ pub fn admin_router() -> Router {
             get(|| async { "gateway-rate-limit-policies" }),
         )
         .route("/admin/routing/policies", get(|| async { "policies" }))
+        .route("/admin/routing/profiles", get(|| async { "profiles" }))
+        .route("/admin/routing/snapshots", get(|| async { "snapshots" }))
         .route(
             "/admin/routing/health-snapshots",
             get(|| async { "health-snapshots" }),
@@ -1065,6 +1175,18 @@ pub fn admin_router_with_state(state: AdminApiState) -> Router {
             delete(delete_project_handler),
         )
         .route(
+            "/admin/api-key-groups",
+            get(list_api_key_groups_handler).post(create_api_key_group_handler),
+        )
+        .route(
+            "/admin/api-key-groups/{group_id}/status",
+            post(update_api_key_group_status_handler),
+        )
+        .route(
+            "/admin/api-key-groups/{group_id}",
+            patch(update_api_key_group_handler).delete(delete_api_key_group_handler),
+        )
+        .route(
             "/admin/api-keys",
             get(list_api_keys_handler).post(create_api_key_handler),
         )
@@ -1164,6 +1286,11 @@ pub fn admin_router_with_state(state: AdminApiState) -> Router {
         )
         .route("/admin/usage/records", get(list_usage_records_handler))
         .route("/admin/usage/summary", get(usage_summary_handler))
+        .route("/admin/billing/events", get(list_billing_events_handler))
+        .route(
+            "/admin/billing/events/summary",
+            get(billing_events_summary_handler),
+        )
         .route("/admin/billing/ledger", get(list_ledger_entries_handler))
         .route("/admin/billing/summary", get(billing_summary_handler))
         .route(
@@ -1181,6 +1308,14 @@ pub fn admin_router_with_state(state: AdminApiState) -> Router {
         .route(
             "/admin/routing/policies",
             get(list_routing_policies_handler).post(create_routing_policy_handler),
+        )
+        .route(
+            "/admin/routing/profiles",
+            get(list_routing_profiles_handler).post(create_routing_profile_handler),
+        )
+        .route(
+            "/admin/routing/snapshots",
+            get(list_compiled_routing_snapshots_handler),
         )
         .route(
             "/admin/routing/health-snapshots",
@@ -1449,8 +1584,8 @@ async fn list_channels_handler(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
-fn admin_error_response(error: AdminIdentityError) -> (StatusCode, Json<ErrorResponse>) {
-    let status = match error {
+  fn admin_error_response(error: AdminIdentityError) -> (StatusCode, Json<ErrorResponse>) {
+      let status = match error {
         AdminIdentityError::InvalidInput(_) => StatusCode::BAD_REQUEST,
         AdminIdentityError::DuplicateEmail => StatusCode::CONFLICT,
         AdminIdentityError::Protected(_) => StatusCode::CONFLICT,
@@ -1464,8 +1599,45 @@ fn admin_error_response(error: AdminIdentityError) -> (StatusCode, Json<ErrorRes
         error: ErrorBody {
             message: error.to_string(),
         },
+      };
+      (status, Json(body))
+  }
+
+  async fn invalidate_catalog_cache_after_mutation() {
+      invalidate_capability_catalog_cache().await;
+  }
+
+fn gateway_api_key_create_error_response(
+    error: anyhow::Error,
+) -> (StatusCode, Json<ErrorResponse>) {
+    let message = error.to_string();
+    let status = if looks_like_gateway_api_key_input_error(&message) {
+        StatusCode::BAD_REQUEST
+    } else {
+        StatusCode::INTERNAL_SERVER_ERROR
+    };
+    let body = ErrorResponse {
+        error: ErrorBody { message },
     };
     (status, Json(body))
+}
+
+fn looks_like_gateway_api_key_input_error(message: &str) -> bool {
+    matches!(
+        message,
+        "tenant_id is required"
+            | "project_id is required"
+            | "environment is required"
+            | "label is required"
+            | "expires_at_ms must be in the future"
+            | "api key is required when custom key mode is selected"
+            | "api_key is required when custom key mode is selected"
+            | "api key group not found"
+            | "api key group tenant does not match"
+            | "api key group project does not match"
+            | "api key group environment does not match"
+            | "api key group is inactive"
+    )
 }
 
 fn portal_admin_error_response(error: PortalIdentityError) -> (StatusCode, Json<ErrorResponse>) {
@@ -1487,31 +1659,33 @@ fn portal_admin_error_response(error: PortalIdentityError) -> (StatusCode, Json<
     (status, Json(body))
 }
 
-async fn create_channel_handler(
-    _claims: AuthenticatedAdminClaims,
-    State(state): State<AdminApiState>,
-    Json(request): Json<CreateChannelRequest>,
-) -> Result<(StatusCode, Json<Channel>), StatusCode> {
-    let channel = persist_channel(state.store.as_ref(), &request.id, &request.name)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok((StatusCode::CREATED, Json(channel)))
-}
+  async fn create_channel_handler(
+      _claims: AuthenticatedAdminClaims,
+      State(state): State<AdminApiState>,
+      Json(request): Json<CreateChannelRequest>,
+  ) -> Result<(StatusCode, Json<Channel>), StatusCode> {
+      let channel = persist_channel(state.store.as_ref(), &request.id, &request.name)
+          .await
+          .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+      invalidate_catalog_cache_after_mutation().await;
+      Ok((StatusCode::CREATED, Json(channel)))
+  }
 
 async fn delete_channel_handler(
     _claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
     Path(channel_id): Path<String>,
-) -> Result<StatusCode, StatusCode> {
-    let deleted = delete_catalog_channel(state.store.as_ref(), &channel_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    if deleted {
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err(StatusCode::NOT_FOUND)
-    }
-}
+  ) -> Result<StatusCode, StatusCode> {
+      let deleted = delete_catalog_channel(state.store.as_ref(), &channel_id)
+          .await
+          .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+      if deleted {
+          invalidate_catalog_cache_after_mutation().await;
+          Ok(StatusCode::NO_CONTENT)
+      } else {
+          Err(StatusCode::NOT_FOUND)
+      }
+  }
 
 async fn list_providers_handler(
     _claims: AuthenticatedAdminClaims,
@@ -1527,7 +1701,7 @@ async fn create_provider_handler(
     _claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
     Json(request): Json<CreateProviderRequest>,
-) -> Result<(StatusCode, Json<ProxyProvider>), StatusCode> {
+  ) -> Result<(StatusCode, Json<ProxyProvider>), StatusCode> {
     let primary_channel_id = request
         .channel_bindings
         .iter()
@@ -1546,11 +1720,12 @@ async fn create_provider_handler(
             display_name: &request.display_name,
             channel_bindings: &bindings,
         },
-    )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok((StatusCode::CREATED, Json(provider)))
-}
+      )
+      .await
+      .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+      invalidate_catalog_cache_after_mutation().await;
+      Ok((StatusCode::CREATED, Json(provider)))
+  }
 
 async fn delete_provider_handler(
     _claims: AuthenticatedAdminClaims,
@@ -1575,15 +1750,16 @@ async fn delete_provider_handler(
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let deleted = delete_catalog_provider(state.store.as_ref(), &provider_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    if deleted {
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err(StatusCode::NOT_FOUND)
-    }
-}
+      let deleted = delete_catalog_provider(state.store.as_ref(), &provider_id)
+          .await
+          .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+      if deleted {
+          invalidate_catalog_cache_after_mutation().await;
+          Ok(StatusCode::NO_CONTENT)
+      } else {
+          Err(StatusCode::NOT_FOUND)
+      }
+  }
 
 async fn list_credentials_handler(
     _claims: AuthenticatedAdminClaims,
@@ -1649,7 +1825,7 @@ async fn create_channel_model_handler(
     _claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
     Json(request): Json<CreateChannelModelRequest>,
-) -> Result<(StatusCode, Json<ChannelModelRecord>), StatusCode> {
+  ) -> Result<(StatusCode, Json<ChannelModelRecord>), StatusCode> {
     let record = persist_channel_model_with_metadata(
         state.store.as_ref(),
         &request.channel_id,
@@ -1659,26 +1835,28 @@ async fn create_channel_model_handler(
         request.streaming,
         request.context_window,
         request.description.as_deref(),
-    )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok((StatusCode::CREATED, Json(record)))
-}
+      )
+      .await
+      .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+      invalidate_catalog_cache_after_mutation().await;
+      Ok((StatusCode::CREATED, Json(record)))
+  }
 
 async fn delete_channel_model_handler(
     _claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
     Path((channel_id, model_id)): Path<(String, String)>,
-) -> Result<StatusCode, StatusCode> {
-    let deleted = delete_catalog_channel_model(state.store.as_ref(), &channel_id, &model_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    if deleted {
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err(StatusCode::NOT_FOUND)
-    }
-}
+  ) -> Result<StatusCode, StatusCode> {
+      let deleted = delete_catalog_channel_model(state.store.as_ref(), &channel_id, &model_id)
+          .await
+          .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+      if deleted {
+          invalidate_catalog_cache_after_mutation().await;
+          Ok(StatusCode::NO_CONTENT)
+      } else {
+          Err(StatusCode::NOT_FOUND)
+      }
+  }
 
 async fn list_models_handler(
     _claims: AuthenticatedAdminClaims,
@@ -1694,34 +1872,36 @@ async fn create_model_handler(
     _claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
     Json(request): Json<CreateModelRequest>,
-) -> Result<(StatusCode, Json<ModelCatalogEntry>), StatusCode> {
-    let model = persist_model_with_metadata(
+  ) -> Result<(StatusCode, Json<ModelCatalogEntry>), StatusCode> {
+      let model = persist_model_with_metadata(
         state.store.as_ref(),
         &request.external_name,
         &request.provider_id,
         &request.capabilities,
         request.streaming,
         request.context_window,
-    )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok((StatusCode::CREATED, Json(model)))
-}
+      )
+      .await
+      .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+      invalidate_catalog_cache_after_mutation().await;
+      Ok((StatusCode::CREATED, Json(model)))
+  }
 
 async fn delete_model_handler(
     _claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
     Path((external_name, provider_id)): Path<(String, String)>,
-) -> Result<StatusCode, StatusCode> {
-    let deleted = delete_model_variant(state.store.as_ref(), &external_name, &provider_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    if deleted {
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err(StatusCode::NOT_FOUND)
-    }
-}
+  ) -> Result<StatusCode, StatusCode> {
+      let deleted = delete_model_variant(state.store.as_ref(), &external_name, &provider_id)
+          .await
+          .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+      if deleted {
+          invalidate_catalog_cache_after_mutation().await;
+          Ok(StatusCode::NO_CONTENT)
+      } else {
+          Err(StatusCode::NOT_FOUND)
+      }
+  }
 
 async fn list_model_prices_handler(
     _claims: AuthenticatedAdminClaims,
@@ -1737,7 +1917,7 @@ async fn create_model_price_handler(
     _claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
     Json(request): Json<CreateModelPriceRequest>,
-) -> Result<(StatusCode, Json<ModelPriceRecord>), StatusCode> {
+  ) -> Result<(StatusCode, Json<ModelPriceRecord>), StatusCode> {
     let record = persist_model_price_with_rates(
         state.store.as_ref(),
         &request.channel_id,
@@ -1751,31 +1931,33 @@ async fn create_model_price_handler(
         request.cache_write_price,
         request.request_price,
         request.is_active,
-    )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok((StatusCode::CREATED, Json(record)))
-}
+      )
+      .await
+      .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+      invalidate_catalog_cache_after_mutation().await;
+      Ok((StatusCode::CREATED, Json(record)))
+  }
 
 async fn delete_model_price_handler(
     _claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
     Path((channel_id, model_id, proxy_provider_id)): Path<(String, String, String)>,
-) -> Result<StatusCode, StatusCode> {
-    let deleted = delete_catalog_model_price(
+  ) -> Result<StatusCode, StatusCode> {
+      let deleted = delete_catalog_model_price(
         state.store.as_ref(),
         &channel_id,
         &model_id,
         &proxy_provider_id,
-    )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    if deleted {
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err(StatusCode::NOT_FOUND)
-    }
-}
+      )
+      .await
+      .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+      if deleted {
+          invalidate_catalog_cache_after_mutation().await;
+          Ok(StatusCode::NO_CONTENT)
+      } else {
+          Err(StatusCode::NOT_FOUND)
+      }
+  }
 
 async fn list_tenants_handler(
     _claims: AuthenticatedAdminClaims,
@@ -1879,11 +2061,107 @@ async fn list_api_keys_handler(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
+async fn list_api_key_groups_handler(
+    _claims: AuthenticatedAdminClaims,
+    State(state): State<AdminApiState>,
+) -> Result<Json<Vec<ApiKeyGroupRecord>>, StatusCode> {
+    list_api_key_groups(state.store.as_ref())
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn create_api_key_group_handler(
+    _claims: AuthenticatedAdminClaims,
+    State(state): State<AdminApiState>,
+    Json(request): Json<CreateApiKeyGroupRequest>,
+) -> Result<(StatusCode, Json<ApiKeyGroupRecord>), (StatusCode, Json<ErrorResponse>)> {
+    create_api_key_group(
+        state.store.as_ref(),
+        ApiKeyGroupInput {
+            tenant_id: request.tenant_id,
+            project_id: request.project_id,
+            environment: request.environment,
+            name: request.name,
+            slug: request.slug,
+            description: request.description,
+            color: request.color,
+            default_capability_scope: request.default_capability_scope,
+            default_routing_profile_id: request.default_routing_profile_id,
+            default_accounting_mode: request.default_accounting_mode,
+        },
+    )
+    .await
+    .map(|group| (StatusCode::CREATED, Json(group)))
+    .map_err(admin_error_response)
+}
+
+async fn update_api_key_group_handler(
+    _claims: AuthenticatedAdminClaims,
+    Path(group_id): Path<String>,
+    State(state): State<AdminApiState>,
+    Json(request): Json<UpdateApiKeyGroupRequest>,
+) -> Result<Json<ApiKeyGroupRecord>, (StatusCode, Json<ErrorResponse>)> {
+    match update_api_key_group(
+        state.store.as_ref(),
+        &group_id,
+        ApiKeyGroupInput {
+            tenant_id: request.tenant_id,
+            project_id: request.project_id,
+            environment: request.environment,
+            name: request.name,
+            slug: request.slug,
+            description: request.description,
+            color: request.color,
+            default_capability_scope: request.default_capability_scope,
+            default_routing_profile_id: request.default_routing_profile_id,
+            default_accounting_mode: request.default_accounting_mode,
+        },
+    )
+    .await
+    {
+        Ok(Some(group)) => Ok(Json(group)),
+        Ok(None) => Err(admin_error_response(AdminIdentityError::NotFound(
+            "api key group not found".to_owned(),
+        ))),
+        Err(error) => Err(admin_error_response(error)),
+    }
+}
+
+async fn update_api_key_group_status_handler(
+    _claims: AuthenticatedAdminClaims,
+    Path(group_id): Path<String>,
+    State(state): State<AdminApiState>,
+    Json(request): Json<UpdateUserStatusRequest>,
+) -> Result<Json<ApiKeyGroupRecord>, (StatusCode, Json<ErrorResponse>)> {
+    match set_api_key_group_active(state.store.as_ref(), &group_id, request.active).await {
+        Ok(Some(group)) => Ok(Json(group)),
+        Ok(None) => Err(admin_error_response(AdminIdentityError::NotFound(
+            "api key group not found".to_owned(),
+        ))),
+        Err(error) => Err(admin_error_response(error)),
+    }
+}
+
+async fn delete_api_key_group_handler(
+    _claims: AuthenticatedAdminClaims,
+    Path(group_id): Path<String>,
+    State(state): State<AdminApiState>,
+) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+    match delete_api_key_group(state.store.as_ref(), &group_id).await {
+        Ok(true) => Ok(StatusCode::NO_CONTENT),
+        Ok(false) => Err(admin_error_response(AdminIdentityError::NotFound(
+            "api key group not found".to_owned(),
+        ))),
+        Err(error) => Err(admin_error_response(error)),
+    }
+}
+
 async fn create_api_key_handler(
     _claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
     Json(request): Json<CreateApiKeyRequest>,
-) -> Result<(StatusCode, Json<CreatedGatewayApiKey>), StatusCode> {
+) -> Result<(StatusCode, Json<CreatedGatewayApiKey>), (StatusCode, Json<ErrorResponse>)> {
     let metadata_label = request
         .label
         .as_deref()
@@ -1891,33 +2169,19 @@ async fn create_api_key_handler(
         .filter(|label| !label.is_empty())
         .map(str::to_owned)
         .unwrap_or_else(|| format!("{} gateway key", request.environment.trim()));
-    let created = if request.label.is_some()
-        || request.expires_at_ms.is_some()
-        || request.notes.is_some()
-        || request.plaintext_key.is_some()
-    {
-        sdkwork_api_app_identity::persist_gateway_api_key_with_metadata(
-            state.store.as_ref(),
-            &request.tenant_id,
-            &request.project_id,
-            &request.environment,
-            &metadata_label,
-            request.expires_at_ms,
-            request.plaintext_key.as_deref(),
-            request.notes.as_deref(),
-        )
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    } else {
-        persist_gateway_api_key(
-            state.store.as_ref(),
-            &request.tenant_id,
-            &request.project_id,
-            &request.environment,
-        )
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    };
+    let created = sdkwork_api_app_identity::persist_gateway_api_key_with_metadata(
+        state.store.as_ref(),
+        &request.tenant_id,
+        &request.project_id,
+        &request.environment,
+        &metadata_label,
+        request.expires_at_ms,
+        request.plaintext_key.as_deref(),
+        request.notes.as_deref(),
+        request.api_key_group_id.as_deref(),
+    )
+    .await
+    .map_err(gateway_api_key_create_error_response)?;
     Ok((StatusCode::CREATED, Json(created)))
 }
 
@@ -1936,6 +2200,7 @@ async fn update_api_key_handler(
         &request.label,
         request.expires_at_ms,
         request.notes.as_deref(),
+        request.api_key_group_id.as_deref(),
     )
     .await
     {
@@ -2369,23 +2634,62 @@ async fn simulate_routing_handler(
         &request.capability,
         &request.model,
         RouteSelectionContext::new(RoutingDecisionSource::AdminSimulation)
+            .with_tenant_id_option(request.tenant_id.as_deref())
+            .with_project_id_option(request.project_id.as_deref())
+            .with_api_key_group_id_option(request.api_key_group_id.as_deref())
             .with_requested_region_option(request.requested_region.as_deref())
             .with_selection_seed_option(request.selection_seed),
     )
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let (selected_candidate, rejected_candidates) =
+        split_routing_assessments(&decision.selected_provider_id, &decision.assessments);
     Ok(Json(RoutingSimulationResponse {
         selected_provider_id: decision.selected_provider_id,
         candidate_ids: decision.candidate_ids,
         matched_policy_id: decision.matched_policy_id,
+        applied_routing_profile_id: decision.applied_routing_profile_id,
+        compiled_routing_snapshot_id: decision.compiled_routing_snapshot_id,
         strategy: decision.strategy,
         selection_seed: decision.selection_seed,
         selection_reason: decision.selection_reason,
+        fallback_reason: decision.fallback_reason,
         requested_region: decision.requested_region,
         slo_applied: decision.slo_applied,
         slo_degraded: decision.slo_degraded,
+        selected_candidate,
+        rejected_candidates,
         assessments: decision.assessments,
     }))
+}
+
+fn split_routing_assessments(
+    selected_provider_id: &str,
+    assessments: &[RoutingCandidateAssessment],
+) -> (
+    Option<RoutingCandidateAssessment>,
+    Vec<RoutingCandidateAssessment>,
+) {
+    let mut selected_candidate = None;
+    let mut rejected_candidates = Vec::new();
+    for assessment in assessments {
+        if assessment.provider_id == selected_provider_id && selected_candidate.is_none() {
+            selected_candidate = Some(assessment.clone());
+        } else {
+            rejected_candidates.push(assessment.clone());
+        }
+    }
+    (selected_candidate, rejected_candidates)
+}
+
+async fn list_compiled_routing_snapshots_handler(
+    _claims: AuthenticatedAdminClaims,
+    State(state): State<AdminApiState>,
+) -> Result<Json<Vec<CompiledRoutingSnapshotRecord>>, StatusCode> {
+    list_compiled_routing_snapshots(state.store.as_ref())
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 async fn list_routing_decision_logs_handler(
@@ -2403,6 +2707,16 @@ async fn list_routing_policies_handler(
     State(state): State<AdminApiState>,
 ) -> Result<Json<Vec<RoutingPolicy>>, StatusCode> {
     list_routing_policies(state.store.as_ref())
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn list_routing_profiles_handler(
+    _claims: AuthenticatedAdminClaims,
+    State(state): State<AdminApiState>,
+) -> Result<Json<Vec<RoutingProfileRecord>>, StatusCode> {
+    list_routing_profiles(state.store.as_ref())
         .await
         .map(Json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
@@ -2433,6 +2747,34 @@ async fn create_routing_policy_handler(
     Ok((StatusCode::CREATED, Json(policy)))
 }
 
+async fn create_routing_profile_handler(
+    _claims: AuthenticatedAdminClaims,
+    State(state): State<AdminApiState>,
+    Json(request): Json<CreateRoutingProfileRequest>,
+) -> Result<(StatusCode, Json<RoutingProfileRecord>), StatusCode> {
+    let profile = create_routing_profile(CreateRoutingProfileInput {
+        profile_id: &request.profile_id,
+        tenant_id: &request.tenant_id,
+        project_id: &request.project_id,
+        name: &request.name,
+        slug: &request.slug,
+        description: request.description.as_deref(),
+        active: request.active,
+        strategy: request.strategy,
+        ordered_provider_ids: &request.ordered_provider_ids,
+        default_provider_id: request.default_provider_id.as_deref(),
+        max_cost: request.max_cost,
+        max_latency_ms: request.max_latency_ms,
+        require_healthy: request.require_healthy,
+        preferred_region: request.preferred_region.as_deref(),
+    })
+    .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let profile = persist_routing_profile(state.store.as_ref(), &profile)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok((StatusCode::CREATED, Json(profile)))
+}
+
 async fn list_usage_records_handler(
     _claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
@@ -2458,6 +2800,26 @@ async fn list_ledger_entries_handler(
     State(state): State<AdminApiState>,
 ) -> Result<Json<Vec<LedgerEntry>>, StatusCode> {
     list_ledger_entries(state.store.as_ref())
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn list_billing_events_handler(
+    _claims: AuthenticatedAdminClaims,
+    State(state): State<AdminApiState>,
+) -> Result<Json<Vec<BillingEventRecord>>, StatusCode> {
+    list_billing_events(state.store.as_ref())
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn billing_events_summary_handler(
+    _claims: AuthenticatedAdminClaims,
+    State(state): State<AdminApiState>,
+) -> Result<Json<BillingEventSummary>, StatusCode> {
+    summarize_billing_events_from_store(state.store.as_ref())
         .await
         .map(Json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)

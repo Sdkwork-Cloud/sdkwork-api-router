@@ -16,3 +16,8 @@ Thumbs.db
 /.runtime-logs/
 **/.codex-logs/
 /artifacts/
+/.external/
+**/.codex-local/
+**/node_modules__rebuild_*/
+**/.vite/
+**/.pnpm-store/

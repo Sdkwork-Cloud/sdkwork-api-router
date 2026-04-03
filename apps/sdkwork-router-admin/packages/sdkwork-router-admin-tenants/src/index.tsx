@@ -1,48 +1,34 @@
-﻿import { useState } from 'react';
-import type { FormEvent } from 'react';
-
+import { useDeferredValue, useEffect, useMemo, useState } from 'react';
+import type { ChangeEvent, FormEvent } from 'react';
 import {
-  AdminDialog,
-  ConfirmDialog,
-  DataTable,
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogTrigger,
-  FormField,
+  Button,
+  Card,
+  CardContent,
   Input,
-  InlineButton,
-  PageToolbar,
-  Select,
-  Textarea,
-  ToolbarInline,
-  ToolbarSearchField,
-} from 'sdkwork-router-admin-commons';
+  Label,
+  StatusBadge,
+  type DataTableColumn,
+} from '@sdkwork/ui-pc-react';
+import { Plus, Search } from 'lucide-react';
+import { useAdminI18n } from 'sdkwork-router-admin-core';
 import type { AdminPageProps, CreatedGatewayApiKey } from 'sdkwork-router-admin-types';
 
-type ApiKeyDraft = {
-  tenant_id: string;
-  project_id: string;
-  environment: string;
-  label: string;
-  notes: string;
-  expires_at_ms: string;
-};
-
-type TenantDirectoryRow = {
-  id: string;
-  name: string;
-  projectCount: number;
-  projectSummary: string;
-  portalUserCount: number;
-  apiKeyCount: number;
-  activeApiKeyCount: number;
-  environmentSummary: string;
-  requestCount: number;
-  tokenCount: number;
-  canIssueApiKey: boolean;
-  searchHaystack: string;
-};
+import { ApiKeyDialog } from './page/ApiKeyDialog';
+import { PlaintextApiKeyDialog } from './page/PlaintextApiKeyDialog';
+import { ProjectDialog } from './page/ProjectDialog';
+import { TenantDialog } from './page/TenantDialog';
+import { TenantsDetailDrawer } from './page/TenantsDetailDrawer';
+import { TenantsRegistrySection } from './page/TenantsRegistrySection';
+import {
+  ConfirmActionDialog,
+  buildTenantDirectoryRows,
+  createApiKeyDraft,
+  defaultProjectId,
+  defaultTenantId,
+  type ApiKeyDraft,
+  type RevealedApiKey,
+  type TenantDirectoryRow,
+} from './page/shared';
 
 export function TenantsPage({
   snapshot,
@@ -66,30 +52,28 @@ export function TenantsPage({
   onDeleteTenant: (tenantId: string) => Promise<void>;
   onDeleteProject: (projectId: string) => Promise<void>;
 }) {
+  const { formatNumber, t } = useAdminI18n();
   const [tenantDraft, setTenantDraft] = useState({ id: '', name: '' });
   const [projectDraft, setProjectDraft] = useState({
-    tenant_id: snapshot.tenants[0]?.id ?? 'tenant_local_demo',
+    tenant_id: defaultTenantId(snapshot),
     id: '',
     name: '',
   });
-  const defaultTenantId = snapshot.tenants[0]?.id ?? 'tenant_local_demo';
-  const defaultProjectId = snapshot.projects[0]?.id ?? 'project_local_demo';
-  const createApiKeyDraft = (overrides: Partial<ApiKeyDraft> = {}): ApiKeyDraft => ({
-    tenant_id: defaultTenantId,
-    project_id: defaultProjectId,
-    environment: 'production',
-    label: '',
-    notes: '',
-    expires_at_ms: '',
-    ...overrides,
-  });
-  const [apiKeyDraft, setApiKeyDraft] = useState<ApiKeyDraft>(createApiKeyDraft());
+  const [apiKeyDraft, setApiKeyDraft] = useState<ApiKeyDraft>(() =>
+    createApiKeyDraft(snapshot),
+  );
   const [search, setSearch] = useState('');
+  const [selectedTenantId, setSelectedTenantId] = useState<string | null>(null);
+  const [isDetailDrawerOpen, setIsDetailDrawerOpen] = useState(false);
   const [isTenantDialogOpen, setIsTenantDialogOpen] = useState(false);
   const [isProjectDialogOpen, setIsProjectDialogOpen] = useState(false);
   const [isApiKeyDialogOpen, setIsApiKeyDialogOpen] = useState(false);
-  const [revealedApiKey, setRevealedApiKey] = useState<CreatedGatewayApiKey | null>(null);
-  const [pendingDelete, setPendingDelete] = useState<{ id: string; label: string } | null>(null);
+  const [revealedApiKey, setRevealedApiKey] = useState<RevealedApiKey>(null);
+  const [pendingDelete, setPendingDelete] = useState<{
+    id: string;
+    label: string;
+  } | null>(null);
+  const deferredQuery = useDeferredValue(search.trim().toLowerCase());
 
   const selectedProjectUsage = snapshot.usageSummary.projects.find(
     (project) => project.project_id === projectDraft.id,
@@ -100,54 +84,27 @@ export function TenantsPage({
   const selectedProjectTokens = snapshot.usageRecords
     .filter((record) => record.project_id === projectDraft.id)
     .reduce((sum, record) => sum + record.total_tokens, 0);
-  const normalizedSearch = search.trim().toLowerCase();
-  const tenantRows: TenantDirectoryRow[] = snapshot.tenants
-    .map((tenant) => {
-      const projects = snapshot.projects.filter((project) => project.tenant_id === tenant.id);
-      const projectIds = new Set(projects.map((project) => project.id));
-      const portalUsers = snapshot.portalUsers.filter((user) => user.workspace_tenant_id === tenant.id);
-      const tenantApiKeys = snapshot.apiKeys.filter(
-        (key) => key.tenant_id === tenant.id || projectIds.has(key.project_id),
-      );
-      const activeApiKeyCount = tenantApiKeys.filter((key) => key.active).length;
-      const environmentSummary = Array.from(new Set(tenantApiKeys.map((key) => key.environment)))
-        .sort()
-        .join(', ');
-      const requestCount = snapshot.usageRecords
-        .filter((record) => projectIds.has(record.project_id))
-        .reduce((sum, record) => sum + 1, 0);
-      const tokenCount = snapshot.usageRecords
-        .filter((record) => projectIds.has(record.project_id))
-        .reduce((sum, record) => sum + record.total_tokens, 0);
-      const projectSummary = projects.length
-        ? projects.slice(0, 2).map((project) => project.name).join(', ')
-        : 'No projects';
 
-      return {
-        id: tenant.id,
-        name: tenant.name,
-        projectCount: projects.length,
-        projectSummary,
-        portalUserCount: portalUsers.length,
-        apiKeyCount: tenantApiKeys.length,
-        activeApiKeyCount,
-        environmentSummary: environmentSummary || 'No keys',
-        requestCount,
-        tokenCount,
-        canIssueApiKey: projects.length > 0,
-        searchHaystack: [
-          tenant.id,
-          tenant.name,
-          ...projects.flatMap((project) => [project.id, project.name]),
-          ...tenantApiKeys.flatMap((key) => [key.project_id, key.label, key.environment, key.notes ?? '']),
-        ].join(' ').toLowerCase(),
-      };
-    })
-    .filter((tenant) => !normalizedSearch || tenant.searchHaystack.includes(normalizedSearch))
-    .sort((left, right) => (
-      left.name.localeCompare(right.name)
-      || left.id.localeCompare(right.id)
-    ));
+  const tenantRows = useMemo(
+    () => buildTenantDirectoryRows(snapshot, deferredQuery),
+    [
+      deferredQuery,
+      snapshot.apiKeys,
+      snapshot.portalUsers,
+      snapshot.projects,
+      snapshot.tenants,
+      snapshot.usageRecords,
+    ],
+  );
+
+  useEffect(() => {
+    if (selectedTenantId && !tenantRows.some((tenant) => tenant.id === selectedTenantId)) {
+      setSelectedTenantId(null);
+      setIsDetailDrawerOpen(false);
+    }
+  }, [selectedTenantId, tenantRows]);
+
+  const selectedTenant = tenantRows.find((tenant) => tenant.id === selectedTenantId) ?? null;
 
   function resetTenantDialog() {
     setTenantDraft({ id: '', name: '' });
@@ -155,8 +112,10 @@ export function TenantsPage({
   }
 
   function resetProjectDialog() {
+    const tenantId = defaultTenantId(snapshot);
+
     setProjectDraft({
-      tenant_id: defaultTenantId,
+      tenant_id: tenantId,
       id: '',
       name: '',
     });
@@ -164,8 +123,82 @@ export function TenantsPage({
   }
 
   function resetApiKeyDialog() {
-    setApiKeyDraft(createApiKeyDraft());
+    setApiKeyDraft(createApiKeyDraft(snapshot));
     setIsApiKeyDialogOpen(false);
+  }
+
+  function handleTenantDialogOpenChange(open: boolean) {
+    if (!open) {
+      resetTenantDialog();
+      return;
+    }
+
+    setIsTenantDialogOpen(true);
+  }
+
+  function handleProjectDialogOpenChange(open: boolean) {
+    if (!open) {
+      resetProjectDialog();
+      return;
+    }
+
+    setIsProjectDialogOpen(true);
+  }
+
+  function handleApiKeyDialogOpenChange(open: boolean) {
+    if (!open) {
+      resetApiKeyDialog();
+      return;
+    }
+
+    setIsApiKeyDialogOpen(true);
+  }
+
+  function openTenantDialog(tenant?: TenantDirectoryRow) {
+    setTenantDraft(
+      tenant
+        ? {
+            id: tenant.id,
+            name: tenant.name,
+          }
+        : { id: '', name: '' },
+    );
+    setIsTenantDialogOpen(true);
+  }
+
+  function openProjectDialog(tenant?: TenantDirectoryRow) {
+    const tenantId = tenant?.id ?? defaultTenantId(snapshot);
+
+    setProjectDraft({
+      tenant_id: tenantId,
+      id: '',
+      name: '',
+    });
+    setIsProjectDialogOpen(true);
+  }
+
+  function openApiKeyDialog(tenant?: TenantDirectoryRow) {
+    const tenantId = tenant?.id ?? defaultTenantId(snapshot);
+
+    setApiKeyDraft(
+      createApiKeyDraft(snapshot, {
+        tenant_id: tenantId,
+        project_id: defaultProjectId(snapshot, tenantId),
+      }),
+    );
+    setIsApiKeyDialogOpen(true);
+  }
+
+  function openDetailDrawer(tenant: TenantDirectoryRow) {
+    setSelectedTenantId(tenant.id);
+    setIsDetailDrawerOpen(true);
+  }
+
+  function handleDetailDrawerOpenChange(open: boolean) {
+    setIsDetailDrawerOpen(open);
+    if (!open) {
+      setSelectedTenantId(null);
+    }
   }
 
   async function handleTenantSubmit(event: FormEvent<HTMLFormElement>) {
@@ -187,6 +220,7 @@ export function TenantsPage({
     const normalizedExpiresAt = apiKeyDraft.expires_at_ms.trim();
     const parsedExpiresAt =
       normalizedExpiresAt === '' ? undefined : Number(normalizedExpiresAt);
+
     const created = await onCreateApiKey({
       tenant_id: apiKeyDraft.tenant_id,
       project_id: apiKeyDraft.project_id,
@@ -211,419 +245,267 @@ export function TenantsPage({
 
     await onDeleteTenant(pendingDelete.id);
     setPendingDelete(null);
+    setSelectedTenantId(null);
+    setIsDetailDrawerOpen(false);
   }
 
   const availableApiKeyProjects = snapshot.projects.filter(
     (project) => project.tenant_id === apiKeyDraft.tenant_id,
   );
 
-  return (
-    <div className="adminx-page-grid">
-      <PageToolbar
-        compact
-        actions={(
-          <>
-            <Dialog open={isTenantDialogOpen} onOpenChange={setIsTenantDialogOpen}>
-              <DialogTrigger asChild>
-                <InlineButton tone="primary" onClick={() => setIsTenantDialogOpen(true)}>
-                  New tenant
-                </InlineButton>
-              </DialogTrigger>
-              <DialogContent size="medium">
-                <AdminDialog
-                  title={tenantDraft.id ? 'Edit tenant' : 'New tenant'}
-                  detail="Tenant creation and editing happen in a dedicated dialog so the registry stays primary on the page."
-                >
-                  <form className="adminx-form-grid" onSubmit={(event) => void handleTenantSubmit(event)}>
-                    <FormField label="Tenant id">
-                      <Input
-                        value={tenantDraft.id}
-                        onChange={(event) => setTenantDraft((current) => ({ ...current, id: event.target.value }))}
-                        required
-                      />
-                    </FormField>
-                    <FormField label="Tenant name">
-                      <Input
-                        value={tenantDraft.name}
-                        onChange={(event) => setTenantDraft((current) => ({ ...current, name: event.target.value }))}
-                        required
-                      />
-                    </FormField>
-                    <DialogFooter>
-                      <InlineButton onClick={resetTenantDialog}>Cancel</InlineButton>
-                      <InlineButton tone="primary" type="submit">
-                        {tenantDraft.id ? 'Save tenant' : 'Create tenant'}
-                      </InlineButton>
-                    </DialogFooter>
-                  </form>
-                </AdminDialog>
-              </DialogContent>
-            </Dialog>
-
-            <Dialog open={isProjectDialogOpen} onOpenChange={setIsProjectDialogOpen}>
-              <DialogTrigger asChild>
-                <InlineButton onClick={() => setIsProjectDialogOpen(true)}>
-                  New project
-                </InlineButton>
-              </DialogTrigger>
-              <DialogContent size="medium">
-                <AdminDialog
-                  title={projectDraft.id ? 'Edit project' : 'New project'}
-                  detail="Projects remain the routing, usage, and billing ownership boundary, so edits belong in their own dialog."
-                >
-                  <form className="adminx-form-grid" onSubmit={(event) => void handleProjectSubmit(event)}>
-                    <FormField label="Tenant id">
-                      {snapshot.tenants.length ? (
-                        <Select
-                          value={projectDraft.tenant_id}
-                          onChange={(event) => setProjectDraft((current) => ({ ...current, tenant_id: event.target.value }))}
-                        >
-                          {snapshot.tenants.map((tenant) => (
-                            <option key={tenant.id} value={tenant.id}>
-                              {tenant.name} ({tenant.id})
-                            </option>
-                          ))}
-                        </Select>
-                      ) : (
-                        <Input
-                          value={projectDraft.tenant_id}
-                          onChange={(event) => setProjectDraft((current) => ({ ...current, tenant_id: event.target.value }))}
-                          required
-                        />
-                      )}
-                    </FormField>
-                    <FormField label="Project id">
-                      <Input
-                        value={projectDraft.id}
-                        onChange={(event) => setProjectDraft((current) => ({ ...current, id: event.target.value }))}
-                        required
-                      />
-                    </FormField>
-                    <FormField label="Project name">
-                      <Input
-                        value={projectDraft.name}
-                        onChange={(event) => setProjectDraft((current) => ({ ...current, name: event.target.value }))}
-                        required
-                      />
-                    </FormField>
-                    <div className="adminx-note">
-                      <strong>Selected project posture</strong>
-                      <p>
-                        Requests: {selectedProjectUsage?.request_count ?? 0}
-                        {' | '}
-                        Usage units: {selectedProjectBilling?.used_units ?? 0}
-                        {' | '}
-                        Tokens: {selectedProjectTokens}
-                      </p>
-                    </div>
-                    <DialogFooter>
-                      <InlineButton onClick={resetProjectDialog}>Cancel</InlineButton>
-                      <InlineButton tone="primary" type="submit">
-                        {projectDraft.id ? 'Save project' : 'Create project'}
-                      </InlineButton>
-                    </DialogFooter>
-                  </form>
-                </AdminDialog>
-              </DialogContent>
-            </Dialog>
-
-            <Dialog open={isApiKeyDialogOpen} onOpenChange={setIsApiKeyDialogOpen}>
-              <DialogTrigger asChild>
-                <InlineButton onClick={() => setIsApiKeyDialogOpen(true)}>
-                  Issue gateway key
-                </InlineButton>
-              </DialogTrigger>
-              <DialogContent size="medium">
-                <AdminDialog
-                  title="Issue gateway key"
-                  detail="Mint a project-scoped API key in a focused dialog, then reveal the plaintext once for secure handoff."
-                >
-                  <form className="adminx-form-grid" onSubmit={(event) => void handleApiKeySubmit(event)}>
-                    <FormField label="Tenant">
-                      {snapshot.tenants.length ? (
-                        <Select
-                          value={apiKeyDraft.tenant_id}
-                          onChange={(event) => {
-                            const nextTenantId = event.target.value;
-                            setApiKeyDraft((current) => ({
-                              ...current,
-                              tenant_id: nextTenantId,
-                              project_id: snapshot.projects.find((project) => project.tenant_id === nextTenantId)?.id ?? '',
-                            }));
-                          }}
-                        >
-                          {snapshot.tenants.map((tenant) => (
-                            <option key={tenant.id} value={tenant.id}>
-                              {tenant.name} ({tenant.id})
-                            </option>
-                          ))}
-                        </Select>
-                      ) : (
-                        <Input
-                          value={apiKeyDraft.tenant_id}
-                          onChange={(event) => setApiKeyDraft((current) => ({ ...current, tenant_id: event.target.value }))}
-                          required
-                        />
-                      )}
-                    </FormField>
-                    <FormField label="Project">
-                      {availableApiKeyProjects.length ? (
-                        <Select
-                          value={apiKeyDraft.project_id}
-                          onChange={(event) => setApiKeyDraft((current) => ({ ...current, project_id: event.target.value }))}
-                        >
-                          {availableApiKeyProjects.map((project) => (
-                            <option key={project.id} value={project.id}>
-                              {project.name} ({project.id})
-                            </option>
-                          ))}
-                        </Select>
-                      ) : (
-                        <Input
-                          value={apiKeyDraft.project_id}
-                          onChange={(event) => setApiKeyDraft((current) => ({ ...current, project_id: event.target.value }))}
-                          required
-                        />
-                      )}
-                    </FormField>
-                    <FormField label="Environment">
-                      <Select
-                        value={apiKeyDraft.environment}
-                        onChange={(event) => setApiKeyDraft((current) => ({ ...current, environment: event.target.value }))}
-                      >
-                        <option value="production">Production</option>
-                        <option value="staging">Staging</option>
-                        <option value="development">Development</option>
-                      </Select>
-                    </FormField>
-                    <FormField label="Key label">
-                      <Input
-                        value={apiKeyDraft.label}
-                        onChange={(event) => setApiKeyDraft((current) => ({ ...current, label: event.target.value }))}
-                        placeholder="Production App Key"
-                      />
-                    </FormField>
-                    <FormField label="Notes">
-                      <Textarea
-                        value={apiKeyDraft.notes}
-                        onChange={(event) => setApiKeyDraft((current) => ({ ...current, notes: event.target.value }))}
-                        rows={3}
-                        placeholder="Retained for admin inventory"
-                      />
-                    </FormField>
-                    <FormField label="Expires at (ms)">
-                      <Input
-                        type="number"
-                        inputMode="numeric"
-                        min="0"
-                        step="1"
-                        value={apiKeyDraft.expires_at_ms}
-                        onChange={(event) => setApiKeyDraft((current) => ({ ...current, expires_at_ms: event.target.value }))}
-                        placeholder="4102444800000"
-                      />
-                    </FormField>
-                    <DialogFooter>
-                      <InlineButton onClick={resetApiKeyDialog}>Cancel</InlineButton>
-                      <InlineButton tone="primary" type="submit">
-                        Issue gateway key
-                      </InlineButton>
-                    </DialogFooter>
-                  </form>
-                </AdminDialog>
-              </DialogContent>
-            </Dialog>
-          </>
-        )}
-      >
-        <ToolbarInline>
-          <ToolbarSearchField
-            label="Search tenants"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="tenant, project, environment, key label"
+  const columns = useMemo<DataTableColumn<TenantDirectoryRow>[]>(
+    () => [
+      {
+        id: 'tenant',
+        header: t('Tenant'),
+        cell: (tenant) => (
+          <div className="space-y-1">
+            <div className="font-medium text-[var(--sdk-color-text-primary)]">
+              {tenant.name}
+            </div>
+            <div className="text-sm text-[var(--sdk-color-text-secondary)]">
+              {tenant.id}
+            </div>
+          </div>
+        ),
+      },
+      {
+        id: 'projects',
+        header: t('Projects'),
+        cell: (tenant) => (
+          <div className="space-y-1 text-sm text-[var(--sdk-color-text-secondary)]">
+            <div>{t('{count} attached', { count: formatNumber(tenant.projectCount) })}</div>
+            <div>{tenant.projectSummary}</div>
+          </div>
+        ),
+      },
+      {
+        id: 'portal-users',
+        align: 'right',
+        header: t('Portal users'),
+        cell: (tenant) => formatNumber(tenant.portalUserCount),
+        width: 120,
+      },
+      {
+        id: 'gateway',
+        header: t('Gateway posture'),
+        cell: (tenant) => (
+          <div className="space-y-1 text-sm text-[var(--sdk-color-text-secondary)]">
+            <div>
+              {t('{active} active / {total} total', {
+                active: formatNumber(tenant.activeApiKeyCount),
+                total: formatNumber(tenant.apiKeyCount),
+              })}
+            </div>
+            <div>{tenant.environmentSummary}</div>
+          </div>
+        ),
+      },
+      {
+        id: 'traffic',
+        header: t('Traffic'),
+        cell: (tenant) => (
+          <div className="space-y-1 text-sm text-[var(--sdk-color-text-secondary)]">
+            <div>{t('{count} requests', { count: formatNumber(tenant.requestCount) })}</div>
+            <div>{t('{count} tokens', { count: formatNumber(tenant.tokenCount) })}</div>
+          </div>
+        ),
+      },
+      {
+        id: 'readiness',
+        header: t('Readiness'),
+        cell: (tenant) => (
+          <StatusBadge
+            showIcon
+            status={tenant.canIssueApiKey ? 'ready' : 'incomplete'}
+            variant={tenant.canIssueApiKey ? 'success' : 'warning'}
           />
-        </ToolbarInline>
-      </PageToolbar>
+        ),
+        width: 140,
+      },
+    ],
+    [formatNumber, t],
+  );
 
-      <DataTable
-        columns={[
-          {
-            key: 'tenant',
-            label: 'Tenant',
-            render: (tenant) => (
-              <div className="adminx-table-cell-stack">
-                <strong>{tenant.name}</strong>
-                <span>{tenant.id}</span>
+  const totalProjects = tenantRows.reduce((sum, tenant) => sum + tenant.projectCount, 0);
+  const totalPortalUsers = tenantRows.reduce(
+    (sum, tenant) => sum + tenant.portalUserCount,
+    0,
+  );
+  const activeApiKeyCount = tenantRows.reduce(
+    (sum, tenant) => sum + tenant.activeApiKeyCount,
+    0,
+  );
+
+  return (
+    <>
+      <div className="flex h-full min-h-0 flex-col gap-4 p-4 lg:p-5">
+        <Card className="shrink-0">
+          <CardContent className="p-4">
+            <form
+              className="flex flex-wrap items-center gap-3"
+              onSubmit={(event) => event.preventDefault()}
+            >
+              <div className="min-w-[18rem] flex-[1.5]">
+                <Label className="sr-only" htmlFor="tenants-search">
+                  {t('Search tenants')}
+                </Label>
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--sdk-color-text-muted)]" />
+                  <Input
+                    className="pl-9"
+                    id="tenants-search"
+                    onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                      setSearch(event.target.value)
+                    }
+                    placeholder={t('tenant, project, environment, key label')}
+                    value={search}
+                  />
+                </div>
               </div>
-            ),
-          },
-          {
-            key: 'projects',
-            label: 'Projects',
-            render: (tenant) => (
-              <div className="adminx-table-cell-stack">
-                <strong>{tenant.projectCount}</strong>
-                <span>{tenant.projectSummary}</span>
+
+              <div className="ml-auto flex flex-wrap items-center self-center gap-2">
+                <div className="hidden text-sm text-[var(--sdk-color-text-secondary)] xl:block">
+                  {t('{count} visible', { count: formatNumber(tenantRows.length) })}
+                  {' | '}
+                  {t('{count} projects', { count: formatNumber(totalProjects) })}
+                  {' | '}
+                  {t('{count} active keys', { count: formatNumber(activeApiKeyCount) })}
+                </div>
+                <Button onClick={() => openTenantDialog()} type="button" variant="primary">
+                  <Plus className="w-4 h-4" />
+                  {t('New tenant')}
+                </Button>
+                <Button onClick={() => openProjectDialog()} type="button" variant="outline">
+                  <Plus className="w-4 h-4" />
+                  {t('New project')}
+                </Button>
+                <Button onClick={() => openApiKeyDialog()} type="button" variant="outline">
+                  <Plus className="w-4 h-4" />
+                  {t('Issue gateway key')}
+                </Button>
               </div>
-            ),
-          },
-          {
-            key: 'portal-users',
-            label: 'Portal users',
-            render: (tenant) => tenant.portalUserCount,
-          },
-          {
-            key: 'api-keys',
-            label: 'Api keys',
-            render: (tenant) => (
-              <div className="adminx-table-cell-stack">
-                <strong>{tenant.activeApiKeyCount} active / {tenant.apiKeyCount} total</strong>
-                <span>{tenant.environmentSummary}</span>
-              </div>
-            ),
-          },
-          {
-            key: 'traffic',
-            label: 'Traffic',
-            render: (tenant) => (
-              <div className="adminx-table-cell-stack">
-                <strong>{tenant.requestCount} requests</strong>
-                <span>{tenant.tokenCount} tokens</span>
-              </div>
-            ),
-          },
-          {
-            key: 'actions',
-            label: 'Actions',
-            render: (tenant) => (
-              <div className="adminx-row">
-                <InlineButton
-                  onClick={() => {
-                    setTenantDraft({ id: tenant.id, name: tenant.name });
-                    setIsTenantDialogOpen(true);
-                  }}
-                >
-                  Edit tenant
-                </InlineButton>
-                <InlineButton
-                  onClick={() => {
-                    setProjectDraft({
-                      tenant_id: tenant.id,
-                      id: '',
-                      name: '',
-                    });
-                    setIsProjectDialogOpen(true);
-                  }}
-                >
-                  New project
-                </InlineButton>
-                <InlineButton
-                  disabled={!tenant.canIssueApiKey}
-                  onClick={() => {
-                    const firstProjectId = snapshot.projects.find(
-                      (project) => project.tenant_id === tenant.id,
-                    )?.id ?? '';
-                    setApiKeyDraft(createApiKeyDraft({
-                      tenant_id: tenant.id,
-                      project_id: firstProjectId,
-                    }));
-                    setIsApiKeyDialogOpen(true);
-                  }}
-                >
-                  Issue gateway key
-                </InlineButton>
-                <InlineButton
-                  tone="danger"
-                  disabled={tenant.projectCount > 0 || tenant.portalUserCount > 0}
-                  onClick={() =>
-                    setPendingDelete({
-                      id: tenant.id,
-                      label: `${tenant.name} (${tenant.id})`,
-                    })}
-                >
-                  Delete
-                </InlineButton>
-              </div>
-            ),
-          },
-        ]}
-        rows={tenantRows}
-        empty="No tenants available."
-        getKey={(tenant) => tenant.id}
+            </form>
+          </CardContent>
+        </Card>
+
+        <div className="min-h-0 flex-1">
+          <TenantsRegistrySection
+            activeApiKeyCount={activeApiKeyCount}
+            columns={columns}
+            filteredTenants={tenantRows}
+            onOpenApiKeyDialog={openApiKeyDialog}
+            onOpenProjectDialog={openProjectDialog}
+            onOpenTenantDialog={openTenantDialog}
+            onRequestDelete={(tenant) =>
+              setPendingDelete({
+                id: tenant.id,
+                label: `${tenant.name} (${tenant.id})`,
+              })
+            }
+            onSelectTenant={openDetailDrawer}
+            selectedTenantId={selectedTenantId}
+            totalPortalUsers={totalPortalUsers}
+            totalProjects={totalProjects}
+          />
+        </div>
+      </div>
+
+      <TenantsDetailDrawer
+        canDelete={
+          selectedTenant
+            ? selectedTenant.projectCount === 0 && selectedTenant.portalUserCount === 0
+            : false
+        }
+        onDelete={() => {
+          if (!selectedTenant) {
+            return;
+          }
+          setPendingDelete({
+            id: selectedTenant.id,
+            label: `${selectedTenant.name} (${selectedTenant.id})`,
+          });
+        }}
+        onEdit={() => {
+          if (!selectedTenant) {
+            return;
+          }
+          setIsDetailDrawerOpen(false);
+          openTenantDialog(selectedTenant);
+        }}
+        onIssueKey={() => {
+          if (!selectedTenant) {
+            return;
+          }
+          setIsDetailDrawerOpen(false);
+          openApiKeyDialog(selectedTenant);
+        }}
+        onNewProject={() => {
+          if (!selectedTenant) {
+            return;
+          }
+          setIsDetailDrawerOpen(false);
+          openProjectDialog(selectedTenant);
+        }}
+        onOpenChange={handleDetailDrawerOpenChange}
+        open={isDetailDrawerOpen}
+        selectedTenant={selectedTenant}
       />
 
-      <Dialog
-        open={Boolean(revealedApiKey)}
-        onOpenChange={(nextOpen) => {
-          if (!nextOpen) {
-            setRevealedApiKey(null);
-          }
-        }}
-      >
-        <DialogContent size="medium">
-          <AdminDialog
-            title="Plaintext key ready"
-            detail="Store this secret now. The control plane persists both hashed_key and raw_key in the canonical ai_app_api_keys table."
-          >
-            {revealedApiKey ? (
-              <div className="adminx-form-grid">
-                <div className="adminx-note">
-                  <strong>Issued scope</strong>
-                      <p>
-                        {revealedApiKey.project_id}
-                        {' | '}
-                        {revealedApiKey.environment}
-                        {' | '}
-                        {revealedApiKey.label}
-                        {' | '}
-                        hashed: {revealedApiKey.hashed}
-                      </p>
-                    </div>
-                    {revealedApiKey.notes ? (
-                      <div className="adminx-note">
-                        <strong>Notes</strong>
-                        <p>{revealedApiKey.notes}</p>
-                      </div>
-                    ) : null}
-                    <div className="adminx-note">
-                      <strong>Expires at (ms)</strong>
-                      <p>{revealedApiKey.expires_at_ms ?? 'never'}</p>
-                    </div>
-                    <div className="adminx-note">
-                      <strong>Plaintext key</strong>
-                      <code>{revealedApiKey.plaintext}</code>
-                </div>
-                <DialogFooter>
-                  <InlineButton
-                    tone="primary"
-                    onClick={() => {
-                      if (navigator.clipboard) {
-                        void navigator.clipboard.writeText(revealedApiKey.plaintext);
-                      }
-                    }}
-                  >
-                    Copy key
-                  </InlineButton>
-                  <InlineButton onClick={() => setRevealedApiKey(null)}>Close</InlineButton>
-                </DialogFooter>
-              </div>
-            ) : null}
-          </AdminDialog>
-        </DialogContent>
-      </Dialog>
+      <TenantDialog
+        draft={tenantDraft}
+        onOpenChange={handleTenantDialogOpenChange}
+        onSubmit={(event) => void handleTenantSubmit(event)}
+        open={isTenantDialogOpen}
+        setDraft={setTenantDraft}
+      />
 
-      <ConfirmDialog
-        open={Boolean(pendingDelete)}
-        title="Delete workspace resource"
-        detail={
+      <ProjectDialog
+        draft={projectDraft}
+        onOpenChange={handleProjectDialogOpenChange}
+        onSubmit={(event) => void handleProjectSubmit(event)}
+        open={isProjectDialogOpen}
+        selectedProjectBilling={selectedProjectBilling}
+        selectedProjectTokens={selectedProjectTokens}
+        selectedProjectUsage={selectedProjectUsage}
+        setDraft={setProjectDraft}
+        snapshot={snapshot}
+      />
+
+      <ApiKeyDialog
+        availableProjects={availableApiKeyProjects}
+        draft={apiKeyDraft}
+        onOpenChange={handleApiKeyDialogOpenChange}
+        onSubmit={(event) => void handleApiKeySubmit(event)}
+        open={isApiKeyDialogOpen}
+        setDraft={setApiKeyDraft}
+        snapshot={snapshot}
+      />
+
+      <PlaintextApiKeyDialog
+        onClose={() => setRevealedApiKey(null)}
+        revealedApiKey={revealedApiKey}
+      />
+
+      <ConfirmActionDialog
+        confirmLabel={t('Delete now')}
+        description={
           pendingDelete
-            ? `Delete ${pendingDelete.label}. This permanently removes the selected resource from the workspace registry.`
+            ? t(
+                'Delete {label}. This permanently removes the selected resource from the workspace registry.',
+                { label: pendingDelete.label },
+              )
             : ''
         }
-        confirmLabel="Delete now"
-        onClose={() => setPendingDelete(null)}
-        onConfirm={confirmDelete}
+        onConfirm={() => void confirmDelete()}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPendingDelete(null);
+          }
+        }}
+        open={Boolean(pendingDelete)}
+        title={t('Delete workspace resource')}
       />
-    </div>
+    </>
   );
 }

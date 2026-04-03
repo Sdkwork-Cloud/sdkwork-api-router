@@ -1,7 +1,12 @@
 import { ArrowRight, Chrome, Github, Lock, Mail, QrCode, Smartphone, User } from 'lucide-react';
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState, type ComponentPropsWithoutRef, type FormEvent, type ReactNode } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { Button, Label, LeadingIconInput, usePortalI18n } from 'sdkwork-router-portal-commons';
+import { translatePortalText, usePortalI18n } from 'sdkwork-router-portal-commons';
+import { Button } from 'sdkwork-router-portal-commons/framework/actions';
+import {
+  Input,
+  Label,
+} from 'sdkwork-router-portal-commons/framework/entry';
 import { portalErrorMessage } from 'sdkwork-router-portal-portal-api';
 
 import type { PortalAuthMode, PortalAuthPageProps } from '../types';
@@ -44,31 +49,59 @@ function authCopy(mode: PortalAuthMode) {
   switch (mode) {
     case 'register':
       return {
-        title: 'Create account',
-        description: 'Create your workspace access and continue into the portal shell.',
-        submitLabel: 'Create account',
-        alternateLabel: 'Sign in',
+        title: translatePortalText('Create account'),
+        description: translatePortalText(
+          'Create your workspace access and continue into the portal shell.',
+        ),
+        submitLabel: translatePortalText('Create account'),
+        alternateLabel: translatePortalText('Sign in'),
         alternatePath: '/login',
       };
     case 'forgot-password':
       return {
-        title: 'Recover access',
-        description:
-          'Password reset links are not enabled for the current portal backend. Continue back to sign in with your workspace email.',
-        submitLabel: 'Back to login',
-        alternateLabel: 'Create account',
+        title: translatePortalText('Recover access'),
+        description: translatePortalText(
+          'Password reset links are not enabled for this workspace yet. Continue back to sign in with your workspace email.',
+        ),
+        submitLabel: translatePortalText('Back to login'),
+        alternateLabel: translatePortalText('Create account'),
         alternatePath: '/register',
       };
     case 'login':
     default:
       return {
-        title: 'Welcome back',
-        description: 'Sign in to continue to your portal workspace.',
-        submitLabel: 'Sign in',
-        alternateLabel: 'Sign up',
+        title: translatePortalText('Welcome back'),
+        description: translatePortalText('Sign in to continue to your portal workspace.'),
+        submitLabel: translatePortalText('Sign in'),
+        alternateLabel: translatePortalText('Sign up'),
         alternatePath: '/register',
       };
   }
+}
+
+function AuthTextInput({
+  icon,
+  inputClassName,
+  style,
+  type,
+  ...props
+}: Omit<ComponentPropsWithoutRef<'input'>, 'className'> & {
+  icon: ReactNode;
+  inputClassName?: string;
+}) {
+  return (
+    <div className="relative block w-full">
+      <span className="pointer-events-none absolute left-4 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center text-zinc-400 dark:text-zinc-500">
+        {icon}
+      </span>
+      <Input
+        {...props}
+        className={['h-10 pr-3', inputClassName].filter(Boolean).join(' ')}
+        style={{ ...style, paddingLeft: '2.75rem' }}
+        type={type ?? 'text'}
+      />
+    </div>
+  );
 }
 
 export function AuthPage({ signIn, register }: PortalAuthPageProps) {
@@ -185,18 +218,17 @@ export function AuthPage({ signIn, register }: PortalAuthPageProps) {
           <div className="mx-auto max-w-md">
             <div className="mb-8">
               <h1 className="mb-2 text-3xl font-black tracking-tight text-zinc-900 dark:text-white">
-                {t(copy.title)}
+                {copy.title}
               </h1>
-              <p className="text-zinc-500 dark:text-zinc-400">{t(copy.description)}</p>
+              <p className="text-zinc-500 dark:text-zinc-400">{copy.description}</p>
             </div>
 
             <form className="space-y-5" onSubmit={handleSubmit}>
               {mode === 'register' ? (
                 <div>
                   <Label className="mb-1.5 block text-zinc-700 dark:text-zinc-300">{t('Name')}</Label>
-                  <LeadingIconInput
+                  <AuthTextInput
                     icon={<User className="h-5 w-5" />}
-                    inputClassName="h-10 pr-3"
                     onChange={(event) => setName(event.target.value)}
                     placeholder={t('Workspace owner')}
                     required
@@ -208,10 +240,9 @@ export function AuthPage({ signIn, register }: PortalAuthPageProps) {
 
               <div>
                 <Label className="mb-1.5 block text-zinc-700 dark:text-zinc-300">{t('Email')}</Label>
-                <LeadingIconInput
+                <AuthTextInput
                   autoComplete="email"
                   icon={<Mail className="h-5 w-5" />}
-                  inputClassName="h-10 pr-3"
                   onChange={(event) => setEmail(event.target.value)}
                   placeholder={t('name@example.com')}
                   required
@@ -235,10 +266,9 @@ export function AuthPage({ signIn, register }: PortalAuthPageProps) {
                       </Button>
                     ) : null}
                   </div>
-                  <LeadingIconInput
+                  <AuthTextInput
                     autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
                     icon={<Lock className="h-5 w-5" />}
-                    inputClassName="h-10 pr-3"
                     onChange={(event) => setPassword(event.target.value)}
                     placeholder={mode === 'register' ? t('Create a password') : t('Enter your password')}
                     required
@@ -249,7 +279,7 @@ export function AuthPage({ signIn, register }: PortalAuthPageProps) {
               ) : null}
 
               <Button className="h-auto w-full rounded-xl py-3 font-bold shadow-sm" disabled={submitting} type="submit">
-                {submitting ? t('Loading...') : t(copy.submitLabel)}
+                {submitting ? t('Loading...') : copy.submitLabel}
                 <ArrowRight className="h-4 w-4" />
               </Button>
             </form>
@@ -308,7 +338,7 @@ export function AuthPage({ signIn, register }: PortalAuthPageProps) {
                     type="button"
                     variant="ghost"
                   >
-                    {t(copy.alternateLabel)}
+                    {copy.alternateLabel}
                   </Button>
                 </>
               ) : mode === 'register' ? (
@@ -320,7 +350,7 @@ export function AuthPage({ signIn, register }: PortalAuthPageProps) {
                     type="button"
                     variant="ghost"
                   >
-                    {t(copy.alternateLabel)}
+                    {copy.alternateLabel}
                   </Button>
                 </>
               ) : (

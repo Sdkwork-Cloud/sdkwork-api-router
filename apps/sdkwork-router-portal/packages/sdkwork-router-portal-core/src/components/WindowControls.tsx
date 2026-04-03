@@ -1,8 +1,11 @@
 import { Minus, Square, X } from 'lucide-react';
+import { usePortalI18n } from 'sdkwork-router-portal-commons';
 
 import { closeWindow, maximizeWindow, minimizeWindow } from '../lib/desktop';
 
 export function WindowControls() {
+  const { t } = usePortalI18n();
+
   return (
     <div className="flex h-full items-stretch" data-tauri-drag-region="false">
       <button
@@ -11,7 +14,7 @@ export function WindowControls() {
         onClick={() => {
           void minimizeWindow();
         }}
-        title="minimizeWindow"
+        title={t('Minimize window')}
         type="button"
       >
         <Minus className="h-4 w-4" />
@@ -22,7 +25,7 @@ export function WindowControls() {
         onClick={() => {
           void maximizeWindow();
         }}
-        title="maximizeWindow"
+        title={t('Maximize window')}
         type="button"
       >
         <Square className="h-3.5 w-3.5" />
@@ -33,7 +36,7 @@ export function WindowControls() {
         onClick={() => {
           void closeWindow();
         }}
-        title="closeWindow"
+        title={t('Close window')}
         type="button"
       >
         <X className="h-4 w-4" />

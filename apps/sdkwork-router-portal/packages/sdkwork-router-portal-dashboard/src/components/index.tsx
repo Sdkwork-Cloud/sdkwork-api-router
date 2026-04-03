@@ -4,24 +4,21 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-
-import { InlineButton, cn } from 'sdkwork-router-portal-commons';
-import type { PortalRouteKey } from 'sdkwork-router-portal-types';
+import {
+  cn,
+  usePortalI18n,
+} from 'sdkwork-router-portal-commons';
+import { Button } from 'sdkwork-router-portal-commons/framework/actions';
+import { Badge } from 'sdkwork-router-portal-commons/framework/display';
+import {
+  Card,
+  CardContent,
+} from 'sdkwork-router-portal-commons/framework/layout';
 
 import type {
-  DashboardInsight,
   DashboardSpendTrendPoint,
-  DashboardTone,
   DashboardTrafficTrendPoint,
 } from '../types';
-
-const statusToneClassNames: Record<DashboardTone, string> = {
-  accent: 'border-primary-500/20 bg-primary-500/10 text-primary-700 dark:text-primary-200',
-  positive: 'border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200',
-  warning: 'border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-200',
-  default:
-    'border border-zinc-500/15 bg-zinc-950/[0.04] text-zinc-600 dark:bg-white/[0.08] dark:text-zinc-300',
-};
 
 type DashboardTrendSeriesKey = 'total_tokens' | 'input_tokens' | 'output_tokens';
 
@@ -31,6 +28,11 @@ interface DashboardTrendSeries {
   dotClassName: string;
   strokeClassName: string;
 }
+
+type DashboardMetricBreakdown = {
+  label: string;
+  value: string;
+};
 
 function buildLinePath(points: Array<{ x: number; y: number }>) {
   return points
@@ -145,51 +147,181 @@ export function DashboardSummaryCard({
   );
 }
 
-export function DashboardSectionHeader({
-  eyebrow,
-  title,
-  description,
-  action,
+function DashboardSnapshotItem({
+  breakdowns,
+  breakdownsSlot,
+  label,
+  value,
+  valueSlot,
 }: {
-  eyebrow?: string;
-  title: string;
-  description: string;
-  action?: ReactNode;
+  breakdowns?: DashboardMetricBreakdown[];
+  breakdownsSlot?: string;
+  label: string;
+  value: string;
+  valueSlot?: string;
 }) {
   return (
-    <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-      <div>
-        {eyebrow ? (
-          <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-zinc-400 dark:text-zinc-500">
-            {eyebrow}
-          </p>
-        ) : null}
-        <h2 className="text-xl font-semibold tracking-tight text-zinc-950 dark:text-zinc-50">
-          {title}
-        </h2>
-        <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">{description}</p>
-      </div>
-      {action}
+    <div className="rounded-2xl border border-zinc-200 bg-zinc-50/80 px-4 py-4 dark:border-zinc-800 dark:bg-zinc-900/60">
+      <span className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
+        {label}
+      </span>
+      <strong
+        className="mt-2 block text-lg font-semibold text-zinc-950 dark:text-zinc-50"
+        data-slot={valueSlot}
+      >
+        {value}
+      </strong>
+      {breakdowns?.length ? (
+        <div
+          className="mt-3 grid grid-cols-3 gap-2"
+          data-slot={breakdownsSlot}
+        >
+          {breakdowns.map((item) => (
+            <div
+              key={item.label}
+              className="rounded-xl border border-zinc-200 bg-white px-2.5 py-2 dark:border-zinc-800 dark:bg-zinc-950"
+            >
+              <span className="block text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
+                {item.label}
+              </span>
+              <strong className="mt-1 block text-xs font-semibold text-zinc-950 dark:text-zinc-50">
+                {item.value}
+              </strong>
+            </div>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
 
-export function DashboardStatusPill({
+export function DashboardMetricCard({
+  breakdowns,
+  description,
   label,
-  tone = 'default',
+  value,
 }: {
+  breakdowns: DashboardMetricBreakdown[];
+  description: string;
   label: string;
-  tone?: DashboardTone;
+  value: string;
 }) {
   return (
-    <span
-      className={cn(
-        'inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.16em]',
-        statusToneClassNames[tone],
-      )}
-    >
-      {label}
-    </span>
+    <Card className="border-zinc-200 bg-white shadow-none dark:border-zinc-800 dark:bg-zinc-950">
+      <CardContent className="p-5">
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400">
+              {label}
+            </p>
+            <strong className="block text-3xl font-semibold text-zinc-950 dark:text-zinc-50">
+              {value}
+            </strong>
+            <p className="text-sm leading-6 text-zinc-500 dark:text-zinc-400">
+              {description}
+            </p>
+          </div>
+
+          <div className="grid grid-cols-3 gap-2">
+            {breakdowns.map((item) => (
+              <div
+                key={item.label}
+                className="rounded-2xl border border-zinc-200 bg-zinc-50/80 px-3 py-3 dark:border-zinc-800 dark:bg-zinc-900/60"
+              >
+                <span className="text-[11px] font-medium uppercase tracking-[0.14em] text-zinc-500 dark:text-zinc-400">
+                  {item.label}
+                </span>
+                <strong className="mt-1 block text-sm font-semibold text-zinc-950 dark:text-zinc-50">
+                  {item.value}
+                </strong>
+              </div>
+            ))}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+export function DashboardBalanceCard({
+  balanceValue,
+  description,
+  onRecharge,
+  onRedeem,
+  planValue,
+  quotaLimitValue,
+  statusLabel,
+  usedBreakdowns,
+  usedUnitsValue,
+  utilizationPercent,
+}: {
+  balanceValue: string;
+  description: string;
+  onRecharge: () => void;
+  onRedeem: () => void;
+  planValue: string;
+  quotaLimitValue: string;
+  statusLabel: string;
+  usedBreakdowns: DashboardMetricBreakdown[];
+  usedUnitsValue: string;
+  utilizationPercent: number | null;
+}) {
+  const { t } = usePortalI18n();
+
+  return (
+    <Card className="border-zinc-200 bg-white shadow-none dark:border-zinc-800 dark:bg-zinc-950 xl:col-span-2">
+      <CardContent className="p-6">
+        <div className="space-y-5">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="min-w-0 flex-1 space-y-3">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400">
+                {t('Balance')}
+              </p>
+              <div
+                className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
+                data-slot="portal-dashboard-balance-primary"
+              >
+                <strong className="block text-4xl font-semibold tracking-tight text-zinc-950 dark:text-zinc-50">
+                  {balanceValue}
+                </strong>
+                <div
+                  className="flex flex-wrap gap-2"
+                  data-slot="portal-dashboard-balance-actions"
+                >
+                  <Button onClick={onRecharge}>{t('Recharge')}</Button>
+                  <Button onClick={onRedeem} variant="secondary">
+                    {t('Redeem')}
+                  </Button>
+                </div>
+              </div>
+              <p className="max-w-2xl text-sm leading-6 text-zinc-500 dark:text-zinc-400">
+                {description}
+              </p>
+            </div>
+            <Badge variant="secondary">{statusLabel}</Badge>
+          </div>
+
+          <div className="h-2.5 overflow-hidden rounded-full bg-zinc-200/80 dark:bg-zinc-800/80">
+            <div
+              className="h-full rounded-full bg-zinc-900 transition-all dark:bg-zinc-100"
+              style={{ width: `${utilizationPercent ?? 32}%` }}
+            />
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-3">
+            <DashboardSnapshotItem
+              breakdowns={usedBreakdowns}
+              breakdownsSlot="portal-dashboard-used-breakdowns"
+              label={t('Used units')}
+              value={usedUnitsValue}
+              valueSlot="portal-dashboard-used-total"
+            />
+            <DashboardSnapshotItem label={t('Quota limit')} value={quotaLimitValue} />
+            <DashboardSnapshotItem label={t('Plan')} value={planValue} />
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -208,6 +340,7 @@ export function DashboardRevenueTrendChart({
   peakLabel: string;
   yAxisFormatter?: (value: number) => string;
 }) {
+  const { t } = usePortalI18n();
   const { chartFrameRef, width } = useChartFrameWidth(720);
   const hasRenderableData = points.length > 0;
   const height = 352;
@@ -370,7 +503,7 @@ export function DashboardRevenueTrendChart({
         </div>
       ) : (
         <div className="flex h-[22rem] items-center justify-center text-sm text-zinc-500 dark:text-zinc-400">
-          No spend trend data yet
+          {t('No spend trend data yet')}
         </div>
       )}
     </div>
@@ -390,6 +523,7 @@ export function DashboardTokenTrendChart({
   summary: string;
   yAxisFormatter?: (value: number) => string;
 }) {
+  const { t } = usePortalI18n();
   const { chartFrameRef, width } = useChartFrameWidth(720);
   const hasRenderableData = points.length > 0 && series.length > 0;
   const height = 352;
@@ -570,7 +704,7 @@ export function DashboardTokenTrendChart({
         </div>
       ) : (
         <div className="flex h-[22rem] items-center justify-center rounded-[1.5rem] border border-dashed border-zinc-300/80 bg-white/60 text-sm text-zinc-500 dark:border-zinc-700/70 dark:bg-zinc-950/35 dark:text-zinc-400">
-          No traffic trend data yet
+          {t('No traffic trend data yet')}
         </div>
       )}
     </div>
@@ -686,27 +820,6 @@ export function DashboardModelDistributionChart<T extends { id: string }>({
   );
 }
 
-export function DashboardInsights({
-  insights,
-  onNavigate,
-}: {
-  insights: DashboardInsight[];
-  onNavigate: (route: PortalRouteKey) => void;
-}) {
-  return (
-    <div className="portalx-insight-grid">
-      {insights.map((insight) => (
-        <article className="portalx-insight-card" key={insight.id}>
-          <DashboardStatusPill label={insight.title} tone={insight.tone} />
-          <p>{insight.detail}</p>
-          {insight.route && insight.action_label ? (
-            <InlineButton onClick={() => onNavigate(insight.route!)} tone="ghost">
-              {insight.action_label}
-            </InlineButton>
-          ) : null}
-        </article>
-      ))}
-    </div>
-  );
-}
+export { StatusBadge } from 'sdkwork-router-portal-commons/framework/display';
+
 

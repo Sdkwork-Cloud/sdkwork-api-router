@@ -3,7 +3,7 @@ mod compat_gemini;
 mod compat_streaming;
 
 use std::sync::{Arc, OnceLock};
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use axum::{
     body::Body,
@@ -34,7 +34,10 @@ use compat_gemini::{
     gemini_request_to_chat_completion, gemini_stream_from_openai, openai_chat_response_to_gemini,
     openai_count_tokens_to_gemini,
 };
-use sdkwork_api_app_billing::{check_quota, persist_ledger_entry, QuotaCheckResult};
+use sdkwork_api_app_billing::{
+    check_quota, create_billing_event, persist_billing_event, persist_ledger_entry,
+    BillingAccountingMode, CreateBillingEventInput, QuotaCheckResult,
+};
 use sdkwork_api_app_credential::CredentialSecretManager;
 use sdkwork_api_app_gateway::cancel_batch;
 use sdkwork_api_app_gateway::cancel_fine_tuning_job;
@@ -60,6 +63,8 @@ use sdkwork_api_app_gateway::create_image_edit;
 use sdkwork_api_app_gateway::create_image_generation;
 use sdkwork_api_app_gateway::create_image_variation;
 use sdkwork_api_app_gateway::create_moderation;
+use sdkwork_api_app_gateway::create_music;
+use sdkwork_api_app_gateway::create_music_lyrics;
 use sdkwork_api_app_gateway::create_realtime_session;
 use sdkwork_api_app_gateway::create_speech_response;
 use sdkwork_api_app_gateway::create_thread;
@@ -82,6 +87,7 @@ use sdkwork_api_app_gateway::delete_conversation_item;
 use sdkwork_api_app_gateway::delete_eval;
 use sdkwork_api_app_gateway::delete_file;
 use sdkwork_api_app_gateway::delete_model;
+use sdkwork_api_app_gateway::delete_music;
 use sdkwork_api_app_gateway::delete_response;
 use sdkwork_api_app_gateway::delete_thread;
 use sdkwork_api_app_gateway::delete_thread_message;
@@ -102,6 +108,7 @@ use sdkwork_api_app_gateway::get_file;
 use sdkwork_api_app_gateway::get_fine_tuning_job;
 use sdkwork_api_app_gateway::get_model;
 use sdkwork_api_app_gateway::get_model_from_store;
+use sdkwork_api_app_gateway::get_music;
 use sdkwork_api_app_gateway::get_response;
 use sdkwork_api_app_gateway::get_thread;
 use sdkwork_api_app_gateway::get_thread_message;
@@ -126,6 +133,7 @@ use sdkwork_api_app_gateway::list_files;
 use sdkwork_api_app_gateway::list_fine_tuning_job_checkpoints;
 use sdkwork_api_app_gateway::list_fine_tuning_job_events;
 use sdkwork_api_app_gateway::list_fine_tuning_jobs;
+use sdkwork_api_app_gateway::list_music;
 use sdkwork_api_app_gateway::list_models;
 use sdkwork_api_app_gateway::list_response_input_items;
 use sdkwork_api_app_gateway::list_thread_messages;
@@ -151,6 +159,7 @@ use sdkwork_api_app_gateway::update_vector_store;
 use sdkwork_api_app_gateway::update_video_character;
 use sdkwork_api_app_gateway::update_webhook;
 use sdkwork_api_app_gateway::video_content;
+use sdkwork_api_app_gateway::music_content;
 use sdkwork_api_app_gateway::{
     create_embedding, create_response, delete_model_from_store,
     execute_json_provider_request_with_runtime_and_options,
@@ -167,8 +176,9 @@ use sdkwork_api_app_gateway::{
     relay_conversation_items_from_store, relay_count_response_input_tokens_from_store,
     relay_delete_assistant_from_store, relay_delete_chat_completion_from_store,
     relay_delete_conversation_from_store, relay_delete_conversation_item_from_store,
-    relay_delete_eval_from_store, relay_delete_file_from_store, relay_delete_response_from_store,
-    relay_delete_thread_from_store, relay_delete_thread_message_from_store,
+    relay_delete_eval_from_store, relay_delete_file_from_store, relay_delete_music_from_store,
+    relay_delete_response_from_store, relay_delete_thread_from_store,
+    relay_delete_thread_message_from_store,
     relay_delete_vector_store_file_from_store, relay_delete_vector_store_from_store,
     relay_delete_video_from_store, relay_delete_webhook_from_store, relay_embedding_from_store,
     relay_eval_from_store, relay_eval_run_from_store, relay_extend_video_from_store,
@@ -177,7 +187,7 @@ use sdkwork_api_app_gateway::{
     relay_get_chat_completion_from_store, relay_get_conversation_from_store,
     relay_get_conversation_item_from_store, relay_get_eval_from_store,
     relay_get_eval_run_from_store, relay_get_file_from_store, relay_get_fine_tuning_job_from_store,
-    relay_get_response_from_store, relay_get_thread_from_store,
+    relay_get_music_from_store, relay_get_response_from_store, relay_get_thread_from_store,
     relay_get_thread_message_from_store, relay_get_thread_run_from_store,
     relay_get_thread_run_step_from_store, relay_get_vector_store_file_batch_from_store,
     relay_get_vector_store_file_from_store, relay_get_vector_store_from_store,
@@ -187,9 +197,10 @@ use sdkwork_api_app_gateway::{
     relay_list_batches_from_store, relay_list_chat_completion_messages_from_store,
     relay_list_chat_completions_from_store, relay_list_conversation_items_from_store,
     relay_list_conversations_from_store, relay_list_eval_runs_from_store,
-    relay_list_evals_from_store, relay_list_files_from_store,
+    relay_list_evals_from_store, relay_list_files_from_store, relay_list_music_from_store,
     relay_list_fine_tuning_job_checkpoints_from_store,
     relay_list_fine_tuning_job_events_from_store, relay_list_fine_tuning_jobs_from_store,
+    relay_music_content_from_store, relay_music_from_store, relay_music_lyrics_from_store,
     relay_list_response_input_items_from_store, relay_list_thread_messages_from_store,
     relay_list_thread_run_steps_from_store, relay_list_thread_runs_from_store,
     relay_list_vector_store_file_batch_files_from_store, relay_list_vector_store_files_from_store,
@@ -208,7 +219,7 @@ use sdkwork_api_app_gateway::{
     relay_upload_from_store, relay_upload_part_from_store,
     relay_vector_store_file_batch_from_store, relay_vector_store_file_from_store,
     relay_vector_store_from_store, relay_video_content_from_store, relay_video_from_store,
-    relay_webhook_from_store, with_request_routing_region,
+    relay_webhook_from_store, with_request_api_key_group_id, with_request_routing_region,
 };
 use sdkwork_api_app_identity::{
     resolve_gateway_request_context, GatewayRequestContext as IdentityGatewayRequestContext,
@@ -242,6 +253,7 @@ use sdkwork_api_contract_openai::images::{
     CreateImageEditRequest, CreateImageRequest, CreateImageVariationRequest, ImageUpload,
 };
 use sdkwork_api_contract_openai::moderations::CreateModerationRequest;
+use sdkwork_api_contract_openai::music::{CreateMusicLyricsRequest, CreateMusicRequest};
 use sdkwork_api_contract_openai::realtime::CreateRealtimeSessionRequest;
 use sdkwork_api_contract_openai::responses::{
     CompactResponseRequest, CountResponseInputTokensRequest, CreateResponseRequest,
@@ -271,6 +283,10 @@ use sdkwork_api_observability::{observe_http_metrics, observe_http_tracing, Http
 use sdkwork_api_openapi::{
     build_openapi_document, extract_routes_from_function, render_docs_html, HttpMethod,
     OpenApiServiceSpec, RouteEntry,
+};
+use sdkwork_api_policy_billing::{
+    builtin_billing_policy_registry, BillingPolicyExecutionInput,
+    BillingPolicyExecutionResult, GROUP_DEFAULT_BILLING_POLICY_ID,
 };
 use sdkwork_api_provider_core::{ProviderRequest, ProviderRequestOptions, ProviderStreamOutput};
 use sdkwork_api_storage_core::{AdminStore, Reloadable};
@@ -722,7 +738,8 @@ async fn apply_gateway_request_context(
         return next.run(request).await;
     };
 
-    let Ok(Some(context)) = resolve_gateway_request_context(state.store.as_ref(), &token).await else {
+    let Ok(Some(context)) = resolve_gateway_request_context(state.store.as_ref(), &token).await
+    else {
         return next.run(request).await;
     };
 
@@ -730,7 +747,13 @@ async fn apply_gateway_request_context(
     CURRENT_GATEWAY_REQUEST_CONTEXT
         .scope(
             context,
-            CURRENT_GATEWAY_REQUEST_STARTED_AT.scope(Instant::now(), next.run(request)),
+            with_request_api_key_group_id(
+                request
+                    .extensions()
+                    .get::<IdentityGatewayRequestContext>()
+                    .and_then(|context| context.api_key_group_id.clone()),
+                CURRENT_GATEWAY_REQUEST_STARTED_AT.scope(Instant::now(), next.run(request)),
+            ),
         )
         .await
 }
@@ -1076,6 +1099,13 @@ pub fn gateway_router_with_stateless_config(config: StatelessGatewayConfig) -> R
             get(video_character_retrieve_handler).post(video_character_update_handler),
         )
         .route("/v1/videos/{video_id}/extend", post(video_extend_handler))
+        .route("/v1/music", get(music_list_handler).post(music_handler))
+        .route(
+            "/v1/music/{music_id}",
+            get(music_retrieve_handler).delete(music_delete_handler),
+        )
+        .route("/v1/music/{music_id}/content", get(music_content_handler))
+        .route("/v1/music/lyrics", post(music_lyrics_handler))
         .route("/v1/uploads", post(uploads_handler))
         .route("/v1/uploads/{upload_id}/parts", post(upload_parts_handler))
         .route(
@@ -1506,6 +1536,13 @@ pub fn gateway_router_with_state(state: GatewayApiState) -> Router {
             "/v1/videos/{video_id}/extend",
             post(video_extend_with_state_handler),
         )
+        .route("/v1/music", get(music_list_with_state_handler).post(music_with_state_handler))
+        .route(
+            "/v1/music/{music_id}",
+            get(music_retrieve_with_state_handler).delete(music_delete_with_state_handler),
+        )
+        .route("/v1/music/{music_id}/content", get(music_content_with_state_handler))
+        .route("/v1/music/lyrics", post(music_lyrics_with_state_handler))
         .route("/v1/uploads", post(uploads_with_state_handler))
         .route(
             "/v1/uploads/{upload_id}/parts",
@@ -3585,6 +3622,134 @@ async fn container_file_content_handler(
     )
 }
 
+async fn music_handler(
+    request_context: StatelessGatewayRequest,
+    ExtractJson(request): ExtractJson<CreateMusicRequest>,
+) -> Response {
+    match relay_stateless_json_request(&request_context, ProviderRequest::Music(&request)).await {
+        Ok(Some(response)) => return Json(response).into_response(),
+        Ok(None) => {}
+        Err(_) => {
+            return bad_gateway_openai_response("failed to relay upstream music create");
+        }
+    }
+
+    Json(create_music(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &request,
+    )
+    .expect("music create"))
+    .into_response()
+}
+
+async fn music_list_handler(request_context: StatelessGatewayRequest) -> Response {
+    match relay_stateless_json_request(&request_context, ProviderRequest::MusicList).await {
+        Ok(Some(response)) => return Json(response).into_response(),
+        Ok(None) => {}
+        Err(_) => {
+            return bad_gateway_openai_response("failed to relay upstream music list");
+        }
+    }
+
+    Json(list_music(
+        request_context.tenant_id(),
+        request_context.project_id(),
+    )
+    .expect("music list"))
+    .into_response()
+}
+
+async fn music_retrieve_handler(
+    request_context: StatelessGatewayRequest,
+    Path(music_id): Path<String>,
+) -> Response {
+    match relay_stateless_json_request(&request_context, ProviderRequest::MusicRetrieve(&music_id))
+        .await
+    {
+        Ok(Some(response)) => return Json(response).into_response(),
+        Ok(None) => {}
+        Err(_) => {
+            return bad_gateway_openai_response("failed to relay upstream music retrieve");
+        }
+    }
+
+    Json(get_music(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &music_id,
+    )
+    .expect("music retrieve"))
+    .into_response()
+}
+
+async fn music_delete_handler(
+    request_context: StatelessGatewayRequest,
+    Path(music_id): Path<String>,
+) -> Response {
+    match relay_stateless_json_request(&request_context, ProviderRequest::MusicDelete(&music_id))
+        .await
+    {
+        Ok(Some(response)) => return Json(response).into_response(),
+        Ok(None) => {}
+        Err(_) => {
+            return bad_gateway_openai_response("failed to relay upstream music delete");
+        }
+    }
+
+    Json(delete_music(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &music_id,
+    )
+    .expect("music delete"))
+    .into_response()
+}
+
+async fn music_content_handler(
+    request_context: StatelessGatewayRequest,
+    Path(music_id): Path<String>,
+) -> Response {
+    match relay_stateless_stream_request(&request_context, ProviderRequest::MusicContent(&music_id))
+        .await
+    {
+        Ok(Some(response)) => return upstream_passthrough_response(response),
+        Ok(None) => {}
+        Err(_) => {
+            return bad_gateway_openai_response("failed to relay upstream music content");
+        }
+    }
+
+    local_music_content_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &music_id,
+    )
+}
+
+async fn music_lyrics_handler(
+    request_context: StatelessGatewayRequest,
+    ExtractJson(request): ExtractJson<CreateMusicLyricsRequest>,
+) -> Response {
+    match relay_stateless_json_request(&request_context, ProviderRequest::MusicLyrics(&request))
+        .await
+    {
+        Ok(Some(response)) => return Json(response).into_response(),
+        Ok(None) => {}
+        Err(_) => {
+            return bad_gateway_openai_response("failed to relay upstream music lyrics");
+        }
+    }
+
+    Json(create_music_lyrics(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &request,
+    )
+    .expect("music lyrics"))
+    .into_response()
+}
+
 async fn videos_handler(
     request_context: StatelessGatewayRequest,
     ExtractJson(request): ExtractJson<CreateVideoRequest>,
@@ -5544,7 +5709,8 @@ async fn chat_completions_with_state_handler(
         {
             Ok(Some(response)) => {
                 let token_usage = extract_token_usage_metrics(&response);
-                let usage_result = record_gateway_usage_for_project_with_route_key_and_tokens(
+                let usage_result =
+                    record_gateway_usage_for_project_with_route_key_and_tokens_and_reference(
                     state.store.as_ref(),
                     request_context.tenant_id(),
                     request_context.project_id(),
@@ -5554,6 +5720,7 @@ async fn chat_completions_with_state_handler(
                     100,
                     0.10,
                     token_usage,
+                    response_usage_id_or_single_data_item_id(&response),
                 )
                 .await;
                 if usage_result.is_err() {
@@ -5799,7 +5966,7 @@ async fn anthropic_messages_with_state_handler(
     {
         Ok(Some(response)) => {
             let token_usage = extract_token_usage_metrics(&response);
-            if record_gateway_usage_for_project_with_route_key_and_tokens(
+            if record_gateway_usage_for_project_with_route_key_and_tokens_and_reference(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
@@ -5809,6 +5976,7 @@ async fn anthropic_messages_with_state_handler(
                 100,
                 0.10,
                 token_usage,
+                response_usage_id_or_single_data_item_id(&response),
             )
             .await
             .is_err()
@@ -6036,7 +6204,7 @@ async fn gemini_models_compat_with_state_handler(
             {
                 Ok(Some(response)) => {
                     let token_usage = extract_token_usage_metrics(&response);
-                    if record_gateway_usage_for_project_with_route_key_and_tokens(
+                    if record_gateway_usage_for_project_with_route_key_and_tokens_and_reference(
                         state.store.as_ref(),
                         request_context.tenant_id(),
                         request_context.project_id(),
@@ -6046,6 +6214,7 @@ async fn gemini_models_compat_with_state_handler(
                         100,
                         0.10,
                         token_usage,
+                        response_usage_id_or_single_data_item_id(&response),
                     )
                     .await
                     .is_err()
@@ -8742,6 +8911,15 @@ fn local_video_content_response(tenant_id: &str, project_id: &str, video_id: &st
         .expect("valid local video content response")
 }
 
+fn local_music_content_response(tenant_id: &str, project_id: &str, music_id: &str) -> Response {
+    let bytes = music_content(tenant_id, project_id, music_id).expect("music content");
+    Response::builder()
+        .status(axum::http::StatusCode::OK)
+        .header(header::CONTENT_TYPE, "audio/mpeg")
+        .body(Body::from(bytes))
+        .expect("valid local music content response")
+}
+
 async fn responses_with_state_handler(
     request_context: AuthenticatedGatewayRequest,
     State(state): State<GatewayApiState>,
@@ -8830,7 +9008,7 @@ async fn responses_with_state_handler(
     {
         Ok(Some(response)) => {
             let token_usage = extract_token_usage_metrics(&response);
-            if record_gateway_usage_for_project_with_route_key_and_tokens(
+            if record_gateway_usage_for_project_with_route_key_and_tokens_and_reference(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
@@ -8840,6 +9018,7 @@ async fn responses_with_state_handler(
                 120,
                 0.12,
                 token_usage,
+                response_usage_id_or_single_data_item_id(&response),
             )
             .await
             .is_err()
@@ -9348,14 +9527,16 @@ async fn completions_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            if record_gateway_usage_for_project_with_route_key_and_reference_id(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "completions",
                 &request.model,
+                &request.model,
                 80,
                 0.08,
+                response_usage_id_or_single_data_item_id(&response),
             )
             .await
             .is_err()
@@ -9433,7 +9614,7 @@ async fn embeddings_with_state_handler(
     {
         Ok(Some(response)) => {
             let token_usage = extract_token_usage_metrics(&response);
-            if record_gateway_usage_for_project_with_route_key_and_tokens(
+            if record_gateway_usage_for_project_with_route_key_and_tokens_and_reference(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
@@ -9443,6 +9624,7 @@ async fn embeddings_with_state_handler(
                 10,
                 0.01,
                 token_usage,
+                response_usage_id_or_single_data_item_id(&response),
             )
             .await
             .is_err()
@@ -9507,14 +9689,16 @@ async fn moderations_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            if record_gateway_usage_for_project_with_route_key_and_reference_id(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
                 "moderations",
                 &request.model,
+                &request.model,
                 1,
                 0.001,
+                response_usage_id_or_single_data_item_id(&response),
             )
             .await
             .is_err()
@@ -9579,7 +9763,7 @@ async fn image_generations_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            if record_gateway_usage_for_project_with_media_and_reference_id(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
@@ -9587,6 +9771,11 @@ async fn image_generations_with_state_handler(
                 &request.model,
                 50,
                 0.05,
+                BillingMediaMetrics {
+                    image_count: image_count_from_response(&response),
+                    ..BillingMediaMetrics::default()
+                },
+                response_usage_id_or_single_data_item_id(&response),
             )
             .await
             .is_err()
@@ -9606,7 +9795,14 @@ async fn image_generations_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    let response = create_image_generation(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &request.model,
+    )
+    .expect("image");
+
+    if record_gateway_usage_for_project_with_media_and_reference_id(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
@@ -9614,6 +9810,11 @@ async fn image_generations_with_state_handler(
         &request.model,
         50,
         0.05,
+        BillingMediaMetrics {
+            image_count: u64::try_from(response.data.len()).unwrap_or(u64::MAX),
+            ..BillingMediaMetrics::default()
+        },
+        None,
     )
     .await
     .is_err()
@@ -9625,15 +9826,7 @@ async fn image_generations_with_state_handler(
             .into_response();
     }
 
-    Json(
-        create_image_generation(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &request.model,
-        )
-        .expect("image"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn image_edits_with_state_handler(
@@ -9657,7 +9850,7 @@ async fn image_edits_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            if record_gateway_usage_for_project_with_media_and_reference_id(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
@@ -9665,6 +9858,11 @@ async fn image_edits_with_state_handler(
                 &route_model,
                 50,
                 0.05,
+                BillingMediaMetrics {
+                    image_count: image_count_from_response(&response),
+                    ..BillingMediaMetrics::default()
+                },
+                response_usage_id_or_single_data_item_id(&response),
             )
             .await
             .is_err()
@@ -9684,7 +9882,14 @@ async fn image_edits_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    let response = create_image_edit(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &request,
+    )
+    .expect("image edit");
+
+    if record_gateway_usage_for_project_with_media_and_reference_id(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
@@ -9692,6 +9897,11 @@ async fn image_edits_with_state_handler(
         &route_model,
         50,
         0.05,
+        BillingMediaMetrics {
+            image_count: u64::try_from(response.data.len()).unwrap_or(u64::MAX),
+            ..BillingMediaMetrics::default()
+        },
+        None,
     )
     .await
     .is_err()
@@ -9703,15 +9913,7 @@ async fn image_edits_with_state_handler(
             .into_response();
     }
 
-    Json(
-        create_image_edit(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &request,
-        )
-        .expect("image edit"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn image_variations_with_state_handler(
@@ -9735,7 +9937,7 @@ async fn image_variations_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
-            if record_gateway_usage_for_project(
+            if record_gateway_usage_for_project_with_media_and_reference_id(
                 state.store.as_ref(),
                 request_context.tenant_id(),
                 request_context.project_id(),
@@ -9743,6 +9945,11 @@ async fn image_variations_with_state_handler(
                 &route_model,
                 50,
                 0.05,
+                BillingMediaMetrics {
+                    image_count: image_count_from_response(&response),
+                    ..BillingMediaMetrics::default()
+                },
+                response_usage_id_or_single_data_item_id(&response),
             )
             .await
             .is_err()
@@ -9762,7 +9969,14 @@ async fn image_variations_with_state_handler(
         }
     }
 
-    if record_gateway_usage_for_project(
+    let response = create_image_variation(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &request,
+    )
+    .expect("image variation");
+
+    if record_gateway_usage_for_project_with_media_and_reference_id(
         state.store.as_ref(),
         request_context.tenant_id(),
         request_context.project_id(),
@@ -9770,6 +9984,11 @@ async fn image_variations_with_state_handler(
         &route_model,
         50,
         0.05,
+        BillingMediaMetrics {
+            image_count: u64::try_from(response.data.len()).unwrap_or(u64::MAX),
+            ..BillingMediaMetrics::default()
+        },
+        None,
     )
     .await
     .is_err()
@@ -9781,15 +10000,7 @@ async fn image_variations_with_state_handler(
             .into_response();
     }
 
-    Json(
-        create_image_variation(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &request,
-        )
-        .expect("image variation"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn transcriptions_with_state_handler(
@@ -11166,6 +11377,451 @@ async fn container_file_content_with_state_handler(
         &container_id,
         &file_id,
     )
+}
+
+async fn music_with_state_handler(
+    request_context: AuthenticatedGatewayRequest,
+    State(state): State<GatewayApiState>,
+    ExtractJson(request): ExtractJson<CreateMusicRequest>,
+) -> Response {
+    match relay_music_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &request,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            let usage_model = response_usage_id_or_single_data_item_id(&response)
+                .unwrap_or(request.model.as_str());
+            let music_seconds =
+                request.duration_seconds.unwrap_or_else(|| music_seconds_from_response(&response));
+            if record_gateway_usage_for_project_with_media_and_reference_id(
+                state.store.as_ref(),
+                request_context.tenant_id(),
+                request_context.project_id(),
+                "music",
+                &request.model,
+                music_billing_units(music_seconds),
+                music_billing_amount(music_seconds),
+                BillingMediaMetrics {
+                    music_seconds,
+                    ..BillingMediaMetrics::default()
+                },
+                Some(usage_model),
+            )
+            .await
+            .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return bad_gateway_openai_response("failed to relay upstream music create");
+        }
+    }
+
+    let response = create_music(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &request,
+    )
+    .expect("music create");
+    let usage_model = match response.data.as_slice() {
+        [track] => track.id.as_str(),
+        _ => request.model.as_str(),
+    };
+    let music_seconds = match response.data.as_slice() {
+        [track] => track.duration_seconds.unwrap_or(request.duration_seconds.unwrap_or(0.0)),
+        _ => request.duration_seconds.unwrap_or(0.0),
+    };
+
+    if record_gateway_usage_for_project_with_media_and_reference_id(
+        state.store.as_ref(),
+        request_context.tenant_id(),
+        request_context.project_id(),
+        "music",
+        &request.model,
+        music_billing_units(music_seconds),
+        music_billing_amount(music_seconds),
+        BillingMediaMetrics {
+            music_seconds,
+            ..BillingMediaMetrics::default()
+        },
+        Some(usage_model),
+    )
+    .await
+    .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(response).into_response()
+}
+
+async fn music_list_with_state_handler(
+    request_context: AuthenticatedGatewayRequest,
+    State(state): State<GatewayApiState>,
+) -> Response {
+    match relay_list_music_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        request_context.tenant_id(),
+        request_context.project_id(),
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage_for_project(
+                state.store.as_ref(),
+                request_context.tenant_id(),
+                request_context.project_id(),
+                "music",
+                "music",
+                10,
+                0.01,
+            )
+            .await
+            .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return bad_gateway_openai_response("failed to relay upstream music list");
+        }
+    }
+
+    if record_gateway_usage_for_project(
+        state.store.as_ref(),
+        request_context.tenant_id(),
+        request_context.project_id(),
+        "music",
+        "music",
+        10,
+        0.01,
+    )
+    .await
+    .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(list_music(
+        request_context.tenant_id(),
+        request_context.project_id(),
+    )
+    .expect("music list"))
+    .into_response()
+}
+
+async fn music_retrieve_with_state_handler(
+    request_context: AuthenticatedGatewayRequest,
+    State(state): State<GatewayApiState>,
+    Path(music_id): Path<String>,
+) -> Response {
+    match relay_get_music_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &music_id,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage_for_project(
+                state.store.as_ref(),
+                request_context.tenant_id(),
+                request_context.project_id(),
+                "music",
+                &music_id,
+                10,
+                0.01,
+            )
+            .await
+            .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return bad_gateway_openai_response("failed to relay upstream music retrieve");
+        }
+    }
+
+    if record_gateway_usage_for_project(
+        state.store.as_ref(),
+        request_context.tenant_id(),
+        request_context.project_id(),
+        "music",
+        &music_id,
+        10,
+        0.01,
+    )
+    .await
+    .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(get_music(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &music_id,
+    )
+    .expect("music retrieve"))
+    .into_response()
+}
+
+async fn music_delete_with_state_handler(
+    request_context: AuthenticatedGatewayRequest,
+    State(state): State<GatewayApiState>,
+    Path(music_id): Path<String>,
+) -> Response {
+    match relay_delete_music_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &music_id,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage_for_project(
+                state.store.as_ref(),
+                request_context.tenant_id(),
+                request_context.project_id(),
+                "music",
+                &music_id,
+                10,
+                0.01,
+            )
+            .await
+            .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return bad_gateway_openai_response("failed to relay upstream music delete");
+        }
+    }
+
+    if record_gateway_usage_for_project(
+        state.store.as_ref(),
+        request_context.tenant_id(),
+        request_context.project_id(),
+        "music",
+        &music_id,
+        10,
+        0.01,
+    )
+    .await
+    .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(delete_music(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &music_id,
+    )
+    .expect("music delete"))
+    .into_response()
+}
+
+async fn music_content_with_state_handler(
+    request_context: AuthenticatedGatewayRequest,
+    State(state): State<GatewayApiState>,
+    Path(music_id): Path<String>,
+) -> Response {
+    match relay_music_content_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &music_id,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            if record_gateway_usage_for_project(
+                state.store.as_ref(),
+                request_context.tenant_id(),
+                request_context.project_id(),
+                "music",
+                &music_id,
+                10,
+                0.01,
+            )
+            .await
+            .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return upstream_passthrough_response(response);
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return bad_gateway_openai_response("failed to relay upstream music content");
+        }
+    }
+
+    if record_gateway_usage_for_project(
+        state.store.as_ref(),
+        request_context.tenant_id(),
+        request_context.project_id(),
+        "music",
+        &music_id,
+        10,
+        0.01,
+    )
+    .await
+    .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    local_music_content_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &music_id,
+    )
+}
+
+async fn music_lyrics_with_state_handler(
+    request_context: AuthenticatedGatewayRequest,
+    State(state): State<GatewayApiState>,
+    ExtractJson(request): ExtractJson<CreateMusicLyricsRequest>,
+) -> Response {
+    match relay_music_lyrics_from_store(
+        state.store.as_ref(),
+        &state.secret_manager,
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &request,
+    )
+    .await
+    {
+        Ok(Some(response)) => {
+            let usage_model = response
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or("lyrics");
+            if record_gateway_usage_for_project_with_route_key(
+                state.store.as_ref(),
+                request_context.tenant_id(),
+                request_context.project_id(),
+                "music",
+                "lyrics",
+                usage_model,
+                20,
+                0.02,
+            )
+            .await
+            .is_err()
+            {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to record usage",
+                )
+                    .into_response();
+            }
+
+            return Json(response).into_response();
+        }
+        Ok(None) => {}
+        Err(_) => {
+            return bad_gateway_openai_response("failed to relay upstream music lyrics");
+        }
+    }
+
+    let response = create_music_lyrics(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &request,
+    )
+    .expect("music lyrics");
+
+    if record_gateway_usage_for_project_with_route_key(
+        state.store.as_ref(),
+        request_context.tenant_id(),
+        request_context.project_id(),
+        "music",
+        "lyrics",
+        &response.id,
+        20,
+        0.02,
+    )
+    .await
+    .is_err()
+    {
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to record usage",
+        )
+            .into_response();
+    }
+
+    Json(response).into_response()
 }
 
 async fn videos_with_state_handler(
@@ -16468,8 +17124,16 @@ async fn record_gateway_usage_for_project(
     units: u64,
     amount: f64,
 ) -> anyhow::Result<()> {
-    record_gateway_usage_for_project_with_route_key(
-        store, tenant_id, project_id, capability, model, model, units, amount,
+    record_gateway_usage_for_project_with_route_key_and_reference_id(
+        store,
+        tenant_id,
+        project_id,
+        capability,
+        model,
+        model,
+        units,
+        amount,
+        None,
     )
     .await
 }
@@ -16479,6 +17143,14 @@ struct TokenUsageMetrics {
     input_tokens: u64,
     output_tokens: u64,
     total_tokens: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct BillingMediaMetrics {
+    image_count: u64,
+    audio_seconds: f64,
+    video_seconds: f64,
+    music_seconds: f64,
 }
 
 fn json_u64(value: Option<&Value>) -> Option<u64> {
@@ -16534,6 +17206,120 @@ fn response_usage_id_or_single_data_item_id(response: &Value) -> Option<&str> {
     })
 }
 
+fn image_count_from_response(response: &Value) -> u64 {
+    response
+        .get("data")
+        .and_then(Value::as_array)
+        .and_then(|data| u64::try_from(data.len()).ok())
+        .unwrap_or(0)
+}
+
+fn music_seconds_from_response(response: &Value) -> f64 {
+    response
+        .get("duration_seconds")
+        .and_then(Value::as_f64)
+        .or_else(|| {
+            response
+                .get("data")
+                .and_then(Value::as_array)
+                .and_then(|data| match data.as_slice() {
+                    [item] => item.get("duration_seconds").and_then(Value::as_f64),
+                    _ => None,
+                })
+        })
+        .unwrap_or(0.0)
+}
+
+fn music_billing_units(music_seconds: f64) -> u64 {
+    music_seconds.max(1.0).ceil() as u64
+}
+
+fn music_billing_amount(music_seconds: f64) -> f64 {
+    music_seconds.max(1.0) * 0.001
+}
+
+fn current_billing_timestamp_ms() -> anyhow::Result<u64> {
+    Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64)
+}
+
+fn build_gateway_billing_event_id(
+    project_id: &str,
+    capability: &str,
+    route_key: &str,
+    provider_id: &str,
+    reference_id: Option<&str>,
+    created_at_ms: u64,
+) -> String {
+    format!(
+        "bill_evt:{project_id}:{capability}:{route_key}:{provider_id}:{}:{created_at_ms}",
+        reference_id.unwrap_or("none")
+    )
+}
+
+fn billing_modality_for_capability(capability: &str) -> &'static str {
+    match capability {
+        "responses" => "multimodal",
+        "images" | "image_edits" | "image_variations" => "image",
+        "audio" | "speech" | "transcriptions" | "translations" => "audio",
+        "videos" => "video",
+        "music" => "music",
+        _ => "text",
+    }
+}
+
+async fn record_gateway_usage_for_project_with_route_key_and_reference_id(
+    store: &dyn AdminStore,
+    tenant_id: &str,
+    project_id: &str,
+    capability: &str,
+    route_key: &str,
+    usage_model: &str,
+    units: u64,
+    amount: f64,
+    reference_id: Option<&str>,
+) -> anyhow::Result<()> {
+    record_gateway_usage_for_project_with_route_key_and_tokens_and_reference(
+        store,
+        tenant_id,
+        project_id,
+        capability,
+        route_key,
+        usage_model,
+        units,
+        amount,
+        None,
+        reference_id,
+    )
+    .await
+}
+
+async fn record_gateway_usage_for_project_with_media_and_reference_id(
+    store: &dyn AdminStore,
+    tenant_id: &str,
+    project_id: &str,
+    capability: &str,
+    model: &str,
+    units: u64,
+    amount: f64,
+    media_metrics: BillingMediaMetrics,
+    reference_id: Option<&str>,
+) -> anyhow::Result<()> {
+    record_gateway_usage_for_project_with_route_key_and_tokens_reference_and_media(
+        store,
+        tenant_id,
+        project_id,
+        capability,
+        model,
+        model,
+        units,
+        amount,
+        None,
+        reference_id,
+        media_metrics,
+    )
+    .await
+}
+
 async fn record_gateway_usage_for_project_with_route_key(
     store: &dyn AdminStore,
     tenant_id: &str,
@@ -16544,7 +17330,7 @@ async fn record_gateway_usage_for_project_with_route_key(
     units: u64,
     amount: f64,
 ) -> anyhow::Result<()> {
-    record_gateway_usage_for_project_with_route_key_and_tokens(
+    record_gateway_usage_for_project_with_route_key_and_tokens_and_reference(
         store,
         tenant_id,
         project_id,
@@ -16554,11 +17340,12 @@ async fn record_gateway_usage_for_project_with_route_key(
         units,
         amount,
         None,
+        None,
     )
     .await
 }
 
-async fn record_gateway_usage_for_project_with_route_key_and_tokens(
+async fn record_gateway_usage_for_project_with_route_key_and_tokens_and_reference(
     store: &dyn AdminStore,
     tenant_id: &str,
     project_id: &str,
@@ -16568,14 +17355,56 @@ async fn record_gateway_usage_for_project_with_route_key_and_tokens(
     units: u64,
     amount: f64,
     token_usage: Option<TokenUsageMetrics>,
+    reference_id: Option<&str>,
+) -> anyhow::Result<()> {
+    record_gateway_usage_for_project_with_route_key_and_tokens_reference_and_media(
+        store,
+        tenant_id,
+        project_id,
+        capability,
+        route_key,
+        usage_model,
+        units,
+        amount,
+        token_usage,
+        reference_id,
+        BillingMediaMetrics::default(),
+    )
+    .await
+}
+
+async fn record_gateway_usage_for_project_with_route_key_and_tokens_reference_and_media(
+    store: &dyn AdminStore,
+    tenant_id: &str,
+    project_id: &str,
+    capability: &str,
+    route_key: &str,
+    usage_model: &str,
+    units: u64,
+    amount: f64,
+    token_usage: Option<TokenUsageMetrics>,
+    reference_id: Option<&str>,
+    media_metrics: BillingMediaMetrics,
 ) -> anyhow::Result<()> {
     let usage_context = planned_execution_usage_context_for_route(
         store, tenant_id, project_id, capability, route_key,
     )
     .await?;
     let token_usage = token_usage.unwrap_or_default();
-    let api_key_hash = current_gateway_request_context()
+    let request_context = current_gateway_request_context();
+    let api_key_hash = request_context
+        .as_ref()
         .map(|context| context.api_key_hash().to_owned());
+    let billing_settlement = resolve_gateway_billing_settlement(
+        store,
+        request_context
+            .as_ref()
+            .and_then(|context| context.api_key_group_id()),
+        usage_context.reference_amount,
+        amount,
+    )
+    .await?;
+    let latency_ms = current_gateway_request_latency_ms().or(usage_context.latency_ms);
     persist_usage_record_with_tokens_and_facts(
         store,
         project_id,
@@ -16588,12 +17417,91 @@ async fn record_gateway_usage_for_project_with_route_key_and_tokens(
         token_usage.total_tokens,
         api_key_hash.as_deref(),
         usage_context.channel_id.as_deref(),
-        current_gateway_request_latency_ms().or(usage_context.latency_ms),
+        latency_ms,
         usage_context.reference_amount,
     )
     .await?;
+    let created_at_ms = current_billing_timestamp_ms()?;
+    let billing_event = create_billing_event(CreateBillingEventInput {
+        event_id: &build_gateway_billing_event_id(
+            project_id,
+            capability,
+            route_key,
+            &usage_context.provider_id,
+            reference_id,
+            created_at_ms,
+        ),
+        tenant_id,
+        project_id,
+        api_key_group_id: usage_context.api_key_group_id.as_deref(),
+        capability,
+        route_key,
+        usage_model,
+        provider_id: &usage_context.provider_id,
+        accounting_mode: billing_settlement.accounting_mode,
+        operation_kind: capability,
+        modality: billing_modality_for_capability(capability),
+        api_key_hash: api_key_hash.as_deref(),
+        channel_id: usage_context.channel_id.as_deref(),
+        reference_id,
+        latency_ms,
+        units,
+        request_count: 1,
+        input_tokens: token_usage.input_tokens,
+        output_tokens: token_usage.output_tokens,
+        total_tokens: token_usage.total_tokens,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        image_count: media_metrics.image_count,
+        audio_seconds: media_metrics.audio_seconds,
+        video_seconds: media_metrics.video_seconds,
+        music_seconds: media_metrics.music_seconds,
+        upstream_cost: billing_settlement.upstream_cost,
+        customer_charge: billing_settlement.customer_charge,
+        applied_routing_profile_id: usage_context.applied_routing_profile_id.as_deref(),
+        compiled_routing_snapshot_id: usage_context.compiled_routing_snapshot_id.as_deref(),
+        fallback_reason: usage_context.fallback_reason.as_deref(),
+        created_at_ms,
+    })?;
+    persist_billing_event(store, &billing_event).await?;
     persist_ledger_entry(store, project_id, units, amount).await?;
     Ok(())
+}
+
+async fn resolve_gateway_billing_settlement(
+    store: &dyn AdminStore,
+    api_key_group_id: Option<&str>,
+    upstream_cost: Option<f64>,
+    customer_charge: f64,
+) -> anyhow::Result<BillingPolicyExecutionResult> {
+    let group_default_accounting_mode =
+        load_api_key_group_default_accounting_mode(store, api_key_group_id).await?;
+    let registry = builtin_billing_policy_registry();
+    let plugin = registry
+        .resolve(GROUP_DEFAULT_BILLING_POLICY_ID)
+        .expect("builtin group-default billing policy plugin must exist");
+
+    plugin.execute(BillingPolicyExecutionInput {
+        api_key_group_default_accounting_mode: group_default_accounting_mode.as_deref(),
+        default_accounting_mode: BillingAccountingMode::PlatformCredit,
+        upstream_cost,
+        customer_charge,
+    })
+}
+
+async fn load_api_key_group_default_accounting_mode(
+    store: &dyn AdminStore,
+    api_key_group_id: Option<&str>,
+) -> anyhow::Result<Option<String>> {
+    let Some(api_key_group_id) = api_key_group_id.map(str::trim).filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+
+    Ok(store
+        .find_api_key_group(api_key_group_id)
+        .await?
+        .and_then(|group| group.default_accounting_mode))
 }
 
 async fn relay_stateless_json_request(

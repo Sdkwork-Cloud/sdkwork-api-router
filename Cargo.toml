@@ -1,5 +1,8 @@
 [workspace]
 members = [
+    "crates/sdkwork-api-cache-core",
+    "crates/sdkwork-api-cache-memory",
+    "crates/sdkwork-api-cache-redis",
     "crates/sdkwork-api-app-billing",
     "crates/sdkwork-api-app-commerce",
     "crates/sdkwork-api-app-catalog",
@@ -32,6 +35,9 @@ members = [
     "crates/sdkwork-api-domain-usage",
     "crates/sdkwork-api-kernel",
     "crates/sdkwork-api-observability",
+    "crates/sdkwork-api-policy-routing",
+    "crates/sdkwork-api-policy-billing",
+    "crates/sdkwork-api-policy-quota",
     "crates/sdkwork-api-provider-core",
     "crates/sdkwork-api-provider-ollama",
     "crates/sdkwork-api-provider-openai",

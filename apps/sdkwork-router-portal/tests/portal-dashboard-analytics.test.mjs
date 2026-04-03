@@ -12,7 +12,18 @@ function read(relativePath) {
 }
 
 function loadDashboardServices() {
-  const load = jiti(import.meta.url, { moduleCache: false });
+  const load = jiti(import.meta.url, {
+    moduleCache: false,
+    alias: {
+      'sdkwork-router-portal-commons/format-core': path.join(
+        appRoot,
+        'packages',
+        'sdkwork-router-portal-commons',
+        'src',
+        'format-core.ts',
+      ),
+    },
+  });
   return load(
     path.join(
       appRoot,
@@ -35,15 +46,31 @@ test('dashboard exposes a claw-style analytics workbench instead of the earlier 
   ).length;
 
   assert.match(dashboardComponents, /DashboardSummaryCard/);
-  assert.match(dashboardComponents, /DashboardSectionHeader/);
-  assert.match(dashboardComponents, /DashboardStatusPill/);
+  assert.match(dashboardComponents, /StatusBadge/);
+  assert.doesNotMatch(dashboardComponents, /DashboardStatusPill/);
   assert.match(dashboardComponents, /DashboardRevenueTrendChart/);
   assert.match(dashboardComponents, /DashboardTokenTrendChart/);
   assert.match(dashboardComponents, /DashboardDistributionRingChart/);
   assert.match(dashboardComponents, /DashboardModelDistributionChart/);
-  assert.match(dashboardPage, /Traffic posture/);
-  assert.match(dashboardPage, /Cost and quota/);
-  assert.match(dashboardPage, /Workspace readiness/);
+  assert.doesNotMatch(dashboardPage, /SectionHeader/);
+  assert.match(dashboardPage, /WorkspacePanel/);
+  assert.match(dashboardPage, /ManagementWorkbench/);
+  assert.match(dashboardPage, /StatusBadge/);
+  assert.doesNotMatch(dashboardPage, /DashboardStatusPill/);
+  assert.match(dashboardPage, /DashboardBalanceCard/);
+  assert.match(dashboardPage, /DashboardMetricCard/);
+  assert.match(dashboardPage, /Balance/);
+  assert.match(dashboardPage, /Revenue/);
+  assert.match(dashboardPage, /Total requests/);
+  assert.match(dashboardPage, /Average booked spend/);
+  assert.match(dashboardPage, /Today/);
+  assert.match(dashboardPage, /7 days/);
+  assert.match(dashboardPage, /This month/);
+  assert.doesNotMatch(dashboardPage, /Portal overview/);
+  assert.doesNotMatch(dashboardPage, /Workspace command center/);
+  assert.doesNotMatch(dashboardPage, /title=\{t\('Traffic posture'\)\}/);
+  assert.doesNotMatch(dashboardPage, /title=\{t\('Cost and quota'\)\}/);
+  assert.doesNotMatch(dashboardPage, /title=\{t\('Workspace readiness'\)\}/);
   assert.match(dashboardPage, /Traffic trend/);
   assert.match(dashboardPage, /Spend trend/);
   assert.match(dashboardPage, /Provider distribution/);
@@ -52,16 +79,12 @@ test('dashboard exposes a claw-style analytics workbench instead of the earlier 
   assert.match(dashboardPage, /Routing evidence/);
   assert.match(dashboardPage, /Module posture/);
   assert.match(dashboardPage, /Next actions/);
-  assert.match(dashboardPage, /const surfaceClass =/);
+  assert.doesNotMatch(dashboardPage, /const surfaceClass =/);
   assert.ok(
     dualColumnSectionCount >= 2,
     'dashboard should use the same repeated two-column analytics rows as claw-studio',
   );
   assert.match(dashboardPage, /data-slot="portal-dashboard-workbench-tabs"/);
-  assert.match(
-    dashboardPage,
-    /chartFrameClass|overflow-hidden rounded-\[1\.5rem\] border border-\[color:var\(--portal-chart-grid\)\]/,
-  );
   assert.doesNotMatch(dashboardPage, /portalx-dashboard-grid/);
   assert.doesNotMatch(dashboardPage, /portalx-dashboard-main/);
   assert.doesNotMatch(dashboardPage, /portalx-dashboard-side/);
@@ -69,7 +92,6 @@ test('dashboard exposes a claw-style analytics workbench instead of the earlier 
   assert.doesNotMatch(dashboardPage, /AreaChart/);
   assert.doesNotMatch(dashboardPage, /BarChart/);
   assert.doesNotMatch(dashboardPage, /PieChart/);
-  assert.doesNotMatch(dashboardPage, /Surface/);
   assert.match(dashboardRepository, /listPortalUsageRecords/);
   assert.match(dashboardServices, /request_volume_series/);
   assert.match(dashboardServices, /spend_series/);

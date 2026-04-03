@@ -714,7 +714,19 @@ async fn create_and_list_providers_and_credentials() {
         .await
         .unwrap();
 
-    assert_eq!(provider.status(), StatusCode::CREATED);
+    let provider_status = provider.status();
+    let provider_body = String::from_utf8(
+        to_bytes(provider.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    assert_eq!(
+        provider_status,
+        StatusCode::CREATED,
+        "body={provider_body:?}"
+    );
 
     let credential = app
         .clone()
@@ -1664,6 +1676,239 @@ async fn update_gateway_api_key_metadata_from_admin_api() {
 
 #[serial(extension_env)]
 #[tokio::test]
+async fn manage_api_key_groups_through_admin_api() {
+    let pool = memory_pool().await;
+    let app = sdkwork_api_interface_admin::admin_router_with_pool(pool);
+    let token = login_token(app.clone()).await;
+
+    for request in [
+        ("/admin/tenants", r#"{"id":"tenant-acme","name":"Acme"}"#),
+        (
+            "/admin/projects",
+            r#"{"tenant_id":"tenant-acme","id":"project-acme","name":"Acme Production"}"#,
+        ),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(request.0)
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(request.1))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+    }
+
+    let created = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api-key-groups")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r##"{"tenant_id":"tenant-acme","project_id":"project-acme","environment":"production","name":"Production Keys","description":"Primary production pool","color":"#2563eb","default_capability_scope":"chat,responses"}"##,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let created_json = read_json(created).await;
+    let group_id = created_json["group_id"].as_str().unwrap().to_owned();
+    assert_eq!(created_json["slug"], "production-keys");
+    assert_eq!(created_json["active"], true);
+
+    let listed = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/admin/api-key-groups")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(listed.status(), StatusCode::OK);
+    let listed_json = read_json(listed).await;
+    assert_eq!(listed_json[0]["group_id"], group_id);
+    assert_eq!(listed_json[0]["description"], "Primary production pool");
+
+    let updated = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/admin/api-key-groups/{group_id}"))
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r##"{"tenant_id":"tenant-acme","project_id":"project-acme","environment":"production","name":"Enterprise Keys","slug":"enterprise-keys","description":"Premium production pool","color":"#0f766e","default_capability_scope":"responses"}"##,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(updated.status(), StatusCode::OK);
+    let updated_json = read_json(updated).await;
+    assert_eq!(updated_json["name"], "Enterprise Keys");
+    assert_eq!(updated_json["slug"], "enterprise-keys");
+    assert_eq!(updated_json["color"], "#0f766e");
+
+    let disabled = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/admin/api-key-groups/{group_id}/status"))
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"active":false}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(disabled.status(), StatusCode::OK);
+    assert_eq!(read_json(disabled).await["active"], false);
+}
+
+#[serial(extension_env)]
+#[tokio::test]
+async fn create_gateway_api_keys_through_admin_api_validates_group_assignment() {
+    let pool = memory_pool().await;
+    let app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let token = login_token(app.clone()).await;
+
+    for request in [
+        ("/admin/tenants", r#"{"id":"tenant-acme","name":"Acme"}"#),
+        (
+            "/admin/projects",
+            r#"{"tenant_id":"tenant-acme","id":"project-acme","name":"Acme Production"}"#,
+        ),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(request.0)
+                    .header("authorization", format!("Bearer {token}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(request.1))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+    }
+
+    let live_group = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api-key-groups")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"tenant_id":"tenant-acme","project_id":"project-acme","environment":"production","name":"Production Keys"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(live_group.status(), StatusCode::CREATED);
+    let live_group_id = read_json(live_group).await["group_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let staging_group = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api-key-groups")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"tenant_id":"tenant-acme","project_id":"project-acme","environment":"staging","name":"Staging Keys"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(staging_group.status(), StatusCode::CREATED);
+    let staging_group_id = read_json(staging_group).await["group_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let mismatched = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api-keys")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"tenant_id":"tenant-acme","project_id":"project-acme","environment":"production","label":"Invalid key","api_key_group_id":"{staging_group_id}"}}"#
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(mismatched.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        read_json(mismatched).await["error"]["message"],
+        "api key group environment does not match"
+    );
+
+    let created = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api-keys")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"tenant_id":"tenant-acme","project_id":"project-acme","environment":"production","label":"Production App Key","api_key_group_id":"{live_group_id}"}}"#
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let created_json = read_json(created).await;
+    let hashed_key = created_json["hashed"].as_str().unwrap().to_owned();
+    assert_eq!(created_json["api_key_group_id"], live_group_id);
+
+    let stored_row: Option<String> =
+        sqlx::query_scalar("SELECT api_key_group_id FROM ai_app_api_keys WHERE hashed_key = ?")
+            .bind(&hashed_key)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(stored_row.as_deref(), Some(live_group_id.as_str()));
+}
+
+#[serial(extension_env)]
+#[tokio::test]
 async fn routing_simulation_uses_catalog_models() {
     let pool = memory_pool().await;
     let app = sdkwork_api_interface_admin::admin_router_with_pool(pool);
@@ -1811,6 +2056,194 @@ async fn create_and_list_routing_policies() {
 
 #[serial(extension_env)]
 #[tokio::test]
+async fn create_and_list_routing_profiles_and_apply_them_in_simulation() {
+    let pool = memory_pool().await;
+    let app = sdkwork_api_interface_admin::admin_router_with_pool(pool);
+    let token = login_token(app.clone()).await;
+
+    let create_profile = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/routing/profiles")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"profile_id\":\"profile-priority\",\"tenant_id\":\"tenant-1\",\"project_id\":\"project-1\",\"name\":\"Priority Live\",\"slug\":\"priority-live\",\"strategy\":\"geo_affinity\",\"ordered_provider_ids\":[\"provider-openrouter\",\"provider-openai-official\"],\"default_provider_id\":\"provider-openrouter\",\"preferred_region\":\"us-east\"}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(create_profile.status(), StatusCode::CREATED);
+    let created_profile_json = read_json(create_profile).await;
+    assert_eq!(created_profile_json["profile_id"], "profile-priority");
+    assert_eq!(created_profile_json["project_id"], "project-1");
+    assert_eq!(created_profile_json["strategy"], "geo_affinity");
+    assert_eq!(created_profile_json["preferred_region"], "us-east");
+
+    let list_profiles = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/admin/routing/profiles")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(list_profiles.status(), StatusCode::OK);
+    let profiles_json = read_json(list_profiles).await;
+    assert_eq!(profiles_json[0]["profile_id"], "profile-priority");
+
+    let create_group = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api-key-groups")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"tenant_id\":\"tenant-1\",\"project_id\":\"project-1\",\"environment\":\"live\",\"name\":\"Production Keys\",\"slug\":\"production-keys\",\"default_routing_profile_id\":\"profile-priority\",\"default_accounting_mode\":\"byok\"}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(create_group.status(), StatusCode::CREATED);
+    let created_group_json = read_json(create_group).await;
+    let group_id = created_group_json["group_id"].as_str().unwrap().to_owned();
+    assert_eq!(
+        created_group_json["default_routing_profile_id"],
+        "profile-priority"
+    );
+    assert_eq!(created_group_json["default_accounting_mode"], "byok");
+
+    create_provider_fixture(
+        app.clone(),
+        &token,
+        r#"{"id":"provider-openrouter","channel_id":"openrouter","adapter_kind":"openai","base_url":"https://openrouter.ai/api/v1","display_name":"OpenRouter","channel_bindings":[{"channel_id":"openrouter","is_primary":true}]}"#,
+    )
+    .await;
+    create_provider_fixture(
+        app.clone(),
+        &token,
+        r#"{"id":"provider-openai-official","channel_id":"openai","adapter_kind":"openai","base_url":"https://api.openai.com","display_name":"OpenAI Official","channel_bindings":[{"channel_id":"openai","is_primary":true}]}"#,
+    )
+    .await;
+
+    let create_openrouter_model = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/models")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"external_name\":\"gpt-4.1\",\"provider_id\":\"provider-openrouter\"}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(create_openrouter_model.status(), StatusCode::CREATED);
+
+    let create_openai_model = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/models")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"external_name\":\"gpt-4.1\",\"provider_id\":\"provider-openai-official\"}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(create_openai_model.status(), StatusCode::CREATED);
+
+    let simulate = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/routing/simulations")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    "{{\"capability\":\"chat_completion\",\"model\":\"gpt-4.1\",\"tenant_id\":\"tenant-1\",\"project_id\":\"project-1\",\"api_key_group_id\":\"{group_id}\"}}"
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(simulate.status(), StatusCode::OK);
+    let simulation_json = read_json(simulate).await;
+    assert_eq!(
+        simulation_json["selected_provider_id"],
+        "provider-openrouter"
+    );
+    assert_eq!(
+        simulation_json["applied_routing_profile_id"],
+        "profile-priority"
+    );
+    assert!(simulation_json["compiled_routing_snapshot_id"]
+        .as_str()
+        .is_some());
+    assert_eq!(simulation_json["requested_region"], "us-east");
+    assert_eq!(simulation_json["strategy"], "geo_affinity");
+    assert_eq!(
+        simulation_json["selected_candidate"]["provider_id"],
+        "provider-openrouter"
+    );
+    assert_eq!(
+        simulation_json["rejected_candidates"][0]["provider_id"],
+        "provider-openai-official"
+    );
+
+    let list_snapshots = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/admin/routing/snapshots")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(list_snapshots.status(), StatusCode::OK);
+    let snapshots_json = read_json(list_snapshots).await;
+    assert_eq!(
+        snapshots_json[0]["snapshot_id"],
+        simulation_json["compiled_routing_snapshot_id"]
+    );
+    assert_eq!(
+        snapshots_json[0]["applied_routing_profile_id"],
+        "profile-priority"
+    );
+    assert_eq!(snapshots_json[0]["strategy"], "geo_affinity");
+    assert_eq!(
+        snapshots_json[0]["ordered_provider_ids"][0],
+        "provider-openrouter"
+    );
+}
+
+#[serial(extension_env)]
+#[tokio::test]
 async fn routing_simulation_persists_decision_log_and_lists_it() {
     let pool = memory_pool().await;
     let app = sdkwork_api_interface_admin::admin_router_with_pool(pool);
@@ -1851,6 +2284,7 @@ async fn routing_simulation_persists_decision_log_and_lists_it() {
     assert_eq!(simulation.status(), StatusCode::OK);
 
     let logs = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("GET")
@@ -2178,8 +2612,10 @@ async fn routing_simulation_accepts_requested_region_and_persists_logs() {
     assert_eq!(simulation_json["assessments"][0]["region_match"], false);
     assert_eq!(simulation_json["assessments"][1]["region"], "us-east");
     assert_eq!(simulation_json["assessments"][1]["region_match"], true);
+    assert!(simulation_json["fallback_reason"].is_null());
 
     let logs = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("GET")
@@ -2194,6 +2630,41 @@ async fn routing_simulation_accepts_requested_region_and_persists_logs() {
     assert_eq!(logs.status(), StatusCode::OK);
     let logs_json = read_json(logs).await;
     assert_eq!(logs_json[0]["requested_region"], "us-east");
+
+    let degraded_simulation = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/routing/simulations")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"capability\":\"chat_completion\",\"model\":\"gpt-4.1\",\"requested_region\":\"ap-south\"}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(degraded_simulation.status(), StatusCode::OK);
+    let degraded_simulation_json = read_json(degraded_simulation).await;
+    assert_eq!(
+        degraded_simulation_json["selected_provider_id"],
+        "provider-eu-west"
+    );
+    assert_eq!(
+        degraded_simulation_json["selected_candidate"]["provider_id"],
+        "provider-eu-west"
+    );
+    assert_eq!(
+        degraded_simulation_json["rejected_candidates"][0]["provider_id"],
+        "provider-us-east"
+    );
+    assert!(degraded_simulation_json["fallback_reason"]
+        .as_str()
+        .unwrap()
+        .contains("no candidate matched requested region ap-south"));
 }
 
 #[serial(extension_env)]
@@ -2297,9 +2768,12 @@ kind = "provider"
 version = "0.1.0"
 display_name = "Custom OpenAI"
 runtime = "connector"
+runtime_compat_version = "sdkwork.runtime/v1"
 protocol = "openai"
 entrypoint = "powershell.exe"
+config_schema_version = "1.0"
 channel_bindings = ["sdkwork.channel.openai"]
+supported_modalities = ["text", "image", "audio", "video", "file"]
 permissions = ["network_outbound", "spawn_process"]
 
 [health]
@@ -2371,9 +2845,12 @@ kind = "provider"
 version = "0.1.0"
 display_name = "Custom OpenAI"
 runtime = "connector"
+runtime_compat_version = "sdkwork.runtime/v1"
 protocol = "openai"
 entrypoint = "powershell.exe"
+config_schema_version = "1.0"
 channel_bindings = ["sdkwork.channel.openai"]
+supported_modalities = ["text", "image", "audio", "video", "file"]
 permissions = ["network_outbound", "spawn_process"]
 
 [health]
@@ -3147,6 +3624,155 @@ async fn billing_summary_from_admin_api_reports_quota_posture() {
 
 #[serial(extension_env)]
 #[tokio::test]
+async fn billing_events_from_admin_api_report_group_and_capability_aggregates() {
+    let pool = memory_pool().await;
+    let store = sdkwork_api_storage_sqlite::SqliteAdminStore::new(pool.clone());
+    store
+        .insert_billing_event(
+            &sdkwork_api_domain_billing::BillingEventRecord::new(
+                "evt_1",
+                "tenant-1",
+                "project-1",
+                "responses",
+                "gpt-4.1",
+                "gpt-4.1",
+                "provider-openrouter",
+                sdkwork_api_domain_billing::BillingAccountingMode::PlatformCredit,
+                100,
+            )
+            .with_api_key_group_id("group-blue")
+            .with_operation("responses.create", "text")
+            .with_request_facts(
+                Some("key-live"),
+                Some("openai"),
+                Some("resp_1"),
+                Some(650),
+            )
+            .with_units(240)
+            .with_token_usage(120, 80, 200)
+            .with_financials(0.42, 0.89)
+            .with_routing_evidence(Some("route-profile-1"), Some("snapshot-1"), None),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_billing_event(
+            &sdkwork_api_domain_billing::BillingEventRecord::new(
+                "evt_2",
+                "tenant-1",
+                "project-1",
+                "images",
+                "gpt-image-1",
+                "gpt-image-1",
+                "provider-openai",
+                sdkwork_api_domain_billing::BillingAccountingMode::PlatformCredit,
+                200,
+            )
+            .with_api_key_group_id("group-blue")
+            .with_operation("images.generate", "image")
+            .with_request_facts(
+                Some("key-live"),
+                Some("openai"),
+                Some("img_1"),
+                Some(900),
+            )
+            .with_units(40)
+            .with_request_count(1)
+            .with_media_usage(2, 0.0, 0.0, 0.0)
+            .with_financials(0.80, 1.50)
+            .with_routing_evidence(
+                Some("route-profile-1"),
+                Some("snapshot-2"),
+                Some("provider_capacity"),
+            ),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_billing_event(
+            &sdkwork_api_domain_billing::BillingEventRecord::new(
+                "evt_3",
+                "tenant-1",
+                "project-2",
+                "audio",
+                "gpt-4o-mini-transcribe",
+                "gpt-4o-mini-transcribe",
+                "provider-byok",
+                sdkwork_api_domain_billing::BillingAccountingMode::Byok,
+                300,
+            )
+            .with_operation("audio.transcriptions.create", "audio")
+            .with_request_facts(
+                Some("key-byok"),
+                Some("openai"),
+                Some("aud_1"),
+                Some(1200),
+            )
+            .with_units(60)
+            .with_request_count(2)
+            .with_media_usage(0, 35.0, 0.0, 0.0)
+            .with_financials(0.0, 0.0),
+        )
+        .await
+        .unwrap();
+
+    let app = sdkwork_api_interface_admin::admin_router_with_pool(pool);
+    let token = login_token(app.clone()).await;
+
+    let events_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/admin/billing/events")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(events_response.status(), StatusCode::OK);
+    let events_json = read_json(events_response).await;
+    assert_eq!(events_json.as_array().unwrap().len(), 3);
+    assert_eq!(events_json[0]["event_id"], "evt_3");
+    assert_eq!(events_json[1]["event_id"], "evt_2");
+    assert_eq!(events_json[2]["event_id"], "evt_1");
+
+    let summary_response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/admin/billing/events/summary")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(summary_response.status(), StatusCode::OK);
+    let summary_json = read_json(summary_response).await;
+    assert_eq!(summary_json["total_events"], 3);
+    assert_eq!(summary_json["project_count"], 2);
+    assert_eq!(summary_json["group_count"], 2);
+    assert_eq!(summary_json["capability_count"], 3);
+    assert_eq!(summary_json["total_request_count"], 4);
+    assert_eq!(summary_json["total_units"], 340);
+    assert_eq!(summary_json["total_tokens"], 200);
+    assert_eq!(summary_json["total_image_count"], 2);
+    assert_eq!(summary_json["total_audio_seconds"], 35.0);
+    assert_eq!(summary_json["groups"][0]["api_key_group_id"], "group-blue");
+    assert_eq!(summary_json["groups"][0]["event_count"], 2);
+    assert_eq!(summary_json["capabilities"][0]["capability"], "audio");
+    assert_eq!(summary_json["capabilities"][1]["capability"], "images");
+    assert_eq!(summary_json["capabilities"][2]["capability"], "responses");
+    assert_eq!(summary_json["accounting_modes"][0]["accounting_mode"], "platform_credit");
+    assert_eq!(summary_json["accounting_modes"][1]["accounting_mode"], "byok");
+}
+
+#[serial(extension_env)]
+#[tokio::test]
 async fn create_and_list_quota_policies_from_admin_api() {
     let pool = memory_pool().await;
     let app = sdkwork_api_interface_admin::admin_router_with_pool(pool);
@@ -3316,53 +3942,51 @@ impl Drop for NativeDynamicEnvGuard {
 }
 
 fn native_dynamic_manifest(entrypoint: &Path) -> String {
-    format!(
-        r#"
-api_version = "sdkwork.extension/v1"
-id = "{FIXTURE_EXTENSION_ID}"
-kind = "provider"
-version = "0.1.0"
-display_name = "Native Mock"
-runtime = "native_dynamic"
-protocol = "openai"
-entrypoint = "{}"
-channel_bindings = ["sdkwork.channel.openai"]
-permissions = ["network_outbound"]
-
-[[capabilities]]
-operation = "chat.completions.create"
-compatibility = "native"
-
-[[capabilities]]
-operation = "chat.completions.stream"
-compatibility = "native"
-
-[[capabilities]]
-operation = "responses.create"
-compatibility = "native"
-
-[[capabilities]]
-operation = "responses.stream"
-compatibility = "native"
-
-[[capabilities]]
-operation = "audio.speech.create"
-compatibility = "native"
-
-[[capabilities]]
-operation = "files.content"
-compatibility = "native"
-
-[[capabilities]]
-operation = "videos.content"
-compatibility = "native"
-"#,
-        config_path_value(entrypoint)
+    toml::to_string(
+        &sdkwork_api_extension_core::ExtensionManifest::new(
+            FIXTURE_EXTENSION_ID,
+            sdkwork_api_extension_core::ExtensionKind::Provider,
+            "0.1.0",
+            sdkwork_api_extension_core::ExtensionRuntime::NativeDynamic,
+        )
+        .with_display_name("Native Mock")
+        .with_protocol(sdkwork_api_extension_core::ExtensionProtocol::OpenAi)
+        .with_entrypoint(entrypoint.to_string_lossy())
+        .with_supported_modality(sdkwork_api_extension_core::ExtensionModality::Audio)
+        .with_supported_modality(sdkwork_api_extension_core::ExtensionModality::Video)
+        .with_supported_modality(sdkwork_api_extension_core::ExtensionModality::File)
+        .with_channel_binding("sdkwork.channel.openai")
+        .with_permission(sdkwork_api_extension_core::ExtensionPermission::NetworkOutbound)
+        .with_capability(sdkwork_api_extension_core::CapabilityDescriptor::new(
+            "chat.completions.create",
+            sdkwork_api_extension_core::CompatibilityLevel::Native,
+        ))
+        .with_capability(sdkwork_api_extension_core::CapabilityDescriptor::new(
+            "chat.completions.stream",
+            sdkwork_api_extension_core::CompatibilityLevel::Native,
+        ))
+        .with_capability(sdkwork_api_extension_core::CapabilityDescriptor::new(
+            "responses.create",
+            sdkwork_api_extension_core::CompatibilityLevel::Native,
+        ))
+        .with_capability(sdkwork_api_extension_core::CapabilityDescriptor::new(
+            "responses.stream",
+            sdkwork_api_extension_core::CompatibilityLevel::Native,
+        ))
+        .with_capability(sdkwork_api_extension_core::CapabilityDescriptor::new(
+            "audio.speech.create",
+            sdkwork_api_extension_core::CompatibilityLevel::Native,
+        ))
+        .with_capability(sdkwork_api_extension_core::CapabilityDescriptor::new(
+            "files.content",
+            sdkwork_api_extension_core::CompatibilityLevel::Native,
+        ))
+        .with_capability(sdkwork_api_extension_core::CapabilityDescriptor::new(
+            "videos.content",
+            sdkwork_api_extension_core::CompatibilityLevel::Native,
+        )),
     )
-}
-
-fn config_path_value(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
+    .expect("native dynamic manifest toml")
 }
 
 struct NativeDynamicLifecycleLogGuard {

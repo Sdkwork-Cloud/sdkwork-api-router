@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react';
 import { BrowserRouter } from 'react-router-dom';
-import { AdminI18nProvider } from 'sdkwork-router-admin-commons';
+import { AdminI18nProvider } from 'sdkwork-router-admin-core';
 
-import { ThemeManager } from './ThemeManager';
+import { AdminThemeProvider } from './ThemeManager';
 
 function resolveBaseName(): string {
   const baseName = import.meta.env.BASE_URL ?? '/admin/';
@@ -13,8 +13,9 @@ export function AppProviders({ children }: { children: ReactNode }) {
   return (
     <AdminI18nProvider>
       <BrowserRouter basename={resolveBaseName()}>
-        <ThemeManager />
-        {children}
+        <AdminThemeProvider>
+          {children}
+        </AdminThemeProvider>
       </BrowserRouter>
     </AdminI18nProvider>
   );

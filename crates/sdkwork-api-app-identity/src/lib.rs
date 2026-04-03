@@ -5,13 +5,16 @@ use argon2::{
 };
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use rand_core::OsRng;
+use sdkwork_api_domain_billing::BillingAccountingMode;
 use sdkwork_api_domain_identity::{
-    AdminUserProfile, AdminUserRecord, GatewayApiKeyRecord, PortalUserProfile, PortalUserRecord,
+    AdminUserProfile, AdminUserRecord, ApiKeyGroupRecord, GatewayApiKeyRecord, PortalUserProfile,
+    PortalUserRecord,
 };
 use sdkwork_api_domain_tenant::{Project, Tenant};
 use sdkwork_api_storage_core::AdminStore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const ADMIN_JWT_ISSUER: &str = "sdkwork-admin";
@@ -65,6 +68,7 @@ pub struct GatewayRequestContext {
     pub project_id: String,
     pub environment: String,
     pub api_key_hash: String,
+    pub api_key_group_id: Option<String>,
 }
 
 impl GatewayRequestContext {
@@ -79,6 +83,10 @@ impl GatewayRequestContext {
     pub fn api_key_hash(&self) -> &str {
         &self.api_key_hash
     }
+
+    pub fn api_key_group_id(&self) -> Option<&str> {
+        self.api_key_group_id.as_deref()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -88,10 +96,49 @@ pub struct CreatedGatewayApiKey {
     pub tenant_id: String,
     pub project_id: String,
     pub environment: String,
+    pub api_key_group_id: Option<String>,
     pub label: String,
     pub notes: Option<String>,
     pub created_at_ms: u64,
     pub expires_at_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApiKeyGroupInput {
+    pub tenant_id: String,
+    pub project_id: String,
+    pub environment: String,
+    pub name: String,
+    #[serde(default)]
+    pub slug: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub color: Option<String>,
+    #[serde(default)]
+    pub default_capability_scope: Option<String>,
+    #[serde(default)]
+    pub default_routing_profile_id: Option<String>,
+    #[serde(default)]
+    pub default_accounting_mode: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PortalApiKeyGroupInput {
+    pub environment: String,
+    pub name: String,
+    #[serde(default)]
+    pub slug: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub color: Option<String>,
+    #[serde(default)]
+    pub default_capability_scope: Option<String>,
+    #[serde(default)]
+    pub default_routing_profile_id: Option<String>,
+    #[serde(default)]
+    pub default_accounting_mode: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -521,6 +568,185 @@ pub async fn delete_admin_user(store: &dyn AdminStore, user_id: &str) -> AdminRe
         .map_err(AdminIdentityError::from)
 }
 
+pub async fn create_api_key_group(
+    store: &dyn AdminStore,
+    input: ApiKeyGroupInput,
+) -> AdminResult<ApiKeyGroupRecord> {
+    let normalized_tenant_id = require_trimmed_input(&input.tenant_id, "tenant_id")?;
+    let normalized_project_id = require_trimmed_input(&input.project_id, "project_id")?;
+    let normalized_environment = require_trimmed_input(&input.environment, "environment")?;
+    let normalized_name = normalize_api_key_group_name(&input.name)?;
+    let normalized_slug = normalize_api_key_group_slug(&normalized_name, input.slug.as_deref())?;
+    let normalized_description =
+        normalize_api_key_group_optional_value(input.description.as_deref());
+    let normalized_color = normalize_api_key_group_optional_value(input.color.as_deref());
+    let normalized_default_capability_scope =
+        normalize_api_key_group_optional_value(input.default_capability_scope.as_deref());
+    let normalized_default_routing_profile_id = validate_default_routing_profile_binding(
+        store,
+        normalized_tenant_id,
+        normalized_project_id,
+        input.default_routing_profile_id.as_deref(),
+    )
+    .await?;
+    let normalized_default_accounting_mode =
+        validate_default_accounting_mode_binding(input.default_accounting_mode.as_deref())?;
+
+    ensure_api_key_group_slug_available(
+        store,
+        None,
+        normalized_tenant_id,
+        normalized_project_id,
+        normalized_environment,
+        &normalized_slug,
+    )
+    .await?;
+
+    let now = now_epoch_millis().map_err(AdminIdentityError::from)?;
+    let record = ApiKeyGroupRecord::new(
+        generate_entity_id("api_key_group").map_err(AdminIdentityError::from)?,
+        normalized_tenant_id,
+        normalized_project_id,
+        normalized_environment,
+        normalized_name,
+        normalized_slug,
+    )
+    .with_description_option(normalized_description)
+    .with_color_option(normalized_color)
+    .with_default_capability_scope_option(normalized_default_capability_scope)
+    .with_default_routing_profile_id_option(normalized_default_routing_profile_id)
+    .with_default_accounting_mode_option(normalized_default_accounting_mode)
+    .with_created_at_ms(now)
+    .with_updated_at_ms(now);
+
+    store
+        .insert_api_key_group(&record)
+        .await
+        .map_err(AdminIdentityError::from)
+}
+
+pub async fn list_api_key_groups(store: &dyn AdminStore) -> Result<Vec<ApiKeyGroupRecord>> {
+    store.list_api_key_groups().await
+}
+
+pub async fn set_api_key_group_active(
+    store: &dyn AdminStore,
+    group_id: &str,
+    active: bool,
+) -> AdminResult<Option<ApiKeyGroupRecord>> {
+    let Some(existing) = store
+        .find_api_key_group(group_id)
+        .await
+        .map_err(AdminIdentityError::from)?
+    else {
+        return Ok(None);
+    };
+
+    let updated = ApiKeyGroupRecord {
+        active,
+        updated_at_ms: now_epoch_millis().map_err(AdminIdentityError::from)?,
+        ..existing
+    };
+
+    let saved = store
+        .insert_api_key_group(&updated)
+        .await
+        .map_err(AdminIdentityError::from)?;
+    Ok(Some(saved))
+}
+
+pub async fn update_api_key_group(
+    store: &dyn AdminStore,
+    group_id: &str,
+    input: ApiKeyGroupInput,
+) -> AdminResult<Option<ApiKeyGroupRecord>> {
+    let normalized_tenant_id = require_trimmed_input(&input.tenant_id, "tenant_id")?;
+    let normalized_project_id = require_trimmed_input(&input.project_id, "project_id")?;
+    let normalized_environment = require_trimmed_input(&input.environment, "environment")?;
+    let normalized_name = normalize_api_key_group_name(&input.name)?;
+    let normalized_slug = normalize_api_key_group_slug(&normalized_name, input.slug.as_deref())?;
+    let normalized_description =
+        normalize_api_key_group_optional_value(input.description.as_deref());
+    let normalized_color = normalize_api_key_group_optional_value(input.color.as_deref());
+    let normalized_default_capability_scope =
+        normalize_api_key_group_optional_value(input.default_capability_scope.as_deref());
+    let normalized_default_routing_profile_id = validate_default_routing_profile_binding(
+        store,
+        normalized_tenant_id,
+        normalized_project_id,
+        input.default_routing_profile_id.as_deref(),
+    )
+    .await?;
+    let normalized_default_accounting_mode =
+        validate_default_accounting_mode_binding(input.default_accounting_mode.as_deref())?;
+
+    ensure_api_key_group_slug_available(
+        store,
+        Some(group_id),
+        normalized_tenant_id,
+        normalized_project_id,
+        normalized_environment,
+        &normalized_slug,
+    )
+    .await?;
+
+    let Some(existing) = store
+        .find_api_key_group(group_id)
+        .await
+        .map_err(AdminIdentityError::from)?
+    else {
+        return Ok(None);
+    };
+
+    let updated = ApiKeyGroupRecord {
+        tenant_id: normalized_tenant_id.to_owned(),
+        project_id: normalized_project_id.to_owned(),
+        environment: normalized_environment.to_owned(),
+        name: normalized_name,
+        slug: normalized_slug,
+        description: normalized_description,
+        color: normalized_color,
+        default_capability_scope: normalized_default_capability_scope,
+        default_routing_profile_id: normalized_default_routing_profile_id,
+        default_accounting_mode: normalized_default_accounting_mode,
+        updated_at_ms: now_epoch_millis().map_err(AdminIdentityError::from)?,
+        ..existing
+    };
+
+    let saved = store
+        .insert_api_key_group(&updated)
+        .await
+        .map_err(AdminIdentityError::from)?;
+    Ok(Some(saved))
+}
+
+pub async fn delete_api_key_group(store: &dyn AdminStore, group_id: &str) -> AdminResult<bool> {
+    let Some(_existing) = store
+        .find_api_key_group(group_id)
+        .await
+        .map_err(AdminIdentityError::from)?
+    else {
+        return Ok(false);
+    };
+
+    let has_bound_keys = store
+        .list_gateway_api_keys()
+        .await
+        .map_err(AdminIdentityError::from)?
+        .iter()
+        .any(|key| key.api_key_group_id.as_deref() == Some(group_id));
+    if has_bound_keys {
+        return Err(AdminIdentityError::InvalidInput(
+            "api key group has bound api keys".to_owned(),
+        ));
+    }
+
+    store
+        .delete_api_key_group(group_id)
+        .await
+        .map_err(AdminIdentityError::from)
+}
+
 pub struct CreateGatewayApiKey;
 
 impl CreateGatewayApiKey {
@@ -584,6 +810,7 @@ impl CreateGatewayApiKey {
             tenant_id: tenant_id.to_owned(),
             project_id: project_id.to_owned(),
             environment: environment.to_owned(),
+            api_key_group_id: None,
             label: normalized_label,
             notes: normalized_notes,
             created_at_ms,
@@ -607,6 +834,7 @@ pub async fn persist_gateway_api_key(
         None,
         None,
         None,
+        None,
     )
     .await
 }
@@ -620,10 +848,19 @@ pub async fn persist_gateway_api_key_with_metadata(
     expires_at_ms: Option<u64>,
     plaintext_key: Option<&str>,
     notes: Option<&str>,
+    api_key_group_id: Option<&str>,
 ) -> Result<CreatedGatewayApiKey> {
     validate_gateway_api_key_metadata(label, notes, expires_at_ms)
         .map_err(|message| anyhow!(message))?;
-    let created = CreateGatewayApiKey::execute_with_optional_plaintext(
+    let validated_group_id = validate_gateway_api_key_group_assignment(
+        store,
+        tenant_id,
+        project_id,
+        environment,
+        api_key_group_id,
+    )
+    .await?;
+    let mut created = CreateGatewayApiKey::execute_with_optional_plaintext(
         tenant_id,
         project_id,
         environment,
@@ -632,9 +869,11 @@ pub async fn persist_gateway_api_key_with_metadata(
         plaintext_key,
         notes,
     )?;
+    created.api_key_group_id = validated_group_id.clone();
     let record =
         GatewayApiKeyRecord::new(tenant_id, project_id, environment, created.hashed.clone())
             .with_raw_key(created.plaintext.clone())
+            .with_api_key_group_id_option(validated_group_id)
             .with_label(created.label.clone())
             .with_notes_option(created.notes.clone())
             .with_created_at_ms(created.created_at_ms)
@@ -671,6 +910,7 @@ pub async fn update_gateway_api_key_metadata(
     label: &str,
     expires_at_ms: Option<u64>,
     notes: Option<&str>,
+    api_key_group_id: Option<&str>,
 ) -> AdminResult<Option<GatewayApiKeyRecord>> {
     let normalized_tenant_id = tenant_id.trim();
     if normalized_tenant_id.is_empty() {
@@ -695,6 +935,15 @@ pub async fn update_gateway_api_key_metadata(
 
     validate_gateway_api_key_metadata(label, notes, expires_at_ms)
         .map_err(AdminIdentityError::InvalidInput)?;
+    let validated_group_id = validate_gateway_api_key_group_assignment(
+        store,
+        normalized_tenant_id,
+        normalized_project_id,
+        normalized_environment,
+        api_key_group_id,
+    )
+    .await
+    .map_err(|error| AdminIdentityError::InvalidInput(error.to_string()))?;
 
     let Some(existing) = store
         .find_gateway_api_key(hashed_key)
@@ -708,6 +957,7 @@ pub async fn update_gateway_api_key_metadata(
         tenant_id: normalized_tenant_id.to_owned(),
         project_id: normalized_project_id.to_owned(),
         environment: normalized_environment.to_owned(),
+        api_key_group_id: validated_group_id,
         label: normalize_gateway_api_key_label(label),
         notes: normalize_gateway_api_key_notes(notes),
         expires_at_ms,
@@ -756,6 +1006,7 @@ pub async fn resolve_gateway_request_context(
         project_id: record.project_id,
         environment: record.environment,
         api_key_hash: hashed_key,
+        api_key_group_id: record.api_key_group_id,
     }))
 }
 
@@ -1124,6 +1375,29 @@ async fn find_portal_scoped_api_key(
     Ok(Some(record))
 }
 
+async fn find_portal_scoped_api_key_group(
+    store: &dyn AdminStore,
+    user_id: &str,
+    group_id: &str,
+) -> PortalResult<Option<ApiKeyGroupRecord>> {
+    let user = load_portal_user_record(store, user_id).await?;
+    let Some(record) = store
+        .find_api_key_group(group_id)
+        .await
+        .map_err(PortalIdentityError::from)?
+    else {
+        return Ok(None);
+    };
+
+    if record.tenant_id != user.workspace_tenant_id
+        || record.project_id != user.workspace_project_id
+    {
+        return Ok(None);
+    }
+
+    Ok(Some(record))
+}
+
 pub async fn list_portal_api_keys(
     store: &dyn AdminStore,
     user_id: &str,
@@ -1140,6 +1414,106 @@ pub async fn list_portal_api_keys(
             key.tenant_id == user.workspace_tenant_id && key.project_id == user.workspace_project_id
         })
         .collect())
+}
+
+pub async fn list_portal_api_key_groups(
+    store: &dyn AdminStore,
+    user_id: &str,
+) -> PortalResult<Vec<ApiKeyGroupRecord>> {
+    let user = load_portal_user_record(store, user_id).await?;
+    let groups = store
+        .list_api_key_groups()
+        .await
+        .map_err(PortalIdentityError::from)?;
+    Ok(groups
+        .into_iter()
+        .filter(|group| {
+            group.tenant_id == user.workspace_tenant_id
+                && group.project_id == user.workspace_project_id
+        })
+        .collect())
+}
+
+pub async fn create_portal_api_key_group(
+    store: &dyn AdminStore,
+    user_id: &str,
+    input: PortalApiKeyGroupInput,
+) -> PortalResult<ApiKeyGroupRecord> {
+    let user = load_portal_user_record(store, user_id).await?;
+    create_api_key_group(
+        store,
+        ApiKeyGroupInput {
+            tenant_id: user.workspace_tenant_id,
+            project_id: user.workspace_project_id,
+            environment: input.environment,
+            name: input.name,
+            slug: input.slug,
+            description: input.description,
+            color: input.color,
+            default_capability_scope: input.default_capability_scope,
+            default_routing_profile_id: input.default_routing_profile_id,
+            default_accounting_mode: input.default_accounting_mode,
+        },
+    )
+    .await
+    .map_err(map_admin_identity_error_to_portal)
+}
+
+pub async fn update_portal_api_key_group(
+    store: &dyn AdminStore,
+    user_id: &str,
+    group_id: &str,
+    input: PortalApiKeyGroupInput,
+) -> PortalResult<Option<ApiKeyGroupRecord>> {
+    let Some(_existing) = find_portal_scoped_api_key_group(store, user_id, group_id).await? else {
+        return Ok(None);
+    };
+    let user = load_portal_user_record(store, user_id).await?;
+    update_api_key_group(
+        store,
+        group_id,
+        ApiKeyGroupInput {
+            tenant_id: user.workspace_tenant_id,
+            project_id: user.workspace_project_id,
+            environment: input.environment,
+            name: input.name,
+            slug: input.slug,
+            description: input.description,
+            color: input.color,
+            default_capability_scope: input.default_capability_scope,
+            default_routing_profile_id: input.default_routing_profile_id,
+            default_accounting_mode: input.default_accounting_mode,
+        },
+    )
+    .await
+    .map_err(map_admin_identity_error_to_portal)
+}
+
+pub async fn set_portal_api_key_group_active(
+    store: &dyn AdminStore,
+    user_id: &str,
+    group_id: &str,
+    active: bool,
+) -> PortalResult<Option<ApiKeyGroupRecord>> {
+    let Some(_existing) = find_portal_scoped_api_key_group(store, user_id, group_id).await? else {
+        return Ok(None);
+    };
+    set_api_key_group_active(store, group_id, active)
+        .await
+        .map_err(map_admin_identity_error_to_portal)
+}
+
+pub async fn delete_portal_api_key_group(
+    store: &dyn AdminStore,
+    user_id: &str,
+    group_id: &str,
+) -> PortalResult<bool> {
+    let Some(_existing) = find_portal_scoped_api_key_group(store, user_id, group_id).await? else {
+        return Ok(false);
+    };
+    delete_api_key_group(store, group_id)
+        .await
+        .map_err(map_admin_identity_error_to_portal)
 }
 
 pub async fn set_portal_api_key_active(
@@ -1188,6 +1562,7 @@ pub async fn create_portal_api_key(
         None,
         None,
         None,
+        None,
     )
     .await
 }
@@ -1200,6 +1575,7 @@ pub async fn create_portal_api_key_with_metadata(
     expires_at_ms: Option<u64>,
     plaintext_key: Option<&str>,
     notes: Option<&str>,
+    api_key_group_id: Option<&str>,
 ) -> PortalResult<CreatedGatewayApiKey> {
     let environment = environment.trim();
     if environment.is_empty() {
@@ -1220,6 +1596,7 @@ pub async fn create_portal_api_key_with_metadata(
         expires_at_ms,
         plaintext_key,
         notes,
+        api_key_group_id,
     )
     .await
     .map_err(PortalIdentityError::from)
@@ -1494,6 +1871,196 @@ fn validate_password_strength(password: &str) -> std::result::Result<(), String>
     Ok(())
 }
 
+fn require_trimmed_input<'a>(value: &'a str, field_name: &str) -> AdminResult<&'a str> {
+    let normalized = value.trim();
+    if normalized.is_empty() {
+        return Err(AdminIdentityError::InvalidInput(format!(
+            "{field_name} is required"
+        )));
+    }
+    Ok(normalized)
+}
+
+fn normalize_api_key_group_name(name: &str) -> AdminResult<String> {
+    let normalized = name.trim();
+    if normalized.is_empty() {
+        return Err(AdminIdentityError::InvalidInput(
+            "name is required".to_owned(),
+        ));
+    }
+    Ok(normalized.to_owned())
+}
+
+fn normalize_api_key_group_slug(name: &str, slug: Option<&str>) -> AdminResult<String> {
+    let source = normalize_optional_value(slug).unwrap_or(name);
+    let mut normalized = String::new();
+    let mut previous_was_dash = false;
+
+    for ch in source.chars() {
+        if ch.is_ascii_alphanumeric() {
+            normalized.push(ch.to_ascii_lowercase());
+            previous_was_dash = false;
+        } else if !normalized.is_empty() && !previous_was_dash {
+            normalized.push('-');
+            previous_was_dash = true;
+        }
+    }
+
+    while normalized.ends_with('-') {
+        normalized.pop();
+    }
+
+    if normalized.is_empty() {
+        return Err(AdminIdentityError::InvalidInput(
+            "slug is required".to_owned(),
+        ));
+    }
+
+    Ok(normalized)
+}
+
+fn normalize_api_key_group_optional_value(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn validate_default_accounting_mode_binding(
+    default_accounting_mode: Option<&str>,
+) -> AdminResult<Option<String>> {
+    let Some(default_accounting_mode) =
+        normalize_api_key_group_optional_value(default_accounting_mode)
+    else {
+        return Ok(None);
+    };
+
+    let normalized = default_accounting_mode.to_ascii_lowercase();
+    let parsed = BillingAccountingMode::from_str(&normalized).map_err(|_| {
+        AdminIdentityError::InvalidInput(
+            "default_accounting_mode must be one of: platform_credit, byok, passthrough"
+                .to_owned(),
+        )
+    })?;
+
+    Ok(Some(parsed.as_str().to_owned()))
+}
+
+async fn ensure_api_key_group_slug_available(
+    store: &dyn AdminStore,
+    current_group_id: Option<&str>,
+    tenant_id: &str,
+    project_id: &str,
+    environment: &str,
+    slug: &str,
+) -> AdminResult<()> {
+    let groups = store
+        .list_api_key_groups()
+        .await
+        .map_err(AdminIdentityError::from)?;
+    let duplicate_exists = groups.iter().any(|group| {
+        group.tenant_id == tenant_id
+            && group.project_id == project_id
+            && group.environment == environment
+            && group.slug == slug
+            && current_group_id != Some(group.group_id.as_str())
+    });
+    if duplicate_exists {
+        return Err(AdminIdentityError::InvalidInput(
+            "api key group slug already exists".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+async fn validate_default_routing_profile_binding(
+    store: &dyn AdminStore,
+    tenant_id: &str,
+    project_id: &str,
+    default_routing_profile_id: Option<&str>,
+) -> AdminResult<Option<String>> {
+    let Some(profile_id) = normalize_api_key_group_optional_value(default_routing_profile_id)
+    else {
+        return Ok(None);
+    };
+
+    let Some(profile) = store
+        .find_routing_profile(&profile_id)
+        .await
+        .map_err(AdminIdentityError::from)?
+    else {
+        return Err(AdminIdentityError::InvalidInput(
+            "routing profile not found".to_owned(),
+        ));
+    };
+
+    if profile.tenant_id != tenant_id {
+        return Err(AdminIdentityError::InvalidInput(
+            "routing profile tenant does not match".to_owned(),
+        ));
+    }
+
+    if profile.project_id != project_id {
+        return Err(AdminIdentityError::InvalidInput(
+            "routing profile project does not match".to_owned(),
+        ));
+    }
+
+    if !profile.active {
+        return Err(AdminIdentityError::InvalidInput(
+            "routing profile is inactive".to_owned(),
+        ));
+    }
+
+    Ok(Some(profile.profile_id))
+}
+
+async fn validate_gateway_api_key_group_assignment(
+    store: &dyn AdminStore,
+    tenant_id: &str,
+    project_id: &str,
+    environment: &str,
+    api_key_group_id: Option<&str>,
+) -> Result<Option<String>> {
+    let Some(group_id) = normalize_optional_value(api_key_group_id) else {
+        return Ok(None);
+    };
+
+    let Some(group) = store.find_api_key_group(group_id).await? else {
+        return Err(anyhow!("api key group not found"));
+    };
+
+    validate_gateway_api_key_group_record(&group, tenant_id, project_id, environment)
+        .map_err(anyhow::Error::msg)?;
+
+    Ok(Some(group.group_id))
+}
+
+fn validate_gateway_api_key_group_record(
+    group: &ApiKeyGroupRecord,
+    tenant_id: &str,
+    project_id: &str,
+    environment: &str,
+) -> std::result::Result<(), String> {
+    if group.tenant_id != tenant_id {
+        return Err("api key group tenant does not match".to_owned());
+    }
+
+    if group.project_id != project_id {
+        return Err("api key group project does not match".to_owned());
+    }
+
+    if group.environment != environment {
+        return Err("api key group environment does not match".to_owned());
+    }
+
+    if !group.active {
+        return Err("api key group is inactive".to_owned());
+    }
+
+    Ok(())
+}
+
 fn default_gateway_api_key_label(environment: &str) -> String {
     format!("{} gateway key", environment.trim())
 }
@@ -1549,6 +2116,20 @@ fn map_portal_store_error(error: anyhow::Error) -> PortalIdentityError {
         PortalIdentityError::DuplicateEmail
     } else {
         PortalIdentityError::Storage(error)
+    }
+}
+
+fn map_admin_identity_error_to_portal(error: AdminIdentityError) -> PortalIdentityError {
+    match error {
+        AdminIdentityError::InvalidInput(message) => PortalIdentityError::InvalidInput(message),
+        AdminIdentityError::DuplicateEmail => {
+            PortalIdentityError::InvalidInput("duplicate identity record".to_owned())
+        }
+        AdminIdentityError::Protected(message) => PortalIdentityError::Protected(message),
+        AdminIdentityError::InvalidCredentials => PortalIdentityError::InvalidCredentials,
+        AdminIdentityError::InactiveUser => PortalIdentityError::InactiveUser,
+        AdminIdentityError::NotFound(message) => PortalIdentityError::NotFound(message),
+        AdminIdentityError::Storage(error) => PortalIdentityError::Storage(error),
     }
 }
 

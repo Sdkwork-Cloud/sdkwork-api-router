@@ -7,8 +7,7 @@
 - independent engineering project under `apps/`
 - product-grade self-service portal rather than a legacy `console` sub-page
 - follows `ARCHITECT.md` package ownership and dependency direction
-- combines live `/portal/*` data with explicit commerce repository seams where backend payment
-  integration is not ready yet, while exposing a backend-readable commerce catalog and desktop runtime evidence
+- combines live `/portal/*` data, live commerce catalog flows, and desktop runtime evidence
 
 ## Workspace Layout
 
@@ -28,7 +27,7 @@ Portal business packages follow the `ARCHITECT.md` shape:
 packages/sdkwork-router-portal-<module>/src/
 ├── types/       # local view contracts and page props
 ├── components/  # module-owned UI pieces
-├── repository/  # live portal API or commerce seam access
+├── repository/  # live portal API access
 ├── services/    # derived product logic and recommendations
 ├── pages/       # route-level page entry
 └── index.tsx    # thin re-export surface
@@ -42,7 +41,6 @@ packages/sdkwork-router-portal-<module>/src/
 - `sdkwork-router-portal-commons`
 - `sdkwork-router-portal-core`
 - `sdkwork-router-portal-portal-api`
-- `sdkwork-router-portal-commerce`
 
 ### Business
 
@@ -63,7 +61,8 @@ packages/sdkwork-router-portal-<module>/src/
 handles compatibility posture, local versus server deployment modes, role-sliced topology, and launch readiness.
 
 `User` handles profile and password rotation.
-`Account` handles cash balance, credits, billing ledger, and runway posture.
+`Account` handles cash balance, billing ledger, and runway posture.
+`Redeem` handles coupon activation, invite growth, and reward visibility.
 
 - `Gateway`
   - compatibility matrix for Codex, Claude Code, OpenCode, Gemini CLI, Gemini-compatible clients, and OpenClaw
@@ -99,11 +98,11 @@ handles compatibility posture, local versus server deployment modes, role-sliced
   - profile and password rotation
   - personal security posture
   - recovery guidance
-- `Credits`
-  - quota posture
-  - points-oriented ledger view
-  - coupon redemption seam
+- `Redeem`
+  - coupon redemption workflow
   - redemption-impact preview
+  - invite growth tooling
+  - activation reward visibility
 - `Billing`
   - subscription plan catalog
   - recharge packs
@@ -111,7 +110,6 @@ handles compatibility posture, local versus server deployment modes, role-sliced
   - recommendation logic based on current usage and remaining quota
 - `Account`
   - cash balance
-  - credits and quota posture
   - billing ledger
   - runway posture
 
@@ -127,10 +125,6 @@ handles compatibility posture, local versus server deployment modes, role-sliced
   - billing summary and ledger
   - API keys
   - password rotation
-- workspace-scoped commerce repository seam:
-  - subscription plans
-  - recharge packs
-  - coupon catalog
 
 ## Commands
 

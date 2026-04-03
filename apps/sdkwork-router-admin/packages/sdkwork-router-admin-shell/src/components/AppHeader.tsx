@@ -1,58 +1,35 @@
+import { RefreshCw, Search } from 'lucide-react';
 import { useEffect, type ReactNode } from 'react';
-import { Search } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
-import { useAdminI18n } from 'sdkwork-router-admin-commons';
+import { useAdminI18n, useAdminWorkbench } from 'sdkwork-router-admin-core';
 
 import { ROUTE_PATHS } from '../application/router/routePaths';
-import { isTauriDesktop } from '../desktopWindow';
+import { ShellStatus } from './ShellStatus';
 
-function BrandMark() {
-  return (
-    <div className="adminx-shell-brand-mark" aria-hidden="true">
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <path d="M12 2v2" />
-        <path d="M12 18v4" />
-        <path d="M4.93 10.93l1.41 1.41" />
-        <path d="M17.66 17.66l1.41 1.41" />
-        <path d="M2 12h2" />
-        <path d="M20 12h2" />
-        <path d="M4.93 13.07l1.41-1.41" />
-        <path d="M17.66 6.34l1.41-1.41" />
-        <path d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
-        <path d="M12 6a6 6 0 0 1 6 6" />
-        <path d="M12 18a6 6 0 0 1-6-6" />
-      </svg>
-    </div>
-  );
-}
+const routerAdminLogo = new URL('../../../../src-tauri/icons/32x32.png', import.meta.url).href;
 
 function HeaderActionButton({
   title,
   onClick,
-  className = '',
   children,
+  className = '',
+  dataSlot,
 }: {
   title: string;
-  onClick: () => void | Promise<void>;
-  className?: string;
+  onClick: () => void;
   children: ReactNode;
+  className?: string;
+  dataSlot?: string;
 }) {
   return (
     <button
-      type="button"
+      className={`flex h-9 items-center justify-center rounded-xl [background:var(--admin-header-control-background)] px-3 text-[var(--admin-text-secondary)] transition-colors hover:[background:var(--admin-header-control-hover)] hover:text-[var(--admin-text-primary)] ${className}`}
+      data-slot={dataSlot}
       data-tauri-drag-region="false"
+      onClick={onClick}
       title={title}
-      className={`adminx-shell-header-action flex h-9 items-center justify-center rounded-2xl bg-zinc-950/[0.045] px-3 text-zinc-600 transition-colors hover:bg-zinc-950/[0.08] hover:text-zinc-950 dark:bg-white/[0.06] dark:text-zinc-300 dark:hover:bg-white/[0.12] dark:hover:text-white ${className}`.trim()}
-      onClick={() => void onClick()}
+      type="button"
     >
       {children}
     </button>
@@ -61,8 +38,8 @@ function HeaderActionButton({
 
 export function AppHeader() {
   const navigate = useNavigate();
+  const { loading, refreshWorkspace, status } = useAdminWorkbench();
   const { t } = useAdminI18n();
-  const isDesktop = isTauriDesktop();
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -79,52 +56,65 @@ export function AppHeader() {
   }, [navigate]);
 
   return (
-    <div
-      className={`adminx-shell-header-wrap relative z-30 bg-white/72 backdrop-blur-xl dark:bg-zinc-950/78 ${
-        isDesktop ? 'is-desktop' : ''
-      }`.trim()}
-    >
-      <header
-        className={`adminx-shell-header relative flex h-12 items-center ${
-          isDesktop ? 'pl-3 pr-0 sm:pl-4' : 'px-3 sm:px-4'
-        }`.trim()}
-      >
+    <div className="relative z-30 border-b border-[var(--admin-border-color)] [background:var(--admin-header-background)] backdrop-blur-xl">
+      <header className="relative flex h-12 items-center px-3 sm:px-4">
         <div
-          className="adminx-shell-header-main flex min-w-0 flex-1 items-center gap-3"
+          className="flex min-w-0 flex-1 items-center gap-3"
           data-slot="app-header-leading"
-          data-tauri-drag-region={isDesktop ? 'true' : undefined}
+          data-tauri-drag-region
         >
-          <div className="adminx-shell-brand flex min-w-0 items-center gap-3">
-            <BrandMark />
-            <div className="adminx-shell-brand-copy min-w-0">
-              <div className="truncate text-[11px] font-semibold uppercase leading-none tracking-[0.22em] text-zinc-500 dark:text-zinc-400">
-                {t('Control plane')}
-              </div>
-              <div className="truncate text-sm font-semibold leading-none text-zinc-950 dark:text-zinc-50">
-                {t('SDKWork Router Admin')}
-              </div>
-            </div>
-          </div>
-
-          <div
-            className="adminx-shell-header-search ml-4"
-            data-slot="app-header-search"
+          <button
+            className="flex min-w-0 items-center gap-2 rounded-xl px-1 py-1 transition-colors hover:[background:var(--admin-header-control-background)]"
+            data-slot="app-header-brand"
             data-tauri-drag-region="false"
+            onClick={() => navigate(ROUTE_PATHS.OVERVIEW)}
+            title={t('Router Admin')}
+            type="button"
           >
-            <HeaderActionButton
-              title={t('Open workspace search')}
-              onClick={() => navigate(ROUTE_PATHS.SETTINGS)}
-              className="gap-2 px-2.5"
-            >
-              <Search className="h-4 w-4" />
-              <span className="adminx-shell-header-search-label hidden text-xs font-medium md:inline">
-                {t('Search')}
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-[10px] border border-[var(--admin-border-color)] [background:var(--admin-header-control-background)]">
+              <img
+                alt={t('Router Admin')}
+                className="h-5 w-5 object-contain"
+                src={routerAdminLogo}
+              />
+            </span>
+            <span className="min-w-0">
+              <span className="block truncate text-sm font-semibold text-[var(--admin-text-primary)]">
+                {t('Router Admin')}
               </span>
-              <span className="adminx-shell-header-search-shortcut hidden rounded-full bg-zinc-950/[0.06] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500 dark:bg-white/[0.08] dark:text-zinc-400 md:inline">
-                Ctrl K
-              </span>
-            </HeaderActionButton>
+            </span>
+          </button>
+          <HeaderActionButton
+            className="gap-2 px-2.5"
+            dataSlot="app-header-search"
+            onClick={() => navigate(ROUTE_PATHS.SETTINGS)}
+            title={t('Open workspace search')}
+          >
+            <Search className="h-4 w-4" />
+            <span className="hidden text-xs font-medium md:inline">{t('Search')}</span>
+            <span className="hidden rounded-full [background:var(--admin-header-control-background)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--admin-text-muted)] md:inline">
+              {t('Ctrl K')}
+            </span>
+          </HeaderActionButton>
+        </div>
+
+        <div
+          className="ml-auto flex h-full items-center justify-end gap-2"
+          data-slot="app-header-trailing"
+          data-tauri-drag-region="false"
+        >
+          <div className="hidden lg:block">
+            <ShellStatus status={status} />
           </div>
+          <HeaderActionButton
+            className="gap-2 px-2.5"
+            dataSlot="app-header-refresh"
+            onClick={() => void refreshWorkspace()}
+            title={loading ? t('Refreshing workspace') : t('Refresh')}
+          >
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            <span className="hidden text-xs font-medium lg:inline">{t('Refresh')}</span>
+          </HeaderActionButton>
         </div>
       </header>
     </div>

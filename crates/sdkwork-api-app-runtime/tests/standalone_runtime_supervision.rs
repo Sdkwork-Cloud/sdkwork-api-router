@@ -18,7 +18,7 @@ use sdkwork_api_app_runtime::{
     CreateStandaloneConfigRolloutRequest, StandaloneListenerHost, StandaloneServiceKind,
     StandaloneServiceReloadHandles,
 };
-use sdkwork_api_config::StandaloneConfigLoader;
+use sdkwork_api_config::{CacheBackendKind, StandaloneConfigLoader};
 use sdkwork_api_domain_catalog::{Channel, ModelCatalogEntry, ProxyProvider};
 use sdkwork_api_ext_provider_native_mock::FIXTURE_EXTENSION_ID;
 use sdkwork_api_extension_core::{
@@ -577,6 +577,148 @@ async fn cluster_standalone_config_rollout_workers_apply_shared_reload() {
     cleanup_dir(&portal_b_root);
 }
 
+#[serial(runtime_config_env)]
+#[tokio::test]
+async fn cluster_standalone_config_rollout_fails_when_only_cache_backend_change_requires_restart() {
+    let shared_store = empty_store().await;
+    let gateway_root = temp_root("cluster-config-rollout-gateway-cache-restart");
+    let gateway_bind = available_bind();
+
+    write_gateway_runtime_config(&gateway_root, &gateway_bind);
+
+    let (gateway_loader, gateway_initial_config) = StandaloneConfigLoader::from_local_root_and_pairs(
+        &gateway_root,
+        std::iter::empty::<(&str, &str)>(),
+    )
+    .unwrap();
+
+    let gateway_live_store = Reloadable::new(empty_store().await);
+    let gateway_supervision = start_standalone_runtime_supervision(
+        StandaloneServiceKind::Gateway,
+        gateway_loader,
+        gateway_initial_config,
+        StandaloneServiceReloadHandles::gateway(gateway_live_store)
+            .with_coordination_store(shared_store.clone())
+            .with_node_id("gateway-node-cache-restart"),
+    );
+
+    wait_for_service_runtime_node(shared_store.as_ref(), "gateway-node-cache-restart").await;
+
+    write_gateway_runtime_config_with_cache(
+        &gateway_root,
+        &gateway_bind,
+        CacheBackendKind::Redis,
+        Some("redis://127.0.0.1:6379/12"),
+    );
+
+    let rollout = create_standalone_config_rollout(
+        shared_store.as_ref(),
+        "admin-user",
+        CreateStandaloneConfigRolloutRequest::new(Some("gateway".to_owned()), 30),
+    )
+    .await
+    .unwrap();
+
+    wait_for_standalone_config_rollout_status(shared_store.as_ref(), &rollout.rollout_id, "failed")
+        .await;
+
+    let rollout = find_standalone_config_rollout(shared_store.as_ref(), &rollout.rollout_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(rollout.participant_count, 1);
+    assert_eq!(rollout.participants.len(), 1);
+    assert_eq!(rollout.participants[0].status, "failed");
+    let message = rollout.participants[0]
+        .message
+        .as_deref()
+        .unwrap_or_default();
+    assert!(message.contains("restart required"));
+    assert!(message.contains("cache_backend"));
+    assert!(message.contains("cache_url"));
+
+    drop(gateway_supervision);
+    cleanup_dir(&gateway_root);
+}
+
+#[serial(runtime_config_env)]
+#[tokio::test]
+async fn cluster_standalone_config_rollout_applies_database_reload_but_fails_when_cache_backend_also_requires_restart(
+) {
+    let shared_store = empty_store().await;
+    let gateway_root = temp_root("cluster-config-rollout-gateway-store-and-cache-restart");
+    let gateway_bind = available_bind();
+    let initial_db_url = sqlite_url_for_path(&gateway_root.join("initial.db"));
+    let rotated_db_url = sqlite_url_for_path(&gateway_root.join("rotated.db"));
+
+    seed_model_store(&initial_db_url, "gateway-initial").await;
+    seed_model_store(&rotated_db_url, "gateway-rotated").await;
+    write_gateway_store_runtime_config_with_cache(
+        &gateway_root,
+        &gateway_bind,
+        &initial_db_url,
+        CacheBackendKind::Memory,
+        None,
+    );
+
+    let (gateway_loader, gateway_initial_config) = StandaloneConfigLoader::from_local_root_and_pairs(
+        &gateway_root,
+        std::iter::empty::<(&str, &str)>(),
+    )
+    .unwrap();
+
+    let gateway_live_store = Reloadable::new(seed_model_store(&initial_db_url, "gateway-initial").await);
+    let gateway_supervision = start_standalone_runtime_supervision(
+        StandaloneServiceKind::Gateway,
+        gateway_loader,
+        gateway_initial_config,
+        StandaloneServiceReloadHandles::gateway(gateway_live_store.clone())
+            .with_coordination_store(shared_store.clone())
+            .with_node_id("gateway-node-store-and-cache-restart"),
+    );
+
+    wait_for_service_runtime_node(shared_store.as_ref(), "gateway-node-store-and-cache-restart")
+        .await;
+
+    write_gateway_store_runtime_config_with_cache(
+        &gateway_root,
+        &gateway_bind,
+        &rotated_db_url,
+        CacheBackendKind::Redis,
+        Some("redis://127.0.0.1:6379/13"),
+    );
+
+    let rollout = create_standalone_config_rollout(
+        shared_store.as_ref(),
+        "admin-user",
+        CreateStandaloneConfigRolloutRequest::new(Some("gateway".to_owned()), 30),
+    )
+    .await
+    .unwrap();
+
+    wait_for_standalone_config_rollout_status(shared_store.as_ref(), &rollout.rollout_id, "failed")
+        .await;
+    wait_for_models(&gateway_live_store, &["gateway-rotated"]).await;
+
+    let rollout = find_standalone_config_rollout(shared_store.as_ref(), &rollout.rollout_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(rollout.participant_count, 1);
+    assert_eq!(rollout.participants.len(), 1);
+    assert_eq!(rollout.participants[0].status, "failed");
+    let message = rollout.participants[0]
+        .message
+        .as_deref()
+        .unwrap_or_default();
+    assert!(message.contains("database_changed=true"));
+    assert!(message.contains("restart required"));
+    assert!(message.contains("cache_backend"));
+
+    drop(gateway_supervision);
+    cleanup_dir(&gateway_root);
+}
+
 #[tokio::test]
 async fn cluster_standalone_config_rollout_times_out_when_participant_stays_pending() {
     let store = empty_store().await;
@@ -633,19 +775,50 @@ extension_hot_reload_interval_secs: 0
 }
 
 fn write_gateway_runtime_config(root: &Path, gateway_bind: &str) {
+    write_gateway_runtime_config_with_cache(root, gateway_bind, CacheBackendKind::Memory, None);
+}
+
+fn write_gateway_store_runtime_config_with_cache(
+    root: &Path,
+    gateway_bind: &str,
+    database_url: &str,
+    cache_backend: CacheBackendKind,
+    cache_url: Option<&str>,
+) {
+    let cache_url = cache_url
+        .map(|value| format!("cache_url: \"{value}\"\n"))
+        .unwrap_or_default();
     fs::write(
         root.join("config.yaml"),
         format!(
             r#"
 gateway_bind: "{gateway_bind}"
-enable_connector_extensions: false
+database_url: "{database_url}"
+cache_backend: "{}"
+{cache_url}enable_connector_extensions: false
 enable_native_dynamic_extensions: false
 runtime_snapshot_interval_secs: 0
 extension_hot_reload_interval_secs: 0
 "#,
+            cache_backend.as_str(),
         ),
     )
     .unwrap();
+}
+
+fn write_gateway_runtime_config_with_cache(
+    root: &Path,
+    gateway_bind: &str,
+    cache_backend: CacheBackendKind,
+    cache_url: Option<&str>,
+) {
+    write_gateway_store_runtime_config_with_cache(
+        root,
+        gateway_bind,
+        "sqlite://sdkwork-api-server.db",
+        cache_backend,
+        cache_url,
+    );
 }
 
 fn write_gateway_secret_manager_runtime_config(
@@ -1058,6 +1231,9 @@ fn native_dynamic_manifest(library_path: &Path) -> ExtensionManifest {
     .with_display_name("Native Mock")
     .with_protocol(ExtensionProtocol::OpenAi)
     .with_entrypoint(library_path.to_string_lossy())
+    .with_supported_modality(sdkwork_api_extension_core::ExtensionModality::Audio)
+    .with_supported_modality(sdkwork_api_extension_core::ExtensionModality::Video)
+    .with_supported_modality(sdkwork_api_extension_core::ExtensionModality::File)
     .with_channel_binding("sdkwork.channel.openai")
     .with_permission(ExtensionPermission::NetworkOutbound)
     .with_capability(sdkwork_api_extension_core::CapabilityDescriptor::new(

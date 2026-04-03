@@ -1,5 +1,5 @@
 use sdkwork_api_app_runtime::{
-    build_admin_store_from_config, resolve_service_runtime_node_id,
+    build_admin_store_from_config, build_cache_runtime_from_config, resolve_service_runtime_node_id,
     start_standalone_runtime_supervision, StandaloneListenerHost, StandaloneServiceKind,
     StandaloneServiceReloadHandles,
 };
@@ -13,6 +13,7 @@ async fn main() -> anyhow::Result<()> {
     init_tracing("portal-api-service");
     let (config_loader, config) = StandaloneConfigLoader::from_env()?;
     config.apply_to_process_env();
+    let _cache_runtime = build_cache_runtime_from_config(&config).await?;
     let live_store = Reloadable::new(build_admin_store_from_config(&config).await?);
     let live_portal_jwt = Reloadable::new(config.portal_jwt_signing_secret.clone());
     let state = PortalApiState::with_live_store_and_jwt_secret_handle(

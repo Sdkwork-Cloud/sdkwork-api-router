@@ -4,10 +4,10 @@ use std::sync::Arc;
 use axum::{
     extract::{FromRequestParts, Path, State},
     http::{header, request::Parts, StatusCode},
-    routing::{delete, get, post},
+    routing::{delete, get, patch, post},
     Json, Router,
 };
-use sdkwork_api_app_billing::summarize_billing_snapshot;
+use sdkwork_api_app_billing::{list_billing_events, summarize_billing_events, summarize_billing_snapshot};
 use sdkwork_api_app_commerce::{
     apply_portal_commerce_payment_event, cancel_portal_commerce_order,
     list_project_commerce_orders, load_portal_commerce_catalog,
@@ -18,24 +18,30 @@ use sdkwork_api_app_commerce::{
     PortalProjectMembershipRecord,
 };
 use sdkwork_api_app_identity::{
-    change_portal_password, create_portal_api_key_with_metadata, delete_portal_api_key,
+    change_portal_password, create_portal_api_key_group, create_portal_api_key_with_metadata,
+    delete_portal_api_key, delete_portal_api_key_group, list_portal_api_key_groups,
     list_portal_api_keys, load_portal_user_profile, load_portal_workspace_summary,
-    login_portal_user, register_portal_user, set_portal_api_key_active, verify_portal_jwt,
-    CreatedGatewayApiKey, PortalAuthSession, PortalClaims, PortalIdentityError,
-    PortalWorkspaceSummary,
+    login_portal_user, register_portal_user, set_portal_api_key_active,
+    set_portal_api_key_group_active, update_portal_api_key_group, verify_portal_jwt,
+    CreatedGatewayApiKey, PortalApiKeyGroupInput, PortalAuthSession, PortalClaims,
+    PortalIdentityError, PortalWorkspaceSummary,
 };
 use sdkwork_api_app_routing::{
-    select_route_with_store_context, simulate_route_with_store_selection_context,
+    create_routing_profile, list_compiled_routing_snapshots, list_routing_profiles,
+    persist_routing_profile, select_route_with_store_context,
+    simulate_route_with_store_selection_context, CreateRoutingProfileInput,
     RouteSelectionContext,
 };
 use sdkwork_api_app_usage::summarize_usage_records;
-use sdkwork_api_domain_billing::{LedgerEntry, ProjectBillingSummary};
+use sdkwork_api_domain_billing::{
+    BillingEventRecord, BillingEventSummary, LedgerEntry, ProjectBillingSummary,
+};
 use sdkwork_api_domain_catalog::ProxyProvider;
-use sdkwork_api_domain_identity::{GatewayApiKeyRecord, PortalUserProfile};
+use sdkwork_api_domain_identity::{ApiKeyGroupRecord, GatewayApiKeyRecord, PortalUserProfile};
 use sdkwork_api_domain_rate_limit::{RateLimitPolicy, RateLimitWindowSnapshot};
 use sdkwork_api_domain_routing::{
-    ProjectRoutingPreferences, RoutingDecision, RoutingDecisionLog, RoutingDecisionSource,
-    RoutingStrategy,
+    CompiledRoutingSnapshotRecord, ProjectRoutingPreferences, RoutingDecision,
+    RoutingDecisionLog, RoutingDecisionSource, RoutingProfileRecord, RoutingStrategy,
 };
 use sdkwork_api_domain_usage::{UsageRecord, UsageSummary};
 use sdkwork_api_observability::{observe_http_metrics, observe_http_tracing, HttpMetricsRegistry};
@@ -152,6 +158,8 @@ struct CreateApiKeyRequest {
     #[serde(default)]
     api_key: Option<String>,
     #[serde(default)]
+    api_key_group_id: Option<String>,
+    #[serde(default)]
     notes: Option<String>,
     #[serde(default)]
     expires_at_ms: Option<u64>,
@@ -160,6 +168,42 @@ struct CreateApiKeyRequest {
 #[derive(Debug, Deserialize)]
 struct UpdateApiKeyStatusRequest {
     active: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateApiKeyGroupRequest {
+    environment: String,
+    name: String,
+    #[serde(default)]
+    slug: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    color: Option<String>,
+    #[serde(default)]
+    default_capability_scope: Option<String>,
+    #[serde(default)]
+    default_accounting_mode: Option<String>,
+    #[serde(default)]
+    default_routing_profile_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateApiKeyGroupRequest {
+    environment: String,
+    name: String,
+    #[serde(default)]
+    slug: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    color: Option<String>,
+    #[serde(default)]
+    default_capability_scope: Option<String>,
+    #[serde(default)]
+    default_accounting_mode: Option<String>,
+    #[serde(default)]
+    default_routing_profile_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -194,6 +238,35 @@ struct PortalRoutingPreviewRequest {
     requested_region: Option<String>,
     #[serde(default)]
     selection_seed: Option<u64>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Deserialize)]
+struct CreatePortalRoutingProfileRequest {
+    name: String,
+    #[serde(default)]
+    slug: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default = "default_true")]
+    active: bool,
+    #[serde(default)]
+    strategy: Option<RoutingStrategy>,
+    #[serde(default)]
+    ordered_provider_ids: Vec<String>,
+    #[serde(default)]
+    default_provider_id: Option<String>,
+    #[serde(default)]
+    max_cost: Option<f64>,
+    #[serde(default)]
+    max_latency_ms: Option<u64>,
+    #[serde(default)]
+    require_healthy: bool,
+    #[serde(default)]
+    preferred_region: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -314,6 +387,15 @@ pub fn portal_router() -> Router {
             get(|| async { "commerce-membership" }),
         )
         .route("/portal/api-keys", get(|| async { "api-keys" }))
+        .route("/portal/api-key-groups", get(|| async { "api-key-groups" }))
+        .route(
+            "/portal/api-key-groups/{group_id}",
+            patch(|| async { "api-key-groups" }).delete(|| async { "api-key-groups" }),
+        )
+        .route(
+            "/portal/api-key-groups/{group_id}/status",
+            post(|| async { "api-key-groups-status" }),
+        )
         .route("/portal/usage/records", get(|| async { "usage-records" }))
         .route("/portal/usage/summary", get(|| async { "usage-summary" }))
         .route(
@@ -321,13 +403,26 @@ pub fn portal_router() -> Router {
             get(|| async { "billing-summary" }),
         )
         .route("/portal/billing/ledger", get(|| async { "billing-ledger" }))
+        .route("/portal/billing/events", get(|| async { "billing-events" }))
+        .route(
+            "/portal/billing/events/summary",
+            get(|| async { "billing-events-summary" }),
+        )
         .route(
             "/portal/routing/summary",
             get(|| async { "routing-summary" }),
         )
         .route(
+            "/portal/routing/profiles",
+            get(|| async { "routing-profiles" }).post(|| async { "routing-profiles" }),
+        )
+        .route(
             "/portal/routing/preferences",
             get(|| async { "routing-preferences" }).post(|| async { "routing-preferences" }),
+        )
+        .route(
+            "/portal/routing/snapshots",
+            get(|| async { "routing-snapshots" }),
         )
         .route(
             "/portal/routing/preview",
@@ -450,14 +545,39 @@ pub fn portal_router_with_state(state: PortalApiState) -> Router {
             "/portal/api-keys/{hashed_key}",
             delete(delete_api_key_handler),
         )
+        .route(
+            "/portal/api-key-groups",
+            get(list_api_key_groups_handler).post(create_api_key_group_handler),
+        )
+        .route(
+            "/portal/api-key-groups/{group_id}",
+            patch(update_api_key_group_handler).delete(delete_api_key_group_handler),
+        )
+        .route(
+            "/portal/api-key-groups/{group_id}/status",
+            post(update_api_key_group_status_handler),
+        )
         .route("/portal/usage/records", get(list_usage_records_handler))
         .route("/portal/usage/summary", get(usage_summary_handler))
         .route("/portal/billing/summary", get(billing_summary_handler))
         .route("/portal/billing/ledger", get(list_billing_ledger_handler))
+        .route("/portal/billing/events", get(list_billing_events_handler))
+        .route(
+            "/portal/billing/events/summary",
+            get(billing_events_summary_handler),
+        )
         .route("/portal/routing/summary", get(routing_summary_handler))
+        .route(
+            "/portal/routing/profiles",
+            get(list_routing_profiles_handler).post(create_routing_profile_handler),
+        )
         .route(
             "/portal/routing/preferences",
             get(get_routing_preferences_handler).post(save_routing_preferences_handler),
+        )
+        .route(
+            "/portal/routing/snapshots",
+            get(list_routing_snapshots_handler),
         )
         .route("/portal/routing/preview", post(preview_routing_handler))
         .route(
@@ -788,6 +908,111 @@ async fn list_api_keys_handler(
         .map_err(portal_error_response)
 }
 
+async fn list_api_key_groups_handler(
+    claims: AuthenticatedPortalClaims,
+    State(state): State<PortalApiState>,
+) -> Result<Json<Vec<ApiKeyGroupRecord>>, (StatusCode, Json<ErrorResponse>)> {
+    list_portal_api_key_groups(state.store.as_ref(), &claims.claims().sub)
+        .await
+        .map(Json)
+        .map_err(portal_error_response)
+}
+
+async fn create_api_key_group_handler(
+    claims: AuthenticatedPortalClaims,
+    State(state): State<PortalApiState>,
+    Json(request): Json<CreateApiKeyGroupRequest>,
+) -> Result<(StatusCode, Json<ApiKeyGroupRecord>), (StatusCode, Json<ErrorResponse>)> {
+    create_portal_api_key_group(
+        state.store.as_ref(),
+        &claims.claims().sub,
+        PortalApiKeyGroupInput {
+            environment: request.environment,
+            name: request.name,
+            slug: request.slug,
+            description: request.description,
+            color: request.color,
+            default_capability_scope: request.default_capability_scope,
+            default_routing_profile_id: request.default_routing_profile_id,
+            default_accounting_mode: request.default_accounting_mode,
+        },
+    )
+    .await
+    .map(|group| (StatusCode::CREATED, Json(group)))
+    .map_err(portal_error_response)
+}
+
+async fn update_api_key_group_handler(
+    claims: AuthenticatedPortalClaims,
+    Path(group_id): Path<String>,
+    State(state): State<PortalApiState>,
+    Json(request): Json<UpdateApiKeyGroupRequest>,
+) -> Result<Json<ApiKeyGroupRecord>, (StatusCode, Json<ErrorResponse>)> {
+    match update_portal_api_key_group(
+        state.store.as_ref(),
+        &claims.claims().sub,
+        &group_id,
+        PortalApiKeyGroupInput {
+            environment: request.environment,
+            name: request.name,
+            slug: request.slug,
+            description: request.description,
+            color: request.color,
+            default_capability_scope: request.default_capability_scope,
+            default_routing_profile_id: request.default_routing_profile_id,
+            default_accounting_mode: request.default_accounting_mode,
+        },
+    )
+    .await
+    .map_err(portal_error_response)?
+    {
+        Some(group) => Ok(Json(group)),
+        None => Err(portal_error_response(PortalIdentityError::NotFound(
+            "api key group not found".to_owned(),
+        ))),
+    }
+}
+
+async fn update_api_key_group_status_handler(
+    claims: AuthenticatedPortalClaims,
+    Path(group_id): Path<String>,
+    State(state): State<PortalApiState>,
+    Json(request): Json<UpdateApiKeyStatusRequest>,
+) -> Result<Json<ApiKeyGroupRecord>, (StatusCode, Json<ErrorResponse>)> {
+    match set_portal_api_key_group_active(
+        state.store.as_ref(),
+        &claims.claims().sub,
+        &group_id,
+        request.active,
+    )
+    .await
+    .map_err(portal_error_response)?
+    {
+        Some(group) => Ok(Json(group)),
+        None => Err(portal_error_response(PortalIdentityError::NotFound(
+            "api key group not found".to_owned(),
+        ))),
+    }
+}
+
+async fn delete_api_key_group_handler(
+    claims: AuthenticatedPortalClaims,
+    Path(group_id): Path<String>,
+    State(state): State<PortalApiState>,
+) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+    let deleted =
+        delete_portal_api_key_group(state.store.as_ref(), &claims.claims().sub, &group_id)
+            .await
+            .map_err(portal_error_response)?;
+    if deleted {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(portal_error_response(PortalIdentityError::NotFound(
+            "api key group not found".to_owned(),
+        )))
+    }
+}
+
 async fn create_api_key_handler(
     claims: AuthenticatedPortalClaims,
     State(state): State<PortalApiState>,
@@ -801,6 +1026,7 @@ async fn create_api_key_handler(
         request.expires_at_ms,
         request.api_key.as_deref(),
         request.notes.as_deref(),
+        request.api_key_group_id.as_deref(),
     )
     .await
     .map(|created| (StatusCode::CREATED, Json(created)))
@@ -973,6 +1199,34 @@ async fn list_billing_ledger_handler(
     Ok(Json(ledger))
 }
 
+async fn list_billing_events_handler(
+    claims: AuthenticatedPortalClaims,
+    State(state): State<PortalApiState>,
+) -> Result<Json<Vec<BillingEventRecord>>, StatusCode> {
+    let workspace = load_workspace_for_user(state.store.as_ref(), &claims.claims().sub).await?;
+    load_project_billing_events(
+        state.store.as_ref(),
+        &workspace.tenant.id,
+        &workspace.project.id,
+    )
+    .await
+    .map(Json)
+}
+
+async fn billing_events_summary_handler(
+    claims: AuthenticatedPortalClaims,
+    State(state): State<PortalApiState>,
+) -> Result<Json<BillingEventSummary>, StatusCode> {
+    let workspace = load_workspace_for_user(state.store.as_ref(), &claims.claims().sub).await?;
+    let events = load_project_billing_events(
+        state.store.as_ref(),
+        &workspace.tenant.id,
+        &workspace.project.id,
+    )
+    .await?;
+    Ok(Json(summarize_billing_events(&events)))
+}
+
 async fn get_routing_preferences_handler(
     claims: AuthenticatedPortalClaims,
     State(state): State<PortalApiState>,
@@ -981,6 +1235,85 @@ async fn get_routing_preferences_handler(
     load_project_routing_preferences_or_default(state.store.as_ref(), &workspace.project.id)
         .await
         .map(Json)
+}
+
+async fn list_routing_profiles_handler(
+    claims: AuthenticatedPortalClaims,
+    State(state): State<PortalApiState>,
+) -> Result<Json<Vec<RoutingProfileRecord>>, StatusCode> {
+    let workspace = load_workspace_for_user(state.store.as_ref(), &claims.claims().sub).await?;
+    list_routing_profiles(state.store.as_ref())
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+        .map(|profiles| {
+            profiles
+                .into_iter()
+                .filter(|profile| {
+                    profile.tenant_id == workspace.tenant.id
+                        && profile.project_id == workspace.project.id
+                })
+                .collect::<Vec<_>>()
+        })
+        .map(Json)
+}
+
+async fn list_routing_snapshots_handler(
+    claims: AuthenticatedPortalClaims,
+    State(state): State<PortalApiState>,
+) -> Result<Json<Vec<CompiledRoutingSnapshotRecord>>, StatusCode> {
+    let workspace = load_workspace_for_user(state.store.as_ref(), &claims.claims().sub).await?;
+    list_compiled_routing_snapshots(state.store.as_ref())
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+        .map(|snapshots| {
+            snapshots
+                .into_iter()
+                .filter(|snapshot| {
+                    snapshot.tenant_id.as_deref() == Some(workspace.tenant.id.as_str())
+                        && snapshot.project_id.as_deref() == Some(workspace.project.id.as_str())
+                })
+                .collect::<Vec<_>>()
+        })
+        .map(Json)
+}
+
+async fn create_routing_profile_handler(
+    claims: AuthenticatedPortalClaims,
+    State(state): State<PortalApiState>,
+    Json(request): Json<CreatePortalRoutingProfileRequest>,
+) -> Result<(StatusCode, Json<RoutingProfileRecord>), StatusCode> {
+    let workspace = load_workspace_for_user(state.store.as_ref(), &claims.claims().sub).await?;
+    let normalized_name = normalize_portal_routing_profile_name(&request.name)?;
+    let normalized_slug =
+        normalize_portal_routing_profile_slug(&normalized_name, request.slug.as_deref())?;
+    let profile_id = format!(
+        "routing-profile-{}-{}",
+        normalized_slug,
+        current_time_millis()
+    );
+
+    let profile = create_routing_profile(CreateRoutingProfileInput {
+        profile_id: &profile_id,
+        tenant_id: &workspace.tenant.id,
+        project_id: &workspace.project.id,
+        name: &normalized_name,
+        slug: &normalized_slug,
+        description: request.description.as_deref(),
+        active: request.active,
+        strategy: request.strategy,
+        ordered_provider_ids: &request.ordered_provider_ids,
+        default_provider_id: request.default_provider_id.as_deref(),
+        max_cost: request.max_cost,
+        max_latency_ms: request.max_latency_ms,
+        require_healthy: request.require_healthy,
+        preferred_region: request.preferred_region.as_deref(),
+    })
+    .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let profile = persist_routing_profile(state.store.as_ref(), &profile)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok((StatusCode::CREATED, Json(profile)))
 }
 
 async fn save_routing_preferences_handler(
@@ -1152,6 +1485,20 @@ async fn load_project_billing_summary(
         .unwrap_or_else(|| ProjectBillingSummary::new(project_id.to_owned())))
 }
 
+async fn load_project_billing_events(
+    store: &dyn AdminStore,
+    tenant_id: &str,
+    project_id: &str,
+) -> Result<Vec<BillingEventRecord>, StatusCode> {
+    let events = list_billing_events(store)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(events
+        .into_iter()
+        .filter(|event| event.tenant_id == tenant_id && event.project_id == project_id)
+        .collect())
+}
+
 fn current_time_millis() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1294,4 +1641,49 @@ fn provider_preference_rank(preference_ranks: &HashMap<String, usize>, provider_
         .get(provider_id)
         .copied()
         .unwrap_or(usize::MAX)
+}
+
+fn normalize_portal_routing_profile_name(name: &str) -> Result<String, StatusCode> {
+    let normalized = name.trim();
+    if normalized.is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    Ok(normalized.to_owned())
+}
+
+fn normalize_portal_routing_profile_slug(
+    name: &str,
+    slug: Option<&str>,
+) -> Result<String, StatusCode> {
+    let source = normalize_portal_routing_profile_optional_value(slug).unwrap_or(name.to_owned());
+    let mut normalized = String::new();
+    let mut previous_was_dash = false;
+
+    for ch in source.chars() {
+        if ch.is_ascii_alphanumeric() {
+            normalized.push(ch.to_ascii_lowercase());
+            previous_was_dash = false;
+        } else if !normalized.is_empty() && !previous_was_dash {
+            normalized.push('-');
+            previous_was_dash = true;
+        }
+    }
+
+    while normalized.ends_with('-') {
+        normalized.pop();
+    }
+
+    if normalized.is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    Ok(normalized)
+}
+
+fn normalize_portal_routing_profile_optional_value(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }

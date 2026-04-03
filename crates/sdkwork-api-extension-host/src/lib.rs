@@ -1031,6 +1031,42 @@ pub fn validate_extension_manifest(manifest: &ExtensionManifest) -> ManifestVali
         });
     }
 
+    if manifest.supported_modalities.is_empty() {
+        issues.push(ManifestValidationIssue {
+            severity: ManifestValidationSeverity::Error,
+            code: "missing_supported_modalities".to_owned(),
+            message: "extension manifest must declare at least one supported modality".to_owned(),
+        });
+    }
+
+    if manifest
+        .runtime_compat_version
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_none()
+    {
+        issues.push(ManifestValidationIssue {
+            severity: ManifestValidationSeverity::Error,
+            code: "missing_runtime_compat_version".to_owned(),
+            message: "extension manifest must declare a runtime compatibility version".to_owned(),
+        });
+    }
+
+    if manifest
+        .config_schema_version
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_none()
+    {
+        issues.push(ManifestValidationIssue {
+            severity: ManifestValidationSeverity::Error,
+            code: "missing_config_schema_version".to_owned(),
+            message: "extension manifest must declare a config schema version".to_owned(),
+        });
+    }
+
     if matches!(
         manifest.runtime,
         ExtensionRuntime::Connector | ExtensionRuntime::NativeDynamic
@@ -1899,8 +1935,11 @@ fn ensure_native_dynamic_manifest_matches(
         && package_manifest.version == library_manifest.version
         && package_manifest.display_name == library_manifest.display_name
         && package_manifest.runtime == library_manifest.runtime
+        && package_manifest.supported_modalities == library_manifest.supported_modalities
         && package_manifest.protocol == library_manifest.protocol
+        && package_manifest.runtime_compat_version == library_manifest.runtime_compat_version
         && package_manifest.config_schema == library_manifest.config_schema
+        && package_manifest.config_schema_version == library_manifest.config_schema_version
         && package_manifest.credential_schema == library_manifest.credential_schema
         && package_manifest.permissions == library_manifest.permissions
         && package_manifest.channel_bindings == library_manifest.channel_bindings
@@ -2337,6 +2376,22 @@ fn provider_invocation_from_request_with_options(
         }
         ProviderRequest::Moderations(body) => {
             invocation_with_body!("moderations.create", [], body, false)
+        }
+        ProviderRequest::Music(body) => {
+            invocation_with_body!("music.create", [], body, false)
+        }
+        ProviderRequest::MusicList => invocation_without_body!("music.list", [], false),
+        ProviderRequest::MusicRetrieve(music_id) => {
+            invocation_without_body!("music.retrieve", [music_id], false)
+        }
+        ProviderRequest::MusicDelete(music_id) => {
+            invocation_without_body!("music.delete", [music_id], false)
+        }
+        ProviderRequest::MusicContent(music_id) => {
+            invocation_without_body!("music.content", [music_id], true)
+        }
+        ProviderRequest::MusicLyrics(body) => {
+            invocation_with_body!("music.lyrics.create", [], body, false)
         }
         ProviderRequest::ImagesGenerations(body) => {
             invocation_with_body!("images.generate", [], body, false)

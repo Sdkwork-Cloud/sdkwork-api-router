@@ -1,5 +1,21 @@
-import { useState } from 'react';
-import type { FormEvent } from 'react';
+import { startTransition, useEffect, useState } from 'react';
+import type { ChangeEvent, FormEvent } from 'react';
+
+import { usePortalI18n } from 'sdkwork-router-portal-commons';
+import { Button } from 'sdkwork-router-portal-commons/framework/actions';
+import {
+  Badge,
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from 'sdkwork-router-portal-commons/framework/display';
+import { Checkbox, Input } from 'sdkwork-router-portal-commons/framework/entry';
+import { SettingsField } from 'sdkwork-router-portal-commons/framework/form';
+import {
+  Card,
+  CardContent,
+} from 'sdkwork-router-portal-commons/framework/layout';
 import {
   Dialog,
   DialogContent,
@@ -7,47 +23,103 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  FormField,
-  InlineButton,
-  Input,
-  Pill,
-  Surface,
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from 'sdkwork-router-portal-commons';
+} from 'sdkwork-router-portal-commons/framework/overlays';
 import { portalErrorMessage } from 'sdkwork-router-portal-portal-api';
 
-import { UserProfileFacts } from '../components';
+import {
+  UserDetailCard,
+  UserProfileFacts,
+  UserSectionCard,
+  UserSummaryCard,
+} from '../components';
 import { changePortalPassword } from '../repository';
-import { buildPortalUserViewModel, passwordsMatch } from '../services';
-import type { PortalUserPageProps } from '../types';
+import {
+  buildPortalUserViewModel,
+  buildUserWorkspaceSummary,
+  passwordsMatch,
+  readPortalUserPreferenceState,
+  sanitizePhoneNumber,
+  sanitizeWeChatId,
+  writePortalUserPreferenceState,
+} from '../services';
+import type {
+  PortalUserPageProps,
+  PortalUserPreferenceState,
+  PortalUserPrivacyPreferenceId,
+} from '../types';
+
+type UserCenterTab = 'profile' | 'privacy' | 'security';
+
+type TranslateFn = (text: string, values?: Record<string, string | number>) => string;
+
+function resolveWorkspaceMemberLabel(active: boolean | undefined, t: TranslateFn) {
+  return active ? t('Active') : t('Restricted');
+}
 
 export function PortalUserPage({ workspace, onNavigate }: PortalUserPageProps) {
+  const { t } = usePortalI18n();
+  const defaultStatus = t('User center details stay aligned with the active workspace session.');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [status, setStatus] = useState(
-    'Keep personal identity, password rotation, and self-service recovery inside the user boundary.',
-  );
+  const [status, setStatus] = useState(defaultStatus);
   const [submitting, setSubmitting] = useState(false);
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const viewModel = buildPortalUserViewModel(workspace, newPassword, confirmPassword);
+  const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
+  const [phoneDialogOpen, setPhoneDialogOpen] = useState(false);
+  const [wechatDialogOpen, setWechatDialogOpen] = useState(false);
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [wechatId, setWechatId] = useState('');
+  const [activeTab, setActiveTab] = useState<UserCenterTab>('profile');
+  const [preferences, setPreferences] = useState<PortalUserPreferenceState>(() =>
+    readPortalUserPreferenceState(workspace),
+  );
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  useEffect(() => {
+    const nextPreferences = readPortalUserPreferenceState(workspace);
+    setPreferences(nextPreferences);
+    setPhoneNumber(nextPreferences.phone_number);
+    setWechatId(nextPreferences.wechat_id);
+    setStatus(defaultStatus);
+  }, [
+    defaultStatus,
+    workspace?.project.id,
+    workspace?.tenant.id,
+    workspace?.user.id,
+  ]);
+
+  useEffect(() => {
+    writePortalUserPreferenceState(workspace, preferences);
+  }, [
+    preferences,
+    workspace?.project.id,
+    workspace?.tenant.id,
+    workspace?.user.id,
+  ]);
+
+  const viewModel = buildPortalUserViewModel(
+    workspace,
+    preferences,
+    newPassword,
+    confirmPassword,
+  );
+  const workspaceSummary = buildUserWorkspaceSummary(workspace);
+  const userStatusLabel = resolveWorkspaceMemberLabel(workspace?.user.active, t);
+
+  async function handleSubmitPassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
     if (!passwordsMatch(newPassword, confirmPassword)) {
-      setStatus('New password confirmation does not match.');
+      setStatus(t('New password confirmation does not match.'));
       return;
     }
+
     if (!viewModel.can_submit_password) {
-      setStatus('Password rotation does not yet satisfy the visible user security policy.');
+      setStatus(t('Password rotation does not yet satisfy the visible user security policy.'));
       return;
     }
 
     setSubmitting(true);
-    setStatus('Updating personal password...');
+    setStatus(t('Updating password...'));
 
     try {
       await changePortalPassword({
@@ -57,8 +129,8 @@ export function PortalUserPage({ workspace, onNavigate }: PortalUserPageProps) {
       setCurrentPassword('');
       setNewPassword('');
       setConfirmPassword('');
-      setStatus('Password updated. Use the new password the next time you sign in.');
-      setDialogOpen(false);
+      setStatus(t('Password updated. Use the new password the next time you sign in.'));
+      setPasswordDialogOpen(false);
     } catch (error) {
       setStatus(portalErrorMessage(error));
     } finally {
@@ -66,224 +138,458 @@ export function PortalUserPage({ workspace, onNavigate }: PortalUserPageProps) {
     }
   }
 
+  function handleSubmitPhone(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const nextPhoneNumber = sanitizePhoneNumber(phoneNumber);
+
+    if (!nextPhoneNumber) {
+      setStatus(t('Phone number is required before binding can be saved.'));
+      return;
+    }
+
+    startTransition(() => {
+      setPreferences((current) => ({
+        ...current,
+        phone_number: nextPhoneNumber,
+      }));
+    });
+    setStatus(t('Phone binding updated in the current user center.'));
+    setPhoneDialogOpen(false);
+  }
+
+  function handleRemovePhone() {
+    startTransition(() => {
+      setPreferences((current) => ({
+        ...current,
+        phone_number: '',
+      }));
+    });
+    setPhoneNumber('');
+    setStatus(t('Phone binding removed from the current user center.'));
+    setPhoneDialogOpen(false);
+  }
+
+  function handleSubmitWeChat(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const nextWechatId = sanitizeWeChatId(wechatId);
+
+    if (!nextWechatId) {
+      setStatus(t('WeChat ID is required before binding can be saved.'));
+      return;
+    }
+
+    startTransition(() => {
+      setPreferences((current) => ({
+        ...current,
+        wechat_id: nextWechatId,
+      }));
+    });
+    setStatus(t('WeChat binding updated in the current user center.'));
+    setWechatDialogOpen(false);
+  }
+
+  function handleRemoveWeChat() {
+    startTransition(() => {
+      setPreferences((current) => ({
+        ...current,
+        wechat_id: '',
+      }));
+    });
+    setWechatId('');
+    setStatus(t('WeChat binding removed from the current user center.'));
+    setWechatDialogOpen(false);
+  }
+
+  function handleTogglePrivacyPreference(preferenceId: PortalUserPrivacyPreferenceId) {
+    startTransition(() => {
+      setPreferences((current) => ({
+        ...current,
+        privacy_preferences: {
+          ...current.privacy_preferences,
+          [preferenceId]: !current.privacy_preferences[preferenceId],
+        },
+      }));
+    });
+    setStatus(t('Privacy preferences updated in the current user center.'));
+  }
+
   return (
     <>
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+      <Dialog open={passwordDialogOpen} onOpenChange={setPasswordDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Password rotation</DialogTitle>
+            <DialogTitle>{t('Change password')}</DialogTitle>
             <DialogDescription>
-              Update personal credentials in a focused dialog instead of keeping the full password form expanded on the page.
+              {t('Change the account password without leaving the user center.')}
             </DialogDescription>
           </DialogHeader>
-          <form className="grid gap-4" onSubmit={handleSubmit}>
-            <FormField label="Current password">
+          <form className="grid gap-4" onSubmit={handleSubmitPassword}>
+            <SettingsField label={t('Current password')} layout="vertical">
               <Input
                 autoComplete="current-password"
-                onChange={(event) => setCurrentPassword(event.target.value)}
+                onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                  setCurrentPassword(event.target.value)}
                 required
                 type="password"
                 value={currentPassword}
               />
-            </FormField>
-            <FormField label="New password">
+            </SettingsField>
+            <SettingsField label={t('New password')} layout="vertical">
               <Input
                 autoComplete="new-password"
-                onChange={(event) => setNewPassword(event.target.value)}
+                onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                  setNewPassword(event.target.value)}
                 required
                 type="password"
                 value={newPassword}
               />
-            </FormField>
-            <FormField label="Confirm new password">
+            </SettingsField>
+            <SettingsField label={t('Confirm new password')} layout="vertical">
               <Input
                 autoComplete="new-password"
-                onChange={(event) => setConfirmPassword(event.target.value)}
+                onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                  setConfirmPassword(event.target.value)}
                 required
                 type="password"
                 value={confirmPassword}
               />
-            </FormField>
+            </SettingsField>
 
-            <div className="portal-shell-info-card grid gap-3">
+            <div className="grid gap-3 rounded-[20px] border border-zinc-200 bg-zinc-50/85 p-4 dark:border-zinc-800 dark:bg-zinc-900/70">
               {viewModel.password_policy.map((item) => (
                 <div className="flex items-center justify-between gap-3" key={item.id}>
-                  <span className="portal-shell-info-copy text-sm">{item.label}</span>
-                  <Pill tone={item.met ? 'positive' : 'warning'}>{item.met ? 'Met' : 'Pending'}</Pill>
+                  <span className="text-sm leading-6 text-zinc-600 dark:text-zinc-300">
+                    {item.label}
+                  </span>
+                  <Badge variant={item.met ? 'success' : 'warning'}>
+                    {item.met ? t('Met') : t('Pending')}
+                  </Badge>
                 </div>
               ))}
             </div>
 
             <DialogFooter>
-              <InlineButton onClick={() => setDialogOpen(false)} tone="ghost" type="button">
-                Cancel
-              </InlineButton>
-              <InlineButton tone="primary" type="submit">
-                {submitting ? 'Saving...' : 'Update password'}
-              </InlineButton>
+              <Button onClick={() => setPasswordDialogOpen(false)} type="button" variant="ghost">
+                {t('Cancel')}
+              </Button>
+              <Button type="submit" variant="primary">
+                {submitting ? t('Saving...') : t('Save password')}
+              </Button>
             </DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
 
-      <Tabs className="grid gap-6" defaultValue="profile">
-        <TabsList>
-          <TabsTrigger value="profile">Profile</TabsTrigger>
-          <TabsTrigger value="security">Security center</TabsTrigger>
-          <TabsTrigger value="recovery">Recovery</TabsTrigger>
-        </TabsList>
+      <Dialog open={phoneDialogOpen} onOpenChange={setPhoneDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('Phone binding')}</DialogTitle>
+            <DialogDescription>
+              {t('Add a recovery phone for password resets and important notices.')}
+            </DialogDescription>
+          </DialogHeader>
+          <form className="grid gap-4" onSubmit={handleSubmitPhone}>
+            <SettingsField label={t('Phone number')} layout="vertical">
+              <Input
+                autoComplete="tel"
+                onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                  setPhoneNumber(event.target.value)}
+                placeholder={t('Phone number')}
+                type="tel"
+                value={phoneNumber}
+              />
+            </SettingsField>
 
-        <TabsContent value="profile">
-          <Surface
-            actions={
-              <div className="flex flex-wrap gap-2">
-                <InlineButton onClick={() => onNavigate('account')} tone="secondary">
-                  Open account
-                </InlineButton>
-                <InlineButton onClick={() => setDialogOpen(true)} tone="primary">
-                  Password rotation
-                </InlineButton>
-              </div>
-            }
-            detail={status}
-            title="Profile facts"
+            <DialogFooter>
+              {preferences.phone_number ? (
+                <Button onClick={handleRemovePhone} type="button" variant="secondary">
+                  {t('Remove binding')}
+                </Button>
+              ) : null}
+              <Button onClick={() => setPhoneDialogOpen(false)} type="button" variant="ghost">
+                {t('Cancel')}
+              </Button>
+              <Button type="submit" variant="primary">
+                {t('Save phone')}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={wechatDialogOpen} onOpenChange={setWechatDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('WeChat binding')}</DialogTitle>
+            <DialogDescription>
+              {t('Bind WeChat for trusted sign-in confirmation and workspace notifications.')}
+            </DialogDescription>
+          </DialogHeader>
+          <form className="grid gap-4" onSubmit={handleSubmitWeChat}>
+            <SettingsField label={t('WeChat ID')} layout="vertical">
+              <Input
+                onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                  setWechatId(event.target.value)}
+                placeholder={t('WeChat ID')}
+                value={wechatId}
+              />
+            </SettingsField>
+
+            <DialogFooter>
+              {preferences.wechat_id ? (
+                <Button onClick={handleRemoveWeChat} type="button" variant="secondary">
+                  {t('Remove binding')}
+                </Button>
+              ) : null}
+              <Button onClick={() => setWechatDialogOpen(false)} type="button" variant="ghost">
+                {t('Cancel')}
+              </Button>
+              <Button type="submit" variant="primary">
+                {t('Save WeChat')}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <div className="space-y-4" data-slot="portal-user-page">
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(0,0.8fr)_minmax(0,0.8fr)]">
+          <UserSectionCard
+            actions={(
+              <>
+                <Button onClick={() => onNavigate('gateway')} variant="secondary">
+                  {t('Return to command center')}
+                </Button>
+                <Button onClick={() => onNavigate('account')} variant="secondary">
+                  {t('Open account')}
+                </Button>
+                <Button onClick={() => setPasswordDialogOpen(true)} variant="primary">
+                  {t('Change password')}
+                </Button>
+              </>
+            )}
+            description={status}
+            title={t('User details')}
           >
-            <div className="grid gap-4">
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                {viewModel.profile_facts.map((item) => (
-                  <article className="portalx-summary-card" key={item.id}>
-                    <span>{item.title}</span>
-                    <strong>{item.value}</strong>
-                    <p>{item.detail}</p>
-                  </article>
-                ))}
-              </div>
-              <div className="grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-                <article className="portal-shell-info-card">
-                  <strong className="portal-shell-info-title">Identity reference</strong>
-                  <p className="portal-shell-info-copy mt-2 text-sm">
-                    Personal profile details stay nearby without consuming a separate top-of-page
-                    summary strip.
-                  </p>
-                  <div className="mt-4">
-                    <UserProfileFacts workspace={workspace} />
-                  </div>
-                </article>
-                <div className="grid gap-3">
-                  {viewModel.personal_security_checklist.map((item) => (
-                    <article className="portal-shell-info-card" key={item.id}>
-                      <div className="flex items-center justify-between gap-3">
-                        <strong className="portal-shell-info-title">{item.title}</strong>
-                        <Pill tone={item.complete ? 'positive' : 'warning'}>
-                          {item.complete ? 'Ready' : 'Needs action'}
-                        </Pill>
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
+              <div className="rounded-[20px] border border-zinc-200 bg-zinc-50/80 p-5 dark:border-zinc-800 dark:bg-zinc-900/60">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div className="flex min-w-0 items-start gap-4">
+                    <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-zinc-200 bg-white text-lg font-semibold text-zinc-950 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-50">
+                      {(workspace?.user.display_name ?? workspace?.user.email ?? t('Portal workspace'))
+                        .slice(0, 2)
+                        .toUpperCase()}
+                    </div>
+                    <div className="min-w-0 space-y-2">
+                      <div className="text-xl font-semibold tracking-tight text-zinc-950 dark:text-zinc-50">
+                        {workspace?.user.display_name ?? t('Portal workspace')}
                       </div>
-                      <p className="portal-shell-info-copy mt-2 text-sm">{item.detail}</p>
-                    </article>
+                      <div className="text-sm text-zinc-500 dark:text-zinc-400">
+                        {workspace?.user.email ?? t('Awaiting workspace session')}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant={workspace?.user.active ? 'success' : 'warning'}>
+                          {userStatusLabel}
+                        </Badge>
+                        <span className="inline-flex items-center rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-zinc-600 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300">
+                          {workspace?.project.name ?? t('Current workspace')}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                  {workspaceSummary.map((item) => (
+                    <div
+                      className="rounded-2xl border border-zinc-200 bg-white px-4 py-4 dark:border-zinc-800 dark:bg-zinc-950"
+                      key={item.id}
+                    >
+                      <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400">
+                        {item.title}
+                      </span>
+                      <strong className="mt-2 block text-base font-semibold text-zinc-950 dark:text-zinc-50">
+                        {item.value}
+                      </strong>
+                      <p className="mt-2 text-sm leading-6 text-zinc-500 dark:text-zinc-400">
+                        {item.detail}
+                      </p>
+                    </div>
                   ))}
                 </div>
               </div>
+
+              <div className="grid gap-3">
+                {viewModel.summary_cards.map((item) => (
+                  <UserSummaryCard
+                    detail={item.detail}
+                    key={item.id}
+                    title={item.title}
+                    value={item.value}
+                  />
+                ))}
+              </div>
             </div>
-          </Surface>
-        </TabsContent>
+          </UserSectionCard>
+        </div>
 
-        <TabsContent value="security">
-          <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
-            <Surface
-              actions={
-                <InlineButton onClick={() => setDialogOpen(true)} tone="primary">
-                  Open password dialog
-                </InlineButton>
-              }
-              detail="A clear checklist keeps personal security work explicit before the next routing, key, or financial action."
-              title="Personal security checklist"
+        <Card
+          className="border-zinc-200 bg-white shadow-none dark:border-zinc-800 dark:bg-zinc-950"
+          data-slot="portal-user-center"
+        >
+          <CardContent className="p-5">
+            <Tabs
+              className="space-y-4"
+              onValueChange={(value) =>
+                startTransition(() => setActiveTab(value as UserCenterTab))}
+              value={activeTab}
             >
-              <div className="grid gap-3">
-                {viewModel.personal_security_checklist.map((item) => (
-                  <article className="portal-shell-info-card" key={item.id}>
-                    <div className="flex items-center justify-between gap-3">
-                      <strong className="portal-shell-info-title">{item.title}</strong>
-                      <Pill tone={item.complete ? 'positive' : 'warning'}>
-                        {item.complete ? 'Ready' : 'Needs action'}
-                      </Pill>
+              <div className="flex flex-col gap-3 border-b border-zinc-200 pb-4 dark:border-zinc-800 lg:flex-row lg:items-center lg:justify-between">
+                <div className="space-y-1">
+                  <h2 className="text-base font-semibold text-zinc-950 dark:text-zinc-50">
+                    {t('User center')}
+                  </h2>
+                  <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                    {t('Protected identity and recovery controls stay available from one profile surface.')}
+                  </p>
+                </div>
+
+                <TabsList
+                  className="inline-flex w-auto justify-start"
+                  data-slot="portal-user-center-tabs"
+                >
+                  <TabsTrigger value="profile">{t('Profile overview')}</TabsTrigger>
+                  <TabsTrigger value="privacy">{t('Privacy preferences')}</TabsTrigger>
+                  <TabsTrigger value="security">{t('Password and authentication')}</TabsTrigger>
+                </TabsList>
+              </div>
+
+              <TabsContent className="pt-1" value="profile">
+                <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,0.95fr)]">
+                  <UserSectionCard
+                    description={t('Core account identity and workspace ownership stay clear in one place.')}
+                    title={t('Profile overview')}
+                  >
+                    <UserProfileFacts workspace={workspace} />
+                  </UserSectionCard>
+
+                  <UserSectionCard
+                    description={t('Bind phone and WeChat so recovery and trusted sign-in stay available.')}
+                    title={t('Connected methods')}
+                  >
+                    <div className="grid gap-3">
+                      {viewModel.binding_items.map((item) => (
+                        <UserDetailCard
+                          badge={(
+                            <Badge variant={item.connected ? 'success' : 'warning'}>
+                              {item.connected ? t('Connected') : t('Not bound')}
+                            </Badge>
+                          )}
+                          description={item.detail}
+                          key={item.id}
+                          title={item.title}
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <span className="text-sm font-medium text-zinc-950 dark:text-zinc-50">
+                              {item.value}
+                            </span>
+                            <Button
+                              onClick={() =>
+                                item.id === 'phone'
+                                  ? setPhoneDialogOpen(true)
+                                  : setWechatDialogOpen(true)}
+                              variant="secondary"
+                            >
+                              {item.action_label}
+                            </Button>
+                          </div>
+                        </UserDetailCard>
+                      ))}
                     </div>
-                    <p className="portal-shell-info-copy mt-2 text-sm">{item.detail}</p>
-                  </article>
-                ))}
-              </div>
-            </Surface>
+                  </UserSectionCard>
+                </div>
+              </TabsContent>
 
-            <Surface
-              detail="Password requirements remain visible even when the edit form is collapsed into a dialog."
-              title="Password policy"
-            >
-              <div className="grid gap-3">
-                {viewModel.password_policy.map((item) => (
-                  <article className="portal-shell-info-card" key={item.id}>
-                    <div className="flex items-center justify-between gap-3">
-                      <strong className="portal-shell-info-title">{item.label}</strong>
-                      <Pill tone={item.met ? 'positive' : 'warning'}>{item.met ? 'Met' : 'Pending'}</Pill>
+              <TabsContent className="pt-1" value="privacy">
+                <UserSectionCard
+                  description={t('Control how your identity and activity appear across the workspace.')}
+                  title={t('Privacy preferences')}
+                >
+                  <div className="grid gap-3">
+                    {viewModel.privacy_preferences.map((item) => (
+                      <label
+                        className="flex cursor-pointer items-center gap-4 rounded-[20px] border border-zinc-200 bg-zinc-50/80 px-4 py-4 transition-colors hover:bg-zinc-100/80 dark:border-zinc-800 dark:bg-zinc-900/60 dark:hover:bg-zinc-900"
+                        key={item.id}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-semibold text-zinc-950 dark:text-zinc-50">
+                            {item.title}
+                          </div>
+                          <div className="mt-1 text-sm leading-6 text-zinc-500 dark:text-zinc-400">
+                            {item.description}
+                          </div>
+                        </div>
+                        <Checkbox
+                          checked={item.enabled}
+                          onCheckedChange={() => handleTogglePrivacyPreference(item.id)}
+                        />
+                      </label>
+                    ))}
+                  </div>
+                </UserSectionCard>
+              </TabsContent>
+
+              <TabsContent className="pt-1" value="security">
+                <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+                  <UserSectionCard
+                    actions={(
+                      <Button onClick={() => setPasswordDialogOpen(true)} variant="primary">
+                        {t('Change password')}
+                      </Button>
+                    )}
+                    description={t('Keep sign-in trust, recovery readiness, and linked channels under one security surface.')}
+                    title={t('Password and authentication')}
+                  >
+                    <div className="grid gap-3">
+                      {viewModel.security_items.map((item) => (
+                        <UserDetailCard
+                          badge={(
+                            <Badge variant={item.tone}>
+                              {item.status_label}
+                            </Badge>
+                          )}
+                          description={item.detail}
+                          key={item.id}
+                          title={item.title}
+                        />
+                      ))}
                     </div>
-                  </article>
-                ))}
-              </div>
-            </Surface>
-          </div>
-        </TabsContent>
+                  </UserSectionCard>
 
-        <TabsContent value="recovery">
-          <div className="grid gap-6 xl:grid-cols-2">
-            <Surface
-              detail="User recovery should guide the signed-in person back into productive work without confusing profile trust with money posture."
-              title="Recovery signals"
-            >
-              <div className="grid gap-3">
-                {viewModel.recovery_signals.map((item) => (
-                  <article className="portal-shell-info-card" key={item.id}>
-                    <strong className="portal-shell-info-title">{item.title}</strong>
-                    <p className="portal-shell-info-copy mt-2 text-sm">{item.detail}</p>
-                  </article>
-                ))}
-              </div>
-            </Surface>
-
-            <Surface
-              detail="User work should reconnect with routing, usage, and financial review instead of ending in a dead settings screen."
-              title="Return to command center"
-            >
-              <div className="grid gap-3">
-                <article className="portal-shell-info-card">
-                  <strong className="portal-shell-info-title">Return to the workspace pulse</strong>
-                  <p className="portal-shell-info-copy mt-2 text-sm">After a personal trust update, confirm that the command center still reflects a healthy operating mode.</p>
-                  <div className="mt-4">
-                    <InlineButton onClick={() => onNavigate('dashboard')} tone="primary">
-                      Open dashboard
-                    </InlineButton>
-                  </div>
-                </article>
-                <article className="portal-shell-info-card">
-                  <strong className="portal-shell-info-title">Review route posture after a security change</strong>
-                  <p className="portal-shell-info-copy mt-2 text-sm">Check the Routing module to confirm the default provider posture still matches the project you intend to operate.</p>
-                  <div className="mt-4">
-                    <InlineButton onClick={() => onNavigate('routing')} tone="secondary">
-                      Open routing
-                    </InlineButton>
-                  </div>
-                </article>
-                <article className="portal-shell-info-card">
-                  <strong className="portal-shell-info-title">Separate money review from personal identity</strong>
-                  <p className="portal-shell-info-copy mt-2 text-sm">When the user boundary is healthy, move into Account for cash balance, ledger evidence, and recharge posture.</p>
-                  <div className="mt-4">
-                    <InlineButton onClick={() => onNavigate('account')} tone="ghost">
-                      Open account
-                    </InlineButton>
-                  </div>
-                </article>
-              </div>
-            </Surface>
-          </div>
-        </TabsContent>
-      </Tabs>
+                  <UserSectionCard
+                    description={t('Password requirements stay visible before you submit a new credential.')}
+                    title={t('Password policy')}
+                  >
+                    <div className="grid gap-3">
+                      {viewModel.password_policy.map((item) => (
+                        <UserDetailCard
+                          badge={(
+                            <Badge variant={item.met ? 'success' : 'warning'}>
+                              {item.met ? t('Met') : t('Pending')}
+                            </Badge>
+                          )}
+                          key={item.id}
+                          title={item.label}
+                        />
+                      ))}
+                    </div>
+                  </UserSectionCard>
+                </div>
+              </TabsContent>
+            </Tabs>
+          </CardContent>
+        </Card>
+      </div>
     </>
   );
 }

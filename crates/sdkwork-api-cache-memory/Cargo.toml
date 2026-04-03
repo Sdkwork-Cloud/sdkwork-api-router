@@ -1,0 +1,17 @@
+[package]
+name = "sdkwork-api-cache-memory"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+sdkwork-api-cache-core = { path = "../sdkwork-api-cache-core" }
+tokio = { workspace = true, features = ["sync", "time"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+
+[lib]
+path = "src/lib.rs"

@@ -22,7 +22,8 @@ use sdkwork_api_extension_core::{
     ExtensionSignatureAlgorithm, ExtensionTrustDeclaration,
 };
 use sdkwork_api_extension_host::{
-    load_native_dynamic_provider_adapter, shutdown_all_native_dynamic_runtimes,
+    discover_extension_packages, load_native_dynamic_provider_adapter,
+    shutdown_all_native_dynamic_runtimes, ExtensionDiscoveryPolicy,
 };
 use sdkwork_api_provider_core::ProviderRequest;
 use sdkwork_api_storage_sqlite::{run_migrations, SqliteAdminStore};
@@ -801,6 +802,14 @@ fn configured_extension_host_reload_rebuilds_native_dynamic_runtimes() {
     fs::write(package_dir.join("sdkwork-extension.toml"), &manifest_text).unwrap();
 
     let _guard = native_dynamic_env_guard(&extension_root, &public_key);
+    let direct_policy = ExtensionDiscoveryPolicy::new(vec![extension_root.clone()])
+        .with_connector_extensions(false)
+        .with_native_dynamic_extensions(true)
+        .with_required_signatures_for_native_dynamic_extensions(true)
+        .with_trusted_signer("sdkwork", &public_key);
+
+    let packages = discover_extension_packages(&direct_policy).unwrap();
+    assert_eq!(packages.len(), 1);
 
     let first = reload_configured_extension_host().unwrap();
     assert_eq!(first.discovered_package_count, 1);
@@ -1403,6 +1412,9 @@ fn native_dynamic_manifest(library_path: &Path) -> sdkwork_api_extension_core::E
     .with_display_name("Native Mock")
     .with_protocol(sdkwork_api_extension_core::ExtensionProtocol::OpenAi)
     .with_entrypoint(library_path.to_string_lossy())
+    .with_supported_modality(sdkwork_api_extension_core::ExtensionModality::Audio)
+    .with_supported_modality(sdkwork_api_extension_core::ExtensionModality::Video)
+    .with_supported_modality(sdkwork_api_extension_core::ExtensionModality::File)
     .with_channel_binding("sdkwork.channel.openai")
     .with_permission(sdkwork_api_extension_core::ExtensionPermission::NetworkOutbound)
     .with_capability(sdkwork_api_extension_core::CapabilityDescriptor::new(

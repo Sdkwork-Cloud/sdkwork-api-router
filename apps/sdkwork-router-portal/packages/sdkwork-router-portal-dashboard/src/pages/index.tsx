@@ -1,45 +1,49 @@
 import {
   Activity,
-  Coins,
-  KeyRound,
   RefreshCw,
   TriangleAlert,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
-  Button,
-  DataTable,
-  EmptyState,
   formatCurrency,
   formatDateTime,
   formatUnits,
-  InlineButton,
+  usePortalI18n,
 } from 'sdkwork-router-portal-commons';
+import { Button } from 'sdkwork-router-portal-commons/framework/actions';
+import {
+  DataTable,
+  StatusBadge,
+} from 'sdkwork-router-portal-commons/framework/display';
+import { EmptyState } from 'sdkwork-router-portal-commons/framework/feedback';
+import { ManagementWorkbench } from 'sdkwork-router-portal-commons/framework/workbench';
+import {
+  WorkspacePanel,
+} from 'sdkwork-router-portal-commons/framework/workspace';
 import { portalErrorMessage } from 'sdkwork-router-portal-portal-api';
+import type {
+  BillingAccountingMode,
+  BillingEventAccountingModeSummary,
+  BillingEventCapabilitySummary,
+} from 'sdkwork-router-portal-types';
 
 import {
   DashboardDistributionRingChart,
+  DashboardBalanceCard,
+  DashboardMetricCard,
   DashboardModelDistributionChart,
   DashboardRevenueTrendChart,
-  DashboardSectionHeader,
-  DashboardStatusPill,
-  DashboardSummaryCard,
   DashboardTokenTrendChart,
 } from '../components';
 import { loadPortalDashboardSnapshot } from '../repository';
 import { buildPortalDashboardViewModel } from '../services';
 import type {
   DashboardInsight,
-  DashboardTone,
+  DashboardStatusVariant,
   PortalDashboardPageProps,
   PortalDashboardPageViewModel,
 } from '../types';
-
-const surfaceClass =
-  'rounded-[2rem] border border-[color:var(--portal-border-color)] [background:var(--portal-surface-background)] p-6 shadow-[var(--portal-shadow-soft)] backdrop-blur';
-const chartFrameClass =
-  'overflow-hidden rounded-[1.5rem] border border-[color:var(--portal-chart-grid)]';
 
 const chartPalette = [
   { dotClassName: 'bg-primary-500', sliceClassName: 'text-primary-500' },
@@ -73,27 +77,143 @@ type DashboardWorkbenchConfig = {
   rows: DashboardWorkbenchRow[];
 };
 
-function buildTrafficHeadline(viewModel: PortalDashboardPageViewModel): {
-  title: string;
-  detail: string;
-} {
-  const { snapshot, provider_mix: providerMix, model_mix: modelMix } = viewModel;
+type TranslateFn = (text: string, values?: Record<string, string | number>) => string;
+type MetricBreakdown = { label: string; value: string };
 
-  if (snapshot.usage_summary.total_requests === 0) {
-    return {
-      title: 'Waiting for the first API request',
-      detail:
-        'As soon as real traffic lands, the dashboard will summarize provider concentration, model mix, and booked spend here.',
-    };
+const EMPTY_METRIC_SUMMARY = {
+  revenue: 0,
+  request_count: 0,
+  used_units: 0,
+  average_booked_spend: 0,
+};
+
+function clampPercentage(value: number): number {
+  return Math.min(100, Math.max(0, value));
+}
+
+function formatAverageSpend(value: number, requestCount: number, t: TranslateFn): string {
+  return requestCount > 0 ? formatCurrency(value) : t('n/a');
+}
+
+function buildMetricBreakdowns(
+  t: TranslateFn,
+  today: string,
+  trailing7d: string,
+  currentMonth: string,
+): MetricBreakdown[] {
+  return [
+    { label: t('Today'), value: today },
+    { label: t('7 days'), value: trailing7d },
+    { label: t('This month'), value: currentMonth },
+  ];
+}
+
+function titleCaseToken(value: string): string {
+  return value
+    .split(/[-_\s]+/g)
+    .filter(Boolean)
+    .map((segment) =>
+      segment.length <= 3
+        ? segment.toUpperCase()
+        : `${segment.slice(0, 1).toUpperCase()}${segment.slice(1)}`,
+    )
+    .join(' ');
+}
+
+function accountingModeLabel(
+  mode: BillingAccountingMode | null | undefined,
+  t: TranslateFn,
+): string {
+  switch (mode) {
+    case 'platform_credit':
+      return t('Platform credit');
+    case 'byok':
+      return t('BYOK');
+    case 'passthrough':
+      return t('Passthrough');
+    default:
+      return t('Accounting mode');
+  }
+}
+
+function capabilityLabel(
+  capability: string | null | undefined,
+  t: TranslateFn,
+): string {
+  switch (capability?.trim().toLowerCase()) {
+    case 'responses':
+      return t('Responses');
+    case 'images':
+      return t('Images');
+    case 'audio':
+      return t('Audio');
+    case 'video':
+      return t('Video');
+    case 'music':
+      return t('Music');
+    default:
+      return capability?.trim() ? titleCaseToken(capability) : t('Capability');
+  }
+}
+
+function accountingModeDetail(
+  summary: BillingEventAccountingModeSummary | null,
+  t: TranslateFn,
+): string {
+  if (!summary) {
+    return t('Billing event evidence will appear here after routed traffic starts recording chargeback activity.');
   }
 
-  const leadProvider = providerMix[0]?.label ?? 'your leading provider';
-  const leadModel = modelMix[0]?.label ?? 'your leading model';
+  return t('{requests} requests / {events} events', {
+    requests: formatUnits(summary.request_count),
+    events: formatUnits(summary.event_count),
+  });
+}
 
-  return {
-    title: `${leadModel} is driving the current visible demand`,
-    detail: `${leadProvider} currently leads ${formatUnits(snapshot.usage_summary.total_requests)} visible requests with ${formatCurrency(snapshot.billing_summary.booked_amount)} in booked spend.`,
-  };
+function capabilityDetail(
+  summary: BillingEventCapabilitySummary | null,
+  t: TranslateFn,
+): string {
+  if (!summary) {
+    return t('Billing event evidence will appear here after routed traffic starts recording chargeback activity.');
+  }
+
+  const facts: string[] = [];
+  if (summary.total_tokens > 0) {
+    facts.push(t('{count} tokens', { count: formatUnits(summary.total_tokens) }));
+  }
+  if (summary.image_count > 0) {
+    facts.push(t('{count} images', { count: formatUnits(summary.image_count) }));
+  }
+  if (summary.audio_seconds > 0) {
+    facts.push(t('{count} audio sec', { count: formatUnits(summary.audio_seconds) }));
+  }
+  if (summary.video_seconds > 0) {
+    facts.push(t('{count} video sec', { count: formatUnits(summary.video_seconds) }));
+  }
+  if (summary.music_seconds > 0) {
+    facts.push(t('{count} music sec', { count: formatUnits(summary.music_seconds) }));
+  }
+  facts.push(t('{count} requests', { count: formatUnits(summary.request_count) }));
+  return facts.join(' / ');
+}
+
+function DashboardAnalyticsPanel({
+  actions,
+  children,
+  description,
+  title,
+}: {
+  actions?: ReactNode;
+  children: ReactNode;
+  description: string;
+  title: string;
+}) {
+  return (
+    <WorkspacePanel actions={actions} description={description} title={title}>
+      {children}
+    </WorkspacePanel>
+  );
 }
 
 function actionTone(index: number): 'primary' | 'secondary' | 'ghost' {
@@ -108,27 +228,35 @@ function actionTone(index: number): 'primary' | 'secondary' | 'ghost' {
   return 'ghost';
 }
 
-function requestPosture(requestAmount: number, averageAmount: number): {
-  label: string;
-  tone: DashboardTone;
+function renderStatusBadge(status: string, statusVariant: DashboardStatusVariant) {
+  return <StatusBadge showIcon={false} status={status} variant={statusVariant} />;
+}
+
+function requestPosture(
+  requestAmount: number,
+  averageAmount: number,
+  t: TranslateFn,
+): {
+  status_label: string;
+  status_variant: DashboardStatusVariant;
 } {
   if (requestAmount >= averageAmount * 1.35 && averageAmount > 0) {
     return {
-      label: 'High spend',
-      tone: 'accent',
+      status_label: t('High spend'),
+      status_variant: 'warning',
     };
   }
 
   if (requestAmount > 0) {
     return {
-      label: 'Tracked',
-      tone: 'positive',
+      status_label: t('Tracked'),
+      status_variant: 'success',
     };
   }
 
   return {
-    label: 'Pending',
-    tone: 'default',
+    status_label: t('Pending'),
+    status_variant: 'default',
   };
 }
 
@@ -152,6 +280,7 @@ export function PortalDashboardPage({
   onNavigate,
   initialSnapshot,
 }: PortalDashboardPageProps) {
+  const { t } = usePortalI18n();
   const [activeWorkbenchTab, setActiveWorkbenchTab] =
     useState<WorkbenchTab>('requests');
   const [requestFilter, setRequestFilter] = useState<RequestFilter>('all');
@@ -160,8 +289,8 @@ export function PortalDashboardPage({
   );
   const [status, setStatus] = useState(
     initialSnapshot
-      ? 'Refreshing routing and activity data for the current workspace.'
-      : 'Loading your workspace overview.',
+      ? t('Refreshing routing and activity data for the current workspace.')
+      : t('Loading your workspace overview.'),
   );
   const [isLoading, setIsLoading] = useState(!initialSnapshot);
   const [error, setError] = useState<string | null>(null);
@@ -183,10 +312,13 @@ export function PortalDashboardPage({
             snapshotBundle.routing_summary,
             snapshotBundle.routing_logs,
             snapshotBundle.usage_records,
+            snapshotBundle.membership,
+            Date.now(),
+            snapshotBundle.billing_event_summary,
           ),
         );
         setError(null);
-        setStatus('Live traffic, routing, and spend telemetry are up to date.');
+        setStatus(t('Live traffic, routing, and spend telemetry are up to date.'));
       })
       .catch((nextError) => {
         if (cancelled) {
@@ -206,10 +338,9 @@ export function PortalDashboardPage({
     return () => {
       cancelled = true;
     };
-  }, [initialSnapshot]);
+  }, [initialSnapshot, t]);
 
   const snapshot = viewModel?.snapshot ?? initialSnapshot ?? null;
-  const trafficHeadline = viewModel ? buildTrafficHeadline(viewModel) : null;
   const routingEvidence = useMemo(
     () => (viewModel?.activity_feed ?? []).filter((item) => item.route === 'routing'),
     [viewModel],
@@ -246,16 +377,56 @@ export function PortalDashboardPage({
     return rows;
   }, [requestAverageAmount, requestFilter, snapshot]);
   const actionCards = useMemo(() => buildActionCards(viewModel), [viewModel]);
+  const balanceSummary = useMemo(() => {
+    if (viewModel) {
+      return viewModel.balance;
+    }
+
+    if (!snapshot) {
+      return {
+        remaining_units: null,
+        quota_limit_units: null,
+        used_units: 0,
+        utilization_ratio: null,
+      };
+    }
+
+    const quotaLimitUnits = snapshot.billing_summary.quota_limit_units ?? null;
+    const usedUnits = snapshot.billing_summary.used_units;
+
+    return {
+      remaining_units: snapshot.billing_summary.remaining_units ?? null,
+      quota_limit_units: quotaLimitUnits,
+      used_units: usedUnits,
+      utilization_ratio:
+        quotaLimitUnits && quotaLimitUnits > 0
+          ? Math.min(1, Math.max(0, usedUnits / quotaLimitUnits))
+          : null,
+    };
+  }, [snapshot, viewModel]);
+  const totals = viewModel?.totals ?? {
+    ...EMPTY_METRIC_SUMMARY,
+    revenue: snapshot?.billing_summary.booked_amount ?? 0,
+    request_count: snapshot?.usage_summary.total_requests ?? 0,
+    used_units: snapshot?.billing_summary.used_units ?? 0,
+    average_booked_spend:
+      snapshot && (snapshot.usage_summary.total_requests ?? 0) > 0
+        ? (snapshot.billing_summary.booked_amount ?? 0) / snapshot.usage_summary.total_requests
+        : 0,
+  };
+  const todaySummary = viewModel?.today ?? EMPTY_METRIC_SUMMARY;
+  const trailing7dSummary = viewModel?.trailing_7d ?? EMPTY_METRIC_SUMMARY;
+  const currentMonthSummary = viewModel?.current_month ?? EMPTY_METRIC_SUMMARY;
   const workbenchConfig = useMemo<DashboardWorkbenchConfig>(() => {
     if (activeWorkbenchTab === 'routing') {
       return {
-        primaryLabel: 'Signal',
-        secondaryLabel: 'Timeline',
-        detailLabel: 'Detail',
-        statusLabel: 'Status',
-        actionLabel: 'Action',
-        emptyTitle: 'Preparing routing evidence',
-        emptyDetail: 'Routing evidence will appear once project routing data becomes available.',
+        primaryLabel: t('Signal'),
+        secondaryLabel: t('Timeline'),
+        detailLabel: t('Detail'),
+        statusLabel: t('Status'),
+        actionLabel: t('Action'),
+        emptyTitle: t('Preparing routing evidence'),
+        emptyDetail: t('Routing evidence will appear once project routing data becomes available.'),
         rows: routingEvidence.map((row) => ({
           id: row.id,
           primary: (
@@ -263,12 +434,12 @@ export function PortalDashboardPage({
           ),
           secondary: row.timestamp_label,
           detail: row.detail,
-          status: <DashboardStatusPill label={row.title} tone={row.tone} />,
+          status: renderStatusBadge(row.status_label, row.status_variant),
           action:
             row.route && row.action_label ? (
-              <InlineButton onClick={() => onNavigate(row.route!)} tone="ghost">
+              <Button onClick={() => onNavigate(row.route!)} variant="ghost">
                 {row.action_label}
-              </InlineButton>
+              </Button>
             ) : (
               '-'
             ),
@@ -278,13 +449,13 @@ export function PortalDashboardPage({
 
     if (activeWorkbenchTab === 'modules') {
       return {
-        primaryLabel: 'Module',
-        secondaryLabel: 'Status detail',
-        detailLabel: 'Operational detail',
-        statusLabel: 'Status',
-        actionLabel: 'Action',
-        emptyTitle: 'Preparing module posture',
-        emptyDetail: 'Module posture will appear after the dashboard finishes loading.',
+        primaryLabel: t('Module'),
+        secondaryLabel: t('Status detail'),
+        detailLabel: t('Operational detail'),
+        statusLabel: t('Status'),
+        actionLabel: t('Action'),
+        emptyTitle: t('Preparing module posture'),
+        emptyDetail: t('Module posture will appear after the dashboard finishes loading.'),
         rows: (viewModel?.modules ?? []).map((row) => ({
           id: row.route,
           primary: (
@@ -292,11 +463,11 @@ export function PortalDashboardPage({
           ),
           secondary: row.status_label,
           detail: row.detail,
-          status: <DashboardStatusPill label={row.status_label} tone={row.tone} />,
+          status: renderStatusBadge(row.status_label, row.status_variant),
           action: (
-            <InlineButton onClick={() => onNavigate(row.route)} tone="ghost">
+            <Button onClick={() => onNavigate(row.route)} variant="ghost">
               {row.action_label}
-            </InlineButton>
+            </Button>
           ),
         })),
       };
@@ -304,26 +475,26 @@ export function PortalDashboardPage({
 
     if (activeWorkbenchTab === 'actions') {
       return {
-        primaryLabel: 'Next action',
-        secondaryLabel: 'Priority',
-        detailLabel: 'Action detail',
-        statusLabel: 'Status',
-        actionLabel: 'Action',
-        emptyTitle: 'Preparing next actions',
-        emptyDetail: 'Next actions will appear when workspace data finishes loading.',
+        primaryLabel: t('Next action'),
+        secondaryLabel: t('Priority'),
+        detailLabel: t('Action detail'),
+        statusLabel: t('Status'),
+        actionLabel: t('Action'),
+        emptyTitle: t('Preparing next actions'),
+        emptyDetail: t('Next actions will appear when workspace data finishes loading.'),
         rows: actionCards.map((item, index) => ({
           id: item.id,
           primary: (
             <span className="font-semibold text-zinc-950 dark:text-zinc-50">{item.title}</span>
           ),
-          secondary: `Priority ${index + 1}`,
+          secondary: t('Priority #{priority}', { priority: index + 1 }),
           detail: item.detail,
-          status: <DashboardStatusPill label={item.title} tone={item.tone} />,
+          status: renderStatusBadge(item.status_label, item.status_variant),
           action:
             item.route && item.action_label ? (
-              <InlineButton onClick={() => onNavigate(item.route!)} tone={actionTone(index)}>
+              <Button onClick={() => onNavigate(item.route!)} variant={actionTone(index)}>
                 {item.action_label}
-              </InlineButton>
+              </Button>
             ) : (
               '-'
             ),
@@ -332,16 +503,17 @@ export function PortalDashboardPage({
     }
 
     return {
-      primaryLabel: 'Request',
-      secondaryLabel: 'Provider',
-      detailLabel: 'Token detail',
-      statusLabel: 'Request posture',
-      actionLabel: 'Booked spend',
-      emptyTitle: 'No recent requests yet',
-      emptyDetail:
+      primaryLabel: t('Request'),
+      secondaryLabel: t('Provider'),
+      detailLabel: t('Token detail'),
+      statusLabel: t('Request posture'),
+      actionLabel: t('Booked spend'),
+      emptyTitle: t('No recent requests yet'),
+      emptyDetail: t(
         'Once gateway requests start flowing through your project, token usage and booked amount will appear here.',
+      ),
       rows: requestRows.map((row) => {
-        const posture = requestPosture(row.amount, requestAverageAmount);
+        const posture = requestPosture(row.amount, requestAverageAmount, t);
 
         return {
           id: `${row.project_id}-${row.model}-${row.created_at_ms}`,
@@ -354,8 +526,12 @@ export function PortalDashboardPage({
             </div>
           ),
           secondary: row.provider,
-          detail: `${formatUnits(row.input_tokens)} in / ${formatUnits(row.output_tokens)} out / ${formatUnits(row.total_tokens)} total`,
-          status: <DashboardStatusPill label={posture.label} tone={posture.tone} />,
+          detail: t('{input} in / {output} out / {total} total', {
+            input: formatUnits(row.input_tokens),
+            output: formatUnits(row.output_tokens),
+            total: formatUnits(row.total_tokens),
+          }),
+          status: renderStatusBadge(posture.status_label, posture.status_variant),
           action: (
             <span className="font-semibold text-zinc-950 dark:text-zinc-50">
               {formatCurrency(row.amount)}
@@ -371,8 +547,71 @@ export function PortalDashboardPage({
     requestAverageAmount,
     requestRows,
     routingEvidence,
+    t,
     viewModel,
   ]);
+  const routingPosture = viewModel?.routing_posture ?? null;
+  const requestFilterLabel =
+    requestFilter === 'all'
+      ? t('All requests')
+      : requestFilter === 'high_spend'
+        ? t('High spend')
+        : t('Latest first');
+  const workbenchTabs = [
+    { id: 'requests' as const, label: t('Recent requests') },
+    { id: 'routing' as const, label: t('Routing evidence') },
+    { id: 'modules' as const, label: t('Module posture') },
+    { id: 'actions' as const, label: t('Next actions') },
+  ];
+  const requestFilterOptions = [
+    { id: 'all' as const, label: t('All requests') },
+    { id: 'high_spend' as const, label: t('High spend') },
+    { id: 'latest' as const, label: t('Latest first') },
+  ];
+  const workbenchTitle =
+    activeWorkbenchTab === 'routing'
+      ? t('Routing evidence')
+      : activeWorkbenchTab === 'modules'
+        ? t('Module posture')
+        : activeWorkbenchTab === 'actions'
+          ? t('Next actions')
+          : t('Recent requests');
+  const workbenchDescription =
+    activeWorkbenchTab === 'routing'
+      ? t('Review routing decisions, latest evidence, and the current provider strategy in one shared workbench.')
+      : activeWorkbenchTab === 'modules'
+        ? t('Compare module readiness and jump directly into the surface that needs attention.')
+        : activeWorkbenchTab === 'actions'
+          ? t('Promote the next operational actions from live traffic, billing, and routing signals.')
+          : t('Inspect request flow, token usage, and booked spend without leaving the dashboard.');
+  const balanceStatusLabel = snapshot?.billing_summary.exhausted ? t('Exhausted') : t('Healthy');
+  const quotaRatio = balanceSummary.utilization_ratio === null
+    ? null
+    : clampPercentage(balanceSummary.utilization_ratio * 100);
+  const balanceBreakdowns = buildMetricBreakdowns(
+    t,
+    formatUnits(todaySummary.used_units),
+    formatUnits(trailing7dSummary.used_units),
+    formatUnits(currentMonthSummary.used_units),
+  );
+  const revenueBreakdowns = buildMetricBreakdowns(
+    t,
+    formatCurrency(todaySummary.revenue),
+    formatCurrency(trailing7dSummary.revenue),
+    formatCurrency(currentMonthSummary.revenue),
+  );
+  const requestBreakdowns = buildMetricBreakdowns(
+    t,
+    formatUnits(todaySummary.request_count),
+    formatUnits(trailing7dSummary.request_count),
+    formatUnits(currentMonthSummary.request_count),
+  );
+  const averageSpendBreakdowns = buildMetricBreakdowns(
+    t,
+    formatAverageSpend(todaySummary.average_booked_spend, todaySummary.request_count, t),
+    formatAverageSpend(trailing7dSummary.average_booked_spend, trailing7dSummary.request_count, t),
+    formatAverageSpend(currentMonthSummary.average_booked_spend, currentMonthSummary.request_count, t),
+  );
 
   if (error && !snapshot) {
     return (
@@ -382,7 +621,7 @@ export function PortalDashboardPage({
             <Activity className="h-6 w-6" />
           </div>
           <h1 className="mt-5 text-2xl font-semibold tracking-tight text-zinc-950 dark:text-zinc-50">
-            Dashboard could not be prepared
+            {t('Dashboard could not be prepared')}
           </h1>
           <p className="mt-3 text-sm leading-6 text-zinc-500 dark:text-zinc-400">
             {error}
@@ -396,198 +635,157 @@ export function PortalDashboardPage({
     <div className="relative h-full overflow-y-auto">
       <div className="min-h-full px-4 py-5 sm:px-6 lg:px-8 xl:px-10">
         <div className="w-full space-y-6 xl:space-y-8">
-          <div className="grid gap-4 xl:grid-cols-3">
-            <DashboardSummaryCard
-              accent={<Activity className="h-5 w-5 text-primary-500" />}
-              changeLabel={
-                snapshot?.usage_summary.total_requests
-                  ? `${formatUnits(snapshot.usage_summary.total_requests)} visible requests`
-                  : 'Awaiting live traffic'
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <DashboardBalanceCard
+              balanceValue={
+                balanceSummary.remaining_units === null
+                  ? t('Unlimited')
+                  : formatUnits(balanceSummary.remaining_units)
               }
-              description="Live request demand, provider spread, and model activity mapped onto the same claw-style summary surface."
-              eyebrow="Telemetry"
-              title="Traffic posture"
-            >
-              <div className="grid gap-4">
-                <div className="rounded-[1.5rem] bg-primary-500/[0.08] p-4">
-                  <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary-700 dark:text-primary-200">
-                    Visible requests
-                  </div>
-                  <div className="mt-2 text-3xl font-semibold tracking-tight text-zinc-950 dark:text-zinc-50">
-                    {formatUnits(snapshot?.usage_summary.total_requests ?? 0)}
-                  </div>
-                  <div className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">
-                    {trafficHeadline?.detail ??
-                      'The first request unlocks trend and distribution signals.'}
-                  </div>
-                </div>
-                <div className="grid gap-3 md:grid-cols-3">
-                  <div className="rounded-[1.4rem] bg-zinc-950/[0.03] p-4 dark:bg-white/[0.04]">
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
-                      Providers
-                    </div>
-                    <div className="mt-2 text-lg font-semibold text-zinc-950 dark:text-zinc-50">
-                      {formatUnits(snapshot?.usage_summary.provider_count ?? 0)}
-                    </div>
-                  </div>
-                  <div className="rounded-[1.4rem] bg-zinc-950/[0.03] p-4 dark:bg-white/[0.04]">
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
-                      Models
-                    </div>
-                    <div className="mt-2 text-lg font-semibold text-zinc-950 dark:text-zinc-50">
-                      {formatUnits(snapshot?.usage_summary.model_count ?? 0)}
-                    </div>
-                  </div>
-                  <div className="rounded-[1.4rem] bg-zinc-950/[0.03] p-4 dark:bg-white/[0.04]">
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
-                      Token units
-                    </div>
-                    <div className="mt-2 text-lg font-semibold text-zinc-950 dark:text-zinc-50">
-                      {formatUnits(snapshot?.billing_summary.used_units ?? 0)}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </DashboardSummaryCard>
-
-            <DashboardSummaryCard
-              accent={<Coins className="h-5 w-5 text-emerald-500" />}
-              changeLabel={
-                snapshot?.billing_summary.exhausted ? 'Action required' : 'Spend visible'
+              description={t('Available workspace balance before the visible quota guardrail is reached.')}
+              onRecharge={() => onNavigate('recharge')}
+              onRedeem={() => onNavigate('credits')}
+              planValue={viewModel?.membership?.plan_name ?? t('No membership')}
+              quotaLimitValue={
+                balanceSummary.quota_limit_units === null
+                  ? t('Unlimited')
+                  : formatUnits(balanceSummary.quota_limit_units)
               }
-              description="Booked spend, remaining runway, and quota pressure stay visible without leaving the dashboard workbench."
-              eyebrow="Billing"
-              title="Cost and quota"
-            >
-              <div className="grid gap-4">
-                <div className="rounded-[1.5rem] bg-emerald-500/[0.08] p-4">
-                  <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-700 dark:text-emerald-200">
-                    Booked spend
-                  </div>
-                  <div className="mt-2 text-3xl font-semibold tracking-tight text-zinc-950 dark:text-zinc-50">
-                    {formatCurrency(snapshot?.billing_summary.booked_amount ?? 0)}
-                  </div>
-                  <div className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">
-                    {snapshot?.billing_summary.exhausted
-                      ? 'Quota is exhausted and recovery is the next required action.'
-                      : 'Booked spend updates in sync with recent request activity.'}
-                  </div>
-                </div>
-                <div className="grid gap-3 md:grid-cols-3">
-                  <div className="rounded-[1.4rem] bg-zinc-950/[0.03] p-4 dark:bg-white/[0.04]">
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
-                      Remaining units
-                    </div>
-                    <div className="mt-2 text-lg font-semibold text-zinc-950 dark:text-zinc-50">
-                      {snapshot?.billing_summary.remaining_units === null
-                        ? 'Unlimited'
-                        : formatUnits(snapshot?.billing_summary.remaining_units ?? 0)}
-                    </div>
-                  </div>
-                  <div className="rounded-[1.4rem] bg-zinc-950/[0.03] p-4 dark:bg-white/[0.04]">
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
-                      Ledger entries
-                    </div>
-                    <div className="mt-2 text-lg font-semibold text-zinc-950 dark:text-zinc-50">
-                      {formatUnits(snapshot?.billing_summary.entry_count ?? 0)}
-                    </div>
-                  </div>
-                  <div className="rounded-[1.4rem] bg-zinc-950/[0.03] p-4 dark:bg-white/[0.04]">
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
-                      Key inventory
-                    </div>
-                    <div className="mt-2 text-lg font-semibold text-zinc-950 dark:text-zinc-50">
-                      {formatUnits(snapshot?.api_key_count ?? 0)}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </DashboardSummaryCard>
-
-            <DashboardSummaryCard
-              accent={<KeyRound className="h-5 w-5 text-amber-500" />}
-              changeLabel={viewModel?.routing_posture?.title ?? 'Checking readiness'}
-              description="Route selection, evidence coverage, and workspace access posture are summarized in the same family as claw-studio."
-              eyebrow="Workspace"
-              title="Workspace readiness"
-            >
-              <div className="grid gap-4">
-                <div className="rounded-[1.5rem] bg-amber-500/[0.08] p-4">
-                  <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-700 dark:text-amber-200">
-                    Active workspace
-                  </div>
-                  <div className="mt-2 text-2xl font-semibold tracking-tight text-zinc-950 dark:text-zinc-50">
-                    {snapshot?.workspace.project.name ?? 'Preparing workspace'}
-                  </div>
-                  <div className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">
-                    {snapshot?.workspace.user.active
-                      ? 'Operator session is active.'
-                      : 'Workspace identity is still loading.'}
-                  </div>
-                </div>
-                <div className="grid gap-3 md:grid-cols-3">
-                  <div className="rounded-[1.4rem] bg-zinc-950/[0.03] p-4 dark:bg-white/[0.04]">
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
-                      Default route
-                    </div>
-                    <div className="mt-2 text-lg font-semibold text-zinc-950 dark:text-zinc-50">
-                      {viewModel?.routing_posture?.selected_provider ?? 'Pending'}
-                    </div>
-                  </div>
-                  <div className="rounded-[1.4rem] bg-zinc-950/[0.03] p-4 dark:bg-white/[0.04]">
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
-                      Evidence count
-                    </div>
-                    <div className="mt-2 text-lg font-semibold text-zinc-950 dark:text-zinc-50">
-                      {viewModel?.routing_posture?.evidence_count ?? '0'}
-                    </div>
-                  </div>
-                  <div className="rounded-[1.4rem] bg-zinc-950/[0.03] p-4 dark:bg-white/[0.04]">
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
-                      Preferred region
-                    </div>
-                    <div className="mt-2 text-lg font-semibold text-zinc-950 dark:text-zinc-50">
-                      {viewModel?.routing_posture?.preferred_region ?? 'Global'}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </DashboardSummaryCard>
+              statusLabel={balanceStatusLabel}
+              usedBreakdowns={balanceBreakdowns}
+              usedUnitsValue={formatUnits(balanceSummary.used_units)}
+              utilizationPercent={quotaRatio}
+            />
+            <DashboardMetricCard
+              breakdowns={revenueBreakdowns}
+              description={t('Booked revenue stays aligned with the latest routed demand across the same operating window.')}
+              label={t('Revenue')}
+              value={formatCurrency(totals.revenue)}
+            />
+            <DashboardMetricCard
+              breakdowns={requestBreakdowns}
+              description={t('Request volume keeps the live demand rhythm visible for today, the trailing week, and the current month.')}
+              label={t('Total requests')}
+              value={formatUnits(totals.request_count)}
+            />
+            <DashboardMetricCard
+              breakdowns={averageSpendBreakdowns}
+              description={t('Average booked spend shows current request efficiency without leaving the dashboard overview.')}
+              label={t('Average booked spend')}
+              value={formatAverageSpend(totals.average_booked_spend, totals.request_count, t)}
+            />
           </div>
 
-          <div className="grid gap-6 xl:grid-cols-[1.35fr_0.95fr]">
-            <section className={surfaceClass}>
-              <DashboardSectionHeader
-                eyebrow="Billing"
-                title="Spend trend"
-                description="Booked amount now follows the same claw-style trend surface used for revenue in claw-studio."
-                action={
-                  <div className="inline-flex rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-emerald-700 dark:text-emerald-200">
-                    {snapshot
-                      ? `${formatCurrency(snapshot.billing_summary.booked_amount)} booked`
-                      : 'Awaiting spend'}
-                  </div>
-                }
-              />
-              <div className="mt-6">
-                <DashboardRevenueTrendChart
-                  points={viewModel?.spend_trend_points ?? []}
-                  title="Spend trend"
-                  summaryLabel="Visible requests"
-                  summaryValue={formatUnits(snapshot?.usage_summary.total_requests ?? 0)}
-                  peakLabel="Peak spend"
-                  yAxisFormatter={formatCurrency}
-                />
+          <DashboardAnalyticsPanel
+            description={t('Commercial highlights bring accounting mode mix, top capability demand, and multimodal workload shape into the workspace overview.')}
+            title={t('Commercial highlights')}
+          >
+            <div
+              className="grid gap-4 xl:grid-cols-[1fr_1fr_1.15fr]"
+              data-slot="portal-dashboard-commercial-highlights"
+            >
+              <div className="rounded-3xl border border-zinc-200 bg-zinc-50/80 p-4 dark:border-zinc-800 dark:bg-zinc-900/60">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400">
+                  {t('Leading accounting mode')}
+                </span>
+                <strong className="mt-2 block text-xl font-semibold text-zinc-950 dark:text-zinc-50">
+                  {accountingModeLabel(viewModel?.commercial_highlights.leading_accounting_mode?.accounting_mode ?? null, t)}
+                </strong>
+                <p className="mt-2 text-sm leading-6 text-zinc-500 dark:text-zinc-400">
+                  {accountingModeDetail(viewModel?.commercial_highlights.leading_accounting_mode ?? null, t)}
+                </p>
+                <div className="mt-4 rounded-2xl border border-zinc-200 bg-white px-3 py-3 dark:border-zinc-800 dark:bg-zinc-950">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
+                    {t('Customer charge')}
+                  </span>
+                  <strong className="mt-2 block text-sm font-semibold text-zinc-950 dark:text-zinc-50">
+                    {formatCurrency(viewModel?.commercial_highlights.leading_accounting_mode?.total_customer_charge ?? 0)}
+                  </strong>
+                </div>
               </div>
-            </section>
 
-            <section className={surfaceClass}>
-              <DashboardSectionHeader
-                eyebrow="Telemetry"
-                title="Provider distribution"
-                description="Provider share is rendered with the same distribution ring and evidence table rhythm as claw-studio."
+              <div className="rounded-3xl border border-zinc-200 bg-zinc-50/80 p-4 dark:border-zinc-800 dark:bg-zinc-900/60">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400">
+                  {t('Leading capability')}
+                </span>
+                <strong className="mt-2 block text-xl font-semibold text-zinc-950 dark:text-zinc-50">
+                  {capabilityLabel(viewModel?.commercial_highlights.leading_capability?.capability ?? null, t)}
+                </strong>
+                <p className="mt-2 text-sm leading-6 text-zinc-500 dark:text-zinc-400">
+                  {capabilityDetail(viewModel?.commercial_highlights.leading_capability ?? null, t)}
+                </p>
+                <div className="mt-4 rounded-2xl border border-zinc-200 bg-white px-3 py-3 dark:border-zinc-800 dark:bg-zinc-950">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
+                    {t('Customer charge')}
+                  </span>
+                  <strong className="mt-2 block text-sm font-semibold text-zinc-950 dark:text-zinc-50">
+                    {formatCurrency(viewModel?.commercial_highlights.leading_capability?.total_customer_charge ?? 0)}
+                  </strong>
+                </div>
+              </div>
+
+              <div className="rounded-3xl border border-zinc-200 bg-zinc-50/80 p-4 dark:border-zinc-800 dark:bg-zinc-900/60">
+                <div className="space-y-1">
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400">
+                    {t('Multimodal demand')}
+                  </span>
+                  <p className="text-sm leading-6 text-zinc-500 dark:text-zinc-400">
+                    {t('Multimodal demand keeps image, audio, video, and music traffic visible inside the workspace overview.')}
+                  </p>
+                </div>
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  {[
+                    { label: t('Images'), value: formatUnits(viewModel?.commercial_highlights.multimodal_totals.image_count ?? 0) },
+                    { label: t('Audio'), value: formatUnits(viewModel?.commercial_highlights.multimodal_totals.audio_seconds ?? 0) },
+                    { label: t('Video'), value: formatUnits(viewModel?.commercial_highlights.multimodal_totals.video_seconds ?? 0) },
+                    { label: t('Music'), value: formatUnits(viewModel?.commercial_highlights.multimodal_totals.music_seconds ?? 0) },
+                  ].map((item) => (
+                    <div
+                      className="rounded-2xl border border-zinc-200 bg-white px-3 py-3 dark:border-zinc-800 dark:bg-zinc-950"
+                      key={item.label}
+                    >
+                      <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
+                        {item.label}
+                      </span>
+                      <strong className="mt-2 block text-sm font-semibold text-zinc-950 dark:text-zinc-50">
+                        {item.value}
+                      </strong>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </DashboardAnalyticsPanel>
+
+          <div className="grid gap-6 xl:grid-cols-[1.35fr_0.95fr]">
+            <DashboardAnalyticsPanel
+              actions={(
+                <div className="inline-flex rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-emerald-700 dark:text-emerald-200">
+                  {snapshot
+                    ? t('{amount} booked', {
+                      amount: formatCurrency(snapshot.billing_summary.booked_amount),
+                    })
+                    : t('Awaiting spend')}
+                </div>
+              )}
+              description={t('Booked amount now follows the shared workspace panel pattern while preserving the existing spend trend telemetry.')}
+              title={t('Spend trend')}
+            >
+              <DashboardRevenueTrendChart
+                points={viewModel?.spend_trend_points ?? []}
+                title={t('Spend trend')}
+                summaryLabel={t('Visible requests')}
+                summaryValue={formatUnits(snapshot?.usage_summary.total_requests ?? 0)}
+                peakLabel={t('Peak spend')}
+                yAxisFormatter={formatCurrency}
               />
-              <div className="mt-6 grid gap-5 2xl:grid-cols-[minmax(320px,0.88fr)_1.12fr]">
+            </DashboardAnalyticsPanel>
+
+            <DashboardAnalyticsPanel
+              description={t('Provider share is rendered with the same distribution ring and evidence table rhythm as the shared workspace system.')}
+              title={t('Provider distribution')}
+            >
+              <div className="grid gap-5 2xl:grid-cols-[minmax(320px,0.88fr)_1.12fr]">
                 {viewModel?.provider_share_series.length ? (
                   <DashboardDistributionRingChart
                     rows={viewModel.provider_share_series.map((row) => ({
@@ -595,24 +793,24 @@ export function PortalDashboardPage({
                       ...row,
                     }))}
                     sliceClassNames={chartPalette.map((item) => item.sliceClassName)}
-                    centerLabel="Requests"
+                    centerLabel={t('Requests')}
                     centerValue={formatUnits(snapshot?.usage_summary.total_requests ?? 0)}
-                    ariaLabel="Provider distribution"
+                    ariaLabel={t('Provider distribution')}
                     valueAccessor={(row) => row.value}
                   />
                 ) : (
                   <EmptyState
-                    detail="Provider share appears after the first request passes through the gateway."
-                    title="No provider traffic yet"
+                    description={t('Provider share appears after the first request passes through the gateway.')}
+                    title={t('No provider traffic yet')}
                   />
                 )}
 
                 <DataTable
                   columns={[
                     {
-                      key: 'provider',
-                      label: 'Provider',
-                      render: (row) => {
+                      id: 'provider',
+                      header: t('Provider'),
+                      cell: (row) => {
                         const palette =
                           chartPalette[
                             (viewModel?.provider_mix.findIndex((item) => item.id === row.id) ?? 0)
@@ -629,77 +827,73 @@ export function PortalDashboardPage({
                         );
                       },
                     },
-                    { key: 'requests', label: 'Requests', render: (row) => row.value_label },
-                    { key: 'projects', label: 'Projects', render: (row) => row.secondary_label },
-                    { key: 'share', label: 'Share', render: (row) => `${row.share}%` },
+                    { id: 'requests', header: t('Requests'), cell: (row) => row.value_label },
+                    { id: 'projects', header: t('Projects'), cell: (row) => row.secondary_label },
+                    { id: 'share', header: t('Share'), cell: (row) => `${row.share}%` },
                   ]}
-                  empty={(
+                  emptyState={(
                     <div className="mx-auto flex max-w-[28rem] flex-col items-center gap-2 text-center">
                       <strong className="text-base font-semibold text-zinc-950 dark:text-zinc-50">
-                        No provider traffic yet
+                        {t('No provider traffic yet')}
                       </strong>
                       <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                        Provider share appears after the first request passes through the gateway.
+                        {t('Provider share appears after the first request passes through the gateway.')}
                       </p>
                     </div>
                   )}
-                  getKey={(row) => row.id}
+                  getRowId={(row) => row.id}
                   rows={viewModel?.provider_mix ?? []}
                 />
               </div>
-            </section>
+            </DashboardAnalyticsPanel>
           </div>
           <div className="grid gap-6 xl:grid-cols-[1.35fr_0.95fr]">
-            <section className={surfaceClass}>
-              <DashboardSectionHeader
-                eyebrow="Telemetry"
-                title="Traffic trend"
-                description="Traffic trend now follows the multi-series claw token-intelligence surface, using Portal token telemetry instead of studio run usage."
-                action={
-                  <div className="inline-flex rounded-full border border-primary-500/20 bg-primary-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-primary-700 dark:text-primary-200">
-                    {snapshot
-                      ? `${formatUnits(snapshot.usage_summary.total_requests)} visible requests`
-                      : 'Awaiting traffic'}
-                  </div>
-                }
+            <DashboardAnalyticsPanel
+              actions={(
+                <div className="inline-flex rounded-full border border-primary-500/20 bg-primary-500/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-primary-700 dark:text-primary-200">
+                  {snapshot
+                    ? t('{count} visible requests', {
+                      count: formatUnits(snapshot.usage_summary.total_requests),
+                    })
+                    : t('Awaiting traffic')}
+                </div>
+              )}
+              description={t('Traffic trend now lives on a shared workspace panel while keeping the portal-specific multi-series token telemetry.')}
+              title={t('Traffic trend')}
+            >
+              <DashboardTokenTrendChart
+                points={viewModel?.traffic_trend_points ?? []}
+                title={t('Traffic trend')}
+                summary={t('Total, input, and output tokens stay visible in the same multi-series claw surface.')}
+                series={[
+                  {
+                    key: 'total_tokens',
+                    label: t('Total tokens'),
+                    dotClassName: 'bg-primary-500',
+                    strokeClassName: 'text-primary-500',
+                  },
+                  {
+                    key: 'input_tokens',
+                    label: t('Input tokens'),
+                    dotClassName: 'bg-sky-500',
+                    strokeClassName: 'text-sky-500',
+                  },
+                  {
+                    key: 'output_tokens',
+                    label: t('Output tokens'),
+                    dotClassName: 'bg-emerald-500',
+                    strokeClassName: 'text-emerald-500',
+                  },
+                ]}
+                yAxisFormatter={(value) => formatUnits(value)}
               />
-              <div className="mt-6">
-                <DashboardTokenTrendChart
-                  points={viewModel?.traffic_trend_points ?? []}
-                  title="Traffic trend"
-                  summary="Total, input, and output tokens stay visible in the same multi-series claw surface."
-                  series={[
-                    {
-                      key: 'total_tokens',
-                      label: 'Total tokens',
-                      dotClassName: 'bg-primary-500',
-                      strokeClassName: 'text-primary-500',
-                    },
-                    {
-                      key: 'input_tokens',
-                      label: 'Input tokens',
-                      dotClassName: 'bg-sky-500',
-                      strokeClassName: 'text-sky-500',
-                    },
-                    {
-                      key: 'output_tokens',
-                      label: 'Output tokens',
-                      dotClassName: 'bg-emerald-500',
-                      strokeClassName: 'text-emerald-500',
-                    },
-                  ]}
-                  yAxisFormatter={(value) => formatUnits(value)}
-                />
-              </div>
-            </section>
+            </DashboardAnalyticsPanel>
 
-            <section className={surfaceClass}>
-              <DashboardSectionHeader
-                eyebrow="Telemetry"
-                title="Model distribution"
-                description="Model demand adopts the same ring-chart-and-table pairing that claw-studio uses for model breakdown."
-              />
-              <div className="mt-6 grid gap-5 2xl:grid-cols-[minmax(320px,0.88fr)_1.12fr]">
+            <DashboardAnalyticsPanel
+              description={t('Model demand adopts the same ring-chart-and-table pairing that the shared workspace system uses for model breakdown.')}
+              title={t('Model distribution')}
+            >
+              <div className="grid gap-5 2xl:grid-cols-[minmax(320px,0.88fr)_1.12fr]">
                 {viewModel?.model_demand_series.length ? (
                   <DashboardModelDistributionChart
                     rows={viewModel.model_demand_series.map((row) => ({
@@ -707,24 +901,24 @@ export function PortalDashboardPage({
                       ...row,
                     }))}
                     sliceClassNames={chartPalette.map((item) => item.sliceClassName)}
-                    centerLabel="Models"
+                    centerLabel={t('Models')}
                     centerValue={formatUnits(snapshot?.usage_summary.model_count ?? 0)}
-                    ariaLabel="Model distribution"
+                    ariaLabel={t('Model distribution')}
                     valueAccessor={(row) => row.requests}
                   />
                 ) : (
                   <EmptyState
-                    detail="Model demand appears after the first request passes through the gateway."
-                    title="No model demand yet"
+                    description={t('Model demand appears after the first request passes through the gateway.')}
+                    title={t('No model demand yet')}
                   />
                 )}
 
                 <DataTable
                   columns={[
                     {
-                      key: 'model',
-                      label: 'Model',
-                      render: (row) => {
+                      id: 'model',
+                      header: t('Model'),
+                      cell: (row) => {
                         const palette =
                           chartPalette[
                             (viewModel?.model_mix.findIndex((item) => item.id === row.id) ?? 0)
@@ -741,185 +935,329 @@ export function PortalDashboardPage({
                         );
                       },
                     },
-                    { key: 'requests', label: 'Requests', render: (row) => row.value_label },
-                    { key: 'providers', label: 'Providers', render: (row) => row.secondary_label },
-                    { key: 'share', label: 'Share', render: (row) => `${row.share}%` },
+                    { id: 'requests', header: t('Requests'), cell: (row) => row.value_label },
+                    { id: 'providers', header: t('Providers'), cell: (row) => row.secondary_label },
+                    { id: 'share', header: t('Share'), cell: (row) => `${row.share}%` },
                   ]}
-                  empty={(
+                  emptyState={(
                     <div className="mx-auto flex max-w-[28rem] flex-col items-center gap-2 text-center">
                       <strong className="text-base font-semibold text-zinc-950 dark:text-zinc-50">
-                        No model demand yet
+                        {t('No model demand yet')}
                       </strong>
                       <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                        Model demand appears after the first request passes through the gateway.
+                        {t('Model demand appears after the first request passes through the gateway.')}
                       </p>
                     </div>
                   )}
-                  getKey={(row) => row.id}
+                  getRowId={(row) => row.id}
                   rows={viewModel?.model_mix ?? []}
                 />
               </div>
-            </section>
+            </DashboardAnalyticsPanel>
           </div>
-          <section className={surfaceClass}>
-            <DashboardSectionHeader
-              eyebrow="Activity workbench"
-              title="Analytics workbench"
-              description="A single claw-style workbench for requests, routing evidence, module posture, and next actions without leaving the right-side Portal canvas."
-            />
+          <ManagementWorkbench
+            actions={
+              activeWorkbenchTab === 'routing' && routingPosture ? (
+                <Button onClick={() => onNavigate('routing')} variant="ghost">
+                  {routingPosture.action_label}
+                </Button>
+              ) : undefined
+            }
+            description={t('A single shared workbench for requests, routing evidence, module posture, and next actions.')}
+            detail={{
+              children:
+                activeWorkbenchTab === 'routing' ? (
+                  routingPosture ? (
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div className="rounded-[1.4rem] border border-zinc-200/70 bg-zinc-50/70 p-4 dark:border-white/6 dark:bg-zinc-950/35">
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
+                          {t('Strategy')}
+                        </div>
+                        <div className="mt-2 text-lg font-semibold text-zinc-950 dark:text-zinc-50">
+                          {routingPosture.strategy_label}
+                        </div>
+                      </div>
+                      <div className="rounded-[1.4rem] border border-zinc-200/70 bg-zinc-50/70 p-4 dark:border-white/6 dark:bg-zinc-950/35">
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
+                          {t('Selected provider')}
+                        </div>
+                        <div className="mt-2 text-lg font-semibold text-zinc-950 dark:text-zinc-50">
+                          {routingPosture.selected_provider}
+                        </div>
+                      </div>
+                      <div className="rounded-[1.4rem] border border-zinc-200/70 bg-zinc-50/70 p-4 dark:border-white/6 dark:bg-zinc-950/35">
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
+                          {t('Preferred region')}
+                        </div>
+                        <div className="mt-2 text-lg font-semibold text-zinc-950 dark:text-zinc-50">
+                          {routingPosture.preferred_region}
+                        </div>
+                      </div>
+                      <div className="rounded-[1.4rem] border border-zinc-200/70 bg-zinc-50/70 p-4 dark:border-white/6 dark:bg-zinc-950/35">
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
+                          {t('Evidence count')}
+                        </div>
+                        <div className="mt-2 text-lg font-semibold text-zinc-950 dark:text-zinc-50">
+                          {routingPosture.evidence_count}
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <EmptyState
+                      description={t('Routing posture will appear once project routing data becomes available.')}
+                      title={t('Preparing routing evidence')}
+                    />
+                  )
+                ) : activeWorkbenchTab === 'modules' ? (
+                  viewModel?.modules.length ? (
+                    <div className="space-y-3">
+                      {viewModel.modules.slice(0, 4).map((module) => (
+                        <div
+                          key={module.route}
+                          className="rounded-[1.4rem] border border-zinc-200/70 bg-zinc-50/70 p-4 dark:border-white/6 dark:bg-zinc-950/35"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="font-semibold text-zinc-950 dark:text-zinc-50">
+                              {module.title}
+                            </div>
+                            {renderStatusBadge(module.status_label, module.status_variant)}
+                          </div>
+                          <p className="mt-3 text-sm leading-6 text-zinc-500 dark:text-zinc-400">
+                            {module.detail}
+                          </p>
+                          <div className="mt-3">
+                            <Button
+                              onClick={() => onNavigate(module.route)}
+                              variant="ghost"
+                            >
+                              {module.action_label}
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <EmptyState
+                      description={t('Module posture will appear after the dashboard finishes loading.')}
+                      title={t('Preparing module posture')}
+                    />
+                  )
+                ) : activeWorkbenchTab === 'actions' ? (
+                  actionCards.length ? (
+                    <div className="space-y-3">
+                      {actionCards.slice(0, 3).map((item, index) => (
+                        <div
+                          key={item.id}
+                          className="rounded-[1.4rem] border border-zinc-200/70 bg-zinc-50/70 p-4 dark:border-white/6 dark:bg-zinc-950/35"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="font-semibold text-zinc-950 dark:text-zinc-50">
+                              {item.title}
+                            </div>
+                            {renderStatusBadge(`P${index + 1}`, item.status_variant)}
+                          </div>
+                          <p className="mt-3 text-sm leading-6 text-zinc-500 dark:text-zinc-400">
+                            {item.detail}
+                          </p>
+                          {item.route && item.action_label ? (
+                            <div className="mt-3">
+                              <Button
+                                onClick={() => onNavigate(item.route!)}
+                                variant={actionTone(index)}
+                              >
+                                {item.action_label}
+                              </Button>
+                            </div>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <EmptyState
+                      description={t('Next actions will appear when workspace data finishes loading.')}
+                      title={t('Preparing next actions')}
+                    />
+                  )
+                ) : (
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="rounded-[1.4rem] border border-zinc-200/70 bg-zinc-50/70 p-4 dark:border-white/6 dark:bg-zinc-950/35">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
+                        {t('Visible rows')}
+                      </div>
+                      <div className="mt-2 text-lg font-semibold text-zinc-950 dark:text-zinc-50">
+                        {formatUnits(workbenchConfig.rows.length)}
+                      </div>
+                    </div>
+                    <div className="rounded-[1.4rem] border border-zinc-200/70 bg-zinc-50/70 p-4 dark:border-white/6 dark:bg-zinc-950/35">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
+                        {t('Average booked spend')}
+                      </div>
+                      <div className="mt-2 text-lg font-semibold text-zinc-950 dark:text-zinc-50">
+                        {formatCurrency(requestAverageAmount)}
+                      </div>
+                    </div>
+                    <div className="rounded-[1.4rem] border border-zinc-200/70 bg-zinc-50/70 p-4 dark:border-white/6 dark:bg-zinc-950/35">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
+                        {t('Active filter')}
+                      </div>
+                      <div className="mt-2 text-lg font-semibold text-zinc-950 dark:text-zinc-50">
+                        {requestFilterLabel}
+                      </div>
+                    </div>
+                    <div className="rounded-[1.4rem] border border-zinc-200/70 bg-zinc-50/70 p-4 dark:border-white/6 dark:bg-zinc-950/35">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
+                        {t('Visible requests')}
+                      </div>
+                      <div className="mt-2 text-lg font-semibold text-zinc-950 dark:text-zinc-50">
+                        {formatUnits(snapshot?.usage_summary.total_requests ?? 0)}
+                      </div>
+                    </div>
+                  </div>
+                ),
+              description:
+                activeWorkbenchTab === 'routing'
+                  ? routingPosture?.latest_reason ??
+                    t('Routing evidence will appear once routing data is available.')
+                  : activeWorkbenchTab === 'modules'
+                    ? t('Each portal module exposes its latest operational posture in the same shared inspector rail.')
+                    : activeWorkbenchTab === 'actions'
+                      ? t('The highest-leverage actions stay visible beside the workbench table.')
+                      : t('Request filters, spend posture, and token flow remain visible beside the workbench table.'),
+              eyebrow:
+                activeWorkbenchTab === 'routing'
+                  ? t('Routing posture')
+                  : activeWorkbenchTab === 'modules'
+                    ? t('Workspace signal')
+                    : activeWorkbenchTab === 'actions'
+                      ? t('Priority stack')
+                      : t('Request posture'),
+              summary:
+                activeWorkbenchTab === 'routing' && routingPosture ? (
+                  renderStatusBadge(
+                    routingPosture.status_label,
+                    routingPosture.status_variant,
+                  )
+                ) : activeWorkbenchTab === 'modules' ? (
+                  <span className="inline-flex items-center rounded-full border border-zinc-200/80 bg-white/90 px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-zinc-600 dark:border-white/8 dark:bg-zinc-950/45 dark:text-zinc-300">
+                    {t('{count} modules', { count: formatUnits(viewModel?.modules.length ?? 0) })}
+                  </span>
+                ) : activeWorkbenchTab === 'actions' ? (
+                  <span className="inline-flex items-center rounded-full border border-zinc-200/80 bg-white/90 px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-zinc-600 dark:border-white/8 dark:bg-zinc-950/45 dark:text-zinc-300">
+                    {t('{count} actions', { count: formatUnits(actionCards.length) })}
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center rounded-full border border-zinc-200/80 bg-white/90 px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-zinc-600 dark:border-white/8 dark:bg-zinc-950/45 dark:text-zinc-300">
+                    {requestFilterLabel}
+                  </span>
+                ),
+              title:
+                activeWorkbenchTab === 'routing'
+                  ? routingPosture?.title ?? t('Preparing routing evidence')
+                  : activeWorkbenchTab === 'modules'
+                    ? t('Module posture snapshot')
+                    : activeWorkbenchTab === 'actions'
+                      ? t('Next actions summary')
+                      : t('Request posture summary'),
+            }}
+            detailWidth={360}
+            eyebrow={t('Activity workbench')}
+            filters={(
+              <div className="space-y-4">
+                <div
+                  className="flex flex-wrap gap-2"
+                  data-slot="portal-dashboard-workbench-tabs"
+                >
+                  {workbenchTabs.map((tab) => {
+                    const isActive = activeWorkbenchTab === tab.id;
 
-            <div
-              className="mt-6 flex flex-wrap gap-2"
-              data-slot="portal-dashboard-workbench-tabs"
-            >
-              {[
-                { id: 'requests' as const, label: 'Recent requests' },
-                { id: 'routing' as const, label: 'Routing evidence' },
-                { id: 'modules' as const, label: 'Module posture' },
-                { id: 'actions' as const, label: 'Next actions' },
-              ].map((tab) => {
-                const isActive = activeWorkbenchTab === tab.id;
-
-                return (
-                  <Button
-                    key={tab.id}
-                    type="button"
-                    onClick={() => setActiveWorkbenchTab(tab.id)}
-                    className={`h-auto rounded-full px-4 py-2 text-sm font-semibold shadow-none transition-colors ${
-                      isActive
-                        ? 'bg-zinc-950 text-white dark:bg-zinc-100 dark:text-zinc-950'
-                        : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700'
-                    }`}
-                    variant="ghost"
-                  >
-                    {tab.label}
-                  </Button>
-                );
-              })}
-            </div>
-
-            <div className="mt-6 space-y-4">
-              {activeWorkbenchTab === 'requests' ? (
-                <div className="flex flex-wrap gap-2">
-                  {[
-                    { id: 'all' as const, label: 'All requests' },
-                  { id: 'high_spend' as const, label: 'High spend' },
-                  { id: 'latest' as const, label: 'Latest first' },
-                ].map((option) => (
-                    <Button
-                      key={option.id}
-                      type="button"
-                      onClick={() => setRequestFilter(option.id)}
-                      className={`h-auto rounded-full px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.14em] shadow-none transition-colors ${
-                        requestFilter === option.id
-                          ? 'bg-primary-500 text-white'
-                          : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700'
-                      }`}
-                      variant="ghost"
-                    >
-                      {option.label}
-                    </Button>
-                  ))}
+                    return (
+                      <Button
+                        key={tab.id}
+                        type="button"
+                        onClick={() => setActiveWorkbenchTab(tab.id)}
+                        className={`h-auto rounded-full px-4 py-2 text-sm font-semibold shadow-none transition-colors ${
+                          isActive
+                            ? 'bg-zinc-950 text-white dark:bg-zinc-100 dark:text-zinc-950'
+                            : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700'
+                        }`}
+                        variant="ghost"
+                      >
+                        {tab.label}
+                      </Button>
+                    );
+                  })}
                 </div>
-              ) : null}
 
-              {activeWorkbenchTab === 'routing' && viewModel?.routing_posture ? (
-                <>
-                  <div className="grid gap-4 lg:grid-cols-4">
-                    <div className="rounded-[1.5rem] border border-zinc-200/70 bg-zinc-50/70 p-5 dark:border-white/6 dark:bg-zinc-950/35">
-                      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
-                        Strategy
-                      </div>
-                      <div className="mt-2 text-lg font-semibold text-zinc-950 dark:text-zinc-50">
-                        {viewModel.routing_posture.strategy_label}
-                      </div>
-                    </div>
-                    <div className="rounded-[1.5rem] border border-zinc-200/70 bg-zinc-50/70 p-5 dark:border-white/6 dark:bg-zinc-950/35">
-                      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
-                        Selected provider
-                      </div>
-                      <div className="mt-2 text-lg font-semibold text-zinc-950 dark:text-zinc-50">
-                        {viewModel.routing_posture.selected_provider}
-                      </div>
-                    </div>
-                    <div className="rounded-[1.5rem] border border-zinc-200/70 bg-zinc-50/70 p-5 dark:border-white/6 dark:bg-zinc-950/35">
-                      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
-                        Preferred region
-                      </div>
-                      <div className="mt-2 text-lg font-semibold text-zinc-950 dark:text-zinc-50">
-                        {viewModel.routing_posture.preferred_region}
-                      </div>
-                    </div>
-                    <div className="rounded-[1.5rem] border border-zinc-200/70 bg-zinc-50/70 p-5 dark:border-white/6 dark:bg-zinc-950/35">
-                      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
-                        Evidence count
-                      </div>
-                      <div className="mt-2 text-lg font-semibold text-zinc-950 dark:text-zinc-50">
-                        {viewModel.routing_posture.evidence_count}
-                      </div>
-                    </div>
+                {activeWorkbenchTab === 'requests' ? (
+                  <div className="flex flex-wrap gap-2">
+                    {requestFilterOptions.map((option) => (
+                      <Button
+                        key={option.id}
+                        type="button"
+                        onClick={() => setRequestFilter(option.id)}
+                        className={`h-auto rounded-full px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.14em] shadow-none transition-colors ${
+                          requestFilter === option.id
+                            ? 'bg-primary-500 text-white'
+                            : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700'
+                        }`}
+                        variant="ghost"
+                      >
+                        {option.label}
+                      </Button>
+                    ))}
                   </div>
-
-                  <div className="rounded-[1.5rem] border border-zinc-200/70 bg-zinc-50/70 px-4 py-4 dark:border-white/6 dark:bg-zinc-950/35">
-                    <div className="flex items-center justify-between gap-3">
-                      <DashboardStatusPill
-                        label={viewModel.routing_posture.title}
-                        tone={viewModel.routing_posture.tone}
-                      />
-                      <InlineButton onClick={() => onNavigate('routing')} tone="ghost">
-                        {viewModel.routing_posture.action_label}
-                      </InlineButton>
+                ) : null}
+              </div>
+            )}
+            main={{
+              children: (
+                <DataTable
+                  columns={[
+                    {
+                      id: 'primary',
+                      header: workbenchConfig.primaryLabel,
+                      cell: (row) => row.primary,
+                    },
+                    {
+                      id: 'secondary',
+                      header: workbenchConfig.secondaryLabel,
+                      cell: (row) => row.secondary,
+                    },
+                    {
+                      id: 'detail',
+                      header: workbenchConfig.detailLabel,
+                      cell: (row) => row.detail,
+                    },
+                    {
+                      id: 'status',
+                      header: workbenchConfig.statusLabel,
+                      cell: (row) => row.status,
+                    },
+                    {
+                      id: 'action',
+                      header: workbenchConfig.actionLabel,
+                      cell: (row) => row.action,
+                    },
+                  ]}
+                  emptyState={(
+                    <div className="mx-auto flex max-w-[32rem] flex-col items-center gap-2 text-center">
+                      <strong className="text-base font-semibold text-zinc-950 dark:text-zinc-50">
+                        {workbenchConfig.emptyTitle}
+                      </strong>
+                      <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                        {workbenchConfig.emptyDetail}
+                      </p>
                     </div>
-                    <p className="mt-3 text-sm leading-6 text-zinc-500 dark:text-zinc-400">
-                      {viewModel.routing_posture.latest_reason}
-                    </p>
-                  </div>
-                </>
-              ) : null}
-
-              <DataTable
-                columns={[
-                  {
-                    key: 'primary',
-                    label: workbenchConfig.primaryLabel,
-                    render: (row) => row.primary,
-                  },
-                  {
-                    key: 'secondary',
-                    label: workbenchConfig.secondaryLabel,
-                    render: (row) => row.secondary,
-                  },
-                  {
-                    key: 'detail',
-                    label: workbenchConfig.detailLabel,
-                    render: (row) => row.detail,
-                  },
-                  {
-                    key: 'status',
-                    label: workbenchConfig.statusLabel,
-                    render: (row) => row.status,
-                  },
-                  {
-                    key: 'action',
-                    label: workbenchConfig.actionLabel,
-                    render: (row) => row.action,
-                  },
-                ]}
-                empty={(
-                  <div className="mx-auto flex max-w-[32rem] flex-col items-center gap-2 text-center">
-                    <strong className="text-base font-semibold text-zinc-950 dark:text-zinc-50">
-                      {workbenchConfig.emptyTitle}
-                    </strong>
-                    <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                      {workbenchConfig.emptyDetail}
-                    </p>
-                  </div>
-                )}
-                getKey={(row) => row.id}
-                rows={workbenchConfig.rows}
-              />
-            </div>
-          </section>
+                  )}
+                  getRowId={(row) => row.id}
+                  rows={workbenchConfig.rows}
+                />
+              ),
+              description: workbenchDescription,
+              title: workbenchTitle,
+            }}
+            title={t('Analytics workbench')}
+          />
 
           {error ? (
             <div className="flex items-center gap-3 rounded-[1.5rem] border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-200">
@@ -939,3 +1277,5 @@ export function PortalDashboardPage({
     </div>
   );
 }
+
+

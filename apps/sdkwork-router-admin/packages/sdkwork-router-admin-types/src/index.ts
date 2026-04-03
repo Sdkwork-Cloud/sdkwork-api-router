@@ -59,6 +59,49 @@ export interface AdminRouteDefinition {
   group?: string;
 }
 
+export type AdminRouteModuleId =
+  | 'sdkwork-router-admin-overview'
+  | 'sdkwork-router-admin-users'
+  | 'sdkwork-router-admin-tenants'
+  | 'sdkwork-router-admin-coupons'
+  | 'sdkwork-router-admin-apirouter'
+  | 'sdkwork-router-admin-catalog'
+  | 'sdkwork-router-admin-traffic'
+  | 'sdkwork-router-admin-operations'
+  | 'sdkwork-router-admin-settings';
+
+export interface AdminModuleLoadingPolicy {
+  strategy: 'lazy';
+  prefetch: 'none' | 'intent';
+  chunkGroup?: string;
+}
+
+export interface AdminModuleNavigationDescriptor {
+  group: string;
+  order: number;
+  sidebar: boolean;
+}
+
+export interface AdminProductModuleManifest {
+  moduleId: AdminRouteModuleId;
+  pluginId: AdminRouteModuleId;
+  pluginKind: 'admin-module';
+  packageName: AdminRouteModuleId;
+  displayName: string;
+  routeKeys: AdminRouteKey[];
+  capabilityTags: string[];
+  requiredPermissions: string[];
+  navigation: AdminModuleNavigationDescriptor;
+  loading: AdminModuleLoadingPolicy;
+}
+
+export interface AdminRouteManifestEntry extends AdminRouteDefinition {
+  path: string;
+  moduleId: AdminRouteModuleId;
+  prefetchGroup?: string;
+  productModule: AdminProductModuleManifest;
+}
+
 export interface ManagedUser {
   id: string;
   email: string;
@@ -118,6 +161,7 @@ export interface GatewayApiKeyRecord {
   project_id: string;
   environment: string;
   hashed_key: string;
+  api_key_group_id?: string | null;
   raw_key?: string | null;
   label: string;
   notes?: string | null;
@@ -125,6 +169,65 @@ export interface GatewayApiKeyRecord {
   last_used_at_ms?: number | null;
   expires_at_ms?: number | null;
   active: boolean;
+}
+
+export interface ApiKeyGroupRecord {
+  group_id: string;
+  tenant_id: string;
+  project_id: string;
+  environment: string;
+  name: string;
+  slug: string;
+  description?: string | null;
+  color?: string | null;
+  default_capability_scope?: string | null;
+  default_routing_profile_id?: string | null;
+  default_accounting_mode?: string | null;
+  active: boolean;
+  created_at_ms: number;
+  updated_at_ms: number;
+}
+
+export type BillingAccountingMode = 'platform_credit' | 'byok' | 'passthrough';
+
+export interface RoutingProfileRecord {
+  profile_id: string;
+  tenant_id: string;
+  project_id: string;
+  name: string;
+  slug: string;
+  description?: string | null;
+  active: boolean;
+  strategy: string;
+  ordered_provider_ids: string[];
+  default_provider_id?: string | null;
+  max_cost?: number | null;
+  max_latency_ms?: number | null;
+  require_healthy: boolean;
+  preferred_region?: string | null;
+  created_at_ms: number;
+  updated_at_ms: number;
+}
+
+export interface CompiledRoutingSnapshotRecord {
+  snapshot_id: string;
+  tenant_id?: string | null;
+  project_id?: string | null;
+  api_key_group_id?: string | null;
+  capability: string;
+  route_key: string;
+  matched_policy_id?: string | null;
+  project_routing_preferences_project_id?: string | null;
+  applied_routing_profile_id?: string | null;
+  strategy: string;
+  ordered_provider_ids: string[];
+  default_provider_id?: string | null;
+  max_cost?: number | null;
+  max_latency_ms?: number | null;
+  require_healthy: boolean;
+  preferred_region?: string | null;
+  created_at_ms: number;
+  updated_at_ms: number;
 }
 
 export interface RateLimitPolicyRecord {
@@ -168,6 +271,7 @@ export interface CreatedGatewayApiKey {
   tenant_id: string;
   project_id: string;
   environment: string;
+  api_key_group_id?: string | null;
   label: string;
   notes?: string | null;
   created_at_ms: number;
@@ -281,6 +385,109 @@ export interface BillingSummary {
   }>;
 }
 
+export interface BillingEventRecord {
+  event_id: string;
+  tenant_id: string;
+  project_id: string;
+  api_key_group_id?: string | null;
+  capability: string;
+  route_key: string;
+  usage_model: string;
+  provider_id: string;
+  accounting_mode: BillingAccountingMode;
+  operation_kind: string;
+  modality: string;
+  api_key_hash?: string | null;
+  channel_id?: string | null;
+  reference_id?: string | null;
+  latency_ms?: number | null;
+  units: number;
+  request_count: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  image_count: number;
+  audio_seconds: number;
+  video_seconds: number;
+  music_seconds: number;
+  upstream_cost: number;
+  customer_charge: number;
+  applied_routing_profile_id?: string | null;
+  compiled_routing_snapshot_id?: string | null;
+  fallback_reason?: string | null;
+  created_at_ms: number;
+}
+
+export interface BillingEventProjectSummary {
+  project_id: string;
+  event_count: number;
+  request_count: number;
+  total_units: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_tokens: number;
+  total_image_count: number;
+  total_audio_seconds: number;
+  total_video_seconds: number;
+  total_music_seconds: number;
+  total_upstream_cost: number;
+  total_customer_charge: number;
+}
+
+export interface BillingEventGroupSummary {
+  api_key_group_id?: string | null;
+  project_count: number;
+  event_count: number;
+  request_count: number;
+  total_upstream_cost: number;
+  total_customer_charge: number;
+}
+
+export interface BillingEventCapabilitySummary {
+  capability: string;
+  event_count: number;
+  request_count: number;
+  total_tokens: number;
+  image_count: number;
+  audio_seconds: number;
+  video_seconds: number;
+  music_seconds: number;
+  total_upstream_cost: number;
+  total_customer_charge: number;
+}
+
+export interface BillingEventAccountingModeSummary {
+  accounting_mode: BillingAccountingMode;
+  event_count: number;
+  request_count: number;
+  total_upstream_cost: number;
+  total_customer_charge: number;
+}
+
+export interface BillingEventSummary {
+  total_events: number;
+  project_count: number;
+  group_count: number;
+  capability_count: number;
+  total_request_count: number;
+  total_units: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_tokens: number;
+  total_image_count: number;
+  total_audio_seconds: number;
+  total_video_seconds: number;
+  total_music_seconds: number;
+  total_upstream_cost: number;
+  total_customer_charge: number;
+  projects: BillingEventProjectSummary[];
+  groups: BillingEventGroupSummary[];
+  capabilities: BillingEventCapabilitySummary[];
+  accounting_modes: BillingEventAccountingModeSummary[];
+}
+
 export interface RoutingDecisionLogRecord {
   decision_id: string;
   decision_source: string;
@@ -289,6 +496,8 @@ export interface RoutingDecisionLogRecord {
   selected_provider_id: string;
   strategy?: string | null;
   selection_reason?: string | null;
+  compiled_routing_snapshot_id?: string | null;
+  fallback_reason?: string | null;
   requested_region?: string | null;
   selection_seed?: number | null;
   slo_applied: boolean;
@@ -347,6 +556,9 @@ export interface AdminWorkspaceSnapshot {
   tenants: TenantRecord[];
   projects: ProjectRecord[];
   apiKeys: GatewayApiKeyRecord[];
+  apiKeyGroups: ApiKeyGroupRecord[];
+  routingProfiles: RoutingProfileRecord[];
+  compiledRoutingSnapshots: CompiledRoutingSnapshotRecord[];
   rateLimitPolicies: RateLimitPolicyRecord[];
   rateLimitWindows: RateLimitWindowRecord[];
   channels: ChannelRecord[];
@@ -357,6 +569,8 @@ export interface AdminWorkspaceSnapshot {
   modelPrices: ModelPriceRecord[];
   usageRecords: UsageRecord[];
   usageSummary: UsageSummary;
+  billingEvents: BillingEventRecord[];
+  billingEventSummary: BillingEventSummary;
   billingSummary: BillingSummary;
   routingLogs: RoutingDecisionLogRecord[];
   providerHealth: ProviderHealthSnapshot[];

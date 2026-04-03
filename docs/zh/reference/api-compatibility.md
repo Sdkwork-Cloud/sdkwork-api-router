@@ -29,6 +29,7 @@ SDKWork 使用五种执行真值标签来描述网关接口的真实实现方式
 - `/v1/uploads`
 - `/v1/audio/*`
 - `/v1/images/*`
+- `/v1/music`
 - `/v1/assistants`
 - `/v1/threads`
 - `/v1/conversations`
@@ -38,6 +39,8 @@ SDKWork 使用五种执行真值标签来描述网关接口的真实实现方式
 - `/v1/webhooks`
 - `/v1/evals`
 - `/v1/videos`
+
+`music` 能力采用资源化 `/v1/music*` 路由，而不是绑定单一上游厂商的私有传输路径，这样可以与图片、视频一样复用统一的路由、计费和插件适配架构。
 
 ## Agent 客户端兼容面
 

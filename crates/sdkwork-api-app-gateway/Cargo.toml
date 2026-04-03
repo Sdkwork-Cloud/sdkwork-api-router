@@ -10,6 +10,8 @@ base64.workspace = true
 reqwest.workspace = true
 sdkwork-api-app-credential = { path = "../sdkwork-api-app-credential" }
 sdkwork-api-app-routing = { path = "../sdkwork-api-app-routing" }
+sdkwork-api-cache-core = { path = "../sdkwork-api-cache-core" }
+sdkwork-api-cache-memory = { path = "../sdkwork-api-cache-memory" }
 sdkwork-api-contract-openai = { path = "../sdkwork-api-contract-openai" }
 sdkwork-api-domain-catalog = { path = "../sdkwork-api-domain-catalog" }
 sdkwork-api-domain-routing = { path = "../sdkwork-api-domain-routing" }
@@ -19,6 +21,7 @@ sdkwork-api-provider-core = { path = "../sdkwork-api-provider-core" }
 sdkwork-api-provider-ollama = { path = "../sdkwork-api-provider-ollama" }
 sdkwork-api-provider-openai = { path = "../sdkwork-api-provider-openai" }
 sdkwork-api-provider-openrouter = { path = "../sdkwork-api-provider-openrouter" }
+serde.workspace = true
 serde_json.workspace = true
 sdkwork-api-storage-core = { path = "../sdkwork-api-storage-core" }
 sdkwork-api-storage-sqlite = { path = "../sdkwork-api-storage-sqlite" }

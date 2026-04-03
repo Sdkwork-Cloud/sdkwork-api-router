@@ -72,3 +72,42 @@ async fn sqlite_store_lists_provider_bindings_for_model_without_drop() {
     assert_eq!(providers[0].channel_bindings.len(), 2);
     assert_eq!(providers[0].channel_bindings[1].channel_id, "openai");
 }
+
+#[tokio::test]
+async fn sqlite_store_persists_provider_extension_id_with_explicit_bindings() {
+    let pool = run_migrations("sqlite::memory:").await.unwrap();
+    let store = SqliteAdminStore::new(pool);
+
+    let provider = ProxyProvider::new(
+        "provider-openai-official",
+        "openai",
+        "openai",
+        "https://api.openai.com",
+        "OpenAI Official",
+    )
+    .with_extension_id("sdkwork.provider.openai.official")
+    .with_channel_binding(ProviderChannelBinding::primary(
+        "provider-openai-official",
+        "openai",
+    ))
+    .with_channel_binding(ProviderChannelBinding::new(
+        "provider-openai-official",
+        "responses-compatible",
+    ));
+
+    let inserted = store.insert_provider(&provider).await;
+    assert!(inserted.is_ok(), "{inserted:?}");
+
+    let providers = store.list_providers().await.unwrap();
+    assert_eq!(providers.len(), 1);
+    assert_eq!(
+        providers[0].extension_id,
+        "sdkwork.provider.openai.official"
+    );
+    assert_eq!(providers[0].channel_bindings.len(), 2);
+    assert_eq!(providers[0].channel_bindings[0].channel_id, "openai");
+    assert_eq!(
+        providers[0].channel_bindings[1].channel_id,
+        "responses-compatible"
+    );
+}

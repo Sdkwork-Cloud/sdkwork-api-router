@@ -1,10 +1,13 @@
+use sdkwork_api_domain_billing::{BillingAccountingMode, BillingEventRecord};
 use sdkwork_api_domain_catalog::{Channel, ProxyProvider};
 use sdkwork_api_domain_routing::{RoutingDecisionLog, RoutingDecisionSource};
 use sdkwork_api_domain_usage::UsageRecord;
 use sdkwork_api_storage_core::{
-    AdminStore, ExtensionRuntimeRolloutParticipantRecord, ExtensionRuntimeRolloutRecord,
-    ServiceRuntimeNodeRecord, StandaloneConfigRolloutParticipantRecord,
-    StandaloneConfigRolloutRecord, StorageDialect,
+    AdminStore, BillingStore, CatalogStore, CredentialStore,
+    ExtensionRuntimeRolloutParticipantRecord, ExtensionRuntimeRolloutRecord, ExtensionStore,
+    IdentityStore, RoutingStore, ServiceRuntimeNodeRecord,
+    StandaloneConfigRolloutParticipantRecord, StandaloneConfigRolloutRecord, StorageDialect,
+    TenantStore, UsageStore,
 };
 use sdkwork_api_storage_sqlite::{run_migrations, SqliteAdminStore};
 
@@ -13,11 +16,48 @@ async fn sqlite_store_implements_admin_store_trait() {
     let pool = run_migrations("sqlite::memory:").await.unwrap();
     let store = SqliteAdminStore::new(pool);
     let trait_store: &dyn AdminStore = &store;
+    let identity_store: &dyn IdentityStore = &store;
+    let tenant_store: &dyn TenantStore = &store;
+    let catalog_store: &dyn CatalogStore = &store;
+    let credential_store: &dyn CredentialStore = &store;
+    let routing_store: &dyn RoutingStore = &store;
+    let usage_store: &dyn UsageStore = &store;
+    let billing_store: &dyn BillingStore = &store;
+    let extension_store: &dyn ExtensionStore = &store;
 
     assert_eq!(trait_store.dialect(), StorageDialect::Sqlite);
     let channels = trait_store.list_channels().await.unwrap();
     assert!(channels.len() >= 5);
     assert!(channels.iter().any(|channel| channel.id == "openai"));
+    assert!(identity_store.list_portal_users().await.unwrap().is_empty());
+    assert!(tenant_store.list_tenants().await.unwrap().is_empty());
+    assert!(catalog_store.list_providers().await.unwrap().is_empty());
+    assert!(credential_store
+        .list_credentials()
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(routing_store
+        .list_routing_policies()
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(usage_store.list_usage_records().await.unwrap().is_empty());
+    assert!(billing_store
+        .list_ledger_entries()
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(billing_store
+        .list_billing_events()
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(extension_store
+        .list_extension_installations()
+        .await
+        .unwrap()
+        .is_empty());
 }
 
 #[tokio::test]
@@ -244,6 +284,47 @@ async fn sqlite_store_finds_any_model_without_full_scan() {
 
     let model = store.find_any_model().await.unwrap().unwrap();
     assert_eq!(model.external_name, "a-model");
+}
+
+#[tokio::test]
+async fn sqlite_store_round_trips_billing_events() {
+    let pool = run_migrations("sqlite::memory:").await.unwrap();
+    let store = SqliteAdminStore::new(pool);
+
+    let event = BillingEventRecord::new(
+        "evt_1",
+        "tenant-1",
+        "project-1",
+        "responses",
+        "gpt-4.1",
+        "gpt-4.1",
+        "provider-openrouter",
+        BillingAccountingMode::PlatformCredit,
+        1_717_171_717,
+    )
+    .with_api_key_group_id("group-blue")
+    .with_operation("responses.create", "multimodal")
+    .with_request_facts(
+        Some("key-live"),
+        Some("openai"),
+        Some("resp_123"),
+        Some(850),
+    )
+    .with_units(240)
+    .with_token_usage(120, 80, 200)
+    .with_cache_token_usage(30, 10)
+    .with_media_usage(2, 3.5, 0.0, 12.0)
+    .with_financials(0.42, 0.89)
+    .with_routing_evidence(
+        Some("route-profile-1"),
+        Some("snapshot-1"),
+        Some("latency_guardrail"),
+    );
+
+    store.insert_billing_event(&event).await.unwrap();
+
+    let events = store.list_billing_events().await.unwrap();
+    assert_eq!(events, vec![event]);
 }
 
 #[tokio::test]

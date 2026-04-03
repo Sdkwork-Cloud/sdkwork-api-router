@@ -3,10 +3,16 @@ import {
   formatDateTime,
   formatUnits,
 } from 'sdkwork-router-portal-commons/format-core';
+import { translatePortalText } from 'sdkwork-router-portal-commons/i18n-core';
 import type {
+  BillingEventAccountingModeSummary,
+  BillingEventCapabilitySummary,
+  BillingEventSummary,
+  PortalCommerceMembership,
   PortalDashboardSummary,
   PortalRouteKey,
   PortalRoutingDecisionLog,
+  PortalRoutingProviderOption,
   PortalRoutingSummary,
   PortalRoutingStrategy,
   UsageRecord,
@@ -14,17 +20,20 @@ import type {
 
 import type {
   DashboardActivityItem,
+  DashboardBalanceSummary,
   DashboardBreakdownItem,
+  DashboardCommercialHighlights,
   DashboardDemandPoint,
   DashboardDistributionPoint,
   DashboardInsight,
   DashboardMetric,
+  DashboardMetricSummary,
   DashboardModuleItem,
   DashboardRoutingPosture,
   DashboardSeriesPoint,
+  DashboardStatusVariant,
   DashboardSpendTrendPoint,
   DashboardTrafficTrendPoint,
-  DashboardTone,
   PortalDashboardPageViewModel,
 } from '../types';
 
@@ -74,24 +83,189 @@ function normalizeRoutingLogs(logs?: PortalRoutingDecisionLog[] | null): PortalR
   }));
 }
 
+function startOfDayMs(value: number): number {
+  const date = new Date(value);
+  date.setHours(0, 0, 0, 0);
+  return date.getTime();
+}
+
+function startOfTrailing7dMs(value: number): number {
+  const date = new Date(value);
+  date.setHours(0, 0, 0, 0);
+  date.setDate(date.getDate() - 6);
+  return date.getTime();
+}
+
+function startOfMonthMs(value: number): number {
+  const date = new Date(value);
+  return new Date(date.getFullYear(), date.getMonth(), 1).getTime();
+}
+
+function summarizeUsageRecords(records: UsageRecord[]): DashboardMetricSummary {
+  const revenue = records.reduce((sum, record) => sum + record.amount, 0);
+  const request_count = records.length;
+  const used_units = records.reduce((sum, record) => sum + record.units, 0);
+
+  return {
+    revenue,
+    request_count,
+    used_units,
+    average_booked_spend: request_count > 0 ? revenue / request_count : 0,
+  };
+}
+
+function emptyBillingEventSummary(): BillingEventSummary {
+  return {
+    total_events: 0,
+    project_count: 0,
+    group_count: 0,
+    capability_count: 0,
+    total_request_count: 0,
+    total_units: 0,
+    total_input_tokens: 0,
+    total_output_tokens: 0,
+    total_tokens: 0,
+    total_image_count: 0,
+    total_audio_seconds: 0,
+    total_video_seconds: 0,
+    total_music_seconds: 0,
+    total_upstream_cost: 0,
+    total_customer_charge: 0,
+    projects: [],
+    groups: [],
+    capabilities: [],
+    accounting_modes: [],
+  };
+}
+
+function sortAccountingModes(
+  items: BillingEventAccountingModeSummary[],
+): BillingEventAccountingModeSummary[] {
+  return [...items]
+    .filter((item) => item.event_count > 0)
+    .sort((left, right) =>
+      right.total_customer_charge - left.total_customer_charge
+      || right.request_count - left.request_count
+      || left.accounting_mode.localeCompare(right.accounting_mode),
+    );
+}
+
+function sortCapabilities(
+  items: BillingEventCapabilitySummary[],
+): BillingEventCapabilitySummary[] {
+  return [...items]
+    .filter((item) => item.event_count > 0)
+    .sort((left, right) =>
+      right.total_customer_charge - left.total_customer_charge
+      || right.request_count - left.request_count
+      || right.total_tokens - left.total_tokens
+      || left.capability.localeCompare(right.capability),
+    );
+}
+
+export function buildDashboardCommercialHighlights(
+  summary?: BillingEventSummary | null,
+): DashboardCommercialHighlights {
+  const safeSummary = summary ?? emptyBillingEventSummary();
+
+  return {
+    total_customer_charge: safeSummary.total_customer_charge,
+    leading_accounting_mode: sortAccountingModes(safeSummary.accounting_modes)[0] ?? null,
+    leading_capability: sortCapabilities(safeSummary.capabilities)[0] ?? null,
+    multimodal_totals: {
+      image_count: safeSummary.total_image_count,
+      audio_seconds: safeSummary.total_audio_seconds,
+      video_seconds: safeSummary.total_video_seconds,
+      music_seconds: safeSummary.total_music_seconds,
+    },
+  };
+}
+
 function routingStrategyLabel(strategy?: PortalRoutingStrategy | string | null): string {
   switch (strategy) {
     case 'deterministic_priority':
-      return 'Predictable order';
+      return translatePortalText('Predictable order');
     case 'weighted_random':
-      return 'Traffic distribution';
+      return translatePortalText('Traffic distribution');
     case 'slo_aware':
-      return 'Reliability guardrails';
+      return translatePortalText('Reliability guardrails');
     case 'geo_affinity':
-      return 'Regional preference';
+      return translatePortalText('Regional preference');
     default:
-      return 'Adaptive routing';
+      return translatePortalText('Adaptive routing');
   }
+}
+
+function titleCaseToken(value: string): string {
+  return value
+    .split(/[\s._:-]+/)
+    .filter(Boolean)
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(' ');
+}
+
+function resolveKnownProviderLabel(providerId: string): string | null {
+  const normalized = providerId.trim().toLowerCase();
+
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized.includes('openai')) {
+    return translatePortalText('OpenAI');
+  }
+
+  if (normalized.includes('anthropic')) {
+    return translatePortalText('Anthropic');
+  }
+
+  if (normalized.includes('gemini')) {
+    return translatePortalText('Gemini');
+  }
+
+  return null;
+}
+
+function resolveProviderDisplayLabel(
+  providerId: string | null | undefined,
+  providerOptions: PortalRoutingProviderOption[] = [],
+): string {
+  const trimmed = providerId?.trim();
+
+  if (!trimmed) {
+    return translatePortalText('Unknown provider');
+  }
+
+  const exactOption = providerOptions.find(
+    (option) => option.provider_id.trim().toLowerCase() === trimmed.toLowerCase(),
+  );
+  const optionLabel = exactOption?.display_name?.trim();
+
+  if (optionLabel) {
+    return optionLabel;
+  }
+
+  return resolveKnownProviderLabel(trimmed) ?? titleCaseToken(trimmed);
+}
+
+function buildBalanceSummary(snapshot: PortalDashboardSummary): DashboardBalanceSummary {
+  const quotaLimitUnits = snapshot.billing_summary.quota_limit_units ?? null;
+  const usedUnits = snapshot.billing_summary.used_units;
+
+  return {
+    remaining_units: snapshot.billing_summary.remaining_units ?? null,
+    quota_limit_units: quotaLimitUnits,
+    used_units: usedUnits,
+    utilization_ratio:
+      quotaLimitUnits && quotaLimitUnits > 0
+        ? Math.min(1, Math.max(0, usedUnits / quotaLimitUnits))
+        : null,
+  };
 }
 
 function remainingUnitsLabel(snapshot: PortalDashboardSummary): string {
   if (snapshot.billing_summary.remaining_units === null || snapshot.billing_summary.remaining_units === undefined) {
-    return 'Unlimited';
+    return translatePortalText('Unlimited');
   }
 
   return formatUnits(snapshot.billing_summary.remaining_units);
@@ -101,7 +275,8 @@ function insight(
   id: string,
   title: string,
   detail: string,
-  tone: DashboardTone,
+  status_label: string,
+  status_variant: DashboardStatusVariant,
   route?: PortalRouteKey,
   action_label?: string,
 ): DashboardInsight {
@@ -109,7 +284,8 @@ function insight(
     id,
     title,
     detail,
-    tone,
+    status_label,
+    status_variant,
     route,
     action_label,
   };
@@ -125,22 +301,26 @@ function buildInsights(
     items.push(
       insight(
         'quota-exhausted',
-        'Quota exhausted',
-        'Recharge or move to a higher plan before production traffic resumes.',
-        'warning',
+        translatePortalText('Quota exhausted'),
+        translatePortalText('Recharge or move to a higher plan before production traffic resumes.'),
+        translatePortalText('Action'),
+        'danger',
         'billing',
-        'Review billing',
+        translatePortalText('Review billing'),
       ),
     );
   } else if ((snapshot.billing_summary.remaining_units ?? Number.POSITIVE_INFINITY) < 5_000) {
     items.push(
       insight(
         'quota-low',
-        'Runway is getting tight',
-        `Only ${remainingUnitsLabel(snapshot)} token units remain in the visible quota buffer.`,
+        translatePortalText('Runway is getting tight'),
+        translatePortalText('Only {units} token units remain in the visible quota buffer.', {
+          units: remainingUnitsLabel(snapshot),
+        }),
+        translatePortalText('Watch'),
         'warning',
         'credits',
-        'Review credits',
+        translatePortalText('Review credits'),
       ),
     );
   }
@@ -149,11 +329,12 @@ function buildInsights(
     items.push(
       insight(
         'missing-key',
-        'API key setup incomplete',
-        'Create at least one project key before inviting clients or teammates.',
+        translatePortalText('API key setup incomplete'),
+        translatePortalText('Create at least one project key before inviting clients or teammates.'),
+        translatePortalText('Setup'),
         'warning',
         'api-keys',
-        'Create key',
+        translatePortalText('Create key'),
       ),
     );
   }
@@ -162,11 +343,12 @@ function buildInsights(
     items.push(
       insight(
         'missing-traffic',
-        'Traffic overview is still empty',
-        'Send the first request to unlock live model, provider, and spend telemetry.',
-        'accent',
+        translatePortalText('Traffic overview is still empty'),
+        translatePortalText('Send the first request to unlock live model, provider, and spend telemetry.'),
+        translatePortalText('Advisory'),
+        'secondary',
         'usage',
-        'Open usage',
+        translatePortalText('Open usage'),
       ),
     );
   }
@@ -175,11 +357,14 @@ function buildInsights(
     items.push(
       insight(
         'routing-degraded',
-        'Routing is protecting availability',
-        'The current preview degraded from the preferred path. Review provider health and fallback behavior.',
+        translatePortalText('Routing is protecting availability'),
+        translatePortalText(
+          'The current preview degraded from the preferred path. Review provider health and fallback behavior.',
+        ),
+        translatePortalText('Review'),
         'warning',
         'routing',
-        'Open routing',
+        translatePortalText('Open routing'),
       ),
     );
   }
@@ -188,11 +373,12 @@ function buildInsights(
     items.push(
       insight(
         'healthy-workspace',
-        'Workspace is ready',
-        'Traffic, access, routing, and quota posture are aligned for steady API usage.',
-        'positive',
+        translatePortalText('Workspace is ready'),
+        translatePortalText('Traffic, access, routing, and quota posture are aligned for steady API usage.'),
+        translatePortalText('Ready'),
+        'success',
         'usage',
-        'Open usage',
+        translatePortalText('Open usage'),
       ),
     );
   }
@@ -207,39 +393,44 @@ function buildMetrics(
   return [
     {
       id: 'requests',
-      label: 'Requests',
+      label: translatePortalText('Requests'),
       value: formatUnits(snapshot.usage_summary.total_requests),
-      detail: 'Completed gateway calls recorded in the current workspace.',
+      detail: translatePortalText('Completed gateway calls recorded in the current workspace.'),
     },
     {
       id: 'booked-amount',
-      label: 'Booked spend',
+      label: translatePortalText('Booked spend'),
       value: formatCurrency(snapshot.billing_summary.booked_amount),
-      detail: 'Total booked amount attached to the visible billing summary.',
+      detail: translatePortalText('Total booked amount attached to the visible billing summary.'),
     },
     {
       id: 'remaining-units',
-      label: 'Remaining units',
+      label: translatePortalText('Remaining units'),
       value: remainingUnitsLabel(snapshot),
-      detail: 'Token-unit runway remaining before the visible quota ceiling is reached.',
+      detail: translatePortalText('Token-unit runway remaining before the visible quota ceiling is reached.'),
     },
     {
       id: 'keys',
-      label: 'API keys',
+      label: translatePortalText('API keys'),
       value: formatUnits(snapshot.api_key_count),
-      detail: 'Active key inventory visible inside this portal session.',
+      detail: translatePortalText('Active key inventory visible inside this portal session.'),
     },
     {
       id: 'providers',
-      label: 'Providers',
+      label: translatePortalText('Providers'),
       value: formatUnits(snapshot.usage_summary.provider_count),
-      detail: 'Providers that served recent visible traffic.',
+      detail: translatePortalText('Providers that served recent visible traffic.'),
     },
     {
       id: 'route',
-      label: 'Default route',
-      value: routingSummary?.preview.selected_provider_id ?? 'Pending',
-      detail: 'Provider currently selected by the routing preview.',
+      label: translatePortalText('Default route'),
+      value: routingSummary
+        ? resolveProviderDisplayLabel(
+          routingSummary.preview.selected_provider_id,
+          routingSummary.provider_options,
+        )
+        : translatePortalText('Pending'),
+      detail: translatePortalText('Provider currently selected by the routing preview.'),
     },
   ];
 }
@@ -254,11 +445,12 @@ function buildQuickActions(
     actions.push(
       insight(
         'action-create-key',
-        'Create the first API key',
-        'Set up a scoped key so external clients can start sending traffic safely.',
+        translatePortalText('Create the first API key'),
+        translatePortalText('Set up a scoped key so external clients can start sending traffic safely.'),
+        translatePortalText('Setup'),
         'warning',
         'api-keys',
-        'Create key',
+        translatePortalText('Create key'),
       ),
     );
   }
@@ -267,11 +459,14 @@ function buildQuickActions(
     actions.push(
       insight(
         'action-start-traffic',
-        'Send the first API request',
-        'The first real call will populate demand, cost, and provider telemetry across the portal.',
-        'accent',
+        translatePortalText('Send the first API request'),
+        translatePortalText(
+          'The first real call will populate demand, cost, and provider telemetry across the portal.',
+        ),
+        translatePortalText('Advisory'),
+        'secondary',
         'usage',
-        'Open usage',
+        translatePortalText('Open usage'),
       ),
     );
   }
@@ -280,22 +475,28 @@ function buildQuickActions(
     actions.push(
       insight(
         'action-recover-billing',
-        'Restore quota before the next traffic window',
-        'Billing recovery is the blocking action before more gateway requests can land.',
-        'warning',
+        translatePortalText('Restore quota before the next traffic window'),
+        translatePortalText(
+          'Billing recovery is the blocking action before more gateway requests can land.',
+        ),
+        translatePortalText('Action'),
+        'danger',
         'billing',
-        'Review billing',
+        translatePortalText('Review billing'),
       ),
     );
   } else if ((snapshot.billing_summary.remaining_units ?? Number.POSITIVE_INFINITY) < 5_000) {
     actions.push(
       insight(
         'action-protect-runway',
-        'Top up credits before runway gets tight',
-        `Only ${remainingUnitsLabel(snapshot)} token units remain in the visible launch buffer.`,
+        translatePortalText('Top up credits before runway gets tight'),
+        translatePortalText('Only {units} token units remain in the visible launch buffer.', {
+          units: remainingUnitsLabel(snapshot),
+        }),
+        translatePortalText('Watch'),
         'warning',
         'credits',
-        'Review credits',
+        translatePortalText('Review credits'),
       ),
     );
   }
@@ -304,11 +505,16 @@ function buildQuickActions(
     actions.push(
       insight(
         'action-review-routing',
-        'Review the active route',
-        'Confirm provider order, fallback posture, and region preference before scaling traffic.',
+        translatePortalText('Review the active route'),
+        translatePortalText(
+          'Confirm provider order, fallback posture, and region preference before scaling traffic.',
+        ),
+        routingSummary.preview.slo_degraded
+          ? translatePortalText('Review')
+          : translatePortalText('Ready'),
         routingSummary.preview.slo_degraded ? 'warning' : 'default',
         'routing',
-        'Open routing',
+        translatePortalText('Open routing'),
       ),
     );
   }
@@ -317,11 +523,14 @@ function buildQuickActions(
     actions.push(
       insight(
         'action-scale',
-        'Inspect live usage',
-        'With the workspace in a healthy state, usage is the best place to validate growth before widening rollout.',
-        'positive',
+        translatePortalText('Inspect live usage'),
+        translatePortalText(
+          'With the workspace in a healthy state, usage is the best place to validate growth before widening rollout.',
+        ),
+        translatePortalText('Ready'),
+        'success',
         'usage',
-        'Open usage',
+        translatePortalText('Open usage'),
       ),
     );
   }
@@ -345,57 +554,81 @@ function buildRoutingPosture(
 
   if (routingSummary.preview.slo_degraded) {
     return {
-      title: 'Fallback protection is active',
-      detail: 'The current preview degraded from the preferred path. Review provider health and hard constraints.',
+      title: translatePortalText('Fallback protection is active'),
+      detail: translatePortalText(
+        'The current preview degraded from the preferred path. Review provider health and hard constraints.',
+      ),
       strategy_label: strategyLabel,
-      selected_provider: routingSummary.preview.selected_provider_id,
+      selected_provider: resolveProviderDisplayLabel(
+        routingSummary.preview.selected_provider_id,
+        routingSummary.provider_options,
+      ),
       preferred_region: preferredRegion,
       evidence_count: formatUnits(routingLogs.length),
+      status_label: translatePortalText('Review'),
       latest_reason:
         latestLog?.selection_reason
         ?? routingSummary.preview.selection_reason
-        ?? 'A fallback provider was selected to protect availability.',
-      tone: 'warning',
+        ?? translatePortalText('A fallback provider was selected to protect availability.'),
+      status_variant: 'warning',
       route: 'routing',
-      action_label: 'Open routing',
+      action_label: translatePortalText('Open routing'),
     };
   }
 
   if (!routingLogs.length) {
     return {
-      title: 'Routing is configured and waiting for traffic',
-      detail: 'The project has a default routing posture, but no recent evidence has been recorded yet.',
+      title: translatePortalText('Routing is configured and waiting for traffic'),
+      detail: translatePortalText(
+        'The project has a default routing posture, but no recent evidence has been recorded yet.',
+      ),
       strategy_label: strategyLabel,
-      selected_provider: routingSummary.preview.selected_provider_id,
+      selected_provider: resolveProviderDisplayLabel(
+        routingSummary.preview.selected_provider_id,
+        routingSummary.provider_options,
+      ),
       preferred_region: preferredRegion,
       evidence_count: '0',
+      status_label: translatePortalText('Advisory'),
       latest_reason:
         routingSummary.preview.selection_reason
-        ?? 'Run a preview or send live traffic to capture the first route decision.',
-      tone: 'accent',
+        ?? translatePortalText('Run a preview or send live traffic to capture the first route decision.'),
+      status_variant: 'secondary',
       route: 'routing',
-      action_label: 'Run preview',
+      action_label: translatePortalText('Run preview'),
     };
   }
 
   return {
-    title: 'Routing is healthy',
-    detail: `The latest routing evidence selected ${latestLog?.selected_provider_id ?? routingSummary.preview.selected_provider_id}.`,
+    title: translatePortalText('Routing is healthy'),
+    detail: translatePortalText('The latest routing evidence selected {provider}.', {
+      provider: resolveProviderDisplayLabel(
+        latestLog?.selected_provider_id ?? routingSummary.preview.selected_provider_id,
+        routingSummary.provider_options,
+      ),
+    }),
     strategy_label: strategyLabel,
-    selected_provider: routingSummary.preview.selected_provider_id,
+    selected_provider: resolveProviderDisplayLabel(
+      routingSummary.preview.selected_provider_id,
+      routingSummary.provider_options,
+    ),
     preferred_region: preferredRegion,
     evidence_count: formatUnits(routingLogs.length),
+    status_label: translatePortalText('Ready'),
     latest_reason:
       latestLog?.selection_reason
       ?? routingSummary.preview.selection_reason
-      ?? 'Routing evidence is available for review in the routing workbench.',
-    tone: 'positive',
+      ?? translatePortalText('Routing evidence is available for review in the routing workbench.'),
+    status_variant: 'success',
     route: 'routing',
-    action_label: 'Open routing',
+    action_label: translatePortalText('Open routing'),
   };
 }
 
-function buildProviderMix(snapshot: PortalDashboardSummary): DashboardBreakdownItem[] {
+function buildProviderMix(
+  snapshot: PortalDashboardSummary,
+  providerOptions: PortalRoutingProviderOption[] = [],
+): DashboardBreakdownItem[] {
   const totalRequests = snapshot.usage_summary.total_requests || 1;
 
   return [...snapshot.usage_summary.providers]
@@ -403,9 +636,13 @@ function buildProviderMix(snapshot: PortalDashboardSummary): DashboardBreakdownI
     .slice(0, 5)
     .map((provider) => ({
       id: provider.provider,
-      label: provider.provider,
-      secondary_label: `${formatUnits(provider.project_count)} project${provider.project_count === 1 ? '' : 's'}`,
-      value_label: `${formatUnits(provider.request_count)} requests`,
+      label: resolveProviderDisplayLabel(provider.provider, providerOptions),
+      secondary_label: translatePortalText('{count} project(s)', {
+        count: formatUnits(provider.project_count),
+      }),
+      value_label: translatePortalText('{count} requests', {
+        count: formatUnits(provider.request_count),
+      }),
       share: Math.max(6, Math.round((provider.request_count / totalRequests) * 100)),
     }));
 }
@@ -419,8 +656,12 @@ function buildModelMix(snapshot: PortalDashboardSummary): DashboardBreakdownItem
     .map((model) => ({
       id: model.model,
       label: model.model,
-      secondary_label: `${formatUnits(model.provider_count)} provider${model.provider_count === 1 ? '' : 's'}`,
-      value_label: `${formatUnits(model.request_count)} requests`,
+      secondary_label: translatePortalText('{count} provider(s)', {
+        count: formatUnits(model.provider_count),
+      }),
+      value_label: translatePortalText('{count} requests', {
+        count: formatUnits(model.request_count),
+      }),
       share: Math.max(6, Math.round((model.request_count / totalRequests) * 100)),
     }));
 }
@@ -506,12 +747,15 @@ function buildSpendSeries(
   }));
 }
 
-function buildProviderShareSeries(snapshot: PortalDashboardSummary): DashboardDistributionPoint[] {
+function buildProviderShareSeries(
+  snapshot: PortalDashboardSummary,
+  providerOptions: PortalRoutingProviderOption[] = [],
+): DashboardDistributionPoint[] {
   return [...snapshot.usage_summary.providers]
     .sort((left, right) => right.request_count - left.request_count)
     .slice(0, 5)
     .map((provider) => ({
-      name: provider.provider,
+      name: resolveProviderDisplayLabel(provider.provider, providerOptions),
       value: provider.request_count,
     }));
 }
@@ -529,27 +773,45 @@ function buildModelDemandSeries(snapshot: PortalDashboardSummary): DashboardDema
 function buildActivityFeed(
   snapshot: PortalDashboardSummary,
   routingLogs: PortalRoutingDecisionLog[] = [],
+  providerOptions: PortalRoutingProviderOption[] = [],
 ): DashboardActivityItem[] {
   const requestItems = snapshot.recent_requests.map((request) => ({
     id: `request-${request.project_id}-${request.created_at_ms}-${request.model}`,
-    title: `${request.model} via ${request.provider}`,
-    detail: `${formatUnits(request.units)} token units booked for ${formatCurrency(request.amount)}.`,
+    title: translatePortalText('{model} via {provider}', {
+      model: request.model,
+      provider: resolveProviderDisplayLabel(request.provider, providerOptions),
+    }),
+    detail: translatePortalText('{units} token units booked for {amount}.', {
+      units: formatUnits(request.units),
+      amount: formatCurrency(request.amount),
+    }),
     timestamp_label: formatDateTime(request.created_at_ms),
     timestamp_ms: request.created_at_ms,
-    tone: 'default' as DashboardTone,
+    status_label: translatePortalText('Tracked'),
+    status_variant: 'default' as DashboardStatusVariant,
     route: 'usage' as PortalRouteKey,
-    action_label: 'Open usage',
+    action_label: translatePortalText('Open usage'),
   }));
 
   const routingItems = routingLogs.map((log) => ({
     id: `routing-${log.decision_id}`,
-    title: `Route selected ${log.selected_provider_id}`,
-    detail: `${routingStrategyLabel(log.strategy)}${log.selection_reason ? ` · ${log.selection_reason}` : ''}`,
+    title: translatePortalText('Route selected {provider}', {
+      provider: resolveProviderDisplayLabel(log.selected_provider_id, providerOptions),
+    }),
+    detail: log.selection_reason
+      ? translatePortalText('{strategy}: {reason}', {
+        strategy: routingStrategyLabel(log.strategy),
+        reason: log.selection_reason,
+      })
+      : routingStrategyLabel(log.strategy),
     timestamp_label: formatDateTime(log.created_at_ms),
     timestamp_ms: log.created_at_ms,
-    tone: log.slo_degraded ? ('warning' as DashboardTone) : ('positive' as DashboardTone),
+    status_label: log.slo_degraded ? translatePortalText('Review') : translatePortalText('Healthy'),
+    status_variant: log.slo_degraded
+      ? ('warning' as DashboardStatusVariant)
+      : ('success' as DashboardStatusVariant),
     route: 'routing' as PortalRouteKey,
-    action_label: 'Open routing',
+    action_label: translatePortalText('Open routing'),
   }));
 
   return [...requestItems, ...routingItems]
@@ -562,76 +824,88 @@ function buildModules(
   snapshot: PortalDashboardSummary,
   routingSummary?: PortalRoutingSummary | null,
 ): DashboardModuleItem[] {
-  const creditsTone: DashboardTone = snapshot.billing_summary.exhausted
-    ? 'warning'
+  const creditsStatusVariant: DashboardStatusVariant = snapshot.billing_summary.exhausted
+    ? 'danger'
     : (snapshot.billing_summary.remaining_units ?? Number.POSITIVE_INFINITY) < 5_000
-      ? 'accent'
-      : 'positive';
+      ? 'warning'
+      : 'success';
 
   return [
     {
       route: 'routing',
-      title: 'Routing',
-      status_label: routingSummary?.preview.slo_degraded ? 'Review' : 'Ready',
+      title: translatePortalText('Routing'),
+      status_label: routingSummary?.preview.slo_degraded ? translatePortalText('Review') : translatePortalText('Ready'),
       detail: routingSummary
-        ? `${routingStrategyLabel(routingSummary.preferences.strategy)} across ${formatUnits(routingSummary.provider_options.length)} providers.`
-        : 'Routing preview data is still loading.',
-      tone: routingSummary?.preview.slo_degraded ? 'warning' : 'positive',
-      action_label: 'Open routing',
+        ? translatePortalText('{strategy} across {count} providers.', {
+          strategy: routingStrategyLabel(routingSummary.preferences.strategy),
+          count: formatUnits(routingSummary.provider_options.length),
+        })
+        : translatePortalText('Routing preview data is still loading.'),
+      status_variant: routingSummary?.preview.slo_degraded ? 'warning' : 'success',
+      action_label: translatePortalText('Open routing'),
     },
     {
       route: 'api-keys',
-      title: 'API Keys',
-      status_label: snapshot.api_key_count > 0 ? 'Ready' : 'Setup',
+      title: translatePortalText('API Keys'),
+      status_label: snapshot.api_key_count > 0 ? translatePortalText('Ready') : translatePortalText('Setup'),
       detail: snapshot.api_key_count > 0
-        ? `${formatUnits(snapshot.api_key_count)} visible project keys.`
-        : 'No project key is visible yet.',
-      tone: snapshot.api_key_count > 0 ? 'positive' : 'warning',
-      action_label: 'Manage keys',
+        ? translatePortalText('{count} visible project keys.', { count: formatUnits(snapshot.api_key_count) })
+        : translatePortalText('No project key is visible yet.'),
+      status_variant: snapshot.api_key_count > 0 ? 'success' : 'warning',
+      action_label: translatePortalText('Manage keys'),
     },
     {
       route: 'usage',
-      title: 'Usage',
-      status_label: snapshot.usage_summary.total_requests > 0 ? 'Live' : 'Quiet',
+      title: translatePortalText('Usage'),
+      status_label: snapshot.usage_summary.total_requests > 0 ? translatePortalText('Live') : translatePortalText('Quiet'),
       detail: snapshot.usage_summary.total_requests > 0
-        ? `${formatUnits(snapshot.usage_summary.total_requests)} requests across ${formatUnits(snapshot.usage_summary.model_count)} models.`
-        : 'The first request will unlock live telemetry.',
-      tone: snapshot.usage_summary.total_requests > 0 ? 'positive' : 'accent',
-      action_label: 'Open usage',
+        ? translatePortalText('{requests} requests across {models} models.', {
+          requests: formatUnits(snapshot.usage_summary.total_requests),
+          models: formatUnits(snapshot.usage_summary.model_count),
+        })
+        : translatePortalText('The first request will unlock live telemetry.'),
+      status_variant: snapshot.usage_summary.total_requests > 0 ? 'success' : 'secondary',
+      action_label: translatePortalText('Open usage'),
     },
     {
       route: 'user',
-      title: 'User',
-      status_label: snapshot.workspace.user.active ? 'Healthy' : 'Review',
-      detail: 'Personal profile, session identity, and security controls.',
-      tone: snapshot.workspace.user.active ? 'positive' : 'warning',
-      action_label: 'Open user',
+      title: translatePortalText('User'),
+      status_label: snapshot.workspace.user.active ? translatePortalText('Healthy') : translatePortalText('Review'),
+      detail: translatePortalText('Personal profile, session identity, and security controls.'),
+      status_variant: snapshot.workspace.user.active ? 'success' : 'warning',
+      action_label: translatePortalText('Open user'),
     },
     {
       route: 'credits',
-      title: 'Credits',
-      status_label: snapshot.billing_summary.exhausted ? 'Exhausted' : creditsTone === 'accent' ? 'Watch' : 'Healthy',
+      title: translatePortalText('Redeem'),
+      status_label: snapshot.billing_summary.exhausted
+        ? translatePortalText('Exhausted')
+        : creditsStatusVariant === 'warning'
+          ? translatePortalText('Watch')
+          : translatePortalText('Healthy'),
       detail: snapshot.billing_summary.exhausted
-        ? 'Quota is exhausted and requires immediate recovery.'
-        : `${remainingUnitsLabel(snapshot)} token units remain in the visible balance.`,
-      tone: creditsTone,
-      action_label: 'Open credits',
+        ? translatePortalText('Quota is exhausted and requires immediate recovery.')
+        : translatePortalText('{units} token units remain in the visible balance.', { units: remainingUnitsLabel(snapshot) }),
+      status_variant: creditsStatusVariant,
+      action_label: translatePortalText('Open redeem'),
     },
     {
       route: 'billing',
-      title: 'Billing',
-      status_label: snapshot.billing_summary.exhausted ? 'Action' : 'Ready',
-      detail: `Current booked amount is ${formatCurrency(snapshot.billing_summary.booked_amount)}.`,
-      tone: snapshot.billing_summary.exhausted ? 'warning' : 'default',
-      action_label: 'Open billing',
+      title: translatePortalText('Billing'),
+      status_label: snapshot.billing_summary.exhausted ? translatePortalText('Action') : translatePortalText('Ready'),
+      detail: translatePortalText('Current booked amount is {amount}.', {
+        amount: formatCurrency(snapshot.billing_summary.booked_amount),
+      }),
+      status_variant: snapshot.billing_summary.exhausted ? 'danger' : 'default',
+      action_label: translatePortalText('Open billing'),
     },
     {
       route: 'account',
-      title: 'Account',
-      status_label: snapshot.billing_summary.booked_amount > 0 ? 'Active' : 'Ready',
-      detail: 'Cash balance, ledger visibility, and payment-side posture.',
-      tone: snapshot.billing_summary.booked_amount > 0 ? 'default' : 'positive',
-      action_label: 'Open account',
+      title: translatePortalText('Account'),
+      status_label: snapshot.billing_summary.booked_amount > 0 ? translatePortalText('Active') : translatePortalText('Ready'),
+      detail: translatePortalText('Cash balance, ledger visibility, and payment-side posture.'),
+      status_variant: snapshot.billing_summary.booked_amount > 0 ? 'default' : 'success',
+      action_label: translatePortalText('Open account'),
     },
   ];
 }
@@ -641,29 +915,67 @@ export function buildPortalDashboardViewModel(
   routingSummary?: PortalRoutingSummary | null,
   routingLogs: PortalRoutingDecisionLog[] = [],
   usageRecords: UsageRecord[] = [],
+  membership: PortalCommerceMembership | null = null,
+  now: number = Date.now(),
+  billingEventSummary: BillingEventSummary | null = null,
 ): PortalDashboardPageViewModel {
   const normalizedSnapshot = normalizeDashboardSummary(snapshot);
   const normalizedRoutingSummary = normalizeRoutingSummary(routingSummary);
   const normalizedRoutingLogs = normalizeRoutingLogs(routingLogs);
   const normalizedUsageRecords = safeArray(usageRecords);
+  const records = normalizedUsageRecords.length
+    ? normalizedUsageRecords
+    : normalizedSnapshot.recent_requests;
+  const providerOptions = normalizedRoutingSummary?.provider_options ?? [];
+  const usageSummary = summarizeUsageRecords(records);
+  const totalRevenue =
+    normalizedSnapshot.billing_summary.booked_amount > 0
+      ? normalizedSnapshot.billing_summary.booked_amount
+      : usageSummary.revenue;
+  const totalRequests =
+    normalizedSnapshot.usage_summary.total_requests > 0
+      ? normalizedSnapshot.usage_summary.total_requests
+      : usageSummary.request_count;
+  const totalUsedUnits =
+    normalizedSnapshot.billing_summary.used_units > 0
+      ? normalizedSnapshot.billing_summary.used_units
+      : usageSummary.used_units;
+  const todayStart = startOfDayMs(now);
+  const trailing7dStart = startOfTrailing7dMs(now);
+  const monthStart = startOfMonthMs(now);
+  const todayRecords = records.filter((record) => record.created_at_ms >= todayStart);
+  const trailing7dRecords = records.filter((record) => record.created_at_ms >= trailing7dStart);
+  const currentMonthRecords = records.filter((record) => record.created_at_ms >= monthStart);
   const traffic_trend_points = buildTrafficTrendPoints(normalizedSnapshot, normalizedUsageRecords);
   const spend_trend_points = buildSpendTrendPoints(normalizedSnapshot, normalizedUsageRecords);
 
   return {
     snapshot: normalizedSnapshot,
+    membership,
+    commercial_highlights: buildDashboardCommercialHighlights(billingEventSummary),
+    balance: buildBalanceSummary(normalizedSnapshot),
+    totals: {
+      revenue: totalRevenue,
+      request_count: totalRequests,
+      used_units: totalUsedUnits,
+      average_booked_spend: totalRequests > 0 ? totalRevenue / totalRequests : 0,
+    },
+    today: summarizeUsageRecords(todayRecords),
+    trailing_7d: summarizeUsageRecords(trailing7dRecords),
+    current_month: summarizeUsageRecords(currentMonthRecords),
     insights: buildInsights(normalizedSnapshot, normalizedRoutingSummary),
     metrics: buildMetrics(normalizedSnapshot, normalizedRoutingSummary),
     routing_posture: buildRoutingPosture(normalizedRoutingSummary, normalizedRoutingLogs),
     quick_actions: buildQuickActions(normalizedSnapshot, normalizedRoutingSummary),
-    provider_mix: buildProviderMix(normalizedSnapshot),
+    provider_mix: buildProviderMix(normalizedSnapshot, providerOptions),
     model_mix: buildModelMix(normalizedSnapshot),
     request_volume_series: buildRequestVolumeSeries(normalizedSnapshot, normalizedUsageRecords),
     spend_series: buildSpendSeries(normalizedSnapshot, normalizedUsageRecords),
     traffic_trend_points,
     spend_trend_points,
-    provider_share_series: buildProviderShareSeries(normalizedSnapshot),
+    provider_share_series: buildProviderShareSeries(normalizedSnapshot, providerOptions),
     model_demand_series: buildModelDemandSeries(normalizedSnapshot),
-    activity_feed: buildActivityFeed(normalizedSnapshot, normalizedRoutingLogs),
+    activity_feed: buildActivityFeed(normalizedSnapshot, normalizedRoutingLogs, providerOptions),
     modules: buildModules(normalizedSnapshot, normalizedRoutingSummary),
   };
 }

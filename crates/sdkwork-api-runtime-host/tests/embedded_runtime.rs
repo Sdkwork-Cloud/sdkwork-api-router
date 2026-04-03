@@ -3,7 +3,14 @@ use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use axum::body::{to_bytes, Body};
+use axum::extract::Request;
+use axum::http::StatusCode;
+use axum::routing::any;
+use axum::{response::Response, Router};
+use reqwest::Client;
 use sdkwork_api_runtime_host::{EmbeddedRuntime, RuntimeHostConfig};
+use tokio::net::TcpListener as TokioTcpListener;
 
 fn unique_temp_dir(name: &str) -> PathBuf {
     let suffix = SystemTime::now()
@@ -32,6 +39,34 @@ fn read_response_headers(stream: &mut TcpStream) -> String {
     }
 
     String::from_utf8(response).unwrap()
+}
+
+async fn spawn_echo_upstream(name: &'static str) -> String {
+    let listener = TokioTcpListener::bind("127.0.0.1:0").await.unwrap();
+    let bind_addr = listener.local_addr().unwrap().to_string();
+    let router = Router::new().fallback(any(move |request: Request<Body>| async move {
+        let path_and_query = request
+            .uri()
+            .path_and_query()
+            .map(|value| value.as_str().to_owned())
+            .unwrap_or_else(|| request.uri().path().to_owned());
+        let body = to_bytes(request.into_body(), usize::MAX).await.unwrap();
+        Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "text/plain; charset=utf-8")
+            .header("x-upstream-name", name)
+            .body(Body::from(format!(
+                "{name}:{path_and_query}:{}",
+                String::from_utf8_lossy(&body)
+            )))
+            .unwrap()
+    }));
+
+    tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+
+    bind_addr
 }
 
 #[tokio::test]
@@ -87,4 +122,141 @@ async fn root_redirect_includes_zero_content_length_for_keep_alive_clients() {
     assert!(response.starts_with("HTTP/1.1 302"));
     assert!(response.contains("location: /portal/\r\n"));
     assert!(response.contains("content-length: 0\r\n"));
+}
+
+#[tokio::test]
+async fn runtime_serves_static_sites_and_proxies_api_routes() {
+    if TcpListener::bind("127.0.0.1:0").is_err() {
+        return;
+    }
+
+    let admin_dir = unique_temp_dir("admin-static");
+    let portal_dir = unique_temp_dir("portal-static");
+    std::fs::create_dir_all(admin_dir.join("assets")).unwrap();
+    std::fs::create_dir_all(portal_dir.join("assets")).unwrap();
+    std::fs::write(
+        admin_dir.join("index.html"),
+        "<!doctype html><title>admin-home</title>",
+    )
+    .unwrap();
+    std::fs::write(
+        portal_dir.join("index.html"),
+        "<!doctype html><title>portal-home</title>",
+    )
+    .unwrap();
+    std::fs::write(
+        admin_dir.join("assets").join("main.js"),
+        "console.log('admin');",
+    )
+    .unwrap();
+
+    let runtime = EmbeddedRuntime::start(RuntimeHostConfig::new(
+        "127.0.0.1:0",
+        &admin_dir,
+        &portal_dir,
+        spawn_echo_upstream("admin").await,
+        spawn_echo_upstream("portal").await,
+        spawn_echo_upstream("gateway").await,
+    ))
+    .await
+    .unwrap();
+
+    let client = Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let root_response = client.get(runtime.base_url()).send().await.unwrap();
+    assert_eq!(root_response.status(), reqwest::StatusCode::FOUND);
+    assert_eq!(root_response.headers().get("location").unwrap(), "/portal/");
+
+    let admin_response = client
+        .get(format!("{}/admin/", runtime.base_url()))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(admin_response.status(), reqwest::StatusCode::OK);
+    assert!(admin_response.text().await.unwrap().contains("admin-home"));
+
+    let asset_response = client
+        .get(format!("{}/admin/assets/main.js", runtime.base_url()))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(asset_response.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        asset_response.headers().get("cache-control").unwrap(),
+        "public, max-age=31536000, immutable"
+    );
+
+    let admin_proxy_response = client
+        .post(format!(
+            "{}/api/admin/sessions?next=dashboard",
+            runtime.base_url()
+        ))
+        .body("payload-body")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(admin_proxy_response.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        admin_proxy_response
+            .headers()
+            .get("access-control-allow-origin")
+            .unwrap(),
+        "*"
+    );
+    assert_eq!(
+        admin_proxy_response
+            .headers()
+            .get("x-upstream-name")
+            .unwrap(),
+        "admin"
+    );
+    assert_eq!(
+        admin_proxy_response.text().await.unwrap(),
+        "admin:/admin/sessions?next=dashboard:payload-body"
+    );
+
+    let gateway_health_response = client
+        .get(format!("{}/api/v1/health", runtime.base_url()))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(gateway_health_response.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        gateway_health_response
+            .headers()
+            .get("access-control-allow-origin")
+            .unwrap(),
+        "*"
+    );
+    assert_eq!(
+        gateway_health_response
+            .headers()
+            .get("x-upstream-name")
+            .unwrap(),
+        "gateway"
+    );
+    assert_eq!(
+        gateway_health_response.text().await.unwrap(),
+        "gateway:/health:"
+    );
+
+    let preflight_response = client
+        .request(
+            reqwest::Method::OPTIONS,
+            format!("{}/api/v1/health", runtime.base_url()),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(preflight_response.status(), reqwest::StatusCode::NO_CONTENT);
+    assert_eq!(
+        preflight_response
+            .headers()
+            .get("access-control-allow-origin")
+            .unwrap(),
+        "*"
+    );
 }

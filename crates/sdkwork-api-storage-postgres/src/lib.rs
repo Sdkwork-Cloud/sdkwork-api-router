@@ -1,5 +1,6 @@
 use anyhow::Result;
-use sdkwork_api_domain_billing::{LedgerEntry, QuotaPolicy};
+use async_trait::async_trait;
+use sdkwork_api_domain_billing::{BillingAccountingMode, BillingEventRecord, LedgerEntry, QuotaPolicy};
 use sdkwork_api_domain_catalog::{
     normalize_provider_extension_id, Channel, ChannelModelRecord, ModelCapability,
     ModelCatalogEntry, ModelPriceRecord, ProviderChannelBinding, ProxyProvider,
@@ -7,25 +8,31 @@ use sdkwork_api_domain_catalog::{
 use sdkwork_api_domain_commerce::{CommerceOrderRecord, ProjectMembershipRecord};
 use sdkwork_api_domain_coupon::CouponCampaign;
 use sdkwork_api_domain_credential::UpstreamCredential;
-use sdkwork_api_domain_identity::{AdminUserRecord, GatewayApiKeyRecord, PortalUserRecord};
+use sdkwork_api_domain_identity::{
+    AdminUserRecord, ApiKeyGroupRecord, GatewayApiKeyRecord, PortalUserRecord,
+};
 use sdkwork_api_domain_rate_limit::{
     RateLimitCheckResult, RateLimitPolicy, RateLimitWindowSnapshot,
 };
 use sdkwork_api_domain_routing::{
-    ProjectRoutingPreferences, ProviderHealthSnapshot, RoutingCandidateAssessment,
-    RoutingDecisionLog, RoutingDecisionSource, RoutingPolicy, RoutingStrategy,
+    CompiledRoutingSnapshotRecord, ProjectRoutingPreferences, ProviderHealthSnapshot,
+    RoutingCandidateAssessment, RoutingDecisionLog, RoutingDecisionSource, RoutingPolicy,
+    RoutingProfileRecord, RoutingStrategy,
 };
 use sdkwork_api_domain_tenant::{Project, Tenant};
 use sdkwork_api_domain_usage::UsageRecord;
 use sdkwork_api_extension_core::{ExtensionInstallation, ExtensionInstance, ExtensionRuntime};
 use sdkwork_api_secret_core::SecretEnvelope;
 use sdkwork_api_storage_core::{
-    AdminStore, ExtensionRuntimeRolloutParticipantRecord, ExtensionRuntimeRolloutRecord,
-    ServiceRuntimeNodeRecord, StandaloneConfigRolloutParticipantRecord,
-    StandaloneConfigRolloutRecord, StorageDialect,
+    AccountKernelStore, AdminStore, ExtensionRuntimeRolloutParticipantRecord,
+    ExtensionRuntimeRolloutRecord, ServiceRuntimeNodeRecord,
+    StandaloneConfigRolloutParticipantRecord, StandaloneConfigRolloutRecord, StorageDialect,
 };
 use serde_json::Value;
-use sqlx::{postgres::PgPoolOptions, PgPool};
+use sqlx::{
+    postgres::{PgPoolOptions, PgRow},
+    PgPool, Row,
+};
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -38,7 +45,7 @@ const BUILTIN_CHANNEL_SEEDS: [(&str, &str, i32); 5] = [
     ("ollama", "Ollama", 50),
 ];
 
-const LEGACY_RENAMED_TABLE_MAPPINGS: [(&str, &str); 22] = [
+const LEGACY_RENAMED_TABLE_MAPPINGS: [(&str, &str); 23] = [
     ("identity_users", "ai_portal_users"),
     ("admin_users", "ai_admin_users"),
     ("tenant_records", "ai_tenants"),
@@ -53,6 +60,7 @@ const LEGACY_RENAMED_TABLE_MAPPINGS: [(&str, &str); 22] = [
     ("routing_decision_logs", "ai_routing_decision_logs"),
     ("routing_provider_health", "ai_provider_health_records"),
     ("usage_records", "ai_usage_records"),
+    ("billing_events", "ai_billing_events"),
     ("billing_ledger_entries", "ai_billing_ledger_entries"),
     ("billing_quota_policies", "ai_billing_quota_policies"),
     ("commerce_orders", "ai_commerce_orders"),
@@ -228,6 +236,49 @@ fn decode_string_list(values_json: &str) -> Result<Vec<String>> {
     Ok(serde_json::from_str(values_json)?)
 }
 
+fn decode_billing_event_row(row: &PgRow) -> Result<BillingEventRecord> {
+    Ok(BillingEventRecord {
+        event_id: row.try_get("event_id")?,
+        tenant_id: row.try_get("tenant_id")?,
+        project_id: row.try_get("project_id")?,
+        api_key_group_id: row.try_get("api_key_group_id")?,
+        capability: row.try_get("capability")?,
+        route_key: row.try_get("route_key")?,
+        usage_model: row.try_get("usage_model")?,
+        provider_id: row.try_get("provider_id")?,
+        accounting_mode: BillingAccountingMode::from_str(
+            &row.try_get::<String, _>("accounting_mode")?,
+        )
+        .unwrap_or(BillingAccountingMode::PlatformCredit),
+        operation_kind: row.try_get("operation_kind")?,
+        modality: row.try_get("modality")?,
+        api_key_hash: row.try_get("api_key_hash")?,
+        channel_id: row.try_get("channel_id")?,
+        reference_id: row.try_get("reference_id")?,
+        latency_ms: row
+            .try_get::<Option<i64>, _>("latency_ms")?
+            .map(u64::try_from)
+            .transpose()?,
+        units: u64::try_from(row.try_get::<i64, _>("units")?)?,
+        request_count: u64::try_from(row.try_get::<i64, _>("request_count")?)?,
+        input_tokens: u64::try_from(row.try_get::<i64, _>("input_tokens")?)?,
+        output_tokens: u64::try_from(row.try_get::<i64, _>("output_tokens")?)?,
+        total_tokens: u64::try_from(row.try_get::<i64, _>("total_tokens")?)?,
+        cache_read_tokens: u64::try_from(row.try_get::<i64, _>("cache_read_tokens")?)?,
+        cache_write_tokens: u64::try_from(row.try_get::<i64, _>("cache_write_tokens")?)?,
+        image_count: u64::try_from(row.try_get::<i64, _>("image_count")?)?,
+        audio_seconds: row.try_get("audio_seconds")?,
+        video_seconds: row.try_get("video_seconds")?,
+        music_seconds: row.try_get("music_seconds")?,
+        upstream_cost: row.try_get("upstream_cost")?,
+        customer_charge: row.try_get("customer_charge")?,
+        applied_routing_profile_id: row.try_get("applied_routing_profile_id")?,
+        compiled_routing_snapshot_id: row.try_get("compiled_routing_snapshot_id")?,
+        fallback_reason: row.try_get("fallback_reason")?,
+        created_at_ms: u64::try_from(row.try_get::<i64, _>("created_at_ms")?)?,
+    })
+}
+
 fn current_timestamp_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -382,6 +433,109 @@ fn decode_credential_row(row: CredentialRow) -> UpstreamCredential {
         secret_keyring_service,
         secret_master_key_id,
     }
+}
+
+type RoutingDecisionLogRow = PgRow;
+
+fn decode_routing_profile_row(row: PgRow) -> Result<RoutingProfileRecord> {
+    Ok(RoutingProfileRecord::new(
+        row.try_get::<String, _>("profile_id")?,
+        row.try_get::<String, _>("tenant_id")?,
+        row.try_get::<String, _>("project_id")?,
+        row.try_get::<String, _>("name")?,
+        row.try_get::<String, _>("slug")?,
+    )
+    .with_description_option(row.try_get::<Option<String>, _>("description")?)
+    .with_active(row.try_get::<bool, _>("active")?)
+    .with_strategy(
+        RoutingStrategy::from_str(&row.try_get::<String, _>("strategy")?)
+            .unwrap_or(RoutingStrategy::DeterministicPriority),
+    )
+    .with_ordered_provider_ids(decode_string_list(
+        &row.try_get::<String, _>("ordered_provider_ids_json")?,
+    )?)
+    .with_default_provider_id_option(row.try_get::<Option<String>, _>("default_provider_id")?)
+    .with_max_cost_option(row.try_get::<Option<f64>, _>("max_cost")?)
+    .with_max_latency_ms_option(
+        row.try_get::<Option<i64>, _>("max_latency_ms")?
+            .map(u64::try_from)
+            .transpose()?,
+    )
+    .with_require_healthy(row.try_get::<bool, _>("require_healthy")?)
+    .with_preferred_region_option(row.try_get::<Option<String>, _>("preferred_region")?)
+    .with_created_at_ms(u64::try_from(row.try_get::<i64, _>("created_at_ms")?)?)
+    .with_updated_at_ms(u64::try_from(row.try_get::<i64, _>("updated_at_ms")?)?))
+}
+
+fn decode_compiled_routing_snapshot_row(row: PgRow) -> Result<CompiledRoutingSnapshotRecord> {
+    Ok(CompiledRoutingSnapshotRecord::new(
+        row.try_get::<String, _>("snapshot_id")?,
+        row.try_get::<String, _>("capability")?,
+        row.try_get::<String, _>("route_key")?,
+    )
+    .with_tenant_id_option(row.try_get::<Option<String>, _>("tenant_id")?)
+    .with_project_id_option(row.try_get::<Option<String>, _>("project_id")?)
+    .with_api_key_group_id_option(row.try_get::<Option<String>, _>("api_key_group_id")?)
+    .with_matched_policy_id_option(row.try_get::<Option<String>, _>("matched_policy_id")?)
+    .with_project_routing_preferences_project_id_option(
+        row.try_get::<Option<String>, _>("project_routing_preferences_project_id")?,
+    )
+    .with_applied_routing_profile_id_option(
+        row.try_get::<Option<String>, _>("applied_routing_profile_id")?,
+    )
+    .with_strategy(row.try_get::<String, _>("strategy")?)
+    .with_ordered_provider_ids(decode_string_list(
+        &row.try_get::<String, _>("ordered_provider_ids_json")?,
+    )?)
+    .with_default_provider_id_option(row.try_get::<Option<String>, _>("default_provider_id")?)
+    .with_max_cost_option(row.try_get::<Option<f64>, _>("max_cost")?)
+    .with_max_latency_ms_option(
+        row.try_get::<Option<i64>, _>("max_latency_ms")?
+            .map(u64::try_from)
+            .transpose()?,
+    )
+    .with_require_healthy(row.try_get::<bool, _>("require_healthy")?)
+    .with_preferred_region_option(row.try_get::<Option<String>, _>("preferred_region")?)
+    .with_created_at_ms(u64::try_from(row.try_get::<i64, _>("created_at_ms")?)?)
+    .with_updated_at_ms(u64::try_from(row.try_get::<i64, _>("updated_at_ms")?)?))
+}
+
+fn decode_routing_decision_log_row(row: RoutingDecisionLogRow) -> Result<RoutingDecisionLog> {
+    Ok(RoutingDecisionLog::new(
+        row.try_get::<String, _>("decision_id")?,
+        RoutingDecisionSource::from_str(&row.try_get::<String, _>("decision_source")?)
+            .unwrap_or(RoutingDecisionSource::Gateway),
+        row.try_get::<String, _>("capability")?,
+        row.try_get::<String, _>("route_key")?,
+        row.try_get::<String, _>("selected_provider_id")?,
+        row.try_get::<String, _>("strategy")?,
+        u64::try_from(row.try_get::<i64, _>("created_at_ms")?)?,
+    )
+    .with_tenant_id_option(row.try_get::<Option<String>, _>("tenant_id")?)
+    .with_project_id_option(row.try_get::<Option<String>, _>("project_id")?)
+    .with_api_key_group_id_option(row.try_get::<Option<String>, _>("api_key_group_id")?)
+    .with_matched_policy_id_option(row.try_get::<Option<String>, _>("matched_policy_id")?)
+    .with_applied_routing_profile_id_option(
+        row.try_get::<Option<String>, _>("applied_routing_profile_id")?,
+    )
+    .with_compiled_routing_snapshot_id_option(
+        row.try_get::<Option<String>, _>("compiled_routing_snapshot_id")?,
+    )
+    .with_selection_seed_option(
+        row.try_get::<Option<i64>, _>("selection_seed")?
+            .map(u64::try_from)
+            .transpose()?,
+    )
+    .with_selection_reason_option(row.try_get::<Option<String>, _>("selection_reason")?)
+    .with_fallback_reason_option(row.try_get::<Option<String>, _>("fallback_reason")?)
+    .with_requested_region_option(row.try_get::<Option<String>, _>("requested_region")?)
+    .with_slo_state(
+        row.try_get::<bool, _>("slo_applied")?,
+        row.try_get::<bool, _>("slo_degraded")?,
+    )
+    .with_assessments(decode_routing_assessments(
+        &row.try_get::<String, _>("assessments_json")?,
+    )?))
 }
 
 fn decode_channel_model_row(row: ChannelModelRow) -> Result<ChannelModelRecord> {
@@ -731,6 +885,70 @@ pub async fn run_migrations(url: &str) -> Result<PgPool> {
     .execute(&pool)
     .await?;
     sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_routing_profiles (
+            profile_id TEXT PRIMARY KEY NOT NULL,
+            tenant_id TEXT NOT NULL,
+            project_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            slug TEXT NOT NULL,
+            description TEXT,
+            active BOOLEAN NOT NULL DEFAULT TRUE,
+            strategy TEXT NOT NULL DEFAULT 'deterministic_priority',
+            ordered_provider_ids_json TEXT NOT NULL DEFAULT '[]',
+            default_provider_id TEXT,
+            max_cost DOUBLE PRECISION,
+            max_latency_ms BIGINT,
+            require_healthy BOOLEAN NOT NULL DEFAULT FALSE,
+            preferred_region TEXT,
+            created_at_ms BIGINT NOT NULL DEFAULT 0,
+            updated_at_ms BIGINT NOT NULL DEFAULT 0
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_routing_profiles_workspace_slug
+         ON ai_routing_profiles (tenant_id, project_id, slug)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_routing_profiles_workspace_active
+         ON ai_routing_profiles (tenant_id, project_id, active, updated_at_ms DESC, profile_id)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_compiled_routing_snapshots (
+            snapshot_id TEXT PRIMARY KEY NOT NULL,
+            tenant_id TEXT,
+            project_id TEXT,
+            api_key_group_id TEXT,
+            capability TEXT NOT NULL,
+            route_key TEXT NOT NULL,
+            matched_policy_id TEXT,
+            project_routing_preferences_project_id TEXT,
+            applied_routing_profile_id TEXT,
+            strategy TEXT NOT NULL DEFAULT '',
+            ordered_provider_ids_json TEXT NOT NULL DEFAULT '[]',
+            default_provider_id TEXT,
+            max_cost DOUBLE PRECISION,
+            max_latency_ms BIGINT,
+            require_healthy BOOLEAN NOT NULL DEFAULT FALSE,
+            preferred_region TEXT,
+            created_at_ms BIGINT NOT NULL DEFAULT 0,
+            updated_at_ms BIGINT NOT NULL DEFAULT 0
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_compiled_routing_snapshots_scope_updated_at
+         ON ai_compiled_routing_snapshots (tenant_id, project_id, api_key_group_id, updated_at_ms DESC, snapshot_id)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
         "CREATE TABLE IF NOT EXISTS ai_project_routing_preferences (
             project_id TEXT PRIMARY KEY NOT NULL,
             preset_id TEXT NOT NULL DEFAULT '',
@@ -752,13 +970,17 @@ pub async fn run_migrations(url: &str) -> Result<PgPool> {
             decision_source TEXT NOT NULL,
             tenant_id TEXT,
             project_id TEXT,
+            api_key_group_id TEXT,
             capability TEXT NOT NULL,
             route_key TEXT NOT NULL,
             selected_provider_id TEXT NOT NULL,
             matched_policy_id TEXT,
+            applied_routing_profile_id TEXT,
+            compiled_routing_snapshot_id TEXT,
             strategy TEXT NOT NULL,
             selection_seed BIGINT,
             selection_reason TEXT,
+            fallback_reason TEXT,
             requested_region TEXT,
             slo_applied BOOLEAN NOT NULL DEFAULT FALSE,
             slo_degraded BOOLEAN NOT NULL DEFAULT FALSE,
@@ -792,6 +1014,26 @@ pub async fn run_migrations(url: &str) -> Result<PgPool> {
     .execute(&pool)
     .await?;
     sqlx::query(
+        "ALTER TABLE ai_routing_decision_logs ADD COLUMN IF NOT EXISTS api_key_group_id TEXT",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_routing_decision_logs ADD COLUMN IF NOT EXISTS applied_routing_profile_id TEXT",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_routing_decision_logs ADD COLUMN IF NOT EXISTS compiled_routing_snapshot_id TEXT",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_routing_decision_logs ADD COLUMN IF NOT EXISTS fallback_reason TEXT",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
         "CREATE TABLE IF NOT EXISTS ai_provider_health_records (
             provider_id TEXT NOT NULL,
             extension_id TEXT NOT NULL,
@@ -814,6 +1056,262 @@ pub async fn run_migrations(url: &str) -> Result<PgPool> {
     sqlx::query(
         "CREATE INDEX IF NOT EXISTS idx_ai_provider_health_records_extension_runtime_observed_at
          ON ai_provider_health_records (extension_id, runtime, observed_at_ms DESC, provider_id)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_account (
+            account_id BIGINT PRIMARY KEY NOT NULL,
+            tenant_id BIGINT NOT NULL,
+            organization_id BIGINT NOT NULL DEFAULT 0,
+            user_id BIGINT NOT NULL,
+            account_type TEXT NOT NULL,
+            currency_code TEXT NOT NULL DEFAULT 'USD',
+            credit_unit_code TEXT NOT NULL DEFAULT 'credit',
+            status TEXT NOT NULL DEFAULT 'active',
+            allow_overdraft BOOLEAN NOT NULL DEFAULT FALSE,
+            overdraft_limit DOUBLE PRECISION NOT NULL DEFAULT 0,
+            created_at_ms BIGINT NOT NULL DEFAULT 0,
+            updated_at_ms BIGINT NOT NULL DEFAULT 0
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_account_user_type
+         ON ai_account (tenant_id, organization_id, user_id, account_type)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_account_benefit_lot (
+            lot_id BIGINT PRIMARY KEY NOT NULL,
+            tenant_id BIGINT NOT NULL,
+            organization_id BIGINT NOT NULL DEFAULT 0,
+            account_id BIGINT NOT NULL,
+            user_id BIGINT NOT NULL,
+            benefit_type TEXT NOT NULL,
+            source_type TEXT NOT NULL,
+            source_id BIGINT,
+            scope_json TEXT,
+            original_quantity DOUBLE PRECISION NOT NULL DEFAULT 0,
+            remaining_quantity DOUBLE PRECISION NOT NULL DEFAULT 0,
+            held_quantity DOUBLE PRECISION NOT NULL DEFAULT 0,
+            priority INTEGER NOT NULL DEFAULT 0,
+            acquired_unit_cost DOUBLE PRECISION,
+            issued_at_ms BIGINT NOT NULL DEFAULT 0,
+            expires_at_ms BIGINT,
+            status TEXT NOT NULL DEFAULT 'active',
+            created_at_ms BIGINT NOT NULL DEFAULT 0,
+            updated_at_ms BIGINT NOT NULL DEFAULT 0
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_account_benefit_lot_account_status_expiry
+         ON ai_account_benefit_lot (tenant_id, organization_id, account_id, status, expires_at_ms)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_account_hold (
+            hold_id BIGINT PRIMARY KEY NOT NULL,
+            tenant_id BIGINT NOT NULL,
+            organization_id BIGINT NOT NULL DEFAULT 0,
+            account_id BIGINT NOT NULL,
+            user_id BIGINT NOT NULL,
+            request_id BIGINT NOT NULL,
+            hold_status TEXT NOT NULL DEFAULT 'held',
+            estimated_quantity DOUBLE PRECISION NOT NULL DEFAULT 0,
+            captured_quantity DOUBLE PRECISION NOT NULL DEFAULT 0,
+            released_quantity DOUBLE PRECISION NOT NULL DEFAULT 0,
+            expires_at_ms BIGINT NOT NULL DEFAULT 0,
+            created_at_ms BIGINT NOT NULL DEFAULT 0,
+            updated_at_ms BIGINT NOT NULL DEFAULT 0
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_account_hold_request
+         ON ai_account_hold (tenant_id, organization_id, request_id)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_account_ledger_entry (
+            ledger_entry_id BIGINT PRIMARY KEY NOT NULL,
+            tenant_id BIGINT NOT NULL,
+            organization_id BIGINT NOT NULL DEFAULT 0,
+            account_id BIGINT NOT NULL,
+            user_id BIGINT NOT NULL,
+            request_id BIGINT,
+            hold_id BIGINT,
+            entry_type TEXT NOT NULL,
+            benefit_type TEXT,
+            quantity DOUBLE PRECISION NOT NULL DEFAULT 0,
+            amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+            created_at_ms BIGINT NOT NULL DEFAULT 0
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_account_ledger_entry_account_created_at
+         ON ai_account_ledger_entry (tenant_id, organization_id, account_id, created_at_ms DESC)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_request_meter_fact (
+            request_id BIGINT PRIMARY KEY NOT NULL,
+            tenant_id BIGINT NOT NULL,
+            organization_id BIGINT NOT NULL DEFAULT 0,
+            user_id BIGINT NOT NULL,
+            account_id BIGINT NOT NULL,
+            api_key_id BIGINT,
+            api_key_hash TEXT,
+            auth_type TEXT NOT NULL,
+            jwt_subject TEXT,
+            platform TEXT,
+            owner TEXT,
+            request_trace_id TEXT,
+            gateway_request_ref TEXT,
+            upstream_request_ref TEXT,
+            protocol_family TEXT NOT NULL DEFAULT '',
+            capability_code TEXT NOT NULL,
+            channel_code TEXT NOT NULL,
+            model_code TEXT NOT NULL,
+            provider_code TEXT NOT NULL,
+            request_status TEXT NOT NULL DEFAULT 'pending',
+            usage_capture_status TEXT NOT NULL DEFAULT 'pending',
+            cost_pricing_plan_id BIGINT,
+            retail_pricing_plan_id BIGINT,
+            estimated_credit_hold DOUBLE PRECISION NOT NULL DEFAULT 0,
+            actual_credit_charge DOUBLE PRECISION,
+            actual_provider_cost DOUBLE PRECISION,
+            started_at_ms BIGINT NOT NULL DEFAULT 0,
+            finished_at_ms BIGINT,
+            created_at_ms BIGINT NOT NULL DEFAULT 0,
+            updated_at_ms BIGINT NOT NULL DEFAULT 0
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_request_meter_fact_user_created_at
+         ON ai_request_meter_fact (tenant_id, organization_id, user_id, created_at_ms DESC)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_request_meter_fact_api_key_created_at
+         ON ai_request_meter_fact (tenant_id, organization_id, api_key_id, created_at_ms DESC)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_request_meter_fact_provider_model_created_at
+         ON ai_request_meter_fact (tenant_id, organization_id, provider_code, model_code, created_at_ms DESC)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_request_meter_metric (
+            request_metric_id BIGINT PRIMARY KEY NOT NULL,
+            tenant_id BIGINT NOT NULL,
+            organization_id BIGINT NOT NULL DEFAULT 0,
+            request_id BIGINT NOT NULL,
+            metric_code TEXT NOT NULL,
+            quantity DOUBLE PRECISION NOT NULL DEFAULT 0,
+            provider_field TEXT,
+            source_kind TEXT NOT NULL DEFAULT 'provider',
+            capture_stage TEXT NOT NULL DEFAULT 'final',
+            is_billable BOOLEAN NOT NULL DEFAULT TRUE,
+            captured_at_ms BIGINT NOT NULL DEFAULT 0
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_request_meter_metric_request_metric
+         ON ai_request_meter_metric (tenant_id, organization_id, request_id, metric_code)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_request_settlement (
+            request_settlement_id BIGINT PRIMARY KEY NOT NULL,
+            tenant_id BIGINT NOT NULL,
+            organization_id BIGINT NOT NULL DEFAULT 0,
+            request_id BIGINT NOT NULL,
+            account_id BIGINT NOT NULL,
+            user_id BIGINT NOT NULL,
+            hold_id BIGINT,
+            settlement_status TEXT NOT NULL DEFAULT 'pending',
+            estimated_credit_hold DOUBLE PRECISION NOT NULL DEFAULT 0,
+            released_credit_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+            captured_credit_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+            provider_cost_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+            retail_charge_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+            shortfall_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+            refunded_amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+            settled_at_ms BIGINT NOT NULL DEFAULT 0,
+            created_at_ms BIGINT NOT NULL DEFAULT 0,
+            updated_at_ms BIGINT NOT NULL DEFAULT 0
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_request_settlement_request
+         ON ai_request_settlement (tenant_id, organization_id, request_id)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_pricing_plan (
+            pricing_plan_id BIGINT PRIMARY KEY NOT NULL,
+            tenant_id BIGINT NOT NULL,
+            organization_id BIGINT NOT NULL DEFAULT 0,
+            plan_code TEXT NOT NULL,
+            plan_version BIGINT NOT NULL,
+            display_name TEXT NOT NULL DEFAULT '',
+            currency_code TEXT NOT NULL DEFAULT 'USD',
+            credit_unit_code TEXT NOT NULL DEFAULT 'credit',
+            status TEXT NOT NULL DEFAULT 'draft',
+            created_at_ms BIGINT NOT NULL DEFAULT 0,
+            updated_at_ms BIGINT NOT NULL DEFAULT 0
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_pricing_plan_code_version
+         ON ai_pricing_plan (tenant_id, organization_id, plan_code, plan_version)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_pricing_rate (
+            pricing_rate_id BIGINT PRIMARY KEY NOT NULL,
+            tenant_id BIGINT NOT NULL,
+            organization_id BIGINT NOT NULL DEFAULT 0,
+            pricing_plan_id BIGINT NOT NULL,
+            metric_code TEXT NOT NULL,
+            model_code TEXT,
+            provider_code TEXT,
+            quantity_step DOUBLE PRECISION NOT NULL DEFAULT 1,
+            unit_price DOUBLE PRECISION NOT NULL DEFAULT 0,
+            created_at_ms BIGINT NOT NULL DEFAULT 0
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_pricing_rate_plan_metric
+         ON ai_pricing_rate (tenant_id, organization_id, pricing_plan_id, metric_code)",
     )
     .execute(&pool)
     .await?;
@@ -895,6 +1393,62 @@ pub async fn run_migrations(url: &str) -> Result<PgPool> {
     sqlx::query(
         "CREATE INDEX IF NOT EXISTS idx_ai_usage_records_project_fact_filters
          ON ai_usage_records (project_id, created_at_ms DESC, api_key_hash, channel_id, model)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_billing_events (
+            event_id TEXT PRIMARY KEY NOT NULL,
+            tenant_id TEXT NOT NULL,
+            project_id TEXT NOT NULL,
+            api_key_group_id TEXT,
+            capability TEXT NOT NULL,
+            route_key TEXT NOT NULL,
+            usage_model TEXT NOT NULL,
+            provider_id TEXT NOT NULL,
+            accounting_mode TEXT NOT NULL,
+            operation_kind TEXT NOT NULL,
+            modality TEXT NOT NULL,
+            api_key_hash TEXT,
+            channel_id TEXT,
+            reference_id TEXT,
+            latency_ms BIGINT,
+            units BIGINT NOT NULL DEFAULT 0,
+            request_count BIGINT NOT NULL DEFAULT 1,
+            input_tokens BIGINT NOT NULL DEFAULT 0,
+            output_tokens BIGINT NOT NULL DEFAULT 0,
+            total_tokens BIGINT NOT NULL DEFAULT 0,
+            cache_read_tokens BIGINT NOT NULL DEFAULT 0,
+            cache_write_tokens BIGINT NOT NULL DEFAULT 0,
+            image_count BIGINT NOT NULL DEFAULT 0,
+            audio_seconds DOUBLE PRECISION NOT NULL DEFAULT 0,
+            video_seconds DOUBLE PRECISION NOT NULL DEFAULT 0,
+            music_seconds DOUBLE PRECISION NOT NULL DEFAULT 0,
+            upstream_cost DOUBLE PRECISION NOT NULL DEFAULT 0,
+            customer_charge DOUBLE PRECISION NOT NULL DEFAULT 0,
+            applied_routing_profile_id TEXT,
+            compiled_routing_snapshot_id TEXT,
+            fallback_reason TEXT,
+            created_at_ms BIGINT NOT NULL DEFAULT 0
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_billing_events_project_created_at
+         ON ai_billing_events (project_id, created_at_ms DESC, capability, provider_id)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_billing_events_group_created_at
+         ON ai_billing_events (api_key_group_id, created_at_ms DESC, project_id, capability)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_billing_events_capability_created_at
+         ON ai_billing_events (capability, created_at_ms DESC, project_id, provider_id)",
     )
     .execute(&pool)
     .await?;
@@ -1191,12 +1745,45 @@ pub async fn run_migrations(url: &str) -> Result<PgPool> {
     .execute(&pool)
     .await?;
     sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_app_api_key_groups (
+            group_id TEXT PRIMARY KEY NOT NULL,
+            tenant_id TEXT NOT NULL,
+            project_id TEXT NOT NULL,
+            environment TEXT NOT NULL,
+            name TEXT NOT NULL,
+            slug TEXT NOT NULL,
+            description TEXT,
+            color TEXT,
+            default_capability_scope TEXT,
+            default_routing_profile_id TEXT,
+            default_accounting_mode TEXT,
+            active BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at_ms BIGINT NOT NULL DEFAULT 0,
+            updated_at_ms BIGINT NOT NULL DEFAULT 0
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_app_api_key_groups_workspace_slug
+         ON ai_app_api_key_groups (tenant_id, project_id, environment, slug)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_app_api_key_groups_workspace_active
+         ON ai_app_api_key_groups (tenant_id, project_id, environment, active, created_at_ms DESC)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
         "CREATE TABLE IF NOT EXISTS ai_app_api_keys (
             hashed_key TEXT PRIMARY KEY NOT NULL,
             raw_key TEXT,
             tenant_id TEXT NOT NULL,
             project_id TEXT NOT NULL,
             environment TEXT NOT NULL,
+            api_key_group_id TEXT,
             label TEXT NOT NULL DEFAULT '',
             notes TEXT,
             created_at_ms BIGINT NOT NULL DEFAULT 0,
@@ -1398,8 +1985,47 @@ pub async fn run_migrations(url: &str) -> Result<PgPool> {
     sqlx::query("ALTER TABLE ai_app_api_keys ADD COLUMN IF NOT EXISTS raw_key TEXT")
         .execute(&pool)
         .await?;
+    sqlx::query("ALTER TABLE ai_app_api_keys ADD COLUMN IF NOT EXISTS api_key_group_id TEXT")
+        .execute(&pool)
+        .await?;
     sqlx::query(
         "ALTER TABLE ai_app_api_keys ADD COLUMN IF NOT EXISTS label TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query("ALTER TABLE ai_app_api_key_groups ADD COLUMN IF NOT EXISTS description TEXT")
+        .execute(&pool)
+        .await?;
+    sqlx::query("ALTER TABLE ai_app_api_key_groups ADD COLUMN IF NOT EXISTS color TEXT")
+        .execute(&pool)
+        .await?;
+    sqlx::query(
+        "ALTER TABLE ai_app_api_key_groups ADD COLUMN IF NOT EXISTS default_capability_scope TEXT",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_app_api_key_groups ADD COLUMN IF NOT EXISTS default_routing_profile_id TEXT",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_app_api_key_groups ADD COLUMN IF NOT EXISTS default_accounting_mode TEXT",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_app_api_key_groups ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_app_api_key_groups ADD COLUMN IF NOT EXISTS created_at_ms BIGINT NOT NULL DEFAULT 0",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_app_api_key_groups ADD COLUMN IF NOT EXISTS updated_at_ms BIGINT NOT NULL DEFAULT 0",
     )
     .execute(&pool)
     .await?;
@@ -1926,6 +2552,7 @@ pub async fn run_migrations(url: &str) -> Result<PgPool> {
                 tenant_id,
                 project_id,
                 environment,
+                api_key_group_id,
                 label,
                 notes,
                 created_at_ms,
@@ -1939,6 +2566,7 @@ pub async fn run_migrations(url: &str) -> Result<PgPool> {
                 tenant_id,
                 project_id,
                 environment,
+                NULL,
                 label,
                 notes,
                 created_at_ms,
@@ -2974,6 +3602,180 @@ impl PostgresAdminStore {
         Ok(policies)
     }
 
+    pub async fn insert_routing_profile(
+        &self,
+        profile: &RoutingProfileRecord,
+    ) -> Result<RoutingProfileRecord> {
+        sqlx::query(
+            "INSERT INTO ai_routing_profiles (
+                profile_id,
+                tenant_id,
+                project_id,
+                name,
+                slug,
+                description,
+                active,
+                strategy,
+                ordered_provider_ids_json,
+                default_provider_id,
+                max_cost,
+                max_latency_ms,
+                require_healthy,
+                preferred_region,
+                created_at_ms,
+                updated_at_ms
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+            ON CONFLICT(profile_id) DO UPDATE SET
+                tenant_id = excluded.tenant_id,
+                project_id = excluded.project_id,
+                name = excluded.name,
+                slug = excluded.slug,
+                description = excluded.description,
+                active = excluded.active,
+                strategy = excluded.strategy,
+                ordered_provider_ids_json = excluded.ordered_provider_ids_json,
+                default_provider_id = excluded.default_provider_id,
+                max_cost = excluded.max_cost,
+                max_latency_ms = excluded.max_latency_ms,
+                require_healthy = excluded.require_healthy,
+                preferred_region = excluded.preferred_region,
+                created_at_ms = excluded.created_at_ms,
+                updated_at_ms = excluded.updated_at_ms",
+        )
+        .bind(&profile.profile_id)
+        .bind(&profile.tenant_id)
+        .bind(&profile.project_id)
+        .bind(&profile.name)
+        .bind(&profile.slug)
+        .bind(&profile.description)
+        .bind(profile.active)
+        .bind(profile.strategy.as_str())
+        .bind(encode_string_list(&profile.ordered_provider_ids)?)
+        .bind(&profile.default_provider_id)
+        .bind(profile.max_cost)
+        .bind(profile.max_latency_ms.map(i64::try_from).transpose()?)
+        .bind(profile.require_healthy)
+        .bind(&profile.preferred_region)
+        .bind(i64::try_from(profile.created_at_ms)?)
+        .bind(i64::try_from(profile.updated_at_ms)?)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(profile.clone())
+    }
+
+    pub async fn list_routing_profiles(&self) -> Result<Vec<RoutingProfileRecord>> {
+        let rows = sqlx::query(
+            "SELECT profile_id, tenant_id, project_id, name, slug, description, active, strategy, ordered_provider_ids_json, default_provider_id, max_cost, max_latency_ms, require_healthy, preferred_region, created_at_ms, updated_at_ms
+             FROM ai_routing_profiles
+             ORDER BY updated_at_ms DESC, profile_id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter().map(decode_routing_profile_row).collect()
+    }
+
+    pub async fn find_routing_profile(
+        &self,
+        profile_id: &str,
+    ) -> Result<Option<RoutingProfileRecord>> {
+        let row = sqlx::query(
+            "SELECT profile_id, tenant_id, project_id, name, slug, description, active, strategy, ordered_provider_ids_json, default_provider_id, max_cost, max_latency_ms, require_healthy, preferred_region, created_at_ms, updated_at_ms
+             FROM ai_routing_profiles
+             WHERE profile_id = $1",
+        )
+        .bind(profile_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        row.map(decode_routing_profile_row).transpose()
+    }
+
+    pub async fn insert_compiled_routing_snapshot(
+        &self,
+        snapshot: &CompiledRoutingSnapshotRecord,
+    ) -> Result<CompiledRoutingSnapshotRecord> {
+        sqlx::query(
+            "INSERT INTO ai_compiled_routing_snapshots (
+                snapshot_id,
+                tenant_id,
+                project_id,
+                api_key_group_id,
+                capability,
+                route_key,
+                matched_policy_id,
+                project_routing_preferences_project_id,
+                applied_routing_profile_id,
+                strategy,
+                ordered_provider_ids_json,
+                default_provider_id,
+                max_cost,
+                max_latency_ms,
+                require_healthy,
+                preferred_region,
+                created_at_ms,
+                updated_at_ms
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+            ON CONFLICT(snapshot_id) DO UPDATE SET
+                tenant_id = excluded.tenant_id,
+                project_id = excluded.project_id,
+                api_key_group_id = excluded.api_key_group_id,
+                capability = excluded.capability,
+                route_key = excluded.route_key,
+                matched_policy_id = excluded.matched_policy_id,
+                project_routing_preferences_project_id = excluded.project_routing_preferences_project_id,
+                applied_routing_profile_id = excluded.applied_routing_profile_id,
+                strategy = excluded.strategy,
+                ordered_provider_ids_json = excluded.ordered_provider_ids_json,
+                default_provider_id = excluded.default_provider_id,
+                max_cost = excluded.max_cost,
+                max_latency_ms = excluded.max_latency_ms,
+                require_healthy = excluded.require_healthy,
+                preferred_region = excluded.preferred_region,
+                created_at_ms = excluded.created_at_ms,
+                updated_at_ms = excluded.updated_at_ms",
+        )
+        .bind(&snapshot.snapshot_id)
+        .bind(&snapshot.tenant_id)
+        .bind(&snapshot.project_id)
+        .bind(&snapshot.api_key_group_id)
+        .bind(&snapshot.capability)
+        .bind(&snapshot.route_key)
+        .bind(&snapshot.matched_policy_id)
+        .bind(&snapshot.project_routing_preferences_project_id)
+        .bind(&snapshot.applied_routing_profile_id)
+        .bind(&snapshot.strategy)
+        .bind(encode_string_list(&snapshot.ordered_provider_ids)?)
+        .bind(&snapshot.default_provider_id)
+        .bind(snapshot.max_cost)
+        .bind(snapshot.max_latency_ms.map(i64::try_from).transpose()?)
+        .bind(snapshot.require_healthy)
+        .bind(&snapshot.preferred_region)
+        .bind(i64::try_from(snapshot.created_at_ms)?)
+        .bind(i64::try_from(snapshot.updated_at_ms)?)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(snapshot.clone())
+    }
+
+    pub async fn list_compiled_routing_snapshots(
+        &self,
+    ) -> Result<Vec<CompiledRoutingSnapshotRecord>> {
+        let rows = sqlx::query(
+            "SELECT snapshot_id, tenant_id, project_id, api_key_group_id, capability, route_key, matched_policy_id, project_routing_preferences_project_id, applied_routing_profile_id, strategy, ordered_provider_ids_json, default_provider_id, max_cost, max_latency_ms, require_healthy, preferred_region, created_at_ms, updated_at_ms
+             FROM ai_compiled_routing_snapshots
+             ORDER BY updated_at_ms DESC, snapshot_id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter()
+            .map(decode_compiled_routing_snapshot_row)
+            .collect()
+    }
+
     pub async fn insert_project_routing_preferences(
         &self,
         preferences: &ProjectRoutingPreferences,
@@ -3081,21 +3883,25 @@ impl PostgresAdminStore {
         log: &RoutingDecisionLog,
     ) -> Result<RoutingDecisionLog> {
         sqlx::query(
-            "INSERT INTO ai_routing_decision_logs (decision_id, decision_source, tenant_id, project_id, capability, route_key, selected_provider_id, matched_policy_id, strategy, selection_seed, selection_reason, requested_region, slo_applied, slo_degraded, created_at_ms, assessments_json)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-             ON CONFLICT(decision_id) DO UPDATE SET decision_source = excluded.decision_source, tenant_id = excluded.tenant_id, project_id = excluded.project_id, capability = excluded.capability, route_key = excluded.route_key, selected_provider_id = excluded.selected_provider_id, matched_policy_id = excluded.matched_policy_id, strategy = excluded.strategy, selection_seed = excluded.selection_seed, selection_reason = excluded.selection_reason, requested_region = excluded.requested_region, slo_applied = excluded.slo_applied, slo_degraded = excluded.slo_degraded, created_at_ms = excluded.created_at_ms, assessments_json = excluded.assessments_json",
+            "INSERT INTO ai_routing_decision_logs (decision_id, decision_source, tenant_id, project_id, api_key_group_id, capability, route_key, selected_provider_id, matched_policy_id, applied_routing_profile_id, compiled_routing_snapshot_id, strategy, selection_seed, selection_reason, fallback_reason, requested_region, slo_applied, slo_degraded, created_at_ms, assessments_json)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+             ON CONFLICT(decision_id) DO UPDATE SET decision_source = excluded.decision_source, tenant_id = excluded.tenant_id, project_id = excluded.project_id, api_key_group_id = excluded.api_key_group_id, capability = excluded.capability, route_key = excluded.route_key, selected_provider_id = excluded.selected_provider_id, matched_policy_id = excluded.matched_policy_id, applied_routing_profile_id = excluded.applied_routing_profile_id, compiled_routing_snapshot_id = excluded.compiled_routing_snapshot_id, strategy = excluded.strategy, selection_seed = excluded.selection_seed, selection_reason = excluded.selection_reason, fallback_reason = excluded.fallback_reason, requested_region = excluded.requested_region, slo_applied = excluded.slo_applied, slo_degraded = excluded.slo_degraded, created_at_ms = excluded.created_at_ms, assessments_json = excluded.assessments_json",
         )
         .bind(&log.decision_id)
         .bind(log.decision_source.as_str())
         .bind(&log.tenant_id)
         .bind(&log.project_id)
+        .bind(&log.api_key_group_id)
         .bind(&log.capability)
         .bind(&log.route_key)
         .bind(&log.selected_provider_id)
         .bind(&log.matched_policy_id)
+        .bind(&log.applied_routing_profile_id)
+        .bind(&log.compiled_routing_snapshot_id)
         .bind(&log.strategy)
         .bind(log.selection_seed.map(i64::try_from).transpose()?)
         .bind(&log.selection_reason)
+        .bind(&log.fallback_reason)
         .bind(&log.requested_region)
         .bind(log.slo_applied)
         .bind(log.slo_degraded)
@@ -3108,28 +3914,8 @@ impl PostgresAdminStore {
     }
 
     pub async fn list_routing_decision_logs(&self) -> Result<Vec<RoutingDecisionLog>> {
-        let rows = sqlx::query_as::<
-            _,
-            (
-                String,
-                String,
-                Option<String>,
-                Option<String>,
-                String,
-                String,
-                String,
-                Option<String>,
-                String,
-                Option<i64>,
-                Option<String>,
-                Option<String>,
-                bool,
-                bool,
-                i64,
-                String,
-            ),
-        >(
-            "SELECT decision_id, decision_source, tenant_id, project_id, capability, route_key, selected_provider_id, matched_policy_id, strategy, selection_seed, selection_reason, requested_region, slo_applied, slo_degraded, created_at_ms, assessments_json
+        let rows = sqlx::query(
+            "SELECT decision_id, decision_source, tenant_id, project_id, api_key_group_id, capability, route_key, selected_provider_id, matched_policy_id, applied_routing_profile_id, compiled_routing_snapshot_id, strategy, selection_seed, selection_reason, fallback_reason, requested_region, slo_applied, slo_degraded, created_at_ms, assessments_json
              FROM ai_routing_decision_logs
              ORDER BY created_at_ms DESC, decision_id DESC",
         )
@@ -3137,45 +3923,7 @@ impl PostgresAdminStore {
         .await?;
 
         rows.into_iter()
-            .map(
-                |(
-                    decision_id,
-                    decision_source,
-                    tenant_id,
-                    project_id,
-                    capability,
-                    route_key,
-                    selected_provider_id,
-                    matched_policy_id,
-                    strategy,
-                    selection_seed,
-                    selection_reason,
-                    requested_region,
-                    slo_applied,
-                    slo_degraded,
-                    created_at_ms,
-                    assessments_json,
-                )| {
-                    Ok(RoutingDecisionLog::new(
-                        decision_id,
-                        RoutingDecisionSource::from_str(&decision_source)
-                            .unwrap_or(RoutingDecisionSource::Gateway),
-                        capability,
-                        route_key,
-                        selected_provider_id,
-                        strategy,
-                        u64::try_from(created_at_ms)?,
-                    )
-                    .with_tenant_id_option(tenant_id)
-                    .with_project_id_option(project_id)
-                    .with_matched_policy_id_option(matched_policy_id)
-                    .with_selection_seed_option(selection_seed.map(u64::try_from).transpose()?)
-                    .with_selection_reason_option(selection_reason)
-                    .with_requested_region_option(requested_region)
-                    .with_slo_state(slo_applied, slo_degraded)
-                    .with_assessments(decode_routing_assessments(&assessments_json)?))
-                },
-            )
+            .map(decode_routing_decision_log_row)
             .collect()
     }
 
@@ -3183,28 +3931,8 @@ impl PostgresAdminStore {
         &self,
         project_id: &str,
     ) -> Result<Vec<RoutingDecisionLog>> {
-        let rows = sqlx::query_as::<
-            _,
-            (
-                String,
-                String,
-                Option<String>,
-                Option<String>,
-                String,
-                String,
-                String,
-                Option<String>,
-                String,
-                Option<i64>,
-                Option<String>,
-                Option<String>,
-                bool,
-                bool,
-                i64,
-                String,
-            ),
-        >(
-            "SELECT decision_id, decision_source, tenant_id, project_id, capability, route_key, selected_provider_id, matched_policy_id, strategy, selection_seed, selection_reason, requested_region, slo_applied, slo_degraded, created_at_ms, assessments_json
+        let rows = sqlx::query(
+            "SELECT decision_id, decision_source, tenant_id, project_id, api_key_group_id, capability, route_key, selected_provider_id, matched_policy_id, applied_routing_profile_id, compiled_routing_snapshot_id, strategy, selection_seed, selection_reason, fallback_reason, requested_region, slo_applied, slo_degraded, created_at_ms, assessments_json
              FROM ai_routing_decision_logs
              WHERE project_id = $1
              ORDER BY created_at_ms DESC, decision_id DESC",
@@ -3214,45 +3942,7 @@ impl PostgresAdminStore {
         .await?;
 
         rows.into_iter()
-            .map(
-                |(
-                    decision_id,
-                    decision_source,
-                    tenant_id,
-                    project_id,
-                    capability,
-                    route_key,
-                    selected_provider_id,
-                    matched_policy_id,
-                    strategy,
-                    selection_seed,
-                    selection_reason,
-                    requested_region,
-                    slo_applied,
-                    slo_degraded,
-                    created_at_ms,
-                    assessments_json,
-                )| {
-                    Ok(RoutingDecisionLog::new(
-                        decision_id,
-                        RoutingDecisionSource::from_str(&decision_source)
-                            .unwrap_or(RoutingDecisionSource::Gateway),
-                        capability,
-                        route_key,
-                        selected_provider_id,
-                        strategy,
-                        u64::try_from(created_at_ms)?,
-                    )
-                    .with_tenant_id_option(tenant_id)
-                    .with_project_id_option(project_id)
-                    .with_matched_policy_id_option(matched_policy_id)
-                    .with_selection_seed_option(selection_seed.map(u64::try_from).transpose()?)
-                    .with_selection_reason_option(selection_reason)
-                    .with_requested_region_option(requested_region)
-                    .with_slo_state(slo_applied, slo_degraded)
-                    .with_assessments(decode_routing_assessments(&assessments_json)?))
-                },
-            )
+            .map(decode_routing_decision_log_row)
             .collect()
     }
 
@@ -3260,28 +3950,8 @@ impl PostgresAdminStore {
         &self,
         project_id: &str,
     ) -> Result<Option<RoutingDecisionLog>> {
-        let row = sqlx::query_as::<
-            _,
-            (
-                String,
-                String,
-                Option<String>,
-                Option<String>,
-                String,
-                String,
-                String,
-                Option<String>,
-                String,
-                Option<i64>,
-                Option<String>,
-                Option<String>,
-                bool,
-                bool,
-                i64,
-                String,
-            ),
-        >(
-            "SELECT decision_id, decision_source, tenant_id, project_id, capability, route_key, selected_provider_id, matched_policy_id, strategy, selection_seed, selection_reason, requested_region, slo_applied, slo_degraded, created_at_ms, assessments_json
+        let row = sqlx::query(
+            "SELECT decision_id, decision_source, tenant_id, project_id, api_key_group_id, capability, route_key, selected_provider_id, matched_policy_id, applied_routing_profile_id, compiled_routing_snapshot_id, strategy, selection_seed, selection_reason, fallback_reason, requested_region, slo_applied, slo_degraded, created_at_ms, assessments_json
              FROM ai_routing_decision_logs
              WHERE project_id = $1
              ORDER BY created_at_ms DESC, decision_id DESC
@@ -3291,46 +3961,7 @@ impl PostgresAdminStore {
         .fetch_optional(&self.pool)
         .await?;
 
-        row.map(
-            |(
-                decision_id,
-                decision_source,
-                tenant_id,
-                project_id,
-                capability,
-                route_key,
-                selected_provider_id,
-                matched_policy_id,
-                strategy,
-                selection_seed,
-                selection_reason,
-                requested_region,
-                slo_applied,
-                slo_degraded,
-                created_at_ms,
-                assessments_json,
-            )| {
-                Ok(RoutingDecisionLog::new(
-                    decision_id,
-                    RoutingDecisionSource::from_str(&decision_source)
-                        .unwrap_or(RoutingDecisionSource::Gateway),
-                    capability,
-                    route_key,
-                    selected_provider_id,
-                    strategy,
-                    u64::try_from(created_at_ms)?,
-                )
-                .with_tenant_id_option(tenant_id)
-                .with_project_id_option(project_id)
-                .with_matched_policy_id_option(matched_policy_id)
-                .with_selection_seed_option(selection_seed.map(u64::try_from).transpose()?)
-                .with_selection_reason_option(selection_reason)
-                .with_requested_region_option(requested_region)
-                .with_slo_state(slo_applied, slo_degraded)
-                .with_assessments(decode_routing_assessments(&assessments_json)?))
-            },
-        )
-        .transpose()
+        row.map(decode_routing_decision_log_row).transpose()
     }
 
     pub async fn insert_provider_health_snapshot(
@@ -3639,6 +4270,165 @@ impl PostgresAdminStore {
         .transpose()
     }
 
+    pub async fn insert_billing_event(
+        &self,
+        event: &BillingEventRecord,
+    ) -> Result<BillingEventRecord> {
+        sqlx::query(
+            "INSERT INTO ai_billing_events (
+                event_id,
+                tenant_id,
+                project_id,
+                api_key_group_id,
+                capability,
+                route_key,
+                usage_model,
+                provider_id,
+                accounting_mode,
+                operation_kind,
+                modality,
+                api_key_hash,
+                channel_id,
+                reference_id,
+                latency_ms,
+                units,
+                request_count,
+                input_tokens,
+                output_tokens,
+                total_tokens,
+                cache_read_tokens,
+                cache_write_tokens,
+                image_count,
+                audio_seconds,
+                video_seconds,
+                music_seconds,
+                upstream_cost,
+                customer_charge,
+                applied_routing_profile_id,
+                compiled_routing_snapshot_id,
+                fallback_reason,
+                created_at_ms
+             )
+             VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+                $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32
+             )
+             ON CONFLICT(event_id) DO UPDATE SET
+                tenant_id = excluded.tenant_id,
+                project_id = excluded.project_id,
+                api_key_group_id = excluded.api_key_group_id,
+                capability = excluded.capability,
+                route_key = excluded.route_key,
+                usage_model = excluded.usage_model,
+                provider_id = excluded.provider_id,
+                accounting_mode = excluded.accounting_mode,
+                operation_kind = excluded.operation_kind,
+                modality = excluded.modality,
+                api_key_hash = excluded.api_key_hash,
+                channel_id = excluded.channel_id,
+                reference_id = excluded.reference_id,
+                latency_ms = excluded.latency_ms,
+                units = excluded.units,
+                request_count = excluded.request_count,
+                input_tokens = excluded.input_tokens,
+                output_tokens = excluded.output_tokens,
+                total_tokens = excluded.total_tokens,
+                cache_read_tokens = excluded.cache_read_tokens,
+                cache_write_tokens = excluded.cache_write_tokens,
+                image_count = excluded.image_count,
+                audio_seconds = excluded.audio_seconds,
+                video_seconds = excluded.video_seconds,
+                music_seconds = excluded.music_seconds,
+                upstream_cost = excluded.upstream_cost,
+                customer_charge = excluded.customer_charge,
+                applied_routing_profile_id = excluded.applied_routing_profile_id,
+                compiled_routing_snapshot_id = excluded.compiled_routing_snapshot_id,
+                fallback_reason = excluded.fallback_reason,
+                created_at_ms = excluded.created_at_ms",
+        )
+        .bind(&event.event_id)
+        .bind(&event.tenant_id)
+        .bind(&event.project_id)
+        .bind(event.api_key_group_id.as_deref())
+        .bind(&event.capability)
+        .bind(&event.route_key)
+        .bind(&event.usage_model)
+        .bind(&event.provider_id)
+        .bind(event.accounting_mode.as_str())
+        .bind(&event.operation_kind)
+        .bind(&event.modality)
+        .bind(event.api_key_hash.as_deref())
+        .bind(event.channel_id.as_deref())
+        .bind(event.reference_id.as_deref())
+        .bind(event.latency_ms.map(i64::try_from).transpose()?)
+        .bind(i64::try_from(event.units)?)
+        .bind(i64::try_from(event.request_count)?)
+        .bind(i64::try_from(event.input_tokens)?)
+        .bind(i64::try_from(event.output_tokens)?)
+        .bind(i64::try_from(event.total_tokens)?)
+        .bind(i64::try_from(event.cache_read_tokens)?)
+        .bind(i64::try_from(event.cache_write_tokens)?)
+        .bind(i64::try_from(event.image_count)?)
+        .bind(event.audio_seconds)
+        .bind(event.video_seconds)
+        .bind(event.music_seconds)
+        .bind(event.upstream_cost)
+        .bind(event.customer_charge)
+        .bind(event.applied_routing_profile_id.as_deref())
+        .bind(event.compiled_routing_snapshot_id.as_deref())
+        .bind(event.fallback_reason.as_deref())
+        .bind(i64::try_from(event.created_at_ms)?)
+        .execute(&self.pool)
+        .await?;
+        Ok(event.clone())
+    }
+
+    pub async fn list_billing_events(&self) -> Result<Vec<BillingEventRecord>> {
+        let rows = sqlx::query(
+            "SELECT
+                event_id,
+                tenant_id,
+                project_id,
+                api_key_group_id,
+                capability,
+                route_key,
+                usage_model,
+                provider_id,
+                accounting_mode,
+                operation_kind,
+                modality,
+                api_key_hash,
+                channel_id,
+                reference_id,
+                latency_ms,
+                units,
+                request_count,
+                input_tokens,
+                output_tokens,
+                total_tokens,
+                cache_read_tokens,
+                cache_write_tokens,
+                image_count,
+                audio_seconds,
+                video_seconds,
+                music_seconds,
+                upstream_cost,
+                customer_charge,
+                applied_routing_profile_id,
+                compiled_routing_snapshot_id,
+                fallback_reason,
+                created_at_ms
+             FROM ai_billing_events
+             ORDER BY created_at_ms DESC, event_id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.iter()
+            .map(decode_billing_event_row)
+            .collect::<Result<Vec<_>>>()
+    }
+
     pub async fn insert_ledger_entry(&self, entry: &LedgerEntry) -> Result<LedgerEntry> {
         sqlx::query(
             "INSERT INTO ai_billing_ledger_entries (project_id, units, amount, created_at_ms) VALUES ($1, $2, $3, $4)",
@@ -3925,20 +4715,23 @@ impl PostgresAdminStore {
     }
 
     pub async fn list_rate_limit_window_snapshots(&self) -> Result<Vec<RateLimitWindowSnapshot>> {
-        let rows = sqlx::query_as::<_, (
-            String,
-            String,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            i64,
-            i64,
-            i64,
-            i64,
-            i64,
-            i64,
-            bool,
-        )>(
+        let rows = sqlx::query_as::<
+            _,
+            (
+                String,
+                String,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                i64,
+                i64,
+                i64,
+                i64,
+                i64,
+                i64,
+                bool,
+            ),
+        >(
             "SELECT
                 p.policy_id,
                 p.project_id,
@@ -4764,18 +5557,20 @@ impl PostgresAdminStore {
                 tenant_id,
                 project_id,
                 environment,
+                api_key_group_id,
                 label,
                 notes,
                 created_at_ms,
                 last_used_at_ms,
                 expires_at_ms,
                 active
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
              ON CONFLICT(hashed_key) DO UPDATE SET
                 raw_key = excluded.raw_key,
                 tenant_id = excluded.tenant_id,
                 project_id = excluded.project_id,
                 environment = excluded.environment,
+                api_key_group_id = excluded.api_key_group_id,
                 label = excluded.label,
                 notes = excluded.notes,
                 created_at_ms = excluded.created_at_ms,
@@ -4788,6 +5583,7 @@ impl PostgresAdminStore {
         .bind(&record.tenant_id)
         .bind(&record.project_id)
         .bind(&record.environment)
+        .bind(&record.api_key_group_id)
         .bind(&record.label)
         .bind(&record.notes)
         .bind(i64::try_from(record.created_at_ms).unwrap_or(i64::MAX))
@@ -4808,8 +5604,8 @@ impl PostgresAdminStore {
     }
 
     pub async fn list_gateway_api_keys(&self) -> Result<Vec<GatewayApiKeyRecord>> {
-        let rows = sqlx::query_as::<_, (String, Option<String>, String, String, String, String, Option<String>, i64, Option<i64>, Option<i64>, bool)>(
-            "SELECT hashed_key, raw_key, tenant_id, project_id, environment, label, notes, created_at_ms, last_used_at_ms, expires_at_ms, active
+        let rows = sqlx::query_as::<_, (String, Option<String>, String, String, String, Option<String>, String, Option<String>, i64, Option<i64>, Option<i64>, bool)>(
+            "SELECT hashed_key, raw_key, tenant_id, project_id, environment, api_key_group_id, label, notes, created_at_ms, last_used_at_ms, expires_at_ms, active
              FROM ai_app_api_keys
              ORDER BY created_at_ms DESC, hashed_key",
         )
@@ -4824,6 +5620,7 @@ impl PostgresAdminStore {
                     tenant_id,
                     project_id,
                     environment,
+                    api_key_group_id,
                     label,
                     notes,
                     created_at_ms,
@@ -4836,6 +5633,7 @@ impl PostgresAdminStore {
                     environment,
                     hashed_key,
                     raw_key,
+                    api_key_group_id,
                     label,
                     notes,
                     created_at_ms: u64::try_from(created_at_ms).unwrap_or_default(),
@@ -4851,8 +5649,8 @@ impl PostgresAdminStore {
         &self,
         hashed_key: &str,
     ) -> Result<Option<GatewayApiKeyRecord>> {
-        let row = sqlx::query_as::<_, (String, Option<String>, String, String, String, String, Option<String>, i64, Option<i64>, Option<i64>, bool)>(
-            "SELECT hashed_key, raw_key, tenant_id, project_id, environment, label, notes, created_at_ms, last_used_at_ms, expires_at_ms, active
+        let row = sqlx::query_as::<_, (String, Option<String>, String, String, String, Option<String>, String, Option<String>, i64, Option<i64>, Option<i64>, bool)>(
+            "SELECT hashed_key, raw_key, tenant_id, project_id, environment, api_key_group_id, label, notes, created_at_ms, last_used_at_ms, expires_at_ms, active
              FROM ai_app_api_keys
              WHERE hashed_key = $1",
         )
@@ -4867,6 +5665,7 @@ impl PostgresAdminStore {
                 tenant_id,
                 project_id,
                 environment,
+                api_key_group_id,
                 label,
                 notes,
                 created_at_ms,
@@ -4880,6 +5679,7 @@ impl PostgresAdminStore {
                     environment,
                     hashed_key,
                     raw_key,
+                    api_key_group_id,
                     label,
                     notes,
                     created_at_ms: u64::try_from(created_at_ms).unwrap_or_default(),
@@ -4894,6 +5694,160 @@ impl PostgresAdminStore {
     pub async fn delete_gateway_api_key(&self, hashed_key: &str) -> Result<bool> {
         let result = sqlx::query("DELETE FROM ai_app_api_keys WHERE hashed_key = $1")
             .bind(hashed_key)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn insert_api_key_group(
+        &self,
+        record: &ApiKeyGroupRecord,
+    ) -> Result<ApiKeyGroupRecord> {
+        sqlx::query(
+            "INSERT INTO ai_app_api_key_groups (
+                group_id,
+                tenant_id,
+                project_id,
+                environment,
+                name,
+                slug,
+                description,
+                color,
+                default_capability_scope,
+                default_routing_profile_id,
+                default_accounting_mode,
+                active,
+                created_at_ms,
+                updated_at_ms
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+             ON CONFLICT(group_id) DO UPDATE SET
+                tenant_id = excluded.tenant_id,
+                project_id = excluded.project_id,
+                environment = excluded.environment,
+                name = excluded.name,
+                slug = excluded.slug,
+                description = excluded.description,
+                color = excluded.color,
+                default_capability_scope = excluded.default_capability_scope,
+                default_routing_profile_id = excluded.default_routing_profile_id,
+                default_accounting_mode = excluded.default_accounting_mode,
+                active = excluded.active,
+                created_at_ms = excluded.created_at_ms,
+                updated_at_ms = excluded.updated_at_ms",
+        )
+        .bind(&record.group_id)
+        .bind(&record.tenant_id)
+        .bind(&record.project_id)
+        .bind(&record.environment)
+        .bind(&record.name)
+        .bind(&record.slug)
+        .bind(&record.description)
+        .bind(&record.color)
+        .bind(&record.default_capability_scope)
+        .bind(&record.default_routing_profile_id)
+        .bind(&record.default_accounting_mode)
+        .bind(record.active)
+        .bind(i64::try_from(record.created_at_ms).unwrap_or(i64::MAX))
+        .bind(i64::try_from(record.updated_at_ms).unwrap_or(i64::MAX))
+        .execute(&self.pool)
+        .await?;
+        Ok(record.clone())
+    }
+
+    pub async fn list_api_key_groups(&self) -> Result<Vec<ApiKeyGroupRecord>> {
+        let rows = sqlx::query_as::<_, (String, String, String, String, String, String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, bool, i64, i64)>(
+            "SELECT group_id, tenant_id, project_id, environment, name, slug, description, color, default_capability_scope, default_routing_profile_id, default_accounting_mode, active, created_at_ms, updated_at_ms
+             FROM ai_app_api_key_groups
+             ORDER BY created_at_ms DESC, group_id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    group_id,
+                    tenant_id,
+                    project_id,
+                    environment,
+                    name,
+                    slug,
+                    description,
+                    color,
+                    default_capability_scope,
+                    default_routing_profile_id,
+                    default_accounting_mode,
+                    active,
+                    created_at_ms,
+                    updated_at_ms,
+                )| ApiKeyGroupRecord {
+                    group_id,
+                    tenant_id,
+                    project_id,
+                    environment,
+                    name,
+                    slug,
+                    description,
+                    color,
+                    default_capability_scope,
+                    default_routing_profile_id,
+                    default_accounting_mode,
+                    active,
+                    created_at_ms: u64::try_from(created_at_ms).unwrap_or_default(),
+                    updated_at_ms: u64::try_from(updated_at_ms).unwrap_or_default(),
+                },
+            )
+            .collect())
+    }
+
+    pub async fn find_api_key_group(&self, group_id: &str) -> Result<Option<ApiKeyGroupRecord>> {
+        let row = sqlx::query_as::<_, (String, String, String, String, String, String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, bool, i64, i64)>(
+            "SELECT group_id, tenant_id, project_id, environment, name, slug, description, color, default_capability_scope, default_routing_profile_id, default_accounting_mode, active, created_at_ms, updated_at_ms
+             FROM ai_app_api_key_groups
+             WHERE group_id = $1",
+        )
+        .bind(group_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(
+            |(
+                group_id,
+                tenant_id,
+                project_id,
+                environment,
+                name,
+                slug,
+                description,
+                color,
+                default_capability_scope,
+                default_routing_profile_id,
+                default_accounting_mode,
+                active,
+                created_at_ms,
+                updated_at_ms,
+            )| ApiKeyGroupRecord {
+                group_id,
+                tenant_id,
+                project_id,
+                environment,
+                name,
+                slug,
+                description,
+                color,
+                default_capability_scope,
+                default_routing_profile_id,
+                default_accounting_mode,
+                active,
+                created_at_ms: u64::try_from(created_at_ms).unwrap_or_default(),
+                updated_at_ms: u64::try_from(updated_at_ms).unwrap_or_default(),
+            },
+        ))
+    }
+
+    pub async fn delete_api_key_group(&self, group_id: &str) -> Result<bool> {
+        let result = sqlx::query("DELETE FROM ai_app_api_key_groups WHERE group_id = $1")
+            .bind(group_id)
             .execute(&self.pool)
             .await?;
         Ok(result.rows_affected() > 0)
@@ -5693,6 +6647,32 @@ impl AdminStore for PostgresAdminStore {
         PostgresAdminStore::list_routing_policies(self).await
     }
 
+    async fn insert_routing_profile(
+        &self,
+        profile: &RoutingProfileRecord,
+    ) -> Result<RoutingProfileRecord> {
+        PostgresAdminStore::insert_routing_profile(self, profile).await
+    }
+
+    async fn list_routing_profiles(&self) -> Result<Vec<RoutingProfileRecord>> {
+        PostgresAdminStore::list_routing_profiles(self).await
+    }
+
+    async fn find_routing_profile(&self, profile_id: &str) -> Result<Option<RoutingProfileRecord>> {
+        PostgresAdminStore::find_routing_profile(self, profile_id).await
+    }
+
+    async fn insert_compiled_routing_snapshot(
+        &self,
+        snapshot: &CompiledRoutingSnapshotRecord,
+    ) -> Result<CompiledRoutingSnapshotRecord> {
+        PostgresAdminStore::insert_compiled_routing_snapshot(self, snapshot).await
+    }
+
+    async fn list_compiled_routing_snapshots(&self) -> Result<Vec<CompiledRoutingSnapshotRecord>> {
+        PostgresAdminStore::list_compiled_routing_snapshots(self).await
+    }
+
     async fn insert_project_routing_preferences(
         &self,
         preferences: &ProjectRoutingPreferences,
@@ -5760,6 +6740,14 @@ impl AdminStore for PostgresAdminStore {
         project_id: &str,
     ) -> Result<Option<UsageRecord>> {
         PostgresAdminStore::find_latest_usage_record_for_project(self, project_id).await
+    }
+
+    async fn insert_billing_event(&self, event: &BillingEventRecord) -> Result<BillingEventRecord> {
+        PostgresAdminStore::insert_billing_event(self, event).await
+    }
+
+    async fn list_billing_events(&self) -> Result<Vec<BillingEventRecord>> {
+        PostgresAdminStore::list_billing_events(self).await
     }
 
     async fn insert_ledger_entry(&self, entry: &LedgerEntry) -> Result<LedgerEntry> {
@@ -5967,6 +6955,22 @@ impl AdminStore for PostgresAdminStore {
         PostgresAdminStore::delete_gateway_api_key(self, hashed_key).await
     }
 
+    async fn insert_api_key_group(&self, record: &ApiKeyGroupRecord) -> Result<ApiKeyGroupRecord> {
+        PostgresAdminStore::insert_api_key_group(self, record).await
+    }
+
+    async fn list_api_key_groups(&self) -> Result<Vec<ApiKeyGroupRecord>> {
+        PostgresAdminStore::list_api_key_groups(self).await
+    }
+
+    async fn find_api_key_group(&self, group_id: &str) -> Result<Option<ApiKeyGroupRecord>> {
+        PostgresAdminStore::find_api_key_group(self, group_id).await
+    }
+
+    async fn delete_api_key_group(&self, group_id: &str) -> Result<bool> {
+        PostgresAdminStore::delete_api_key_group(self, group_id).await
+    }
+
     async fn insert_extension_installation(
         &self,
         installation: &ExtensionInstallation,
@@ -6126,3 +7130,6 @@ impl AdminStore for PostgresAdminStore {
         .await
     }
 }
+
+#[async_trait]
+impl AccountKernelStore for PostgresAdminStore {}

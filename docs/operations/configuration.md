@@ -60,6 +60,8 @@ If no config file exists, the services still start with these values:
 - `admin_bind`: `127.0.0.1:8081`
 - `portal_bind`: `127.0.0.1:8082`
 - `database_url`: `sqlite://<config-root>/sdkwork-api-server.db`
+- `cache_backend`: `memory`
+- `cache_url`: unset
 - `extension_paths`: `["<config-root>/extensions"]`
 - `secret_local_file`: `<config-root>/secrets.json`
 - `enable_connector_extensions`: `true`
@@ -81,6 +83,8 @@ Supported fields:
 - `admin_bind`
 - `portal_bind`
 - `database_url`
+- `cache_backend`
+- `cache_url`
 - `extension_paths`
 - `enable_connector_extensions`
 - `enable_native_dynamic_extensions`
@@ -95,6 +99,20 @@ Supported fields:
 - `credential_master_key`
 - `secret_local_file`
 - `secret_keyring_service`
+
+## Cache Backend Status
+
+The config contract accepts `cache_backend` and optional `cache_url`, and the standalone runtime now links both built-in cache drivers through the cache driver registry:
+
+- `memory`: supported for embedded, test, and single-process deployments
+- `redis`: supported for shared, multi-process deployments through the in-repo Redis cache driver
+
+The current cache consumers do not all activate in the same way:
+
+- route-decision cache is enabled in the standalone gateway because it is process-local handoff state
+- capability catalog cache is opt-in and currently enabled only when a runtime explicitly injects a shared cache store, such as the combined product runtime
+- standalone `gateway-service` and `admin-api-service` enable capability catalog cache only when the configured backend supports shared cross-process coherence, which is currently `redis`
+- standalone `gateway-service` and `admin-api-service` keep capability catalog cache disabled with the default `memory` backend to avoid cross-process stale reads
 
 ## Runtime Reload Behavior
 
@@ -123,10 +141,16 @@ Reloadable without restart:
 - `secret_keyring_service`
 
 Still restart-required:
+- `cache_backend`
+- `cache_url`
 - changes made only in the parent shell after the process already started
 - binary upgrades and other out-of-process deployment changes
 
-When a restart-required field changes on disk, the running process logs that the change was detected but ignored until restart.
+When a restart-required field changes on disk, the running process keeps the last applied value for that field, records the pending restart requirement, and logs that the change was detected but still needs process restart.
+
+If a config file mixes reloadable and restart-required changes, the runtime applies only the reloadable subset immediately and keeps the restart-required subset pending.
+
+Standalone config rollout reports these restart-required-only or mixed restart-required changes as participant `failed` with a `restart required for ...` message instead of marking the rollout as succeeded.
 
 ## YAML Example
 
@@ -135,6 +159,7 @@ gateway_bind: "127.0.0.1:8080"
 admin_bind: "127.0.0.1:8081"
 portal_bind: "127.0.0.1:8082"
 database_url: "sqlite://sdkwork-api-server.db"
+cache_backend: "memory"
 extension_paths:
   - "extensions"
   - "extensions/partner"
@@ -163,6 +188,7 @@ secret_keyring_service: "sdkwork-api-server"
   "admin_bind": "127.0.0.1:8081",
   "portal_bind": "127.0.0.1:8082",
   "database_url": "postgres://postgres:postgres@127.0.0.1:5432/sdkwork_api_server",
+  "cache_backend": "memory",
   "extension_paths": [
     "extensions"
   ],
@@ -196,6 +222,8 @@ The most important runtime environment variables are:
 - `SDKWORK_CONFIG_DIR`
 - `SDKWORK_CONFIG_FILE`
 - `SDKWORK_DATABASE_URL`
+- `SDKWORK_CACHE_BACKEND`
+- `SDKWORK_CACHE_URL`
 - `SDKWORK_GATEWAY_BIND`
 - `SDKWORK_ADMIN_BIND`
 - `SDKWORK_PORTAL_BIND`

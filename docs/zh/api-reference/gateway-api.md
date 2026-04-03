@@ -43,6 +43,7 @@ curl http://127.0.0.1:8080/v1/models \
 | realtime | `POST /realtime/sessions` | realtime session 创建 |
 | evals | `GET/POST /evals`、`GET/POST/DELETE /evals/{eval_id}`、嵌套 runs 和 output item 路由 | 评估工作流 |
 | videos | `GET/POST /videos`，以及 retrieve、delete、content、remix、edits、extensions、extend、character 路由 | 同时覆盖 canonical 与嵌套路由 |
+| music | `GET/POST /music`、`GET/DELETE /music/{music_id}`、`GET /music/{music_id}/content`、`POST /music/lyrics` | 资源化音乐生成、获取、二进制内容读取与歌词生成 |
 
 ## 网关语义
 

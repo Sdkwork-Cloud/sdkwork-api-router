@@ -1,17 +1,24 @@
 #!/usr/bin/env node
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 import { withSupportedWindowsCmakeGenerator } from './run-tauri-cli.mjs';
+import {
+  frontendInstallStatus,
+  frontendViteConfigHealthy,
+  pnpmExecutable,
+  pnpmProcessSpec,
+  pnpmSpawnOptions,
+} from './dev/pnpm-launch-lib.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export function pnpmCommand(platform = process.platform) {
-  return platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
+  return pnpmExecutable(platform);
 }
 
 export function resolveRustRunner(platform = process.platform, env = process.env) {
@@ -59,12 +66,11 @@ export function createProductCheckPlan({
 
   return [
     {
+      ...pnpmProcessSpec(['typecheck'], { platform }),
       label: 'portal typecheck',
-      command: pnpmCommand(platform),
-      args: ['typecheck'],
       cwd: portalAppDir,
       env: baseEnv,
-      shell: platform === 'win32',
+      shell: false,
       windowsHide: platform === 'win32',
     },
     {
@@ -77,12 +83,11 @@ export function createProductCheckPlan({
       windowsHide: platform === 'win32',
     },
     {
+      ...pnpmProcessSpec(['typecheck'], { platform }),
       label: 'admin typecheck',
-      command: pnpmCommand(platform),
-      args: ['typecheck'],
       cwd: adminAppDir,
       env: baseEnv,
-      shell: platform === 'win32',
+      shell: false,
       windowsHide: platform === 'win32',
     },
     {
@@ -129,6 +134,51 @@ export function createProductCheckPlan({
   ];
 }
 
+function ensureFrontendAppReady({
+  appRoot,
+  platform = process.platform,
+  env = process.env,
+} = {}) {
+  const installStatus = frontendInstallStatus({
+    appRoot,
+    platform,
+    requiredPackages: ['vite', 'typescript'],
+    requiredBinCommands: ['vite', 'tsc'],
+    verifyInstalled: () => frontendViteConfigHealthy({
+      appRoot,
+      command: 'build',
+      env,
+      platform,
+    }),
+  });
+
+  if (installStatus === 'ready') {
+    return;
+  }
+
+  const installProcess = pnpmProcessSpec(['--dir', appRoot, 'install'], { platform });
+  const result = spawnSync(
+    installProcess.command,
+    installProcess.args,
+    {
+      ...pnpmSpawnOptions({
+        platform,
+        env,
+      }),
+      encoding: 'utf8',
+      maxBuffer: 32 * 1024 * 1024,
+    },
+  );
+
+  if (result.error) {
+    throw result.error;
+  }
+
+  if ((result.status ?? 1) !== 0) {
+    throw new Error(`pnpm install exited with code ${result.status ?? 1} for ${appRoot}`);
+  }
+}
+
 async function runStep(step) {
   await new Promise((resolve, reject) => {
     const child = spawn(step.command, step.args, {
@@ -156,6 +206,15 @@ async function runStep(step) {
 
 async function main() {
   const plan = createProductCheckPlan();
+  for (const appRoot of [
+    path.join(__dirname, '..', 'apps', 'sdkwork-router-portal'),
+    path.join(__dirname, '..', 'apps', 'sdkwork-router-admin'),
+  ]) {
+    ensureFrontendAppReady({
+      appRoot,
+    });
+  }
+
   for (const step of plan) {
     console.error(`[check-router-product] ${step.label}`);
     // eslint-disable-next-line no-await-in-loop

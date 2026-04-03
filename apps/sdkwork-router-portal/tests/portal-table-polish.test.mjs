@@ -11,6 +11,8 @@ function read(relativePath) {
 
 test('portal shared table exposes shadcn-style slots and keeps header visible for empty data', () => {
   const commons = read('packages/sdkwork-router-portal-commons/src/index.tsx');
+  const frameworkDisplay = read('packages/sdkwork-router-portal-commons/src/framework/display.ts');
+  const apiKeysPage = read('packages/sdkwork-router-portal-api-keys/src/pages/index.tsx');
   const apiKeyTable = read('packages/sdkwork-router-portal-api-keys/src/components/PortalApiKeyTable.tsx');
   const usagePage = read('packages/sdkwork-router-portal-usage/src/pages/index.tsx');
   const creditsPage = read('packages/sdkwork-router-portal-credits/src/pages/index.tsx');
@@ -30,9 +32,12 @@ test('portal shared table exposes shadcn-style slots and keeps header visible fo
     (gatewayPage.match(/<DataTable/g)?.length ?? 0)
     + (gatewayComponents.match(/<DataTable/g)?.length ?? 0);
 
-  assert.match(commons, /data-slot="table-container"/);
-  assert.match(commons, /data-slot="table-header"/);
-  assert.match(commons, /data-slot="table-empty"/);
+  assert.match(frameworkDisplay, /from '@sdkwork\/ui-pc-react\/components\/ui\/data-display'/);
+  assert.match(frameworkDisplay, /DataTable/);
+  assert.doesNotMatch(commons, /data-slot="table-container"/);
+  assert.doesNotMatch(commons, /data-slot="table-header"/);
+  assert.doesNotMatch(commons, /data-slot="table-empty"/);
+  assert.match(apiKeysPage, /data-slot="portal-api-key-table"/);
   assert.match(apiKeyTable, /DataTable/);
   assert.doesNotMatch(apiKeyTable, /if \(!items.length\)/);
   assert.doesNotMatch(usagePage, /visibleRecords.length \?/);
@@ -47,15 +52,20 @@ test('portal shared table exposes shadcn-style slots and keeps header visible fo
   assert.match(dashboardPage, /Request posture/);
   assert.doesNotMatch(dashboardPage, /<table className="w-full/);
   assert.equal(routingTableCount, 1);
+  assert.match(routingPage, /ManagementWorkbench/);
   assert.match(routingPage, /data-slot="portal-routing-filter-bar"/);
   assert.match(routingPage, /Workbench lane/);
   assert.match(routingPage, /Operational focus/);
+  assert.doesNotMatch(routingPage, /<Surface/);
   assert.doesNotMatch(routingPage, /viewModel\.evidence.length \?/);
   assert.doesNotMatch(routingPage, /<Tabs/);
   assert.equal(gatewayTableCount, 1);
+  assert.match(gatewayPage, /ManagementWorkbench/);
   assert.match(gatewayPage, /data-slot="portal-gateway-filter-bar"/);
   assert.match(gatewayPage, /Workbench lane/);
   assert.match(gatewayPage, /Operational focus/);
+  assert.doesNotMatch(gatewayPage, /<Surface/);
   assert.doesNotMatch(gatewayPage, /Compatibility matrix/);
   assert.doesNotMatch(gatewayPage, /Desktop runtime controls/);
+  assert.doesNotMatch(gatewayComponents, /export \{ Surface \}/);
 });

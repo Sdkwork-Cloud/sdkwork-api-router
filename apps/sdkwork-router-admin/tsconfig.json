@@ -15,18 +15,20 @@
     "isolatedModules": true,
     "noEmit": true,
     "jsx": "react-jsx",
+    "types": ["node", "vite/client"],
     "baseUrl": ".",
     "paths": {
-      "@sdkwork/ui-pc-react": ["../../../sdkwork-ui/sdkwork-ui-pc-react/src/index.ts"],
-      "@sdkwork/ui-pc-react/*": ["../../../sdkwork-ui/sdkwork-ui-pc-react/src/*"],
+      "motion/react": ["src/vendor/motion-react.tsx"],
+      "@sdkwork/ui-pc-react": ["node_modules/@sdkwork/ui-pc-react/dist/index.d.ts"],
+      "@sdkwork/ui-pc-react/theme": ["node_modules/@sdkwork/ui-pc-react/dist/theme/index.d.ts"],
+      "@sdkwork/ui-pc-react/*": ["node_modules/@sdkwork/ui-pc-react/dist/*"],
       "@sdkwork/ui-pc-react/styles.css": [
-        "../../../sdkwork-ui/sdkwork-ui-pc-react/src/styles/sdkwork-ui.css"
+        "node_modules/@sdkwork/ui-pc-react/dist/sdkwork-ui.css"
       ],
       "sdkwork-router-admin-apirouter": ["packages/sdkwork-router-admin-apirouter/src/index.ts"],
       "sdkwork-router-admin-admin-api": ["packages/sdkwork-router-admin-admin-api/src/index.ts"],
       "sdkwork-router-admin-auth": ["packages/sdkwork-router-admin-auth/src/index.tsx"],
       "sdkwork-router-admin-catalog": ["packages/sdkwork-router-admin-catalog/src/index.tsx"],
-      "sdkwork-router-admin-commons": ["packages/sdkwork-router-admin-commons/src/index.tsx"],
       "sdkwork-router-admin-core": ["packages/sdkwork-router-admin-core/src/index.tsx"],
       "sdkwork-router-admin-coupons": ["packages/sdkwork-router-admin-coupons/src/index.tsx"],
       "sdkwork-router-admin-operations": ["packages/sdkwork-router-admin-operations/src/index.tsx"],

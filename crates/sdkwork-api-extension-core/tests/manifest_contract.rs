@@ -1,5 +1,6 @@
 use sdkwork_api_extension_core::{
-    CapabilityDescriptor, CompatibilityLevel, ExtensionKind, ExtensionManifest, ExtensionRuntime,
+    CapabilityDescriptor, CompatibilityLevel, ExtensionKind, ExtensionManifest, ExtensionModality,
+    ExtensionRuntime,
 };
 
 #[test]
@@ -25,4 +26,30 @@ fn manifest_tracks_kind_runtime_and_capabilities() {
         CompatibilityLevel::Relay
     );
     assert_eq!(manifest.channel_bindings, vec!["sdkwork.channel.openai"]);
+}
+
+#[test]
+fn manifest_tracks_runtime_contract_versions_and_supported_modalities() {
+    let manifest = ExtensionManifest::new(
+        "sdkwork.provider.openrouter",
+        ExtensionKind::Provider,
+        "0.1.0",
+        ExtensionRuntime::Builtin,
+    )
+    .with_supported_modality(ExtensionModality::Image)
+    .with_supported_modality(ExtensionModality::Audio);
+
+    assert_eq!(
+        manifest.runtime_compat_version.as_deref(),
+        Some("sdkwork.runtime/v1")
+    );
+    assert_eq!(manifest.config_schema_version.as_deref(), Some("1.0"));
+    assert_eq!(
+        manifest.supported_modalities,
+        vec![
+            ExtensionModality::Text,
+            ExtensionModality::Image,
+            ExtensionModality::Audio,
+        ]
+    );
 }

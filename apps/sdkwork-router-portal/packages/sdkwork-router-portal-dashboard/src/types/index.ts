@@ -1,4 +1,10 @@
+import type { StatusBadgeVariant } from 'sdkwork-router-portal-commons/framework/display';
+
 import type {
+  BillingEventAccountingModeSummary,
+  BillingEventCapabilitySummary,
+  BillingEventSummary,
+  PortalCommerceMembership,
   PortalDashboardSummary,
   PortalRouteKey,
   PortalRoutingDecisionLog,
@@ -6,13 +12,14 @@ import type {
   UsageRecord,
 } from 'sdkwork-router-portal-types';
 
-export type DashboardTone = 'accent' | 'positive' | 'warning' | 'default';
+export type DashboardStatusVariant = StatusBadgeVariant;
 
 export interface DashboardInsight {
   id: string;
   title: string;
   detail: string;
-  tone: DashboardTone;
+  status_label: string;
+  status_variant: DashboardStatusVariant;
   route?: PortalRouteKey;
   action_label?: string;
 }
@@ -24,6 +31,32 @@ export interface DashboardMetric {
   detail: string;
 }
 
+export interface DashboardMetricSummary {
+  revenue: number;
+  request_count: number;
+  used_units: number;
+  average_booked_spend: number;
+}
+
+export interface DashboardBalanceSummary {
+  remaining_units: number | null;
+  quota_limit_units: number | null;
+  used_units: number;
+  utilization_ratio: number | null;
+}
+
+export interface DashboardCommercialHighlights {
+  total_customer_charge: number;
+  leading_accounting_mode: BillingEventAccountingModeSummary | null;
+  leading_capability: BillingEventCapabilitySummary | null;
+  multimodal_totals: {
+    image_count: number;
+    audio_seconds: number;
+    video_seconds: number;
+    music_seconds: number;
+  };
+}
+
 export interface DashboardRoutingPosture {
   title: string;
   detail: string;
@@ -32,7 +65,8 @@ export interface DashboardRoutingPosture {
   preferred_region: string;
   evidence_count: string;
   latest_reason: string;
-  tone: DashboardTone;
+  status_label: string;
+  status_variant: DashboardStatusVariant;
   route: PortalRouteKey;
   action_label: string;
 }
@@ -83,7 +117,8 @@ export interface DashboardActivityItem {
   title: string;
   detail: string;
   timestamp_label: string;
-  tone: DashboardTone;
+  status_label: string;
+  status_variant: DashboardStatusVariant;
   route?: PortalRouteKey;
   action_label?: string;
 }
@@ -93,12 +128,14 @@ export interface DashboardModuleItem {
   title: string;
   status_label: string;
   detail: string;
-  tone: DashboardTone;
+  status_variant: DashboardStatusVariant;
   action_label: string;
 }
 
 export interface PortalDashboardSnapshotBundle {
   dashboard: PortalDashboardSummary;
+  membership: PortalCommerceMembership | null;
+  billing_event_summary: BillingEventSummary;
   routing_summary: PortalRoutingSummary;
   routing_logs: PortalRoutingDecisionLog[];
   usage_records: UsageRecord[];
@@ -111,6 +148,13 @@ export interface PortalDashboardPageProps {
 
 export interface PortalDashboardPageViewModel {
   snapshot: PortalDashboardSummary;
+  membership: PortalCommerceMembership | null;
+  commercial_highlights: DashboardCommercialHighlights;
+  balance: DashboardBalanceSummary;
+  totals: DashboardMetricSummary;
+  today: DashboardMetricSummary;
+  trailing_7d: DashboardMetricSummary;
+  current_month: DashboardMetricSummary;
   insights: DashboardInsight[];
   metrics: DashboardMetric[];
   routing_posture: DashboardRoutingPosture | null;

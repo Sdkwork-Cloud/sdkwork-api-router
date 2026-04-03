@@ -1,3 +1,4 @@
+import { translatePortalText } from 'sdkwork-router-portal-commons/i18n-core';
 import { resolveGatewayBaseUrl as resolveGatewayBaseUrlFromPortalApi } from 'sdkwork-router-portal-portal-api';
 
 export type ApiKeySetupClientId =
@@ -64,13 +65,15 @@ export interface ApiKeyQuickSetupPlan {
   snippets: ApiKeySetupSnippet[];
   request: ApiKeyClientInstallRequest;
   applyLabel: string;
+  available: boolean;
+  availabilityDetail?: string;
   requiresInstances?: boolean;
 }
 
 export interface ApiKeyQuickSetupInput {
   hashedKey: string;
   label: string;
-  plaintextKey: string;
+  plaintextKey: string | null;
   gatewayBaseUrl: string;
   defaults?: Partial<{
     openaiModel: string;
@@ -134,7 +137,7 @@ function isDesktopRuntime(): boolean {
 async function invokeDesktopCommand<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   const invoke = resolveWindow()?.__TAURI_INTERNALS__?.invoke;
   if (typeof invoke !== 'function') {
-    throw new Error('Tauri invoke bridge is unavailable.');
+    throw new Error(translatePortalText('Tauri invoke bridge is unavailable.'));
   }
 
   return invoke<T>(command, args);
@@ -191,20 +194,37 @@ export function buildApiKeyQuickSetupPlans(input: ApiKeyQuickSetupInput): ApiKey
   const openaiBaseUrl = joinUrl(gatewayBaseUrl, '/v1');
   const anthropicBaseUrl = joinUrl(gatewayBaseUrl, '/v1');
   const geminiBaseUrl = gatewayBaseUrl;
+  const plaintextKey = input.plaintextKey?.trim() ?? '';
+  const hasPlaintext = plaintextKey.length > 0;
   const openaiModel = sanitizeModelId(input.defaults?.openaiModel, 'gpt-5.4');
   const anthropicModel = sanitizeModelId(input.defaults?.anthropicModel, 'claude-sonnet-4');
   const geminiModel = sanitizeModelId(input.defaults?.geminiModel, 'gemini-2.5-pro');
   const routerName = 'SDKWork Router';
-  const sharedDescription =
-    'Use the current Api key directly against the SDKWork Router gateway without introducing a second credential boundary.';
+  const sharedDescription = translatePortalText(
+    'Use the current Api key directly against the SDKWork Router gateway without introducing a second credential boundary.',
+  );
+  const buildAvailabilityDetail = (label: string) =>
+    hasPlaintext
+      ? undefined
+      : translatePortalText(
+          'Rotate this key to reveal a new one-time secret before applying {label} setup or copying local snippets.',
+          { label },
+        );
+  const withPlaintextSnippets = (snippets: ApiKeySetupSnippet[]) =>
+    hasPlaintext ? snippets : [];
 
   return [
     {
       id: 'codex',
       label: 'Codex',
-      description: `${sharedDescription} Codex stays on the OpenAI-compatible responses stack.`,
+      description: translatePortalText(
+        '{sharedDescription} Codex stays on the OpenAI-compatible responses stack.',
+        { sharedDescription },
+      ),
       compatibility: 'openai',
-      applyLabel: 'Apply setup',
+      applyLabel: translatePortalText('Apply setup'),
+      available: hasPlaintext,
+      availabilityDetail: buildAvailabilityDetail('Codex'),
       request: {
         clientId: 'codex',
         provider: {
@@ -212,15 +232,15 @@ export function buildApiKeyQuickSetupPlans(input: ApiKeyQuickSetupInput): ApiKey
           channelId: 'openai',
           name: routerName,
           baseUrl: openaiBaseUrl,
-          apiKey: input.plaintextKey,
+          apiKey: plaintextKey,
           compatibility: 'openai',
           models: [{ id: openaiModel, name: openaiModel }],
         },
       },
-      snippets: [
+      snippets: withPlaintextSnippets([
         {
           id: 'config',
-          title: 'Config',
+          title: translatePortalText('Config'),
           target: '~/.codex/config.toml',
           language: 'toml',
           content: [
@@ -236,23 +256,26 @@ export function buildApiKeyQuickSetupPlans(input: ApiKeyQuickSetupInput): ApiKey
         },
         {
           id: 'auth',
-          title: 'Auth',
+          title: translatePortalText('Auth'),
           target: '~/.codex/auth.json',
           language: 'json',
           content: json({
             auth_mode: 'apikey',
-            OPENAI_API_KEY: input.plaintextKey,
+            OPENAI_API_KEY: plaintextKey,
           }),
         },
-      ],
+      ]),
     },
     {
       id: 'claude-code',
       label: 'Claude Code',
-      description:
+      description: translatePortalText(
         'Claude Code uses the Anthropic-compatible route exposed by the gateway, keeps the same Api key, and preserves anthropic-version plus anthropic-beta headers on the relay path.',
+      ),
       compatibility: 'anthropic',
-      applyLabel: 'Apply setup',
+      applyLabel: translatePortalText('Apply setup'),
+      available: hasPlaintext,
+      availabilityDetail: buildAvailabilityDetail('Claude Code'),
       request: {
         clientId: 'claude-code',
         provider: {
@@ -260,35 +283,38 @@ export function buildApiKeyQuickSetupPlans(input: ApiKeyQuickSetupInput): ApiKey
           channelId: 'anthropic',
           name: routerName,
           baseUrl: anthropicBaseUrl,
-          apiKey: input.plaintextKey,
+          apiKey: plaintextKey,
           compatibility: 'anthropic',
           models: [{ id: anthropicModel, name: anthropicModel }],
         },
       },
-      snippets: [
+      snippets: withPlaintextSnippets([
         {
           id: 'settings',
-          title: 'Settings',
+          title: translatePortalText('Settings'),
           target: '~/.claude/settings.json',
           language: 'json',
           content: json({
             $schema: 'https://json.schemastore.org/claude-code-settings.json',
             model: anthropicModel,
             env: {
-              ANTHROPIC_AUTH_TOKEN: input.plaintextKey,
+              ANTHROPIC_AUTH_TOKEN: plaintextKey,
               ANTHROPIC_BASE_URL: anthropicBaseUrl,
             },
           }),
         },
-      ],
+      ]),
     },
     {
       id: 'opencode',
       label: 'OpenCode',
-      description:
+      description: translatePortalText(
         'OpenCode uses the OpenAI-compatible provider block and the same routed Api key.',
+      ),
       compatibility: 'openai',
-      applyLabel: 'Apply setup',
+      applyLabel: translatePortalText('Apply setup'),
+      available: hasPlaintext,
+      availabilityDetail: buildAvailabilityDetail('OpenCode'),
       request: {
         clientId: 'opencode',
         provider: {
@@ -296,15 +322,15 @@ export function buildApiKeyQuickSetupPlans(input: ApiKeyQuickSetupInput): ApiKey
           channelId: 'openai',
           name: routerName,
           baseUrl: openaiBaseUrl,
-          apiKey: input.plaintextKey,
+          apiKey: plaintextKey,
           compatibility: 'openai',
           models: [{ id: openaiModel, name: openaiModel }],
         },
       },
-      snippets: [
+      snippets: withPlaintextSnippets([
         {
           id: 'config',
-          title: 'Config',
+          title: translatePortalText('Config'),
           target: '~/.config/opencode/opencode.json',
           language: 'json',
           content: json({
@@ -328,25 +354,28 @@ export function buildApiKeyQuickSetupPlans(input: ApiKeyQuickSetupInput): ApiKey
         },
         {
           id: 'auth',
-          title: 'Auth',
+          title: translatePortalText('Auth'),
           target: '~/.local/share/opencode/auth.json',
           language: 'json',
           content: json({
             'api-router': {
               type: 'api',
-              key: input.plaintextKey,
+              key: plaintextKey,
             },
           }),
         },
-      ],
+      ]),
     },
     {
       id: 'gemini',
       label: 'Gemini',
-      description:
+      description: translatePortalText(
         'Gemini CLI uses the official GOOGLE_GEMINI_BASE_URL plus GEMINI_API_KEY_AUTH_MECHANISM=bearer setup while keeping this Api key as the only secret.',
+      ),
       compatibility: 'gemini',
-      applyLabel: 'Apply setup',
+      applyLabel: translatePortalText('Apply setup'),
+      available: hasPlaintext,
+      availabilityDetail: buildAvailabilityDetail('Gemini'),
       request: {
         clientId: 'gemini',
         provider: {
@@ -354,15 +383,15 @@ export function buildApiKeyQuickSetupPlans(input: ApiKeyQuickSetupInput): ApiKey
           channelId: 'gemini',
           name: routerName,
           baseUrl: geminiBaseUrl,
-          apiKey: input.plaintextKey,
+          apiKey: plaintextKey,
           compatibility: 'gemini',
           models: [{ id: geminiModel, name: geminiModel }],
         },
       },
-      snippets: [
+      snippets: withPlaintextSnippets([
         {
           id: 'settings',
-          title: 'Settings',
+          title: translatePortalText('Settings'),
           target: '~/.gemini/settings.json',
           language: 'json',
           content: json({
@@ -378,24 +407,27 @@ export function buildApiKeyQuickSetupPlans(input: ApiKeyQuickSetupInput): ApiKey
         },
         {
           id: 'env',
-          title: 'Environment',
+          title: translatePortalText('Environment'),
           target: '~/.gemini/.env',
           language: 'bash',
           content: [
-            `GEMINI_API_KEY="${input.plaintextKey}"`,
+            `GEMINI_API_KEY="${plaintextKey}"`,
             `GOOGLE_GEMINI_BASE_URL="${geminiBaseUrl}"`,
             'GEMINI_API_KEY_AUTH_MECHANISM="bearer"',
           ].join('\n'),
         },
-      ],
+      ]),
     },
     {
       id: 'openclaw',
       label: 'OpenClaw',
-      description:
+      description: translatePortalText(
         'OpenClaw writes a provider manifest into the selected local instances and points them at the routed gateway endpoint.',
+      ),
       compatibility: 'openai',
-      applyLabel: 'Apply setup',
+      applyLabel: translatePortalText('Apply setup'),
+      available: hasPlaintext,
+      availabilityDetail: buildAvailabilityDetail('OpenClaw'),
       requiresInstances: true,
       request: {
         clientId: 'openclaw',
@@ -404,26 +436,26 @@ export function buildApiKeyQuickSetupPlans(input: ApiKeyQuickSetupInput): ApiKey
           channelId: 'openai',
           name: routerName,
           baseUrl: openaiBaseUrl,
-          apiKey: input.plaintextKey,
+          apiKey: plaintextKey,
           compatibility: 'openai',
           models: [{ id: openaiModel, name: openaiModel }],
         },
       },
-      snippets: [
+      snippets: withPlaintextSnippets([
         {
           id: 'manifest',
-          title: 'Provider manifest',
+          title: translatePortalText('Provider manifest'),
           target: '~/.openclaw/instances/<instance-id>/providers/provider-api-router.json',
           language: 'json',
           content: json({
             provider: 'api-router',
             endpoint: openaiBaseUrl,
-            apiKey: input.plaintextKey,
+            apiKey: plaintextKey,
             defaultModelId: openaiModel,
             label: input.label,
           }),
         },
-      ],
+      ]),
     },
   ];
 }

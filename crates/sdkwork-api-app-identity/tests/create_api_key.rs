@@ -3,7 +3,7 @@ use sdkwork_api_app_identity::{
     hash_gateway_api_key, list_gateway_api_keys, persist_gateway_api_key_with_metadata,
     resolve_gateway_request_context,
 };
-use sdkwork_api_domain_identity::GatewayApiKeyRecord;
+use sdkwork_api_domain_identity::{ApiKeyGroupRecord, GatewayApiKeyRecord};
 use sdkwork_api_storage_sqlite::{run_migrations, SqliteAdminStore};
 
 #[test]
@@ -36,6 +36,7 @@ async fn persisted_gateway_api_keys_can_be_listed_with_governance_metadata() {
         Some(1_900_000_000_000),
         None,
         Some("Gateway launch credential"),
+        None,
     )
     .await
     .unwrap();
@@ -66,6 +67,7 @@ async fn resolving_gateway_context_updates_last_used_and_rejects_expired_keys() 
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -74,6 +76,12 @@ async fn resolving_gateway_context_updates_last_used_and_rejects_expired_keys() 
         .await
         .unwrap();
     assert!(request_context.is_some());
+    assert_eq!(
+        request_context
+            .as_ref()
+            .and_then(|context| context.api_key_group_id.as_deref()),
+        None
+    );
 
     let active_record = store
         .find_gateway_api_key(&created.hashed)
@@ -122,5 +130,93 @@ fn custom_plaintext_key_can_be_preserved_during_creation() {
     assert_eq!(
         created.notes.as_deref(),
         Some("Operator supplied migration key")
+    );
+}
+
+#[tokio::test]
+async fn persisted_gateway_api_key_can_be_bound_to_an_api_key_group() {
+    let pool = run_migrations("sqlite::memory:").await.unwrap();
+    let store = SqliteAdminStore::new(pool);
+
+    let group = ApiKeyGroupRecord::new(
+        "group-live",
+        "tenant-1",
+        "project-1",
+        "live",
+        "Production keys",
+        "production-keys",
+    )
+    .with_description("Primary production key pool")
+    .with_created_at_ms(1_700_000_000_000)
+    .with_updated_at_ms(1_700_000_000_000);
+    store.insert_api_key_group(&group).await.unwrap();
+
+    let created = persist_gateway_api_key_with_metadata(
+        &store,
+        "tenant-1",
+        "project-1",
+        "live",
+        "Production rollout",
+        Some(1_900_000_000_000),
+        None,
+        Some("Gateway launch credential"),
+        Some(&group.group_id),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(created.api_key_group_id.as_deref(), Some("group-live"));
+
+    let persisted = store
+        .find_gateway_api_key(&created.hashed)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(persisted.api_key_group_id.as_deref(), Some("group-live"));
+
+    let request_context = resolve_gateway_request_context(&store, &created.plaintext)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        request_context.api_key_group_id.as_deref(),
+        Some("group-live")
+    );
+}
+
+#[tokio::test]
+async fn persisted_gateway_api_key_rejects_api_key_group_with_mismatched_environment() {
+    let pool = run_migrations("sqlite::memory:").await.unwrap();
+    let store = SqliteAdminStore::new(pool);
+
+    let group = ApiKeyGroupRecord::new(
+        "group-staging",
+        "tenant-1",
+        "project-1",
+        "staging",
+        "Staging keys",
+        "staging-keys",
+    )
+    .with_created_at_ms(1_700_000_000_000)
+    .with_updated_at_ms(1_700_000_000_000);
+    store.insert_api_key_group(&group).await.unwrap();
+
+    let error = persist_gateway_api_key_with_metadata(
+        &store,
+        "tenant-1",
+        "project-1",
+        "live",
+        "Production rollout",
+        None,
+        None,
+        None,
+        Some(&group.group_id),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        "api key group environment does not match"
     );
 }

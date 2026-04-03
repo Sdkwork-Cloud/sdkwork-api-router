@@ -10,6 +10,58 @@
       "import": "./src/index.tsx",
       "types": "./src/index.tsx"
     },
+    "./framework": {
+      "import": "./src/framework.tsx",
+      "types": "./src/framework.tsx"
+    },
+    "./framework/actions": {
+      "import": "./src/framework/actions.ts",
+      "types": "./src/framework/actions.ts"
+    },
+    "./framework/display": {
+      "import": "./src/framework/display.ts",
+      "types": "./src/framework/display.ts"
+    },
+    "./framework/entry": {
+      "import": "./src/framework/entry.ts",
+      "types": "./src/framework/entry.ts"
+    },
+    "./framework/feedback": {
+      "import": "./src/framework/feedback.ts",
+      "types": "./src/framework/feedback.ts"
+    },
+    "./framework/form": {
+      "import": "./src/framework/form.tsx",
+      "types": "./src/framework/form.tsx"
+    },
+    "./framework/layout": {
+      "import": "./src/framework/layout.ts",
+      "types": "./src/framework/layout.ts"
+    },
+    "./framework/overlays": {
+      "import": "./src/framework/overlays.ts",
+      "types": "./src/framework/overlays.ts"
+    },
+    "./framework/shell": {
+      "import": "./src/framework/shell.ts",
+      "types": "./src/framework/shell.ts"
+    },
+    "./framework/site": {
+      "import": "./src/framework/site.tsx",
+      "types": "./src/framework/site.tsx"
+    },
+    "./framework/workbench": {
+      "import": "./src/framework/workbench.ts",
+      "types": "./src/framework/workbench.ts"
+    },
+    "./framework/workspace": {
+      "import": "./src/framework/workspace.ts",
+      "types": "./src/framework/workspace.ts"
+    },
+    "./clipboard": {
+      "import": "./src/clipboard.ts",
+      "types": "./src/clipboard.ts"
+    },
     "./format-core": {
       "import": "./src/format-core.ts",
       "types": "./src/format-core.ts"
@@ -20,14 +72,9 @@
     }
   },
   "dependencies": {
-    "@radix-ui/react-checkbox": "^1.3.3",
-    "@radix-ui/react-dialog": "^1.1.15",
-    "@radix-ui/react-label": "^2.1.7",
-    "@radix-ui/react-slot": "^1.2.3",
-    "@radix-ui/react-tabs": "^1.1.13",
-    "class-variance-authority": "^0.7.1",
+    "@sdkwork/ui-pc-react": "workspace:*",
     "clsx": "^2.1.1",
-    "lucide-react": "^0.542.0",
+    "lucide-react": "^0.554.0",
     "react": "^19.0.0",
     "tailwind-merge": "^3.3.1"
   }

@@ -1,0 +1,11 @@
+[package]
+name = "sdkwork-api-policy-routing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+sdkwork-api-domain-routing = { path = "../sdkwork-api-domain-routing" }
+
+[lib]
+path = "src/lib.rs"

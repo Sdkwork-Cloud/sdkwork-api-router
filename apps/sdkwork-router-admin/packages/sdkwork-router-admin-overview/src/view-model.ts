@@ -1,6 +1,7 @@
 import type {
   AdminAlert,
   AdminWorkspaceSnapshot,
+  BillingEventSummary,
   BillingSummary,
   ManagedUser,
   OverviewMetric,
@@ -50,6 +51,32 @@ function normalizeBillingSummary(summary?: Partial<BillingSummary> | null): Bill
   };
 }
 
+function normalizeBillingEventSummary(
+  summary?: Partial<BillingEventSummary> | null,
+): BillingEventSummary {
+  return {
+    total_events: summary?.total_events ?? 0,
+    project_count: summary?.project_count ?? 0,
+    group_count: summary?.group_count ?? 0,
+    capability_count: summary?.capability_count ?? 0,
+    total_request_count: summary?.total_request_count ?? 0,
+    total_units: summary?.total_units ?? 0,
+    total_input_tokens: summary?.total_input_tokens ?? 0,
+    total_output_tokens: summary?.total_output_tokens ?? 0,
+    total_tokens: summary?.total_tokens ?? 0,
+    total_image_count: summary?.total_image_count ?? 0,
+    total_audio_seconds: summary?.total_audio_seconds ?? 0,
+    total_video_seconds: summary?.total_video_seconds ?? 0,
+    total_music_seconds: summary?.total_music_seconds ?? 0,
+    total_upstream_cost: summary?.total_upstream_cost ?? 0,
+    total_customer_charge: summary?.total_customer_charge ?? 0,
+    projects: safeArray(summary?.projects),
+    groups: safeArray(summary?.groups),
+    capabilities: safeArray(summary?.capabilities),
+    accounting_modes: safeArray(summary?.accounting_modes),
+  };
+}
+
 function normalizeSnapshot(snapshot: Partial<AdminWorkspaceSnapshot>): AdminWorkspaceSnapshot {
   return {
     sessionUser: snapshot.sessionUser ?? null,
@@ -59,6 +86,9 @@ function normalizeSnapshot(snapshot: Partial<AdminWorkspaceSnapshot>): AdminWork
     tenants: safeArray(snapshot.tenants),
     projects: safeArray(snapshot.projects),
     apiKeys: safeArray(snapshot.apiKeys),
+    apiKeyGroups: safeArray(snapshot.apiKeyGroups),
+    routingProfiles: safeArray(snapshot.routingProfiles),
+    compiledRoutingSnapshots: safeArray(snapshot.compiledRoutingSnapshots),
     rateLimitPolicies: safeArray(snapshot.rateLimitPolicies),
     rateLimitWindows: safeArray(snapshot.rateLimitWindows),
     channels: safeArray(snapshot.channels),
@@ -69,6 +99,8 @@ function normalizeSnapshot(snapshot: Partial<AdminWorkspaceSnapshot>): AdminWork
     modelPrices: safeArray(snapshot.modelPrices),
     usageRecords: safeArray(snapshot.usageRecords),
     usageSummary: normalizeUsageSummary(snapshot.usageSummary),
+    billingEvents: safeArray(snapshot.billingEvents),
+    billingEventSummary: normalizeBillingEventSummary(snapshot.billingEventSummary),
     billingSummary: normalizeBillingSummary(snapshot.billingSummary),
     routingLogs: safeArray(snapshot.routingLogs),
     providerHealth: safeArray(snapshot.providerHealth),

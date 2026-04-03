@@ -1,13 +1,23 @@
 import {
-  ADMIN_LOCALE_OPTIONS,
-  FormField,
+  Badge,
+  FormGrid,
+  FormSection,
   Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  SettingsField,
+} from '@sdkwork/ui-pc-react';
+
+import {
+  ADMIN_LOCALE_OPTIONS,
+  useAdminAppStore,
   useAdminI18n,
-} from 'sdkwork-router-admin-commons';
+  useAdminWorkbench,
+} from 'sdkwork-router-admin-core';
 
-import { useAdminAppStore, useAdminWorkbench } from 'sdkwork-router-admin-core';
-
-import { SettingsInfoCard, SettingsSection } from './Shared';
+import { SettingsBadge, SettingsSummaryCard } from './Shared';
 
 export function GeneralSettings() {
   const {
@@ -22,64 +32,67 @@ export function GeneralSettings() {
 
   return (
     <div className="space-y-8">
-      <div>
-        <h2 className="mb-1 text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
-          {t('General')}
-        </h2>
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">
-          {t('Operator workspace language, shell posture, and persistence defaults.')}
-        </p>
-      </div>
-
-      <div className="space-y-6">
-        <SettingsSection
-          eyebrow={t('Language')}
-          title={t('Language and locale')}
-          description={t(
-            'Choose the operator workspace language. Dates, numbers, and shared shell copy follow this setting immediately.',
-          )}
-        >
-          <div className="grid gap-4 md:grid-cols-2">
-            <FormField label={t('Language')}>
-              <Select
-                value={locale}
-                onChange={(event) => setLocale(event.target.value as typeof locale)}
-              >
+      <FormSection
+        description={t(
+          'Choose the operator workspace language. Dates, numbers, and shared shell copy follow this setting immediately.',
+        )}
+        title={t('Language and locale')}
+      >
+        <FormGrid columns={1}>
+          <SettingsField
+            controlId="admin-settings-language"
+            description={t('Language updates every route label, shell notice, and workspace detail immediately.')}
+            label={t('Language')}
+            layout="vertical"
+          >
+            <Select
+              onValueChange={(value: string) => setLocale(value as typeof locale)}
+              value={locale}
+            >
+              <SelectTrigger id="admin-settings-language">
+                <SelectValue placeholder={t('Language')} />
+              </SelectTrigger>
+              <SelectContent>
                 {ADMIN_LOCALE_OPTIONS.map((option) => (
-                  <option key={option.id} value={option.id}>
+                  <SelectItem key={option.id} value={option.id}>
                     {t(option.label)}
-                  </option>
+                  </SelectItem>
                 ))}
-              </Select>
-            </FormField>
-          </div>
-        </SettingsSection>
+              </SelectContent>
+            </Select>
+          </SettingsField>
+        </FormGrid>
+      </FormSection>
 
-        <SettingsSection
-          eyebrow={t('Workspace')}
-          title={t('Workspace posture')}
-          description={t('Current shell posture for the control plane workspace.')}
-        >
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            <SettingsInfoCard
-              label={t('Operator')}
-              value={sessionUser?.display_name ?? t('Control plane operator')}
-              detail={sessionUser?.email ?? t(status)}
-            />
-            <SettingsInfoCard label={t('Theme mode')} value={t(themeMode)} />
-            <SettingsInfoCard label={t('Theme color')} value={t(themeColor)} />
-            <SettingsInfoCard
-              label={t('Sidebar mode')}
-              value={isSidebarCollapsed ? t('collapsed') : t('expanded')}
-            />
-            <SettingsInfoCard label={t('Sidebar width')} value={`${sidebarWidth}px`} />
-            <SettingsInfoCard
-              label={t('Hidden nav items')}
-              value={hiddenSidebarItems.length}
-            />
-          </div>
-        </SettingsSection>
-      </div>
+      <FormSection
+        actions={
+          <SettingsBadge variant={sessionUser?.active ? 'success' : 'warning'}>
+            {sessionUser?.active ? t('live shell summary') : t('Workspace')}
+          </SettingsBadge>
+        }
+        description={t('Current shell posture for the control plane workspace.')}
+        title={t('Workspace posture')}
+      >
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <SettingsSummaryCard
+            badge={sessionUser?.active ? t('active') : t('Settings center')}
+            detail={sessionUser?.email ?? t(status)}
+            label={t('Operator')}
+            value={sessionUser?.display_name ?? t('Control plane operator')}
+          />
+          <SettingsSummaryCard label={t('Theme mode')} value={t(themeMode)} />
+          <SettingsSummaryCard label={t('Theme color')} value={t(themeColor)} />
+          <SettingsSummaryCard
+            label={t('Sidebar mode')}
+            value={isSidebarCollapsed ? t('collapsed') : t('expanded')}
+          />
+          <SettingsSummaryCard label={t('Sidebar width')} value={`${sidebarWidth}px`} />
+          <SettingsSummaryCard
+            label={t('Hidden nav items')}
+            value={hiddenSidebarItems.length}
+          />
+        </div>
+      </FormSection>
     </div>
   );
 }

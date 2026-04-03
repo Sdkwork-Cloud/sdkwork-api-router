@@ -1,4 +1,7 @@
 import type {
+  ApiKeyGroupRecord,
+  BillingEventRecord,
+  BillingEventSummary,
   CreatedGatewayApiKey,
   GatewayApiKeyRecord,
   LedgerEntry,
@@ -15,9 +18,11 @@ import type {
   PortalAuthSession,
   PortalDashboardSummary,
   PortalGatewayRateLimitSnapshot,
+  PortalCompiledRoutingSnapshotRecord,
   PortalRoutingDecision,
   PortalRoutingDecisionLog,
   PortalRoutingPreferences,
+  RoutingProfileRecord,
   PortalRoutingSummary,
   PortalUserProfile,
   PortalWorkspaceSummary,
@@ -427,6 +432,27 @@ async function postJson<TRequest, TResponse>(
   return readJson<TResponse>(response);
 }
 
+async function patchJson<TRequest, TResponse>(
+  path: string,
+  body: TRequest,
+  token?: string,
+): Promise<TResponse> {
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+  };
+  if (token) {
+    headers.authorization = `Bearer ${token}`;
+  }
+
+  const response = await fetch(`${await resolvePortalBaseUrl()}${path}`, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify(body),
+  });
+
+  return readJson<TResponse>(response);
+}
+
 async function deleteEmpty(path: string, token?: string): Promise<void> {
   const headers: Record<string, string> = {};
   if (token) {
@@ -509,6 +535,7 @@ export function createPortalApiKey(
     environment: string;
     label: string;
     api_key?: string | null;
+    api_key_group_id?: string | null;
     notes?: string | null;
     expires_at_ms?: number | null;
   },
@@ -537,6 +564,131 @@ export function deletePortalApiKey(hashedKey: string, token?: string): Promise<v
   return deleteEmpty(`/api-keys/${encodeURIComponent(hashedKey)}`, requiredPortalToken(token));
 }
 
+type PortalApiKeyGroupMutationInput = {
+  environment: string;
+  name: string;
+  slug?: string | null;
+  description?: string | null;
+  color?: string | null;
+  default_capability_scope?: string | null;
+  default_accounting_mode?: string | null;
+  default_routing_profile_id?: string | null;
+};
+
+export function listPortalApiKeyGroups(token?: string): Promise<ApiKeyGroupRecord[]> {
+  return getJson<ApiKeyGroupRecord[]>('/api-key-groups', requiredPortalToken(token));
+}
+
+export function createPortalApiKeyGroup(
+  input: PortalApiKeyGroupMutationInput,
+  token?: string,
+): Promise<ApiKeyGroupRecord> {
+  return postJson<PortalApiKeyGroupMutationInput, ApiKeyGroupRecord>(
+    '/api-key-groups',
+    input,
+    requiredPortalToken(token),
+  );
+}
+
+export function updatePortalApiKeyGroup(
+  groupId: string,
+  input: PortalApiKeyGroupMutationInput,
+  token?: string,
+): Promise<ApiKeyGroupRecord> {
+  return patchJson<PortalApiKeyGroupMutationInput, ApiKeyGroupRecord>(
+    `/api-key-groups/${encodeURIComponent(groupId)}`,
+    input,
+    requiredPortalToken(token),
+  );
+}
+
+export function updatePortalApiKeyGroupStatus(
+  groupId: string,
+  active: boolean,
+  token?: string,
+): Promise<ApiKeyGroupRecord> {
+  return postJson<{ active: boolean }, ApiKeyGroupRecord>(
+    `/api-key-groups/${encodeURIComponent(groupId)}/status`,
+    { active },
+    requiredPortalToken(token),
+  );
+}
+
+export function deletePortalApiKeyGroup(groupId: string, token?: string): Promise<void> {
+  return deleteEmpty(
+    `/api-key-groups/${encodeURIComponent(groupId)}`,
+    requiredPortalToken(token),
+  );
+}
+
+type RoutingProfileWireRecord = Omit<RoutingProfileRecord, 'active' | 'require_healthy'> & {
+  active?: boolean;
+  require_healthy?: boolean;
+};
+
+function normalizeRoutingProfileRecord(profile: RoutingProfileWireRecord): RoutingProfileRecord {
+  return {
+    ...profile,
+    active: profile.active ?? false,
+    require_healthy: profile.require_healthy ?? false,
+  };
+}
+
+type PortalCompiledRoutingSnapshotWireRecord = Omit<
+  PortalCompiledRoutingSnapshotRecord,
+  'require_healthy'
+> & {
+  require_healthy?: boolean;
+};
+
+function normalizeCompiledRoutingSnapshotRecord(
+  snapshot: PortalCompiledRoutingSnapshotWireRecord,
+): PortalCompiledRoutingSnapshotRecord {
+  return {
+    ...snapshot,
+    require_healthy: snapshot.require_healthy ?? false,
+  };
+}
+
+export function listPortalRoutingProfiles(token?: string): Promise<RoutingProfileRecord[]> {
+  return getJson<RoutingProfileWireRecord[]>(
+    '/routing/profiles',
+    requiredPortalToken(token),
+  ).then((profiles) => profiles.map(normalizeRoutingProfileRecord));
+}
+
+export function listPortalRoutingSnapshots(
+  token?: string,
+): Promise<PortalCompiledRoutingSnapshotRecord[]> {
+  return getJson<PortalCompiledRoutingSnapshotWireRecord[]>(
+    '/routing/snapshots',
+    requiredPortalToken(token),
+  ).then((snapshots) => snapshots.map(normalizeCompiledRoutingSnapshotRecord));
+}
+
+export function createPortalRoutingProfile(
+  input: {
+    name: string;
+    slug?: string | null;
+    description?: string | null;
+    active?: boolean;
+    strategy?: string;
+    ordered_provider_ids?: string[];
+    default_provider_id?: string | null;
+    max_cost?: number | null;
+    max_latency_ms?: number | null;
+    require_healthy?: boolean;
+    preferred_region?: string | null;
+  },
+  token?: string,
+): Promise<RoutingProfileRecord> {
+  return postJson<typeof input, RoutingProfileWireRecord>(
+    '/routing/profiles',
+    input,
+    requiredPortalToken(token),
+  ).then(normalizeRoutingProfileRecord);
+}
+
 export function listPortalUsageRecords(token?: string): Promise<UsageRecord[]> {
   return getJson<UsageRecord[]>('/usage/records', requiredPortalToken(token));
 }
@@ -547,6 +699,14 @@ export function getPortalUsageSummary(token?: string): Promise<UsageSummary> {
 
 export function getPortalBillingSummary(token?: string): Promise<ProjectBillingSummary> {
   return getJson<ProjectBillingSummary>('/billing/summary', requiredPortalToken(token));
+}
+
+export function getPortalBillingEvents(token?: string): Promise<BillingEventRecord[]> {
+  return getJson<BillingEventRecord[]>('/billing/events', requiredPortalToken(token));
+}
+
+export function getPortalBillingEventSummary(token?: string): Promise<BillingEventSummary> {
+  return getJson<BillingEventSummary>('/billing/events/summary', requiredPortalToken(token));
 }
 
 export function listPortalBillingLedger(token?: string): Promise<LedgerEntry[]> {

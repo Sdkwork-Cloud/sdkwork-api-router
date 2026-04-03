@@ -1,9 +1,13 @@
 import type {
   AdminAuthSession,
   AdminSessionUser,
+  ApiKeyGroupRecord,
+  BillingEventRecord,
+  BillingEventSummary,
   BillingSummary,
   ChannelRecord,
   ChannelModelRecord,
+  CompiledRoutingSnapshotRecord,
   CouponRecord,
   CreatedGatewayApiKey,
   CredentialRecord,
@@ -18,6 +22,7 @@ import type {
   RateLimitPolicyRecord,
   RateLimitWindowRecord,
   RoutingDecisionLogRecord,
+  RoutingProfileRecord,
   RuntimeReloadReport,
   RuntimeStatusRecord,
   TenantRecord,
@@ -163,6 +168,22 @@ async function postJson<TRequest, TResponse>(
 ): Promise<TResponse> {
   const response = await fetch(`${await resolveAdminBaseUrl()}${path}`, {
     method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(body),
+  });
+  return readJson<TResponse>(response);
+}
+
+async function patchJson<TRequest, TResponse>(
+  path: string,
+  body: TRequest,
+  token?: string,
+): Promise<TResponse> {
+  const response = await fetch(`${await resolveAdminBaseUrl()}${path}`, {
+    method: 'PATCH',
     headers: {
       'content-type': 'application/json',
       ...(token ? { authorization: `Bearer ${token}` } : {}),
@@ -325,6 +346,99 @@ export function listApiKeys(token?: string): Promise<GatewayApiKeyRecord[]> {
   return getJson<GatewayApiKeyRecord[]>('/api-keys', token);
 }
 
+export function listApiKeyGroups(token?: string): Promise<ApiKeyGroupRecord[]> {
+  return getJson<ApiKeyGroupRecord[]>('/api-key-groups', token);
+}
+
+export function createApiKeyGroup(input: {
+  tenant_id: string;
+  project_id: string;
+  environment: string;
+  name: string;
+  slug?: string | null;
+  description?: string | null;
+  color?: string | null;
+  default_capability_scope?: string | null;
+  default_accounting_mode?: string | null;
+  default_routing_profile_id?: string | null;
+}): Promise<ApiKeyGroupRecord> {
+  return postJson<typeof input, ApiKeyGroupRecord>(
+    '/api-key-groups',
+    input,
+    requiredToken(),
+  );
+}
+
+export function updateApiKeyGroup(
+  groupId: string,
+  input: {
+    tenant_id: string;
+    project_id: string;
+    environment: string;
+    name: string;
+    slug?: string | null;
+    description?: string | null;
+    color?: string | null;
+    default_capability_scope?: string | null;
+    default_accounting_mode?: string | null;
+    default_routing_profile_id?: string | null;
+  },
+): Promise<ApiKeyGroupRecord> {
+  return patchJson<typeof input, ApiKeyGroupRecord>(
+    `/api-key-groups/${encodeURIComponent(groupId)}`,
+    input,
+    requiredToken(),
+  );
+}
+
+export function updateApiKeyGroupStatus(
+  groupId: string,
+  active: boolean,
+): Promise<ApiKeyGroupRecord> {
+  return postJson<{ active: boolean }, ApiKeyGroupRecord>(
+    `/api-key-groups/${encodeURIComponent(groupId)}/status`,
+    { active },
+    requiredToken(),
+  );
+}
+
+export function deleteApiKeyGroup(groupId: string): Promise<void> {
+  return deleteEmpty(`/api-key-groups/${encodeURIComponent(groupId)}`, requiredToken());
+}
+
+export function listRoutingProfiles(token?: string): Promise<RoutingProfileRecord[]> {
+  return getJson<RoutingProfileRecord[]>('/routing/profiles', token);
+}
+
+export function createRoutingProfile(input: {
+  profile_id?: string;
+  tenant_id: string;
+  project_id: string;
+  name: string;
+  slug?: string | null;
+  description?: string | null;
+  active?: boolean;
+  strategy?: string;
+  ordered_provider_ids?: string[];
+  default_provider_id?: string | null;
+  max_cost?: number | null;
+  max_latency_ms?: number | null;
+  require_healthy?: boolean;
+  preferred_region?: string | null;
+}): Promise<RoutingProfileRecord> {
+  return postJson<typeof input, RoutingProfileRecord>(
+    '/routing/profiles',
+    input,
+    requiredToken(),
+  );
+}
+
+export function listCompiledRoutingSnapshots(
+  token?: string,
+): Promise<CompiledRoutingSnapshotRecord[]> {
+  return getJson<CompiledRoutingSnapshotRecord[]>('/routing/snapshots', token);
+}
+
 export function createApiKey(input: {
   tenant_id: string;
   project_id: string;
@@ -333,6 +447,7 @@ export function createApiKey(input: {
   notes?: string;
   expires_at_ms?: number | null;
   plaintext_key?: string;
+  api_key_group_id?: string | null;
 }): Promise<CreatedGatewayApiKey> {
   return postJson<typeof input, CreatedGatewayApiKey>('/api-keys', input, requiredToken());
 }
@@ -345,6 +460,7 @@ export function updateApiKey(input: {
   label: string;
   notes?: string | null;
   expires_at_ms?: number | null;
+  api_key_group_id?: string | null;
 }): Promise<GatewayApiKeyRecord> {
   return resolveAdminBaseUrl()
     .then((baseUrl) =>
@@ -361,6 +477,7 @@ export function updateApiKey(input: {
           label: input.label,
           notes: input.notes,
           expires_at_ms: input.expires_at_ms,
+          api_key_group_id: input.api_key_group_id,
         }),
       }),
     )
@@ -526,6 +643,14 @@ export function getUsageSummary(token?: string): Promise<UsageSummary> {
 
 export function getBillingSummary(token?: string): Promise<BillingSummary> {
   return getJson<BillingSummary>('/billing/summary', token);
+}
+
+export function listBillingEvents(token?: string): Promise<BillingEventRecord[]> {
+  return getJson<BillingEventRecord[]>('/billing/events', token);
+}
+
+export function getBillingEventSummary(token?: string): Promise<BillingEventSummary> {
+  return getJson<BillingEventSummary>('/billing/events/summary', token);
 }
 
 export function listRoutingDecisionLogs(token?: string): Promise<RoutingDecisionLogRecord[]> {

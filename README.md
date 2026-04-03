@@ -254,15 +254,17 @@ Recommended uses:
   - defaults to preview mode so the built-in Pingora web host is the primary entrypoint; use `--browser` or `-Browser` when you explicitly want the standalone Vite admin and portal frontends instead
   - prints a formatted startup summary with unified web URLs, direct service URLs, log files, and the seeded admin / portal credentials
   - the underlying dev launchers now supervise nested child processes and wait for them to stop before exiting, so `Ctrl+C`, `bin/stop-dev.*`, and child crash handling are less likely to leave orphaned `pnpm` or `cargo` processes behind
+  - on Windows, `start-dev.sh` delegates to `start-dev.ps1`, so Git Bash / MSYS paths do not leak into the Windows Node runtime; the command name stays the same, but the lifecycle implementation is unified with PowerShell
 - `bin/build.sh` / `bin/build.ps1`
   - release-oriented build pipeline for:
     - Rust release binaries
     - admin and portal browser assets
     - console and docs browser assets
     - admin and portal Tauri release bundles
-    - native release package output under `artifacts/release/`
+  - native release package output under `artifacts/release/`
   - on Windows, the build and install pipeline automatically use a managed short cargo target directory when `CARGO_TARGET_DIR` is not set, reducing MSVC/CMake path-length failures
   - on Windows, release builds default to `CARGO_BUILD_JOBS=1` when you do not set it explicitly, which matches the most reliable MSVC/CMake path validated for this workspace; override `CARGO_BUILD_JOBS` if you intentionally want a different concurrency trade-off
+  - on Windows, `build.sh` delegates to `build.ps1`, so Git Bash users follow the same verified build path as native PowerShell users
 - `bin/install.sh` / `bin/install.ps1`
   - install the release runtime into `artifacts/install/sdkwork-api-router/current` by default
   - copy release binaries plus admin and portal static sites
@@ -278,12 +280,14 @@ Recommended uses:
     - `service/windows-task/sdkwork-api-router.xml`
     - `service/windows-task/install-service.ps1`
     - `service/windows-task/uninstall-service.ps1`
+  - on Windows, `install.sh` delegates to `install.ps1`, keeping path handling and install behavior aligned with the verified PowerShell implementation
 - `bin/start.sh` / `bin/start.ps1`
   - production runtime entrypoint
   - starts `router-product-service` in release mode, serving `/admin/*`, `/portal/*`, and `/api/*`
   - uses a writable local SQLite database under the installed runtime `var/data/` directory by default
   - prints a formatted startup summary with unified web URLs, direct service URLs, log files, and the seeded admin / portal credentials
   - designed for direct daemon use or for foreground service-manager execution
+  - on Windows, `start.sh` delegates to `start.ps1`, keeping the production shell entrypoint available from Git Bash without reintroducing MSYS path translation bugs
 - `bin/stop.sh` / `bin/stop.ps1`
   - stop the managed production runtime
   - the PowerShell `start/stop` helpers now resolve platform-specific binary names and process-stop behavior at runtime, so the same `pwsh` entrypoints remain usable on Linux and macOS installs in addition to Windows
@@ -326,6 +330,10 @@ Important runtime notes:
 
 - `bin/start.sh --foreground` and `bin/start.ps1 -Foreground` are the service-manager-friendly forms.
 - both `bin/start-dev.*` and `bin/start.*` print clickable local URLs for the unified web entrypoint plus the direct backend ports after successful startup.
+- `bin/start-dev.*` and `bin/start.*` share the `9980`-series defaults. If another runtime is already bound to those ports, the scripts now fail fast before spawning child services and print the conflicting bind addresses directly instead of surfacing a late health-check timeout or "started then exited" symptom.
+- the managed start scripts now keep a companion `.state.env` file next to each managed pid file. It records the active bind set, frontend mode, and process fingerprint so repeat `start` / `stop` calls can distinguish a healthy managed instance from a stale or PID-reused process.
+- if a managed runtime is already healthy on a different bind set, re-running `bin/start-dev.*` or `bin/start.*` now prints the active managed addresses instead of failing with a generic health-check error.
+- on Windows, the `.sh` wrappers are compatibility entrypoints that hand off to the corresponding `.ps1` scripts. This keeps Git Bash workflows available while avoiding `/d/...` MSYS path mismatches inside Windows Node / cargo processes.
 - the seeded local credentials printed by the managed startup scripts are:
   - admin: `admin@sdkwork.local / ChangeMe123!`
   - portal: `portal@sdkwork.local / ChangeMe123!`

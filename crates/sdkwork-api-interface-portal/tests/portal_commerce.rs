@@ -1,4 +1,4 @@
-use axum::body::{to_bytes, Body};
+﻿use axum::body::{to_bytes, Body};
 use axum::http::{Request, StatusCode};
 use serde_json::Value;
 use sqlx::SqlitePool;
@@ -122,6 +122,44 @@ async fn portal_commerce_catalog_exposes_plans_packs_and_active_coupons() {
 }
 
 #[tokio::test]
+async fn portal_commerce_catalog_exposes_server_managed_recharge_options_and_custom_policy() {
+    let pool = memory_pool().await;
+    let app = sdkwork_api_interface_portal::portal_router_with_pool(pool);
+    let token = portal_token(app.clone()).await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/portal/commerce/catalog")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let json = read_json(response).await;
+    assert_eq!(json["recharge_options"].as_array().unwrap().len(), 4);
+    assert_eq!(json["recharge_options"][0]["amount_cents"], 1000);
+    assert_eq!(json["recharge_options"][0]["amount_label"], "$10.00");
+    assert_eq!(json["recharge_options"][0]["granted_units"], 25000);
+    assert_eq!(
+        json["recharge_options"][1]["effective_ratio_label"],
+        "2,800 units / $1"
+    );
+    assert_eq!(json["custom_recharge_policy"]["enabled"], true);
+    assert_eq!(json["custom_recharge_policy"]["min_amount_cents"], 1000);
+    assert_eq!(json["custom_recharge_policy"]["step_amount_cents"], 500);
+    assert_eq!(json["custom_recharge_policy"]["suggested_amount_cents"], 5000);
+    assert_eq!(
+        json["custom_recharge_policy"]["rules"][1]["effective_ratio_label"],
+        "2,800 units / $1"
+    );
+}
+
+#[tokio::test]
 async fn portal_commerce_catalog_requires_authentication() {
     let pool = memory_pool().await;
     let app = sdkwork_api_interface_portal::portal_router_with_pool(pool);
@@ -211,6 +249,125 @@ async fn portal_commerce_quote_prices_recharge_and_coupon_redemption() {
     assert_eq!(coupon_json["payable_price_label"], "$0.00");
     assert_eq!(coupon_json["bonus_units"], 100);
     assert_eq!(coupon_json["projected_remaining_units"], 5100);
+}
+
+#[tokio::test]
+async fn portal_commerce_quote_and_order_support_custom_recharge_from_server_policy() {
+    let pool = memory_pool().await;
+    let app = sdkwork_api_interface_portal::portal_router_with_pool(pool.clone());
+    let token = portal_token(app.clone()).await;
+    let workspace = portal_workspace(app.clone(), &token).await;
+    let project_id = workspace["project"]["id"].as_str().unwrap().to_owned();
+
+    sqlx::query(
+        "INSERT INTO ai_billing_ledger_entries (project_id, units, amount) VALUES (?, ?, ?)",
+    )
+    .bind(&project_id)
+    .bind(240_i64)
+    .bind(0.42_f64)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "INSERT INTO ai_billing_quota_policies (policy_id, project_id, max_units, enabled)
+         VALUES (?, ?, ?, ?)",
+    )
+    .bind("quota-portal")
+    .bind(&project_id)
+    .bind(500_i64)
+    .bind(1_i64)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let quote_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/portal/commerce/quote")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"target_kind\":\"custom_recharge\",\"target_id\":\"custom\",\"custom_amount_cents\":5000,\"current_remaining_units\":260}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(quote_response.status(), StatusCode::OK);
+    let quote_json = read_json(quote_response).await;
+    assert_eq!(quote_json["target_kind"], "custom_recharge");
+    assert_eq!(quote_json["target_id"], "custom-5000");
+    assert_eq!(quote_json["target_name"], "Custom recharge");
+    assert_eq!(quote_json["amount_cents"], 5000);
+    assert_eq!(quote_json["list_price_label"], "$50.00");
+    assert_eq!(quote_json["payable_price_label"], "$50.00");
+    assert_eq!(quote_json["granted_units"], 140000);
+    assert_eq!(quote_json["projected_remaining_units"], 140260);
+    assert_eq!(quote_json["pricing_rule_label"], "Tiered custom recharge");
+    assert_eq!(quote_json["effective_ratio_label"], "2,800 units / $1");
+
+    let create_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/portal/commerce/orders")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"target_kind\":\"custom_recharge\",\"target_id\":\"custom\",\"custom_amount_cents\":5000}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(create_response.status(), StatusCode::CREATED);
+    let create_json = read_json(create_response).await;
+    let order_id = create_json["order_id"].as_str().unwrap().to_owned();
+    assert_eq!(create_json["target_kind"], "custom_recharge");
+    assert_eq!(create_json["target_id"], "custom-5000");
+    assert_eq!(create_json["target_name"], "Custom recharge");
+    assert_eq!(create_json["payable_price_label"], "$50.00");
+    assert_eq!(create_json["granted_units"], 140000);
+    assert_eq!(create_json["status"], "pending_payment");
+
+    let settle_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(&format!("/portal/commerce/orders/{order_id}/settle"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(settle_response.status(), StatusCode::OK);
+    let settle_json = read_json(settle_response).await;
+    assert_eq!(settle_json["status"], "fulfilled");
+
+    let billing_response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/portal/billing/summary")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(billing_response.status(), StatusCode::OK);
+    let billing_json = read_json(billing_response).await;
+    assert_eq!(billing_json["remaining_units"], 140260);
 }
 
 #[tokio::test]
@@ -979,3 +1136,4 @@ async fn portal_commerce_payment_settlement_event_activates_membership_and_quota
     assert_eq!(membership_json["plan_id"], "growth");
     assert_eq!(membership_json["status"], "active");
 }
+

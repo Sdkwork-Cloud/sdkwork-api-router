@@ -14,9 +14,10 @@ use sdkwork_api_app_routing::{
     simulate_route_with_store_seeded,
 };
 use sdkwork_api_domain_catalog::{Channel, ModelCatalogEntry, ProxyProvider};
+use sdkwork_api_domain_identity::ApiKeyGroupRecord;
 use sdkwork_api_domain_routing::{
     ProjectRoutingPreferences, ProviderHealthSnapshot, RoutingDecisionSource, RoutingPolicy,
-    RoutingStrategy,
+    RoutingProfileRecord, RoutingStrategy,
 };
 use sdkwork_api_extension_core::{ExtensionInstallation, ExtensionInstance, ExtensionRuntime};
 #[cfg(windows)]
@@ -751,6 +752,11 @@ async fn route_simulation_geo_affinity_degrades_to_top_ranked_candidate_when_no_
         .unwrap()
         .contains("no candidate matched"));
     assert!(decision
+        .fallback_reason
+        .as_deref()
+        .unwrap()
+        .contains("no candidate matched requested region us-east"));
+    assert!(decision
         .assessments
         .iter()
         .all(|assessment| assessment.region_match == Some(false)));
@@ -1234,6 +1240,7 @@ async fn select_route_with_store_context_persists_requested_region_in_routing_de
         RouteSelectionContext::new(RoutingDecisionSource::Gateway)
             .with_tenant_id_option(Some("tenant-1"))
             .with_project_id_option(Some("project-1"))
+            .with_api_key_group_id_option(Some("group-live"))
             .with_requested_region_option(Some("us-east")),
     )
     .await
@@ -1244,6 +1251,7 @@ async fn select_route_with_store_context_persists_requested_region_in_routing_de
     let logs = store.list_routing_decision_logs().await.unwrap();
     assert_eq!(logs.len(), 1);
     assert_eq!(logs[0].requested_region.as_deref(), Some("us-east"));
+    assert_eq!(logs[0].api_key_group_id.as_deref(), Some("group-live"));
 }
 
 #[serial(routing_runtime)]
@@ -1332,6 +1340,175 @@ async fn select_route_with_store_context_applies_project_routing_preferences_ove
     assert_eq!(decision.selected_provider_id, "provider-openrouter");
     assert_eq!(decision.requested_region.as_deref(), Some("us-east"));
     assert_eq!(decision.strategy.as_deref(), Some("slo_aware"));
+}
+
+#[serial(routing_runtime)]
+#[tokio::test]
+async fn route_selection_applies_group_routing_profile_over_project_preferences() {
+    shutdown_all_connector_runtimes().unwrap();
+    shutdown_all_native_dynamic_runtimes().unwrap();
+
+    let pool = run_migrations("sqlite::memory:").await.unwrap();
+    let store = SqliteAdminStore::new(pool);
+
+    store
+        .insert_channel(&Channel::new("openai", "OpenAI"))
+        .await
+        .unwrap();
+    store
+        .insert_provider(&ProxyProvider::new(
+            "provider-openrouter",
+            "openai",
+            "openai",
+            "https://openrouter.example/v1",
+            "OpenRouter",
+        ))
+        .await
+        .unwrap();
+    store
+        .insert_provider(&ProxyProvider::new(
+            "provider-openai-official",
+            "openai",
+            "openai",
+            "https://openai.example/v1",
+            "OpenAI Official",
+        ))
+        .await
+        .unwrap();
+    store
+        .insert_model(&ModelCatalogEntry::new("gpt-4.1", "provider-openrouter"))
+        .await
+        .unwrap();
+    store
+        .insert_model(&ModelCatalogEntry::new(
+            "gpt-4.1",
+            "provider-openai-official",
+        ))
+        .await
+        .unwrap();
+
+    let global_policy = RoutingPolicy::new("policy-global", "chat_completion", "gpt-4.1")
+        .with_priority(100)
+        .with_ordered_provider_ids(vec![
+            "provider-openai-official".to_owned(),
+            "provider-openrouter".to_owned(),
+        ]);
+    persist_routing_policy(&store, &global_policy)
+        .await
+        .unwrap();
+
+    let preferences = ProjectRoutingPreferences::new("project-1")
+        .with_preset_id("balanced")
+        .with_strategy(RoutingStrategy::DeterministicPriority)
+        .with_ordered_provider_ids(vec![
+            "provider-openai-official".to_owned(),
+            "provider-openrouter".to_owned(),
+        ])
+        .with_default_provider_id("provider-openai-official")
+        .with_preferred_region("eu-west")
+        .with_updated_at_ms(123);
+    store
+        .insert_project_routing_preferences(&preferences)
+        .await
+        .unwrap();
+
+    let profile = RoutingProfileRecord::new(
+        "profile-priority",
+        "tenant-1",
+        "project-1",
+        "Priority Live",
+        "priority-live",
+    )
+    .with_strategy(RoutingStrategy::GeoAffinity)
+    .with_ordered_provider_ids(vec![
+        "provider-openrouter".to_owned(),
+        "provider-openai-official".to_owned(),
+    ])
+    .with_default_provider_id("provider-openrouter")
+    .with_preferred_region("us-east")
+    .with_created_at_ms(100)
+    .with_updated_at_ms(200);
+    store.insert_routing_profile(&profile).await.unwrap();
+
+    let group = ApiKeyGroupRecord::new(
+        "group-live",
+        "tenant-1",
+        "project-1",
+        "live",
+        "Production Keys",
+        "production-keys",
+    )
+    .with_default_routing_profile_id("profile-priority")
+    .with_created_at_ms(100)
+    .with_updated_at_ms(200);
+    store.insert_api_key_group(&group).await.unwrap();
+
+    let decision = select_route_with_store_context(
+        &store,
+        "chat_completion",
+        "gpt-4.1",
+        RouteSelectionContext::new(RoutingDecisionSource::Gateway)
+            .with_tenant_id_option(Some("tenant-1"))
+            .with_project_id_option(Some("project-1"))
+            .with_api_key_group_id_option(Some("group-live")),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(decision.selected_provider_id, "provider-openrouter");
+    assert_eq!(
+        decision.applied_routing_profile_id.as_deref(),
+        Some("profile-priority")
+    );
+    assert!(decision.compiled_routing_snapshot_id.as_deref().is_some());
+    assert_eq!(decision.requested_region.as_deref(), Some("us-east"));
+    assert_eq!(decision.strategy.as_deref(), Some("geo_affinity"));
+
+    let snapshots = store.list_compiled_routing_snapshots().await.unwrap();
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(
+        snapshots[0].snapshot_id.as_str(),
+        decision.compiled_routing_snapshot_id.as_deref().unwrap()
+    );
+    assert_eq!(snapshots[0].tenant_id.as_deref(), Some("tenant-1"));
+    assert_eq!(snapshots[0].project_id.as_deref(), Some("project-1"));
+    assert_eq!(snapshots[0].api_key_group_id.as_deref(), Some("group-live"));
+    assert_eq!(snapshots[0].capability, "chat_completion");
+    assert_eq!(snapshots[0].route_key, "gpt-4.1");
+    assert_eq!(
+        snapshots[0].matched_policy_id.as_deref(),
+        Some("policy-global")
+    );
+    assert_eq!(
+        snapshots[0]
+            .project_routing_preferences_project_id
+            .as_deref(),
+        Some("project-1")
+    );
+    assert_eq!(
+        snapshots[0].applied_routing_profile_id.as_deref(),
+        Some("profile-priority")
+    );
+    assert_eq!(snapshots[0].strategy, "geo_affinity");
+    assert_eq!(
+        snapshots[0].ordered_provider_ids,
+        vec![
+            "provider-openrouter".to_owned(),
+            "provider-openai-official".to_owned(),
+        ]
+    );
+    assert_eq!(snapshots[0].preferred_region.as_deref(), Some("us-east"));
+
+    let logs = store.list_routing_decision_logs().await.unwrap();
+    assert_eq!(logs.len(), 1);
+    assert_eq!(
+        logs[0].applied_routing_profile_id.as_deref(),
+        Some("profile-priority")
+    );
+    assert_eq!(
+        logs[0].compiled_routing_snapshot_id.as_deref(),
+        decision.compiled_routing_snapshot_id.as_deref()
+    );
 }
 
 #[serial(routing_runtime)]

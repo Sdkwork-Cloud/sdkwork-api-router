@@ -1,7 +1,7 @@
 param(
     [switch]$Foreground,
     [switch]$DryRun,
-    [int]$WaitSeconds = 60,
+    [int]$WaitSeconds = 600,
     [switch]$Install,
     [switch]$Browser,
     [switch]$Preview,
@@ -28,6 +28,7 @@ $runDirectory = Join-Path $devHome 'run'
 $envFile = Join-Path $configDirectory 'router-dev.env'
 $pidFile = Join-Path $runDirectory 'start-workspace.pid'
 $stopFile = Join-Path $runDirectory 'start-workspace.stop'
+$stateFile = Join-Path $runDirectory 'start-workspace.state.env'
 $stdoutLog = Join-Path $logDirectory 'start-workspace.stdout.log'
 $stderrLog = Join-Path $logDirectory 'start-workspace.stderr.log'
 $planFile = Join-Path $runDirectory 'start-workspace.plan.txt'
@@ -97,6 +98,109 @@ $planArgs = @($startArgs + '--dry-run')
 
 Push-Location $repoRoot
 try {
+    $gatewayHealthUrl = Resolve-RouterHealthUrl -BindAddress $env:SDKWORK_GATEWAY_BIND -PathSuffix '/health'
+    $adminHealthUrl = Resolve-RouterHealthUrl -BindAddress $env:SDKWORK_ADMIN_BIND -PathSuffix '/admin/health'
+    $portalHealthUrl = Resolve-RouterHealthUrl -BindAddress $env:SDKWORK_PORTAL_BIND -PathSuffix '/portal/health'
+    $previewAdminUrl = Resolve-RouterHealthUrl -BindAddress $env:SDKWORK_WEB_BIND -PathSuffix '/admin/'
+    $previewPortalUrl = Resolve-RouterHealthUrl -BindAddress $env:SDKWORK_WEB_BIND -PathSuffix '/portal/'
+    $browserAdminUrl = 'http://127.0.0.1:5173/admin/'
+    $browserPortalUrl = 'http://127.0.0.1:5174/portal/'
+
+    if ($Preview -or $Tauri) {
+        $primaryAdminSurfaceUrl = $previewAdminUrl
+        $primaryPortalSurfaceUrl = $previewPortalUrl
+        $primaryMode = if ($Tauri) { 'development tauri' } else { 'development preview' }
+        $primaryUnifiedAccessEnabled = $true
+        $secondaryAdminSurfaceUrl = $browserAdminUrl
+        $secondaryPortalSurfaceUrl = $browserPortalUrl
+        $secondaryMode = 'development browser'
+        $secondaryUnifiedAccessEnabled = $false
+    } else {
+        $primaryAdminSurfaceUrl = $browserAdminUrl
+        $primaryPortalSurfaceUrl = $browserPortalUrl
+        $primaryMode = 'development browser'
+        $primaryUnifiedAccessEnabled = $false
+        $secondaryAdminSurfaceUrl = $previewAdminUrl
+        $secondaryPortalSurfaceUrl = $previewPortalUrl
+        $secondaryMode = 'development preview'
+        $secondaryUnifiedAccessEnabled = $true
+    }
+
+    $existingPid = Get-RouterManagedProcessId -PidFile $pidFile -StateFile $stateFile
+    if (($existingPid -gt 0) -and -not $DryRun) {
+        $managedState = Get-RouterManagedState -StateFile $stateFile
+        $activeWebBind = if ($managedState -and $managedState.WebBind) { $managedState.WebBind } else { $env:SDKWORK_WEB_BIND }
+        $activeGatewayBind = if ($managedState -and $managedState.GatewayBind) { $managedState.GatewayBind } else { $env:SDKWORK_GATEWAY_BIND }
+        $activeAdminBind = if ($managedState -and $managedState.AdminBind) { $managedState.AdminBind } else { $env:SDKWORK_ADMIN_BIND }
+        $activePortalBind = if ($managedState -and $managedState.PortalBind) { $managedState.PortalBind } else { $env:SDKWORK_PORTAL_BIND }
+        $activeGatewayHealthUrl = Resolve-RouterHealthUrl -BindAddress $activeGatewayBind -PathSuffix '/health'
+        $activeAdminHealthUrl = Resolve-RouterHealthUrl -BindAddress $activeAdminBind -PathSuffix '/admin/health'
+        $activePortalHealthUrl = Resolve-RouterHealthUrl -BindAddress $activePortalBind -PathSuffix '/portal/health'
+
+        $backendReady = (Wait-RouterHealthUrl -Url $activeGatewayHealthUrl -WaitSeconds $WaitSeconds -ProcessId $existingPid) `
+            -and (Wait-RouterHealthUrl -Url $activeAdminHealthUrl -WaitSeconds $WaitSeconds -ProcessId $existingPid) `
+            -and (Wait-RouterHealthUrl -Url $activePortalHealthUrl -WaitSeconds $WaitSeconds -ProcessId $existingPid)
+
+        $adminSurfaceUrl = if ($managedState -and $managedState.AdminAppUrl) { $managedState.AdminAppUrl } else { $primaryAdminSurfaceUrl }
+        $portalSurfaceUrl = if ($managedState -and $managedState.PortalAppUrl) { $managedState.PortalAppUrl } else { $primaryPortalSurfaceUrl }
+        $mode = if ($managedState -and $managedState.Mode) { $managedState.Mode } else { $primaryMode }
+        $unifiedAccessEnabled = if ($managedState) { [bool]$managedState.UnifiedAccessEnabled } else { $primaryUnifiedAccessEnabled }
+        $webReady = $false
+
+        if ($backendReady) {
+            $webReady = (Wait-RouterHealthUrl -Url $adminSurfaceUrl -WaitSeconds $WaitSeconds -ProcessId $existingPid) `
+                -and (Wait-RouterHealthUrl -Url $portalSurfaceUrl -WaitSeconds $WaitSeconds -ProcessId $existingPid)
+
+            if ((-not $webReady) -and (-not $managedState)) {
+                $adminSurfaceUrl = $secondaryAdminSurfaceUrl
+                $portalSurfaceUrl = $secondaryPortalSurfaceUrl
+                $mode = $secondaryMode
+                $unifiedAccessEnabled = $secondaryUnifiedAccessEnabled
+                $webReady = (Wait-RouterHealthUrl -Url $adminSurfaceUrl -WaitSeconds $WaitSeconds -ProcessId $existingPid) `
+                    -and (Wait-RouterHealthUrl -Url $portalSurfaceUrl -WaitSeconds $WaitSeconds -ProcessId $existingPid)
+            }
+        }
+
+        if ($backendReady -and $webReady) {
+            $requestedConfigurationDiffers = ($activeWebBind -ne $env:SDKWORK_WEB_BIND) `
+                -or ($activeGatewayBind -ne $env:SDKWORK_GATEWAY_BIND) `
+                -or ($activeAdminBind -ne $env:SDKWORK_ADMIN_BIND) `
+                -or ($activePortalBind -ne $env:SDKWORK_PORTAL_BIND) `
+                -or ($mode -ne $primaryMode)
+
+            if ($requestedConfigurationDiffers) {
+                Write-RouterInfo "development workspace already running (pid=$($existingPid)) with active managed settings that differ from the requested launch configuration"
+            } else {
+                Write-RouterInfo "development workspace already running (pid=$($existingPid))"
+            }
+            Write-RouterStartupSummary `
+                -Mode $mode `
+                -WebBind $activeWebBind `
+                -GatewayBind $activeGatewayBind `
+                -AdminBind $activeAdminBind `
+                -PortalBind $activePortalBind `
+                -UnifiedAccessEnabled $unifiedAccessEnabled `
+                -AdminAppUrl $adminSurfaceUrl `
+                -PortalAppUrl $portalSurfaceUrl `
+                -StdoutLog $stdoutLog `
+                -StderrLog $stderrLog
+            return
+        }
+
+        $existingProcess = Get-Process -Id $existingPid -ErrorAction SilentlyContinue
+        if (-not $existingProcess) {
+            Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
+            Remove-Item $stopFile -Force -ErrorAction SilentlyContinue
+            Remove-RouterManagedStateFile -StateFile $stateFile
+            Write-RouterInfo "previous development workspace pid=$existingPid exited during readiness checks; removed stale pid file and retrying startup"
+        } else {
+            Write-RouterInfo "development workspace pid=$existingPid is present but managed services are not healthy; recent logs follow"
+            Show-RouterLogTail -LogFile $stdoutLog
+            Show-RouterLogTail -LogFile $stderrLog
+            Throw-RouterError "development workspace is already running (pid=$existingPid) but failed health checks"
+        }
+    }
+
     $planOutput = & node @planArgs
     Set-Content -Path $planFile -Value $planOutput -Encoding utf8
 
@@ -105,13 +209,27 @@ try {
         return
     }
 
+    $preflightBindAddresses = @(
+        $env:SDKWORK_GATEWAY_BIND,
+        $env:SDKWORK_ADMIN_BIND,
+        $env:SDKWORK_PORTAL_BIND
+    )
+    if ($Preview -or $Tauri) {
+        $preflightBindAddresses += $env:SDKWORK_WEB_BIND
+    } else {
+        $preflightBindAddresses += @('127.0.0.1:5173', '127.0.0.1:5174')
+    }
+
+    Assert-RouterBindAddressesAvailable `
+        -BindAddresses $preflightBindAddresses `
+        -ServiceLabel 'development workspace'
+
     if ($Foreground) {
         if (Test-Path $stopFile) { Remove-Item $stopFile -Force -ErrorAction SilentlyContinue }
         & node @startArgs
         return
     }
 
-    Assert-RouterNotRunning -PidFile $pidFile
     if (Test-Path $stopFile) { Remove-Item $stopFile -Force -ErrorAction SilentlyContinue }
     if (Test-Path $stdoutLog) { Remove-Item $stdoutLog -Force }
     if (Test-Path $stderrLog) { Remove-Item $stderrLog -Force }
@@ -124,10 +242,7 @@ try {
         -StderrLog $stderrLog
 
     Set-Content -Path $pidFile -Value $process.Id -Encoding utf8
-
-    $gatewayHealthUrl = Resolve-RouterHealthUrl -BindAddress $env:SDKWORK_GATEWAY_BIND -PathSuffix '/health'
-    $adminHealthUrl = Resolve-RouterHealthUrl -BindAddress $env:SDKWORK_ADMIN_BIND -PathSuffix '/admin/health'
-    $portalHealthUrl = Resolve-RouterHealthUrl -BindAddress $env:SDKWORK_PORTAL_BIND -PathSuffix '/portal/health'
+    Remove-RouterManagedStateFile -StateFile $stateFile
 
     $backendReady = (Wait-RouterHealthUrl -Url $gatewayHealthUrl -WaitSeconds $WaitSeconds -ProcessId $process.Id) `
         -and (Wait-RouterHealthUrl -Url $adminHealthUrl -WaitSeconds $WaitSeconds -ProcessId $process.Id) `
@@ -138,6 +253,7 @@ try {
         Stop-RouterProcessTree -ProcessId $process.Id -WaitSeconds $WaitSeconds -Force | Out-Null
         Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
         Remove-Item $stopFile -Force -ErrorAction SilentlyContinue
+        Remove-RouterManagedStateFile -StateFile $stateFile
         Show-RouterLogTail -LogFile $stdoutLog
         Show-RouterLogTail -LogFile $stderrLog
         if ($workspaceExited) {
@@ -146,13 +262,8 @@ try {
         Throw-RouterError 'development services failed health checks'
     }
 
-    if ($Preview -or $Tauri) {
-        $adminSurfaceUrl = Resolve-RouterHealthUrl -BindAddress $env:SDKWORK_WEB_BIND -PathSuffix '/admin/'
-        $portalSurfaceUrl = Resolve-RouterHealthUrl -BindAddress $env:SDKWORK_WEB_BIND -PathSuffix '/portal/'
-    } else {
-        $adminSurfaceUrl = 'http://127.0.0.1:5173/admin/'
-        $portalSurfaceUrl = 'http://127.0.0.1:5174/portal/'
-    }
+    $adminSurfaceUrl = $primaryAdminSurfaceUrl
+    $portalSurfaceUrl = $primaryPortalSurfaceUrl
 
     $webReady = (Wait-RouterHealthUrl -Url $adminSurfaceUrl -WaitSeconds $WaitSeconds -ProcessId $process.Id) `
         -and (Wait-RouterHealthUrl -Url $portalSurfaceUrl -WaitSeconds $WaitSeconds -ProcessId $process.Id)
@@ -162,6 +273,7 @@ try {
         Stop-RouterProcessTree -ProcessId $process.Id -WaitSeconds $WaitSeconds -Force | Out-Null
         Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
         Remove-Item $stopFile -Force -ErrorAction SilentlyContinue
+        Remove-RouterManagedStateFile -StateFile $stateFile
         Show-RouterLogTail -LogFile $stdoutLog
         Show-RouterLogTail -LogFile $stderrLog
         if ($workspaceExited) {
@@ -170,14 +282,30 @@ try {
         Throw-RouterError 'development web surfaces failed health checks'
     }
 
-    Write-RouterInfo "started development workspace (pid=$($process.Id))"
-    $mode = if ($Tauri) {
-        'development tauri'
-    } elseif ($Preview) {
-        'development preview'
-    } else {
-        'development browser'
+    if (-not (Confirm-RouterProcessAlive -ProcessId $process.Id -WaitSeconds 2)) {
+        Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
+        Remove-Item $stopFile -Force -ErrorAction SilentlyContinue
+        Remove-RouterManagedStateFile -StateFile $stateFile
+        Show-RouterLogTail -LogFile $stdoutLog
+        Show-RouterLogTail -LogFile $stderrLog
+        Throw-RouterError 'development workspace exited immediately after reporting ready; see startup log above'
     }
+
+    $mode = $primaryMode
+    $processFingerprint = Get-RouterProcessFingerprint -ProcessId $process.Id
+    Write-RouterManagedStateFile -StateFile $stateFile `
+        -ProcessId $process.Id `
+        -ProcessFingerprint $processFingerprint `
+        -Mode $mode `
+        -WebBind $env:SDKWORK_WEB_BIND `
+        -GatewayBind $env:SDKWORK_GATEWAY_BIND `
+        -AdminBind $env:SDKWORK_ADMIN_BIND `
+        -PortalBind $env:SDKWORK_PORTAL_BIND `
+        -UnifiedAccessEnabled $primaryUnifiedAccessEnabled `
+        -AdminAppUrl $adminSurfaceUrl `
+        -PortalAppUrl $portalSurfaceUrl
+
+    Write-RouterInfo "started development workspace (pid=$($process.Id))"
 
     Write-RouterStartupSummary `
         -Mode $mode `
@@ -185,7 +313,7 @@ try {
         -GatewayBind $env:SDKWORK_GATEWAY_BIND `
         -AdminBind $env:SDKWORK_ADMIN_BIND `
         -PortalBind $env:SDKWORK_PORTAL_BIND `
-        -UnifiedAccessEnabled ($Preview -or $Tauri) `
+        -UnifiedAccessEnabled $primaryUnifiedAccessEnabled `
         -AdminAppUrl $adminSurfaceUrl `
         -PortalAppUrl $portalSurfaceUrl `
         -StdoutLog $stdoutLog `

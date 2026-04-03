@@ -3,18 +3,38 @@ use axum::extract::State;
 use axum::http::{Request, StatusCode};
 use axum::routing::get;
 use axum::{Json, Router};
+use sdkwork_api_app_gateway::{
+    clear_capability_catalog_cache_store, configure_capability_catalog_cache_store,
+};
 use sdkwork_api_app_credential::CredentialSecretManager;
 use sdkwork_api_app_identity::hash_gateway_api_key;
+use sdkwork_api_cache_core::CacheStore;
+use sdkwork_api_cache_memory::MemoryCacheStore;
+use sdkwork_api_cache_redis::RedisCacheStore;
 use sdkwork_api_domain_catalog::{Channel, ModelCatalogEntry, ProxyProvider};
 use sdkwork_api_domain_identity::GatewayApiKeyRecord;
 use sdkwork_api_storage_core::{AdminStore, Reloadable};
 use sdkwork_api_storage_sqlite::SqliteAdminStore;
+use serial_test::serial;
 use serde_json::Value;
 use sqlx::SqlitePool;
 use std::sync::{Arc, Mutex};
 use tower::ServiceExt;
 
 mod support;
+
+struct CapabilityCatalogCacheResetGuard;
+
+impl Drop for CapabilityCatalogCacheResetGuard {
+    fn drop(&mut self) {
+        clear_capability_catalog_cache_store();
+    }
+}
+
+fn capability_catalog_cache_reset_guard() -> CapabilityCatalogCacheResetGuard {
+    clear_capability_catalog_cache_store();
+    CapabilityCatalogCacheResetGuard
+}
 
 #[tokio::test]
 async fn models_route_returns_ok() {
@@ -288,7 +308,155 @@ async fn models_route_reads_persisted_catalog_models() {
 }
 
 #[tokio::test]
+#[serial]
+async fn models_route_refreshes_after_admin_catalog_mutation_invalidates_capability_cache() {
+    let _cache_guard = capability_catalog_cache_reset_guard();
+    let cache_store: Arc<dyn CacheStore> = Arc::new(MemoryCacheStore::default());
+    configure_capability_catalog_cache_store(cache_store);
+
+    let pool = memory_pool().await;
+    seed_openai_provider(&SqliteAdminStore::new(pool.clone())).await;
+    let api_key = support::issue_gateway_api_key(
+        &pool,
+        "tenant-cache-memory",
+        "project-cache-memory",
+    )
+    .await;
+    let app = sdkwork_api_interface_http::gateway_router_with_pool(pool.clone());
+
+    let initial_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/models")
+                .header("authorization", format!("Bearer {api_key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(initial_response.status(), StatusCode::OK);
+    let initial_json = read_json(initial_response).await;
+    assert_eq!(initial_json["data"], serde_json::json!([]));
+
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool);
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let create = admin_app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/models")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"external_name\":\"gpt-4.1\",\"provider_id\":\"provider-openai-official\"}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(create.status(), StatusCode::CREATED);
+
+    let refreshed_response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/models")
+                .header("authorization", format!("Bearer {api_key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(refreshed_response.status(), StatusCode::OK);
+    let refreshed_json = read_json(refreshed_response).await;
+    assert_eq!(refreshed_json["data"][0]["id"], "gpt-4.1");
+}
+
+#[tokio::test]
+#[serial]
+async fn models_route_refreshes_after_admin_catalog_mutation_invalidates_shared_redis_capability_cache(
+) {
+    let _cache_guard = capability_catalog_cache_reset_guard();
+    let redis_server = support::FakeRedisServer::start();
+    let redis_url = redis_server.url_with_db(7);
+    let gateway_cache_store: Arc<dyn CacheStore> =
+        Arc::new(RedisCacheStore::connect(&redis_url).await.unwrap());
+    configure_capability_catalog_cache_store(gateway_cache_store.clone());
+
+    let pool = memory_pool().await;
+    seed_openai_provider(&SqliteAdminStore::new(pool.clone())).await;
+    let api_key = support::issue_gateway_api_key(
+        &pool,
+        "tenant-cache-redis",
+        "project-cache-redis",
+    )
+    .await;
+    let app = sdkwork_api_interface_http::gateway_router_with_pool(pool.clone());
+
+    let initial_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/models")
+                .header("authorization", format!("Bearer {api_key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(initial_response.status(), StatusCode::OK);
+    let initial_json = read_json(initial_response).await;
+    assert_eq!(initial_json["data"], serde_json::json!([]));
+
+    let admin_cache_store: Arc<dyn CacheStore> =
+        Arc::new(RedisCacheStore::connect(&redis_url).await.unwrap());
+    configure_capability_catalog_cache_store(admin_cache_store);
+
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool);
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let create = admin_app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/models")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"external_name\":\"gpt-4.1\",\"provider_id\":\"provider-openai-official\"}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(create.status(), StatusCode::CREATED);
+
+    configure_capability_catalog_cache_store(gateway_cache_store);
+
+    let refreshed_response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/models")
+                .header("authorization", format!("Bearer {api_key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(refreshed_response.status(), StatusCode::OK);
+    let refreshed_json = read_json(refreshed_response).await;
+    assert_eq!(refreshed_json["data"][0]["id"], "gpt-4.1");
+}
+
+#[tokio::test]
+#[serial]
 async fn gateway_router_uses_replaced_live_store_for_new_requests() {
+    let _cache_guard = capability_catalog_cache_reset_guard();
     let api_key = "skw_live_reloadable_models";
     let live_store = Reloadable::new(seeded_gateway_store("gpt-4.1-old", api_key).await);
     let app = sdkwork_api_interface_http::gateway_router_with_state(

@@ -18,7 +18,7 @@ hero:
 
 features:
   - title: OpenAI 兼容网关
-    details: 暴露完整的 `/v1/*` 能力面，覆盖 chat、responses、embeddings、files、uploads、audio、images、assistants、threads、vector stores、evals、videos 等接口。
+    details: 暴露完整的 `/v1/*` 能力面，覆盖 chat、responses、embeddings、files、uploads、audio、images、music、assistants、threads、vector stores、evals、videos 等接口。
   - title: 原生控制平面
     details: 通过 `/admin/*` 统一管理 channels、providers、credentials、routing policy、runtime rollout、usage、billing 与 quota。
   - title: 公共自助门户

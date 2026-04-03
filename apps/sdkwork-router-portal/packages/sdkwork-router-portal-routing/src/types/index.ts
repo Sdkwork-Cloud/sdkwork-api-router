@@ -31,6 +31,8 @@ export interface RoutingEvidenceItem {
   title: string;
   detail: string;
   timestamp_label: string;
+  snapshot_id?: string | null;
+  fallback_reason?: string | null;
 }
 
 export interface PortalRoutingPageViewModel {

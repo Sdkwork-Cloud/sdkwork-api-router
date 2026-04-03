@@ -1,0 +1,28 @@
+{
+  "name": "sdkwork-router-portal-console",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.tsx",
+  "module": "./src/index.tsx",
+  "types": "./src/index.tsx",
+  "exports": {
+    ".": {
+      "import": "./src/index.tsx",
+      "types": "./src/index.tsx"
+    }
+  },
+  "dependencies": {
+    "react": "^19.0.0",
+    "sdkwork-router-portal-account": "workspace:*",
+    "sdkwork-router-portal-api-keys": "workspace:*",
+    "sdkwork-router-portal-billing": "workspace:*",
+    "sdkwork-router-portal-credits": "workspace:*",
+    "sdkwork-router-portal-dashboard": "workspace:*",
+    "sdkwork-router-portal-gateway": "workspace:*",
+    "sdkwork-router-portal-recharge": "workspace:*",
+    "sdkwork-router-portal-routing": "workspace:*",
+    "sdkwork-router-portal-types": "workspace:*",
+    "sdkwork-router-portal-user": "workspace:*",
+    "sdkwork-router-portal-usage": "workspace:*"
+  }
+}

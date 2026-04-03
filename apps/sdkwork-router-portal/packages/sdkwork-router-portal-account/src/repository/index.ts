@@ -1,7 +1,17 @@
 import {
+  getPortalBillingEventSummary,
   getPortalCommerceMembership,
   getPortalBillingSummary,
+  getPortalUsageSummary,
   listPortalBillingLedger,
+  listPortalUsageRecords,
 } from 'sdkwork-router-portal-portal-api';
 
-export { getPortalBillingSummary, getPortalCommerceMembership, listPortalBillingLedger };
+export {
+  getPortalBillingEventSummary,
+  getPortalBillingSummary,
+  getPortalCommerceMembership,
+  getPortalUsageSummary,
+  listPortalBillingLedger,
+  listPortalUsageRecords,
+};

@@ -1,10 +1,16 @@
 use sdkwork_api_app_credential::CredentialSecretManager;
 use sdkwork_api_app_gateway::{
-    delete_model, delete_model_from_store, get_model, get_model_from_store, list_models,
+    clear_capability_catalog_cache_store, configure_capability_catalog_cache_store, delete_model,
+    delete_model_from_store, get_model, get_model_from_store, invalidate_capability_catalog_cache,
+    list_models,
     list_models_from_store,
 };
+use sdkwork_api_cache_core::CacheStore;
+use sdkwork_api_cache_memory::MemoryCacheStore;
 use sdkwork_api_domain_catalog::{Channel, ModelCatalogEntry, ProxyProvider};
 use sdkwork_api_storage_sqlite::{run_migrations, SqliteAdminStore};
+use serial_test::serial;
+use std::sync::Arc;
 
 async fn create_store_with_registered_provider() -> SqliteAdminStore {
     let pool = run_migrations("sqlite::memory:").await.unwrap();
@@ -27,6 +33,19 @@ async fn create_store_with_registered_provider() -> SqliteAdminStore {
         .await
         .unwrap();
     store
+}
+
+struct CapabilityCatalogCacheResetGuard;
+
+impl Drop for CapabilityCatalogCacheResetGuard {
+    fn drop(&mut self) {
+        clear_capability_catalog_cache_store();
+    }
+}
+
+fn capability_catalog_cache_reset_guard() -> CapabilityCatalogCacheResetGuard {
+    clear_capability_catalog_cache_store();
+    CapabilityCatalogCacheResetGuard
 }
 
 #[test]
@@ -114,4 +133,134 @@ async fn deletes_catalog_model_from_store() {
         .await
         .unwrap()
         .is_none());
+}
+
+#[tokio::test]
+#[serial]
+async fn catalog_model_reads_use_configured_capability_catalog_cache_until_invalidated() {
+    let _cache_guard = capability_catalog_cache_reset_guard();
+    let cache_store: Arc<dyn CacheStore> = Arc::new(MemoryCacheStore::default());
+    configure_capability_catalog_cache_store(cache_store);
+
+    let store = create_store_with_registered_provider().await;
+    store
+        .insert_model(&ModelCatalogEntry::new(
+            "gpt-4.1",
+            "provider-openai-official",
+        ))
+        .await
+        .unwrap();
+
+    let first = list_models_from_store(&store, "tenant-1", "project-1")
+        .await
+        .unwrap();
+    assert_eq!(first.data.len(), 1);
+    assert_eq!(first.data[0].id, "gpt-4.1");
+
+    store
+        .insert_model(&ModelCatalogEntry::new(
+            "gpt-4.1-mini",
+            "provider-openai-official",
+        ))
+        .await
+        .unwrap();
+
+    let cached = list_models_from_store(&store, "tenant-1", "project-1")
+        .await
+        .unwrap();
+    assert_eq!(cached.data.len(), 1);
+    assert!(cached.data.iter().all(|model| model.id != "gpt-4.1-mini"));
+
+    invalidate_capability_catalog_cache().await;
+
+    let refreshed = list_models_from_store(&store, "tenant-1", "project-1")
+        .await
+        .unwrap();
+    assert_eq!(refreshed.data.len(), 2);
+    assert!(refreshed.data.iter().any(|model| model.id == "gpt-4.1"));
+    assert!(refreshed
+        .data
+        .iter()
+        .any(|model| model.id == "gpt-4.1-mini"));
+}
+
+#[tokio::test]
+#[serial]
+async fn deleting_catalog_model_from_store_invalidates_capability_catalog_cache() {
+    let _cache_guard = capability_catalog_cache_reset_guard();
+    let cache_store: Arc<dyn CacheStore> = Arc::new(MemoryCacheStore::default());
+    configure_capability_catalog_cache_store(cache_store);
+
+    let store = create_store_with_registered_provider().await;
+    store
+        .insert_model(&ModelCatalogEntry::new(
+            "ft:gpt-4.1:sdkwork",
+            "provider-openai-official",
+        ))
+        .await
+        .unwrap();
+
+    let cached = get_model_from_store(&store, "tenant-1", "project-1", "ft:gpt-4.1:sdkwork")
+        .await
+        .unwrap()
+        .expect("catalog model");
+    assert_eq!(cached.id, "ft:gpt-4.1:sdkwork");
+
+    let response = delete_model_from_store(
+        &store,
+        &CredentialSecretManager::database_encrypted("local-dev-master-key"),
+        "tenant-1",
+        "project-1",
+        "ft:gpt-4.1:sdkwork",
+    )
+    .await
+    .unwrap()
+    .expect("deleted model");
+
+    assert_eq!(response["id"], "ft:gpt-4.1:sdkwork");
+    assert_eq!(response["deleted"], true);
+
+    let reloaded = get_model_from_store(&store, "tenant-1", "project-1", "ft:gpt-4.1:sdkwork")
+        .await
+        .unwrap();
+    assert!(reloaded.is_none());
+}
+
+#[tokio::test]
+#[serial]
+async fn capability_catalog_cache_store_can_be_cleared_for_runtime_isolation() {
+    let _cache_guard = capability_catalog_cache_reset_guard();
+    let cache_store: Arc<dyn CacheStore> = Arc::new(MemoryCacheStore::default());
+    configure_capability_catalog_cache_store(cache_store);
+
+    let store = create_store_with_registered_provider().await;
+    store
+        .insert_model(&ModelCatalogEntry::new(
+            "gpt-4.1",
+            "provider-openai-official",
+        ))
+        .await
+        .unwrap();
+
+    let cached = list_models_from_store(&store, "tenant-1", "project-1")
+        .await
+        .unwrap();
+    assert_eq!(cached.data.len(), 1);
+
+    clear_capability_catalog_cache_store();
+
+    store
+        .insert_model(&ModelCatalogEntry::new(
+            "gpt-4.1-mini",
+            "provider-openai-official",
+        ))
+        .await
+        .unwrap();
+
+    let uncached = list_models_from_store(&store, "tenant-1", "project-1")
+        .await
+        .unwrap();
+    assert_eq!(uncached.data.len(), 2);
+    assert!(uncached.data.iter().any(|model| model.id == "gpt-4.1"));
+    assert!(uncached.data.iter().any(|model| model.id == "gpt-4.1-mini"));
 }

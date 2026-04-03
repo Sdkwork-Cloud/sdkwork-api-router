@@ -1536,6 +1536,9 @@ fn native_dynamic_manifest(library_path: &Path) -> sdkwork_api_extension_core::E
     .with_display_name("Native Mock")
     .with_protocol(sdkwork_api_extension_core::ExtensionProtocol::OpenAi)
     .with_entrypoint(library_path.to_string_lossy())
+    .with_supported_modality(sdkwork_api_extension_core::ExtensionModality::Audio)
+    .with_supported_modality(sdkwork_api_extension_core::ExtensionModality::Video)
+    .with_supported_modality(sdkwork_api_extension_core::ExtensionModality::File)
     .with_channel_binding("sdkwork.channel.openai")
     .with_permission(sdkwork_api_extension_core::ExtensionPermission::NetworkOutbound)
     .with_capability(sdkwork_api_extension_core::CapabilityDescriptor::new(

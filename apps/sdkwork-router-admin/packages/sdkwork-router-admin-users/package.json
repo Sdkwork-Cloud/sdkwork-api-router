@@ -12,8 +12,9 @@
     }
   },
   "dependencies": {
+    "@sdkwork/ui-pc-react": "file:../../../../../sdkwork-ui/sdkwork-ui-pc-react",
     "react": "^19.0.0",
-    "sdkwork-router-admin-commons": "workspace:*",
+    "sdkwork-router-admin-core": "workspace:*",
     "sdkwork-router-admin-types": "workspace:*"
   }
 }

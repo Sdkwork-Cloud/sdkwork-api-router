@@ -18,7 +18,7 @@ hero:
 
 features:
   - title: OpenAI-compatible gateway
-    details: Expose a broad `/v1/*` surface for chat, responses, embeddings, files, uploads, audio, images, assistants, threads, vector stores, evals, videos, and more.
+    details: Expose a broad `/v1/*` surface for chat, responses, embeddings, files, uploads, audio, images, music, assistants, threads, vector stores, evals, videos, and more.
   - title: Native control plane
     details: Operate channels, providers, credentials, routing policies, runtime rollouts, usage, billing, and quota management through `/admin/*`.
   - title: Public self-service portal
@@ -34,6 +34,7 @@ SDKWork now follows a documentation structure closer to mature API platforms suc
 - [Getting Started](/getting-started/installation): install prerequisites, run from source, compile binaries, and package browser or Tauri artifacts
 - [Script Lifecycle](/getting-started/script-lifecycle): understand what every startup script does and how build, install, start, verify, stop, and service registration fit together
 - [Architecture](/architecture/software-architecture): understand the standalone services, workspace layering, extension runtime, and module boundaries
+- [Plugin-First Architecture](/architecture/plugin-first-architecture): review the target standard for pluggable drivers, runtime packages, policy engines, and product modules
 - [API Reference](/api-reference/overview): navigate the gateway, admin, and portal surfaces with the right base path and auth model
 - [Operations](/operations/configuration): configure, observe, and troubleshoot standalone deployments
 - [Reference](/reference/api-compatibility): inspect compatibility labels, repository layout, and build tooling
@@ -56,6 +57,7 @@ Choose the path that matches what you need right now:
   - [Release Builds](/getting-started/release-builds)
 - System design:
   - [Software Architecture](/architecture/software-architecture)
+  - [Plugin-First Architecture](/architecture/plugin-first-architecture)
 - Endpoint inventory:
   - [Gateway API](/api-reference/gateway-api)
 

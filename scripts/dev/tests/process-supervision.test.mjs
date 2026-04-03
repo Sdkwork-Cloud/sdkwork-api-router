@@ -60,6 +60,30 @@ test('waitForChildExit escalates to SIGKILL after the graceful timeout', async (
   assert.deepEqual(child.killCalls, ['SIGTERM', 'SIGKILL']);
 });
 
+test('waitForChildExit uses taskkill tree termination on Windows so wrapper grandchildren do not linger', async () => {
+  const child = new FakeChild();
+  child.pid = 4321;
+  const taskkillCalls = [];
+
+  await waitForChildExit(child, {
+    platform: 'win32',
+    forceKillAfterMs: 5,
+    settleAfterForceMs: 5,
+    spawnImpl(command, args) {
+      taskkillCalls.push([command, args]);
+      const taskkillProcess = new EventEmitter();
+      setImmediate(() => taskkillProcess.emit('exit', 0, null));
+      return taskkillProcess;
+    },
+  });
+
+  assert.deepEqual(child.killCalls, []);
+  assert.deepEqual(taskkillCalls, [
+    ['taskkill', ['/PID', '4321', '/T']],
+    ['taskkill', ['/PID', '4321', '/T', '/F']],
+  ]);
+});
+
 test('createSignalController exits only after supervised children stop', async () => {
   const child = new FakeChild();
   const exitCalls = [];

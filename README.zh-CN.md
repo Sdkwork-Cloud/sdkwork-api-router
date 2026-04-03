@@ -255,15 +255,17 @@ node scripts/dev/start-workspace.mjs
   - 如果明确需要 Vite 独立开发服务，可使用 `--browser` 或 `-Browser`
   - 启动成功后会输出格式化摘要，包含统一入口、独立端口、日志文件和默认账号密码
   - 内部对子进程做了监督和回收处理，`Ctrl+C`、`bin/stop-dev.*` 与异常退出时更不容易残留孤儿 `pnpm` / `cargo` 进程
+  - Windows 下 `start-dev.sh` 会委托给 `start-dev.ps1`，这样 Git Bash / MSYS 路径不会直接传入 Windows 版 Node；命令名保持不变，但底层生命周期实现与 PowerShell 统一
 - `bin/build.sh` / `bin/build.ps1`
   - 面向发布态的构建流水线，会构建：
     - Rust release 二进制
     - admin / portal 浏览器静态资源
     - docs 构建产物
     - admin Tauri release 包
-    - 原生 release 输出到 `artifacts/release/`
+  - 原生 release 输出到 `artifacts/release/`
   - Windows 下如果未显式设置 `CARGO_TARGET_DIR`，构建与安装流程会自动使用较短的目标目录以降低 MSVC / CMake 路径过长失败
   - Windows 下如果未显式设置 `CARGO_BUILD_JOBS`，release 构建默认使用 `1`
+  - Windows 下 `build.sh` 会委托给 `build.ps1`，确保 Git Bash 与 PowerShell 走同一条已验证的构建路径
 - `bin/install.sh` / `bin/install.ps1`
   - 默认将发布态运行时安装到 `artifacts/install/sdkwork-api-router/current`
   - 复制 release 二进制与 admin / portal 静态站点
@@ -279,12 +281,14 @@ node scripts/dev/start-workspace.mjs
     - `service/windows-task/sdkwork-api-router.xml`
     - `service/windows-task/install-service.ps1`
     - `service/windows-task/uninstall-service.ps1`
+  - Windows 下 `install.sh` 同样会委托给 `install.ps1`，路径处理与安装行为统一复用已验证的 PowerShell 版本
 - `bin/start.sh` / `bin/start.ps1`
   - 发布态运行入口
   - 启动 `router-product-service`，统一承载 `/admin/*`、`/portal/*` 和 `/api/*`
   - 默认使用安装目录 `var/data/` 下的本地 SQLite
   - 启动成功后输出格式化摘要，包含统一入口、独立端口、日志文件和默认账号密码
   - 可直接作为 daemon 使用，也可以交给系统服务管理器以前台方式托管
+  - Windows 下 `start.sh` 会委托给 `start.ps1`，既保留 Git Bash 用法，又避免重新引入 MSYS 路径转换导致的发布态启动问题
 - `bin/stop.sh` / `bin/stop.ps1`
   - 停止托管发布态运行时
   - PowerShell 版会在运行时解析平台对应的二进制名称和停止逻辑，因此同一套 `pwsh` 入口可复用于 Windows、Linux、macOS 安装目录
@@ -327,6 +331,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\start.ps1 -DryRun
 
 - `bin/start.sh --foreground` 与 `bin/start.ps1 -Foreground` 是服务管理器友好的前台模式
 - `bin/start-dev.*` 和 `bin/start.*` 成功启动后都会打印可点击的统一入口和独立服务 URL
+- `bin/start-dev.*` 与 `bin/start.*` 默认共用 `9980` 段端口。如果这些端口已经被其他运行时占用，脚本会在真正拉起子进程前直接失败，并明确打印冲突的绑定地址，而不是等到健康检查阶段才表现成“启动后一会退出”。
+- 托管启动脚本现在会在 pid 文件旁边维护一个 `.state.env` 状态文件，记录当前实例的绑定地址、前端模式和进程指纹，用来区分“健康运行中的托管实例”和“残留 pid / pid 被系统复用”的情况。
+- 如果当前已经有一套健康的托管运行时使用了另一组端口，再次执行 `bin/start-dev.*` 或 `bin/start.*` 时会直接打印这套已运行实例的真实地址，而不会再落成模糊的 health-check 失败。
+- Windows 下 `.sh` wrapper 属于兼容入口，实际会转交给对应的 `.ps1` 脚本执行。这样既保留 Git Bash 的命令习惯，也避免 `/d/...` 这类 MSYS 路径直接进入 Windows Node / cargo 进程。
 - 托管启动脚本会打印本地默认账号：
   - admin：`admin@sdkwork.local / ChangeMe123!`
   - portal：`portal@sdkwork.local / ChangeMe123!`

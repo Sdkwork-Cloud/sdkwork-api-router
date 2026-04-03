@@ -21,8 +21,17 @@ import type {
 } from 'sdkwork-router-portal-types';
 
 const PORTAL_AUTH_STORAGE_KEY = 'sdkwork-router-portal.auth.v1';
-const DEFAULT_BOOTSTRAP_STATUS = 'Checking for an existing portal session token.';
-const DEFAULT_DASHBOARD_STATUS = 'Sign in to load the current workspace status.';
+const DEFAULT_BOOTSTRAP_STATUS_KEY = 'Checking for an existing portal session token.';
+const DEFAULT_DASHBOARD_STATUS_KEY = 'Sign in to load the current workspace status.';
+const SYNC_SESSION_BOOTSTRAP_STATUS_KEY = 'Refreshing workspace identity and dashboard context.';
+const SYNC_SESSION_DASHBOARD_STATUS_KEY = 'Refreshing workspace status after sign-in.';
+const HYDRATE_BOOTSTRAP_STATUS_KEY = 'Refreshing workspace identity and navigation context.';
+const HYDRATE_DASHBOARD_STATUS_KEY = 'Refreshing workspace status for the active project.';
+const WORKSPACE_RESTORED_STATUS_KEY = 'Workspace identity restored.';
+const SESSION_ENDED_STATUS_KEY = 'Your portal session ended. Sign in again to continue.';
+const SESSION_INVALID_STATUS_KEY = 'The saved portal session is no longer valid. Please sign in again.';
+const SESSION_EXPIRED_STATUS_KEY = 'Your portal session expired. Sign in again to continue.';
+const DASHBOARD_SYNCED_STATUS_KEY = 'Workspace status is synced with the latest dashboard snapshot.';
 
 interface PortalAuthState {
   isAuthenticated: boolean;
@@ -41,7 +50,7 @@ interface PortalAuthState {
   syncDashboard: (token?: string) => Promise<PortalDashboardSummary | null>;
 }
 
-function signedOutState(message = DEFAULT_BOOTSTRAP_STATUS) {
+function signedOutState(message = DEFAULT_BOOTSTRAP_STATUS_KEY) {
   return {
     isAuthenticated: false,
     isBootstrapping: false,
@@ -50,7 +59,7 @@ function signedOutState(message = DEFAULT_BOOTSTRAP_STATUS) {
     workspace: null,
     dashboardSnapshot: null,
     bootstrapStatus: message,
-    dashboardStatus: DEFAULT_DASHBOARD_STATUS,
+    dashboardStatus: DEFAULT_DASHBOARD_STATUS_KEY,
   } as const;
 }
 
@@ -70,8 +79,8 @@ async function syncSessionState(
     isBootstrapping: true,
     sessionToken: session.token,
     user: session.user,
-    bootstrapStatus: 'Refreshing workspace identity and dashboard context.',
-    dashboardStatus: 'Refreshing workspace status after sign-in.',
+    bootstrapStatus: SYNC_SESSION_BOOTSTRAP_STATUS_KEY,
+    dashboardStatus: SYNC_SESSION_DASHBOARD_STATUS_KEY,
   });
 
   await get().syncWorkspace(session.token);
@@ -82,7 +91,7 @@ async function syncSessionState(
     isBootstrapping: false,
     sessionToken: session.token,
     user: session.user,
-    bootstrapStatus: 'Workspace identity restored.',
+    bootstrapStatus: WORKSPACE_RESTORED_STATUS_KEY,
   });
 }
 
@@ -106,7 +115,7 @@ export const usePortalAuthStore = create<PortalAuthState>()(
       },
       signOut: async (message) => {
         clearPortalSessionToken();
-        set(signedOutState(message ?? 'Your portal session ended. Sign in again to continue.'));
+        set(signedOutState(message ?? SESSION_ENDED_STATUS_KEY));
       },
       hydrate: async () => {
         const persistedToken = readPortalSessionToken();
@@ -118,8 +127,8 @@ export const usePortalAuthStore = create<PortalAuthState>()(
 
         set({
           isBootstrapping: true,
-          bootstrapStatus: 'Refreshing workspace identity and navigation context.',
-          dashboardStatus: 'Refreshing workspace status for the active project.',
+          bootstrapStatus: HYDRATE_BOOTSTRAP_STATUS_KEY,
+          dashboardStatus: HYDRATE_DASHBOARD_STATUS_KEY,
           sessionToken: persistedToken,
         });
 
@@ -135,7 +144,7 @@ export const usePortalAuthStore = create<PortalAuthState>()(
             sessionToken: persistedToken,
             user,
             workspace,
-            bootstrapStatus: 'Workspace identity restored.',
+            bootstrapStatus: WORKSPACE_RESTORED_STATUS_KEY,
           });
 
           await get().syncDashboard(persistedToken);
@@ -150,7 +159,7 @@ export const usePortalAuthStore = create<PortalAuthState>()(
         } catch (error) {
           const nextMessage =
             error instanceof PortalApiError && error.status === 401
-              ? 'The saved portal session is no longer valid. Please sign in again.'
+              ? SESSION_INVALID_STATUS_KEY
               : portalErrorMessage(error);
 
           clearPortalSessionToken();
@@ -176,7 +185,7 @@ export const usePortalAuthStore = create<PortalAuthState>()(
         } catch (error) {
           if (error instanceof PortalApiError && error.status === 401) {
             clearPortalSessionToken();
-            set(signedOutState('Your portal session expired. Sign in again to continue.'));
+            set(signedOutState(SESSION_EXPIRED_STATUS_KEY));
             return null;
           }
 
@@ -192,7 +201,7 @@ export const usePortalAuthStore = create<PortalAuthState>()(
         if (!currentToken) {
           set({
             dashboardSnapshot: null,
-            dashboardStatus: DEFAULT_DASHBOARD_STATUS,
+            dashboardStatus: DEFAULT_DASHBOARD_STATUS_KEY,
           });
           return null;
         }
@@ -203,13 +212,13 @@ export const usePortalAuthStore = create<PortalAuthState>()(
             isAuthenticated: true,
             sessionToken: currentToken,
             dashboardSnapshot,
-            dashboardStatus: 'Workspace status is synced with the latest dashboard snapshot.',
+            dashboardStatus: DASHBOARD_SYNCED_STATUS_KEY,
           });
           return dashboardSnapshot;
         } catch (error) {
           if (error instanceof PortalApiError && error.status === 401) {
             clearPortalSessionToken();
-            set(signedOutState('Your portal session expired. Sign in again to continue.'));
+            set(signedOutState(SESSION_EXPIRED_STATUS_KEY));
             return null;
           }
 
@@ -243,6 +252,6 @@ export function subscribeToPortalSessionExpiry() {
   return onPortalSessionExpired(() => {
     void usePortalAuthStore
       .getState()
-      .signOut('Your portal session expired. Sign in again to continue.');
+      .signOut(SESSION_EXPIRED_STATUS_KEY);
   });
 }

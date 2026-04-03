@@ -1,4 +1,5 @@
 export type PortalAnonymousRouteKey = 'login' | 'register' | 'forgot-password';
+export type PortalTopLevelRouteKey = 'home' | 'console' | 'models' | 'docs' | 'downloads';
 export type PortalRouteKey =
   | 'gateway'
   | 'dashboard'
@@ -7,8 +8,10 @@ export type PortalRouteKey =
   | 'usage'
   | 'user'
   | 'credits'
+  | 'recharge'
   | 'billing'
   | 'account';
+export type PortalRouteGroupKey = 'operations' | 'access' | 'revenue';
 export type PortalThemeMode = 'light' | 'dark' | 'system';
 export type PortalThemeColor =
   | 'tech-blue'
@@ -21,9 +24,55 @@ export type PortalDataSource = 'live' | 'workspace_seed';
 
 export interface PortalRouteDefinition {
   key: PortalRouteKey;
-  label: string;
-  eyebrow: string;
-  detail: string;
+  group: PortalRouteGroupKey;
+  labelKey: string;
+  eyebrowKey: string;
+  detailKey: string;
+  sidebarVisible?: boolean;
+}
+
+export type PortalRouteModuleId =
+  | 'sdkwork-router-portal-gateway'
+  | 'sdkwork-router-portal-dashboard'
+  | 'sdkwork-router-portal-routing'
+  | 'sdkwork-router-portal-api-keys'
+  | 'sdkwork-router-portal-usage'
+  | 'sdkwork-router-portal-user'
+  | 'sdkwork-router-portal-credits'
+  | 'sdkwork-router-portal-recharge'
+  | 'sdkwork-router-portal-billing'
+  | 'sdkwork-router-portal-account';
+
+export interface PortalModuleLoadingPolicy {
+  strategy: 'lazy';
+  prefetch: 'none' | 'intent';
+  chunkGroup?: string;
+}
+
+export interface PortalModuleNavigationDescriptor {
+  group: PortalRouteGroupKey | 'public';
+  order: number;
+  sidebar: boolean;
+}
+
+export interface PortalProductModuleManifest {
+  moduleId: PortalRouteModuleId;
+  pluginId: PortalRouteModuleId;
+  pluginKind: 'portal-module';
+  packageName: PortalRouteModuleId;
+  displayName: string;
+  routeKeys: PortalRouteKey[];
+  capabilityTags: string[];
+  requiredPermissions: string[];
+  navigation: PortalModuleNavigationDescriptor;
+  loading: PortalModuleLoadingPolicy;
+}
+
+export interface PortalRouteManifestEntry extends PortalRouteDefinition {
+  path: string;
+  moduleId: PortalRouteModuleId;
+  prefetchGroup?: string;
+  productModule: PortalProductModuleManifest;
 }
 
 export interface TenantRecord {
@@ -67,6 +116,7 @@ export interface GatewayApiKeyRecord {
   project_id: string;
   environment: string;
   hashed_key: string;
+  api_key_group_id?: string | null;
   label: string;
   notes?: string | null;
   created_at_ms: number;
@@ -81,10 +131,47 @@ export interface CreatedGatewayApiKey {
   tenant_id: string;
   project_id: string;
   environment: string;
+  api_key_group_id?: string | null;
   label: string;
   notes?: string | null;
   created_at_ms: number;
   expires_at_ms?: number | null;
+}
+
+export interface ApiKeyGroupRecord {
+  group_id: string;
+  tenant_id: string;
+  project_id: string;
+  environment: string;
+  name: string;
+  slug: string;
+  description?: string | null;
+  color?: string | null;
+  default_capability_scope?: string | null;
+  default_routing_profile_id?: string | null;
+  default_accounting_mode?: string | null;
+  active: boolean;
+  created_at_ms: number;
+  updated_at_ms: number;
+}
+
+export interface RoutingProfileRecord {
+  profile_id: string;
+  tenant_id: string;
+  project_id: string;
+  name: string;
+  slug: string;
+  description?: string | null;
+  active: boolean;
+  strategy: string;
+  ordered_provider_ids: string[];
+  default_provider_id?: string | null;
+  max_cost?: number | null;
+  max_latency_ms?: number | null;
+  require_healthy: boolean;
+  preferred_region?: string | null;
+  created_at_ms: number;
+  updated_at_ms: number;
 }
 
 export interface UsageRecord {
@@ -122,6 +209,111 @@ export interface ProjectBillingSummary {
   quota_limit_units?: number | null;
   remaining_units?: number | null;
   exhausted: boolean;
+}
+
+export type BillingAccountingMode = 'platform_credit' | 'byok' | 'passthrough';
+
+export interface BillingEventRecord {
+  event_id: string;
+  tenant_id: string;
+  project_id: string;
+  api_key_group_id?: string | null;
+  capability: string;
+  route_key: string;
+  usage_model: string;
+  provider_id: string;
+  accounting_mode: BillingAccountingMode;
+  operation_kind: string;
+  modality: string;
+  api_key_hash?: string | null;
+  channel_id?: string | null;
+  reference_id?: string | null;
+  latency_ms?: number | null;
+  units: number;
+  request_count: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  image_count: number;
+  audio_seconds: number;
+  video_seconds: number;
+  music_seconds: number;
+  upstream_cost: number;
+  customer_charge: number;
+  applied_routing_profile_id?: string | null;
+  compiled_routing_snapshot_id?: string | null;
+  fallback_reason?: string | null;
+  created_at_ms: number;
+}
+
+export interface BillingEventProjectSummary {
+  project_id: string;
+  event_count: number;
+  request_count: number;
+  total_units: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_tokens: number;
+  total_image_count: number;
+  total_audio_seconds: number;
+  total_video_seconds: number;
+  total_music_seconds: number;
+  total_upstream_cost: number;
+  total_customer_charge: number;
+}
+
+export interface BillingEventGroupSummary {
+  api_key_group_id?: string | null;
+  project_count: number;
+  event_count: number;
+  request_count: number;
+  total_upstream_cost: number;
+  total_customer_charge: number;
+}
+
+export interface BillingEventCapabilitySummary {
+  capability: string;
+  event_count: number;
+  request_count: number;
+  total_tokens: number;
+  image_count: number;
+  audio_seconds: number;
+  video_seconds: number;
+  music_seconds: number;
+  total_upstream_cost: number;
+  total_customer_charge: number;
+}
+
+export interface BillingEventAccountingModeSummary {
+  accounting_mode: BillingAccountingMode;
+  event_count: number;
+  request_count: number;
+  total_upstream_cost: number;
+  total_customer_charge: number;
+}
+
+export interface BillingEventSummary {
+  total_events: number;
+  project_count: number;
+  group_count: number;
+  capability_count: number;
+  total_request_count: number;
+  total_units: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_tokens: number;
+  total_image_count: number;
+  total_audio_seconds: number;
+  total_video_seconds: number;
+  total_music_seconds: number;
+  total_upstream_cost: number;
+  total_customer_charge: number;
+  projects: BillingEventProjectSummary[];
+  groups: BillingEventGroupSummary[];
+  capabilities: BillingEventCapabilitySummary[];
+  accounting_modes: BillingEventAccountingModeSummary[];
 }
 
 export interface PortalRateLimitPolicySnapshot {
@@ -224,9 +416,12 @@ export interface PortalRoutingDecision {
   selected_provider_id: string;
   candidate_ids: string[];
   matched_policy_id?: string | null;
+  applied_routing_profile_id?: string | null;
+  compiled_routing_snapshot_id?: string | null;
   strategy?: string | null;
   selection_seed?: number | null;
   selection_reason?: string | null;
+  fallback_reason?: string | null;
   requested_region?: string | null;
   slo_applied: boolean;
   slo_degraded: boolean;
@@ -238,18 +433,43 @@ export interface PortalRoutingDecisionLog {
   decision_source: string;
   tenant_id?: string | null;
   project_id?: string | null;
+  api_key_group_id?: string | null;
   capability: string;
   route_key: string;
   selected_provider_id: string;
   matched_policy_id?: string | null;
+  applied_routing_profile_id?: string | null;
+  compiled_routing_snapshot_id?: string | null;
   strategy: string;
   selection_seed?: number | null;
   selection_reason?: string | null;
+  fallback_reason?: string | null;
   requested_region?: string | null;
   slo_applied: boolean;
   slo_degraded: boolean;
   created_at_ms: number;
   assessments: PortalRoutingAssessment[];
+}
+
+export interface PortalCompiledRoutingSnapshotRecord {
+  snapshot_id: string;
+  tenant_id?: string | null;
+  project_id?: string | null;
+  api_key_group_id?: string | null;
+  capability: string;
+  route_key: string;
+  matched_policy_id?: string | null;
+  project_routing_preferences_project_id?: string | null;
+  applied_routing_profile_id?: string | null;
+  strategy: string;
+  ordered_provider_ids: string[];
+  default_provider_id?: string | null;
+  max_cost?: number | null;
+  max_latency_ms?: number | null;
+  require_healthy: boolean;
+  preferred_region?: string | null;
+  created_at_ms: number;
+  updated_at_ms: number;
 }
 
 export interface PortalRoutingProviderOption {
@@ -320,6 +540,38 @@ export interface RechargePack {
   source: PortalDataSource;
 }
 
+export interface PortalRechargeOption {
+  id: string;
+  label: string;
+  amount_cents: number;
+  amount_label: string;
+  granted_units: number;
+  effective_ratio_label: string;
+  note: string;
+  recommended: boolean;
+  source: PortalDataSource;
+}
+
+export interface PortalCustomRechargeRule {
+  id: string;
+  label: string;
+  min_amount_cents: number;
+  max_amount_cents: number;
+  units_per_cent: number;
+  effective_ratio_label: string;
+  note: string;
+}
+
+export interface PortalCustomRechargePolicy {
+  enabled: boolean;
+  min_amount_cents: number;
+  max_amount_cents: number;
+  step_amount_cents: number;
+  suggested_amount_cents: number;
+  rules: PortalCustomRechargeRule[];
+  source: PortalDataSource;
+}
+
 export interface CouponOffer {
   code: string;
   title: string;
@@ -346,12 +598,15 @@ export interface PortalCommerceCoupon {
 export interface PortalCommerceCatalog {
   plans: SubscriptionPlan[];
   packs: RechargePack[];
+  recharge_options: PortalRechargeOption[];
+  custom_recharge_policy: PortalCustomRechargePolicy | null;
   coupons: PortalCommerceCoupon[];
 }
 
 export type PortalCommerceQuoteKind =
   | 'subscription_plan'
   | 'recharge_pack'
+  | 'custom_recharge'
   | 'coupon_redemption';
 
 export interface PortalCommerceQuoteRequest {
@@ -359,6 +614,7 @@ export interface PortalCommerceQuoteRequest {
   target_id: string;
   coupon_code?: string | null;
   current_remaining_units?: number | null;
+  custom_amount_cents?: number | null;
 }
 
 export interface PortalAppliedCoupon {
@@ -379,8 +635,11 @@ export interface PortalCommerceQuote {
   payable_price_label: string;
   granted_units: number;
   bonus_units: number;
+  amount_cents?: number | null;
   projected_remaining_units?: number | null;
   applied_coupon?: PortalAppliedCoupon | null;
+  pricing_rule_label?: string | null;
+  effective_ratio_label?: string | null;
   source: PortalDataSource;
 }
 

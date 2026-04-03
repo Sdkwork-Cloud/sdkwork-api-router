@@ -49,9 +49,23 @@ if [ -z "$RUNTIME_HOME" ]; then
 fi
 
 RUNTIME_HOME=$(CDPATH= cd -- "$RUNTIME_HOME" 2>/dev/null && pwd || printf '%s' "$RUNTIME_HOME")
-PID_FILE="$RUNTIME_HOME/var/run/router-product-service.pid"
-STDOUT_LOG="$RUNTIME_HOME/var/log/router-product-service.stdout.log"
-STDERR_LOG="$RUNTIME_HOME/var/log/router-product-service.stderr.log"
+RUN_DIR="$RUNTIME_HOME/var/run"
+LOG_DIR="$RUNTIME_HOME/var/log"
+
+if router_is_windows; then
+  PS_SCRIPT="$(router_windows_path "$SCRIPT_DIR/stop.ps1")"
+  set --
+  [ -n "$RUNTIME_HOME" ] && set -- "$@" -Home "$(router_windows_path "$RUNTIME_HOME")"
+  [ "$DRY_RUN" = '1' ] && set -- "$@" -DryRun
+  [ "$WAIT_SECONDS" != '30' ] && set -- "$@" -WaitSeconds "$WAIT_SECONDS"
+  [ "$FORCE_MODE" = '0' ] && set -- "$@" -GracefulOnly
+  exec powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PS_SCRIPT" "$@"
+fi
+
+PID_FILE="$RUN_DIR/router-product-service.pid"
+STATE_FILE="$RUN_DIR/router-product-service.state.env"
+STDOUT_LOG="$LOG_DIR/router-product-service.stdout.log"
+STDERR_LOG="$LOG_DIR/router-product-service.stderr.log"
 
 if [ "$DRY_RUN" = '1' ]; then
   router_log "would stop router-product-service using pid file $PID_FILE"
@@ -59,19 +73,15 @@ if [ "$DRY_RUN" = '1' ]; then
 fi
 
 if ! [ -f "$PID_FILE" ]; then
+  router_remove_managed_state "$STATE_FILE"
   router_log "pid file not found, nothing to stop: $PID_FILE"
   exit 0
 fi
 
-PID=$(tr -d '[:space:]' < "$PID_FILE" 2>/dev/null || true)
+PID=$(router_get_running_pid "$PID_FILE" "$STATE_FILE")
 if [ -z "$PID" ]; then
   rm -f "$PID_FILE"
-  router_log "removed empty pid file: $PID_FILE"
-  exit 0
-fi
-
-if ! router_is_pid_running "$PID"; then
-  rm -f "$PID_FILE"
+  router_remove_managed_state "$STATE_FILE"
   router_log "process already stopped, removed stale pid file: $PID_FILE"
   exit 0
 fi
@@ -83,4 +93,5 @@ if ! router_stop_pid "$PID" "$WAIT_SECONDS" "$FORCE_MODE"; then
 fi
 
 rm -f "$PID_FILE"
+router_remove_managed_state "$STATE_FILE"
 router_log "stopped router-product-service pid=$PID"

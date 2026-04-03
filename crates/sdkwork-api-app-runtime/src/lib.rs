@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use async_trait::async_trait;
 use axum::Router;
 use futures_util::{stream, StreamExt, TryStreamExt};
 use std::io;
@@ -15,14 +16,17 @@ use sdkwork_api_app_gateway::{
     reload_extension_host_with_policy, reload_extension_host_with_scope,
     start_configured_extension_hot_reload_supervision, ConfiguredExtensionHostReloadScope,
 };
+use sdkwork_api_cache_core::{CacheDriverFactory, CacheDriverRegistry, CacheRuntimeStores};
+use sdkwork_api_cache_memory::MemoryCacheStore;
+use sdkwork_api_cache_redis::RedisCacheStore;
 use sdkwork_api_config::{
-    StandaloneConfig, StandaloneConfigLoader, StandaloneConfigWatchState,
+    CacheBackendKind, StandaloneConfig, StandaloneConfigLoader, StandaloneConfigWatchState,
     StandaloneRuntimeDynamicConfig,
 };
 use sdkwork_api_storage_core::{
     AdminStore, ExtensionRuntimeRolloutParticipantRecord, ExtensionRuntimeRolloutRecord,
     Reloadable, ServiceRuntimeNodeRecord, StandaloneConfigRolloutParticipantRecord,
-    StandaloneConfigRolloutRecord, StorageDialect,
+    StandaloneConfigRolloutRecord, StorageDialect, StorageDriverFactory, StorageDriverRegistry,
 };
 use sdkwork_api_storage_postgres::{run_migrations as run_postgres_migrations, PostgresAdminStore};
 use sdkwork_api_storage_sqlite::{run_migrations as run_sqlite_migrations, SqliteAdminStore};
@@ -384,28 +388,157 @@ struct StandaloneRuntimeState {
     snapshot_supervision: AbortOnDropHandle,
     extension_hot_reload_supervision: AbortOnDropHandle,
     previous_watch_state: Option<StandaloneConfigWatchState>,
+    pending_restart_required: Option<PendingStandaloneRuntimeRestartRequired>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PendingStandaloneRuntimeRestartRequired {
+    watch_state: StandaloneConfigWatchState,
+    message: String,
+}
+
+struct SqliteAdminStoreFactory;
+
+#[async_trait]
+impl StorageDriverFactory<Arc<dyn AdminStore>> for SqliteAdminStoreFactory {
+    fn dialect(&self) -> StorageDialect {
+        StorageDialect::Sqlite
+    }
+
+    fn driver_name(&self) -> &'static str {
+        "sqlite-admin-store"
+    }
+
+    async fn build(&self, database_url: &str) -> Result<Arc<dyn AdminStore>> {
+        let pool = run_sqlite_migrations(database_url).await?;
+        Ok(Arc::new(SqliteAdminStore::new(pool)))
+    }
+}
+
+struct PostgresAdminStoreFactory;
+
+#[async_trait]
+impl StorageDriverFactory<Arc<dyn AdminStore>> for PostgresAdminStoreFactory {
+    fn dialect(&self) -> StorageDialect {
+        StorageDialect::Postgres
+    }
+
+    fn driver_name(&self) -> &'static str {
+        "postgres-admin-store"
+    }
+
+    async fn build(&self, database_url: &str) -> Result<Arc<dyn AdminStore>> {
+        let pool = run_postgres_migrations(database_url).await?;
+        Ok(Arc::new(PostgresAdminStore::new(pool)))
+    }
+}
+
+struct MemoryCacheStoreFactory;
+
+#[async_trait]
+impl CacheDriverFactory for MemoryCacheStoreFactory {
+    fn backend_kind(&self) -> CacheBackendKind {
+        CacheBackendKind::Memory
+    }
+
+    fn driver_name(&self) -> &'static str {
+        "memory-cache-store"
+    }
+
+    async fn build(&self, _cache_url: Option<&str>) -> Result<CacheRuntimeStores> {
+        let store = Arc::new(MemoryCacheStore::default());
+        Ok(CacheRuntimeStores::new(store.clone(), store))
+    }
+}
+
+struct RedisCacheStoreFactory;
+
+#[async_trait]
+impl CacheDriverFactory for RedisCacheStoreFactory {
+    fn backend_kind(&self) -> CacheBackendKind {
+        CacheBackendKind::Redis
+    }
+
+    fn driver_name(&self) -> &'static str {
+        "redis-cache-store"
+    }
+
+    async fn build(&self, cache_url: Option<&str>) -> Result<CacheRuntimeStores> {
+        let cache_url = cache_url.ok_or_else(|| anyhow::anyhow!("redis cache backend requires cache_url"))?;
+        let store = Arc::new(RedisCacheStore::connect(cache_url).await?);
+        Ok(CacheRuntimeStores::new(store.clone(), store))
+    }
+}
+
+const STANDALONE_SUPPORTED_STORAGE_DIALECTS: [StorageDialect; 2] =
+    [StorageDialect::Sqlite, StorageDialect::Postgres];
+
+fn standalone_admin_store_registry() -> StorageDriverRegistry<Arc<dyn AdminStore>> {
+    StorageDriverRegistry::new()
+        .with_factory(SqliteAdminStoreFactory)
+        .with_factory(PostgresAdminStoreFactory)
+}
+
+fn supported_storage_dialects_summary() -> String {
+    STANDALONE_SUPPORTED_STORAGE_DIALECTS
+        .iter()
+        .map(|dialect| dialect.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn standalone_cache_driver_registry() -> CacheDriverRegistry {
+    CacheDriverRegistry::new()
+        .with_factory(MemoryCacheStoreFactory)
+        .with_factory(RedisCacheStoreFactory)
 }
 
 pub async fn build_admin_store_from_config(
     config: &StandaloneConfig,
 ) -> Result<Arc<dyn AdminStore>> {
-    match config.storage_dialect() {
-        Some(StorageDialect::Sqlite) => {
-            let pool = run_sqlite_migrations(&config.database_url).await?;
-            Ok(Arc::new(SqliteAdminStore::new(pool)))
-        }
-        Some(StorageDialect::Postgres) => {
-            let pool = run_postgres_migrations(&config.database_url).await?;
-            Ok(Arc::new(PostgresAdminStore::new(pool)))
-        }
-        Some(other) => anyhow::bail!(
-            "standalone runtime supervision does not yet support storage dialect: {}",
-            other.as_str()
-        ),
-        None => {
-            anyhow::bail!("standalone runtime supervision received unsupported database URL scheme")
-        }
-    }
+    let supported_dialects = supported_storage_dialects_summary();
+    let Some(dialect) = config.storage_dialect() else {
+        anyhow::bail!(
+            "standalone runtime supervision received unsupported database URL scheme for {} (supported dialects: {})",
+            config.database_url,
+            supported_dialects
+        );
+    };
+
+    let registry = standalone_admin_store_registry();
+    let Some(driver) = registry.resolve(dialect) else {
+        anyhow::bail!(
+            "standalone runtime supervision does not yet support storage dialect: {} (supported dialects: {})",
+            dialect.as_str(),
+            supported_dialects
+        );
+    };
+
+    driver.build(&config.database_url).await.with_context(|| {
+        format!(
+            "failed to initialize standalone admin store with driver {}",
+            driver.driver_name()
+        )
+    })
+}
+
+pub async fn build_cache_runtime_from_config(
+    config: &StandaloneConfig,
+) -> Result<CacheRuntimeStores> {
+    let registry = standalone_cache_driver_registry();
+    let Some(driver) = registry.resolve(config.cache_backend) else {
+        anyhow::bail!(
+            "standalone runtime does not yet support cache backend: {}",
+            config.cache_backend.as_str()
+        );
+    };
+
+    driver.build(config.cache_url.as_deref()).await.with_context(|| {
+        format!(
+            "failed to initialize standalone cache runtime with driver {}",
+            driver.driver_name()
+        )
+    })
 }
 
 fn build_secret_manager_from_config(config: &StandaloneConfig) -> CredentialSecretManager {
@@ -518,24 +651,37 @@ pub struct StandaloneConfigRolloutDetails {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct StandaloneRuntimeReloadOutcome {
-    changed: bool,
-    message: String,
+enum StandaloneRuntimeReloadOutcome {
+    NoChange { message: String },
+    Applied { message: String },
+    RestartRequired { message: String },
 }
 
 impl StandaloneRuntimeReloadOutcome {
     fn no_change() -> Self {
-        Self {
-            changed: false,
+        Self::NoChange {
             message: "no effective config changes detected".to_owned(),
         }
     }
 
-    fn changed(message: String) -> Self {
-        Self {
-            changed: true,
-            message,
+    fn applied(message: String) -> Self {
+        Self::Applied { message }
+    }
+
+    fn restart_required(message: String) -> Self {
+        Self::RestartRequired { message }
+    }
+
+    fn message(&self) -> &str {
+        match self {
+            Self::NoChange { message }
+            | Self::Applied { message }
+            | Self::RestartRequired { message } => message,
         }
+    }
+
+    fn requires_restart(&self) -> bool {
+        matches!(self, Self::RestartRequired { .. })
     }
 }
 
@@ -964,6 +1110,13 @@ async fn reload_standalone_runtime_config_pass(
     force_reload: bool,
 ) -> Result<StandaloneRuntimeReloadOutcome> {
     let next_watch_state = config_loader.watch_state()?;
+    if let Some(pending_restart) = state.pending_restart_required.as_ref() {
+        if pending_restart.watch_state == next_watch_state {
+            return Ok(StandaloneRuntimeReloadOutcome::restart_required(
+                pending_restart.message.clone(),
+            ));
+        }
+    }
     if !force_reload && state.previous_watch_state.as_ref() == Some(&next_watch_state) {
         return Ok(StandaloneRuntimeReloadOutcome::no_change());
     }
@@ -971,12 +1124,8 @@ async fn reload_standalone_runtime_config_pass(
     let next_config = config_loader.reload()?;
     let restart_required_changes =
         restart_required_changed_fields(service_kind, &state.current_config, &next_config);
-    if !restart_required_changes.is_empty() {
-        eprintln!(
-            "runtime config reload ignored non-reloadable changes requiring restart: {}",
-            restart_required_changes.join(", ")
-        );
-    }
+    let restart_required_message = (!restart_required_changes.is_empty())
+        .then(|| format!("restart required for {}", restart_required_changes.join(", ")));
 
     let next_dynamic = next_config.runtime_dynamic_config();
     let bind_changed = service_bind(service_kind, &state.current_config)
@@ -998,9 +1147,16 @@ async fn reload_standalone_runtime_config_pass(
         && !bind_changed
         && !dynamic_changed
     {
-        state.current_config = next_config;
-        state.previous_watch_state = Some(next_watch_state);
-        return Ok(StandaloneRuntimeReloadOutcome::no_change());
+        state.previous_watch_state = Some(next_watch_state.clone());
+        update_pending_restart_required(
+            state,
+            next_watch_state,
+            restart_required_message.as_deref(),
+        );
+        return Ok(match restart_required_message {
+            Some(message) => StandaloneRuntimeReloadOutcome::restart_required(message),
+            None => StandaloneRuntimeReloadOutcome::no_change(),
+        });
     }
 
     let prepared_store = if database_changed {
@@ -1121,13 +1277,26 @@ async fn reload_standalone_runtime_config_pass(
         next_dynamic.native_dynamic_shutdown_drain_timeout_ms
     );
 
-    state.current_config = next_config;
-    state.current_dynamic = next_dynamic;
-    state.previous_watch_state = Some(next_watch_state);
-
-    Ok(StandaloneRuntimeReloadOutcome::changed(format!(
+    let applied_message = format!(
         "runtime config reload applied: bind_changed={bind_changed} database_changed={database_changed} admin_jwt_changed={admin_jwt_changed} portal_jwt_changed={portal_jwt_changed} secret_manager_changed={secret_manager_changed} extension_policy_changed={extension_policy_changed}"
-    )))
+    );
+    let applied_config =
+        merge_applied_service_config(service_kind, &state.current_config, &next_config);
+    state.current_config = applied_config.clone();
+    state.current_dynamic = applied_config.runtime_dynamic_config();
+    state.previous_watch_state = Some(next_watch_state.clone());
+    update_pending_restart_required(
+        state,
+        next_watch_state,
+        restart_required_message.as_deref(),
+    );
+
+    Ok(match restart_required_message {
+        Some(message) => {
+            StandaloneRuntimeReloadOutcome::restart_required(format!("{applied_message}; {message}"))
+        }
+        None => StandaloneRuntimeReloadOutcome::applied(applied_message),
+    })
 }
 
 async fn process_standalone_config_rollout_work(
@@ -1184,13 +1353,18 @@ async fn process_standalone_config_rollout_work(
         .await
         {
             Ok(outcome) => {
+                let next_status = if outcome.requires_restart() {
+                    "failed"
+                } else {
+                    "succeeded"
+                };
                 coordination_store
                     .transition_standalone_config_rollout_participant(
                         &participant.rollout_id,
                         node_id,
                         "applying",
-                        "succeeded",
-                        Some(outcome.message.as_str()),
+                        next_status,
+                        Some(outcome.message()),
                         completed_at_ms,
                     )
                     .await?;
@@ -1419,6 +1593,7 @@ pub fn start_standalone_runtime_supervision(
                 snapshot_supervision,
                 extension_hot_reload_supervision,
                 previous_watch_state: initial_watch_state,
+                pending_restart_required: None,
             };
 
             let mut interval =
@@ -1526,6 +1701,7 @@ fn service_relevant_field(service_kind: StandaloneServiceKind, field: &str) -> b
         "admin_bind" => service_kind == StandaloneServiceKind::Admin,
         "portal_bind" => service_kind == StandaloneServiceKind::Portal,
         "database_url" => true,
+        "cache_backend" | "cache_url" => service_kind != StandaloneServiceKind::Portal,
         "admin_jwt_signing_secret" => service_kind == StandaloneServiceKind::Admin,
         "portal_jwt_signing_secret" => service_kind == StandaloneServiceKind::Portal,
         "secret_backend"
@@ -1570,6 +1746,73 @@ fn service_bind(service_kind: StandaloneServiceKind, config: &StandaloneConfig) 
     }
 }
 
+fn merge_applied_service_config(
+    service_kind: StandaloneServiceKind,
+    current: &StandaloneConfig,
+    next: &StandaloneConfig,
+) -> StandaloneConfig {
+    let mut applied = current.clone();
+
+    match service_kind {
+        StandaloneServiceKind::Gateway => {
+            applied.gateway_bind = next.gateway_bind.clone();
+        }
+        StandaloneServiceKind::Admin => {
+            applied.admin_bind = next.admin_bind.clone();
+            applied.admin_jwt_signing_secret = next.admin_jwt_signing_secret.clone();
+        }
+        StandaloneServiceKind::Portal => {
+            applied.portal_bind = next.portal_bind.clone();
+            applied.portal_jwt_signing_secret = next.portal_jwt_signing_secret.clone();
+        }
+    }
+
+    applied.database_url = next.database_url.clone();
+
+    if service_kind.supports_runtime_dynamic() {
+        applied.extension_paths = next.extension_paths.clone();
+        applied.enable_connector_extensions = next.enable_connector_extensions;
+        applied.enable_native_dynamic_extensions = next.enable_native_dynamic_extensions;
+        applied.extension_hot_reload_interval_secs = next.extension_hot_reload_interval_secs;
+        applied.extension_trusted_signers = next.extension_trusted_signers.clone();
+        applied.require_signed_connector_extensions = next.require_signed_connector_extensions;
+        applied.require_signed_native_dynamic_extensions =
+            next.require_signed_native_dynamic_extensions;
+        applied.native_dynamic_shutdown_drain_timeout_ms =
+            next.native_dynamic_shutdown_drain_timeout_ms;
+        applied.runtime_snapshot_interval_secs = next.runtime_snapshot_interval_secs;
+    }
+
+    if service_kind != StandaloneServiceKind::Portal {
+        applied.secret_backend = next.secret_backend;
+        applied.credential_master_key = next.credential_master_key.clone();
+        applied.credential_legacy_master_keys = next.credential_legacy_master_keys.clone();
+        applied.secret_local_file = next.secret_local_file.clone();
+        applied.secret_keyring_service = next.secret_keyring_service.clone();
+    }
+
+    applied
+}
+
+fn update_pending_restart_required(
+    state: &mut StandaloneRuntimeState,
+    watch_state: StandaloneConfigWatchState,
+    message: Option<&str>,
+) {
+    match message {
+        Some(message) => {
+            eprintln!("runtime config reload requires restart: {message}");
+            state.pending_restart_required = Some(PendingStandaloneRuntimeRestartRequired {
+                watch_state,
+                message: message.to_owned(),
+            });
+        }
+        None => {
+            state.pending_restart_required = None;
+        }
+    }
+}
+
 fn extension_runtime_policy_changed(
     current: &StandaloneRuntimeDynamicConfig,
     next: &StandaloneRuntimeDynamicConfig,
@@ -1609,7 +1852,9 @@ fn extension_discovery_policy_from_config(
 mod tests {
     use super::*;
     use sdkwork_api_app_credential::persist_credential_with_secret_and_manager;
+    use sdkwork_api_config::CacheBackendKind;
     use sdkwork_api_storage_sqlite::{run_migrations, SqliteAdminStore};
+    use std::io::Write;
 
     #[tokio::test]
     async fn validate_secret_manager_for_store_checks_multiple_credentials() {
@@ -1641,5 +1886,227 @@ mod tests {
         validate_secret_manager_for_store(&store, &manager)
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn build_cache_runtime_from_config_returns_memory_cache_runtime() {
+        let config = StandaloneConfig::default();
+
+        let stores = build_cache_runtime_from_config(&config).await.unwrap();
+        stores
+            .cache_store()
+            .put("routing", "selection", b"provider-a".to_vec(), None, &[])
+            .await
+            .unwrap();
+        let cached = stores
+            .cache_store()
+            .get("routing", "selection")
+            .await
+            .unwrap()
+            .expect("cached entry");
+
+        assert_eq!(cached.value(), b"provider-a");
+    }
+
+    #[tokio::test]
+    async fn build_cache_runtime_from_config_builds_redis_cache_runtime() {
+        let mut config = StandaloneConfig::default();
+        config.cache_backend = CacheBackendKind::Redis;
+        let server = MinimalRedisPingServer::start();
+        config.cache_url = Some(server.url_with_db(4));
+
+        build_cache_runtime_from_config(&config).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn build_admin_store_from_config_surfaces_supported_dialects_for_mysql() {
+        let mut config = StandaloneConfig::default();
+        config.database_url = "mysql://router:secret@localhost:3306/router".to_owned();
+
+        let error = match build_admin_store_from_config(&config).await {
+            Ok(_) => panic!("mysql should remain unsupported until a real driver ships"),
+            Err(error) => error.to_string(),
+        };
+
+        assert!(error.contains("mysql"));
+        assert!(error.contains("supported dialects"));
+        assert!(error.contains("sqlite"));
+        assert!(error.contains("postgres"));
+    }
+
+    #[tokio::test]
+    async fn build_admin_store_from_config_surfaces_supported_dialects_for_libsql() {
+        let mut config = StandaloneConfig::default();
+        config.database_url = "libsql://router.example.com".to_owned();
+
+        let error = match build_admin_store_from_config(&config).await {
+            Ok(_) => panic!("libsql should remain unsupported until a real driver ships"),
+            Err(error) => error.to_string(),
+        };
+
+        assert!(error.contains("libsql"));
+        assert!(error.contains("supported dialects"));
+        assert!(error.contains("sqlite"));
+        assert!(error.contains("postgres"));
+    }
+
+    #[test]
+    fn restart_required_changed_fields_include_cache_backend_for_gateway_runtime() {
+        let current = StandaloneConfig::default();
+        let next = StandaloneConfig {
+            cache_backend: CacheBackendKind::Redis,
+            cache_url: Some("redis://127.0.0.1:6379/8".to_owned()),
+            ..current.clone()
+        };
+
+        let changed =
+            restart_required_changed_fields(StandaloneServiceKind::Gateway, &current, &next);
+
+        assert!(changed.contains(&"cache_backend"));
+        assert!(changed.contains(&"cache_url"));
+    }
+
+    #[test]
+    fn merge_applied_service_config_keeps_gateway_cache_backend_on_restart_required_changes() {
+        let current = StandaloneConfig::default();
+        let next = StandaloneConfig {
+            gateway_bind: "127.0.0.1:19090".to_owned(),
+            cache_backend: CacheBackendKind::Redis,
+            cache_url: Some("redis://127.0.0.1:6379/9".to_owned()),
+            ..current.clone()
+        };
+
+        let applied =
+            merge_applied_service_config(StandaloneServiceKind::Gateway, &current, &next);
+
+        assert_eq!(applied.gateway_bind, "127.0.0.1:19090");
+        assert_eq!(applied.cache_backend, CacheBackendKind::Memory);
+        assert_eq!(applied.cache_url, None);
+    }
+
+    struct MinimalRedisPingServer {
+        address: String,
+        stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        thread: Option<std::thread::JoinHandle<()>>,
+    }
+
+    impl MinimalRedisPingServer {
+        fn start() -> Self {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.set_nonblocking(true).unwrap();
+            let address = listener.local_addr().unwrap().to_string();
+            let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let thread_stop = stop.clone();
+            let thread = std::thread::spawn(move || {
+                while !thread_stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    match listener.accept() {
+                        Ok((mut stream, _)) => {
+                            stream.set_nonblocking(false).unwrap();
+                            loop {
+                            match read_minimal_resp_array(&mut stream) {
+                                Ok(Some(command)) => match String::from_utf8_lossy(&command[0])
+                                    .to_ascii_uppercase()
+                                    .as_str()
+                                {
+                                    "PING" => {
+                                        stream.write_all(b"+PONG\r\n").unwrap();
+                                        stream.flush().unwrap();
+                                    }
+                                    "GET" => {
+                                        stream.write_all(b"$-1\r\n").unwrap();
+                                        stream.flush().unwrap();
+                                    }
+                                    "AUTH" | "SELECT" => {
+                                        stream.write_all(b"+OK\r\n").unwrap();
+                                        stream.flush().unwrap();
+                                    }
+                                    other => panic!("unexpected minimal redis command: {other}"),
+                                },
+                                Ok(None) => break,
+                                Err(error)
+                                    if matches!(
+                                        error.kind(),
+                                        std::io::ErrorKind::UnexpectedEof
+                                            | std::io::ErrorKind::ConnectionReset
+                                            | std::io::ErrorKind::TimedOut
+                                    ) =>
+                                {
+                                    break
+                                }
+                                Err(error) => panic!("minimal redis server read failed: {error}"),
+                            }
+                        }
+                        }
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            std::thread::sleep(std::time::Duration::from_millis(10));
+                        }
+                        Err(error) => panic!("minimal redis accept failed: {error}"),
+                    }
+                }
+            });
+
+            Self {
+                address,
+                stop,
+                thread: Some(thread),
+            }
+        }
+
+        fn url_with_db(&self, db: u32) -> String {
+            format!("redis://{}/{db}", self.address)
+        }
+    }
+
+    impl Drop for MinimalRedisPingServer {
+        fn drop(&mut self) {
+            self.stop
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+            let _ = std::net::TcpStream::connect(&self.address);
+            if let Some(thread) = self.thread.take() {
+                thread.join().unwrap();
+            }
+        }
+    }
+
+    fn read_minimal_resp_array(
+        stream: &mut std::net::TcpStream,
+    ) -> std::io::Result<Option<Vec<Vec<u8>>>> {
+        let mut marker = [0_u8; 1];
+        match std::io::Read::read_exact(stream, &mut marker) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+            Err(error) => return Err(error),
+        }
+        assert_eq!(marker[0], b'*');
+        let count = read_minimal_resp_line(stream)?.parse::<usize>().unwrap();
+        let mut values = Vec::with_capacity(count);
+        for _ in 0..count {
+            let mut bulk_marker = [0_u8; 1];
+            std::io::Read::read_exact(stream, &mut bulk_marker)?;
+            assert_eq!(bulk_marker[0], b'$');
+            let length = read_minimal_resp_line(stream)?.parse::<usize>().unwrap();
+            let mut value = vec![0_u8; length];
+            std::io::Read::read_exact(stream, &mut value)?;
+            let mut crlf = [0_u8; 2];
+            std::io::Read::read_exact(stream, &mut crlf)?;
+            values.push(value);
+        }
+        Ok(Some(values))
+    }
+
+    fn read_minimal_resp_line(stream: &mut std::net::TcpStream) -> std::io::Result<String> {
+        let mut bytes = Vec::new();
+        loop {
+            let mut byte = [0_u8; 1];
+            std::io::Read::read_exact(stream, &mut byte)?;
+            if byte[0] == b'\r' {
+                let mut newline = [0_u8; 1];
+                std::io::Read::read_exact(stream, &mut newline)?;
+                assert_eq!(newline[0], b'\n');
+                break;
+            }
+            bytes.push(byte[0]);
+        }
+        Ok(String::from_utf8(bytes).unwrap())
     }
 }

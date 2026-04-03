@@ -14,6 +14,7 @@ $repoRoot = Get-RouterRepoRoot -ScriptDirectory $scriptDir
 $devHome = Get-RouterDefaultDevHome -RepoRoot $repoRoot
 $pidFile = Join-Path $devHome 'run\start-workspace.pid'
 $stopFile = Join-Path $devHome 'run\start-workspace.stop'
+$stateFile = Join-Path $devHome 'run\start-workspace.state.env'
 $stdoutLog = Join-Path $devHome 'log\start-workspace.stdout.log'
 $stderrLog = Join-Path $devHome 'log\start-workspace.stderr.log'
 
@@ -24,21 +25,16 @@ if ($DryRun) {
 
 if (-not (Test-Path $pidFile)) {
     Remove-Item $stopFile -Force -ErrorAction SilentlyContinue
+    Remove-RouterManagedStateFile -StateFile $stateFile
     Write-RouterInfo "pid file not found, nothing to stop: $pidFile"
     return
 }
 
-$pidValue = (Get-Content $pidFile -ErrorAction SilentlyContinue | Select-Object -First 1).Trim()
-if ([string]::IsNullOrWhiteSpace($pidValue)) {
+$pidValue = Get-RouterManagedProcessId -PidFile $pidFile -StateFile $stateFile
+if ($pidValue -le 0) {
     Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
     Remove-Item $stopFile -Force -ErrorAction SilentlyContinue
-    Write-RouterInfo "removed empty pid file: $pidFile"
-    return
-}
-
-if (-not (Test-RouterProcessRunning -PidValue $pidValue)) {
-    Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
-    Remove-Item $stopFile -Force -ErrorAction SilentlyContinue
+    Remove-RouterManagedStateFile -StateFile $stateFile
     Write-RouterInfo "process already stopped, removed stale pid file: $pidFile"
     return
 }
@@ -58,4 +54,5 @@ if (-not $stopped) {
 
 Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
 Remove-Item $stopFile -Force -ErrorAction SilentlyContinue
+Remove-RouterManagedStateFile -StateFile $stateFile
 Write-RouterInfo "stopped development workspace pid=$pidValue"

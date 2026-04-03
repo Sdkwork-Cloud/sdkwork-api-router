@@ -25,77 +25,54 @@ function readFirstExistingClaw(candidates) {
   throw new Error(`Unable to resolve claw reference from candidates: ${candidates.join(', ')}`);
 }
 
-test('admin shell stylesheet carries the claw-studio theme token and scrollbar primitives', () => {
-  const adminTheme = readFromApp('packages/sdkwork-router-admin-shell/src/styles/index.css');
-  const clawTheme = readFromClaw('packages/sdkwork-claw-shell/src/styles/index.css');
+test('admin root imports shared ui css while the shell package owns layout host primitives', () => {
+  const main = readFromApp('src/main.tsx');
+  const themeCss = readFromApp('src/theme.css');
+  const shellEntry = readFromApp('packages/sdkwork-router-admin-shell/src/index.ts');
+  const shellHost = readFromApp('packages/sdkwork-router-admin-shell/src/styles/shell-host.css');
 
-  const requiredSnippets = [
-    '--theme-primary-50: #eff6ff;',
-    '--theme-primary-500: #3b82f6;',
-    '[data-theme="lobster"]',
-    '[data-theme="green-tech"]',
-    '[data-theme="zinc"]',
-    '[data-theme="violet"]',
-    '[data-theme="rose"]',
-    '.custom-scrollbar {',
-    '.scrollbar-hide {',
-  ];
-
-  for (const snippet of requiredSnippets) {
-    assert.match(clawTheme, new RegExp(snippet.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-    assert.match(adminTheme, new RegExp(snippet.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-  }
-
-  assert.match(clawTheme, /@source "\.\.\/\.\.\/\.\.\/\.\.\/";/);
-  assert.match(adminTheme, /@source "\.\.\/\.\.\/\.\.\/\.\.\/src";/);
-  assert.match(adminTheme, /@source "\.\.\/\.\.\/\.\.\/";/);
-  assert.doesNotMatch(adminTheme, /@source "\.\.\/\.\.\/\.\.\/\.\.\/";/);
-  assert.match(adminTheme, /\.ghost-scrollbar \{/);
+  assert.match(main, /@sdkwork\/ui-pc-react\/styles\.css/);
+  assert.match(main, /\.\/theme\.css/);
+  assert.match(themeCss, /@source "\.\/";/);
+  assert.match(themeCss, /@source "\.\.\/packages";/);
+  assert.match(themeCss, /--admin-shell-background/);
+  assert.match(themeCss, /--admin-sidebar-background/);
+  assert.match(themeCss, /--admin-content-background/);
+  assert.match(themeCss, /--admin-sidebar-text:/);
+  assert.match(themeCss, /--admin-sidebar-item-hover:/);
+  assert.match(themeCss, /--admin-sidebar-popover-background:/);
+  assert.match(themeCss, /--admin-sidebar-edge-background:/);
+  assert.match(shellEntry, /\.\/styles\/shell-host\.css/);
+  assert.match(shellHost, /admin-shell-host/);
+  assert.match(shellHost, /admin-shell-route-scroll/);
+  assert.match(shellHost, /admin-shell-sidebar-resize-handle/);
+  assert.match(shellHost, /data-sdk-shell='router-admin-desktop'/);
+  assert.doesNotMatch(shellHost, /admin-shell-auth-stage/);
 });
 
-test('admin commons primitives use claw-style tailwind surfaces instead of admin-only shell wrappers', () => {
-  const commons = readFromApp('packages/sdkwork-router-admin-commons/src/index.tsx');
+test('admin no longer ships the legacy commons package and keeps localization in core', () => {
+  const coreIndex = readFromApp('packages/sdkwork-router-admin-core/src/index.tsx');
+  const coreI18n = readFromApp('packages/sdkwork-router-admin-core/src/i18n.tsx');
 
-  assert.match(commons, /rounded-3xl border/);
-  assert.match(commons, /rounded-\[28px\] border border-zinc-200\/80 bg-white\/92/);
-  assert.match(commons, /sticky top-0 z-10 whitespace-nowrap border-b border-zinc-200\/80/);
-  assert.match(commons, /transition-colors hover:bg-zinc-50\/80/);
-  assert.doesNotMatch(commons, /adminx-page-toolbar/);
-  assert.doesNotMatch(commons, /adminx-surface/);
-  assert.doesNotMatch(commons, /adminx-stat-card/);
-  assert.doesNotMatch(commons, /adminx-table-wrap/);
-  assert.doesNotMatch(commons, /adminx-table-row/);
-});
-
-test('admin commons exposes shadcn-style checkbox, textarea, and modal primitives for unified dialog forms', () => {
-  const commons = readFromApp('packages/sdkwork-router-admin-commons/src/index.tsx');
-
-  assert.match(commons, /@radix-ui\/react-checkbox/);
-  assert.match(commons, /CheckboxPrimitive\.Root/);
-  assert.match(commons, /export const Checkbox = forwardRef/);
-  assert.match(commons, /export const Textarea = forwardRef/);
-  assert.match(commons, /min-h-\[96px\]/);
-  assert.match(commons, /export function Modal/);
-  assert.match(commons, /showCloseButton=\{false\}/);
-});
-
-test('admin modal chrome reuses shared Button primitives instead of private close-button markup', () => {
-  const commons = readFromApp('packages/sdkwork-router-admin-commons/src/index.tsx');
-
-  assert.match(commons, /function DialogIconCloseButton/);
-  assert.match(commons, /DialogClose asChild>[\s\S]*?<DialogIconCloseButton/);
-  assert.match(commons, /<Button/);
-  assert.match(commons, /variant="ghost"/);
-  assert.match(commons, /size="icon"/);
-  assert.doesNotMatch(commons, /DialogClose asChild>[\s\S]*?<button/);
+  assert.match(coreIndex, /AdminI18nProvider/);
+  assert.match(coreIndex, /useAdminI18n/);
+  assert.match(coreI18n, /translateAdminText/);
+  assert.match(coreI18n, /ADMIN_LOCALE_OPTIONS/);
+  assert.equal(
+    existsSync(path.join(appRoot, 'packages', 'sdkwork-router-admin-commons', 'package.json')),
+    false,
+  );
 });
 
 test('admin modal forms reuse shared Textarea instead of raw textarea tags', () => {
   const files = [
-    'packages/sdkwork-router-admin-coupons/src/index.tsx',
-    'packages/sdkwork-router-admin-tenants/src/index.tsx',
-    'packages/sdkwork-router-admin-apirouter/src/pages/GatewayModelMappingsPage.tsx',
-    'packages/sdkwork-router-admin-apirouter/src/pages/GatewayAccessPage.tsx',
+    'packages/sdkwork-router-admin-coupons/src/page/CouponDialog.tsx',
+    'packages/sdkwork-router-admin-tenants/src/page/ApiKeyDialog.tsx',
+    'packages/sdkwork-router-admin-catalog/src/page/CatalogCredentialDialog.tsx',
+    'packages/sdkwork-router-admin-catalog/src/page/CatalogChannelModelDialog.tsx',
+    'packages/sdkwork-router-admin-apirouter/src/pages/mappings/GatewayModelMappingEditorDialog.tsx',
+    'packages/sdkwork-router-admin-apirouter/src/pages/access/GatewayApiKeyCreateDialog.tsx',
+    'packages/sdkwork-router-admin-apirouter/src/pages/access/GatewayApiKeyEditDialog.tsx',
   ];
 
   for (const relativePath of files) {
@@ -106,15 +83,81 @@ test('admin modal forms reuse shared Textarea instead of raw textarea tags', () 
   }
 });
 
-test('admin shell chrome uses claw-style translucent header and dark rail classes directly in React', () => {
+test('admin shell chrome keeps shared desktop shell while sidebar interaction styling mirrors claw-studio', () => {
+  const layout = readFromApp('packages/sdkwork-router-admin-shell/src/application/layouts/MainLayout.tsx');
   const header = readFromApp('packages/sdkwork-router-admin-shell/src/components/AppHeader.tsx');
   const sidebar = readFromApp('packages/sdkwork-router-admin-shell/src/components/Sidebar.tsx');
+  const routePrefetch = readFromApp(
+    'packages/sdkwork-router-admin-shell/src/application/router/routePrefetch.ts',
+  );
 
-  assert.match(header, /bg-white\/72 backdrop-blur-xl dark:bg-zinc-950\/78/);
-  assert.match(header, /rounded-2xl bg-zinc-950\/\[\d\.\d+\]/);
-  assert.match(sidebar, /bg-\[linear-gradient\(180deg,_#13151a_0%,_#0b0c10_100%\)\]/);
-  assert.match(sidebar, /shadow-\[18px_0_50px_rgba\(9,9,11,0\.16\)\]/);
-  assert.match(sidebar, /text-\[14px\] tracking-tight/);
+  assert.match(layout, /relative flex h-screen flex-col overflow-hidden/);
+  assert.match(layout, /<Sidebar \/>/);
+  assert.match(layout, /<AppHeader \/>/);
+  assert.match(layout, /admin-shell-content/);
+  assert.match(layout, /\[background:var\(--admin-shell-background\)\]/);
+  assert.match(layout, /bg-\[var\(--admin-content-background\)\]/);
+  assert.doesNotMatch(layout, /DesktopShellFrame/);
+  assert.doesNotMatch(layout, /brandMark/);
+  assert.doesNotMatch(layout, /SDKWork Router Admin/);
+  assert.doesNotMatch(layout, /Control plane/);
+  assert.match(header, /\[background:var\(--admin-header-background\)\]/);
+  assert.match(header, /ShellStatus/);
+  assert.match(header, /HeaderActionButton/);
+  assert.match(header, /data-slot="app-header-leading"/);
+  assert.match(header, /data-slot="app-header-brand"/);
+  assert.match(header, /data-slot="app-header-trailing"/);
+  assert.match(header, /dataSlot="app-header-search"/);
+  assert.match(header, /dataSlot="app-header-refresh"/);
+  assert.match(header, /t\('Router Admin'\)/);
+  assert.match(header, /ROUTE_PATHS\.OVERVIEW/);
+  assert.match(header, /32x32\.png/);
+  assert.match(header, /import\.meta\.url/);
+  assert.match(header, /Ctrl K/);
+  assert.doesNotMatch(header, /Toolbar/);
+  assert.doesNotMatch(header, /ToolbarGroup/);
+  assert.doesNotMatch(header, /@sdkwork\/ui-pc-react\/components\/ui/);
+  assert.match(sidebar, /motion\/react/);
+  assert.match(sidebar, /sidebar-edge-control/);
+  assert.match(sidebar, /PanelLeftOpen/);
+  assert.match(sidebar, /ChevronUp/);
+  assert.match(sidebar, /\[background:var\(--admin-sidebar-background\)\]/);
+  assert.match(sidebar, /text-\[var\(--admin-sidebar-text\)\]/);
+  assert.match(sidebar, /text-\[var\(--admin-sidebar-text-muted\)\]/);
+  assert.match(sidebar, /bg-\[var\(--admin-sidebar-item-hover\)\]/);
+  assert.match(sidebar, /bg-\[var\(--admin-sidebar-popover-background\)\]/);
+  assert.match(sidebar, /bg-\[var\(--admin-sidebar-edge-background\)\]/);
+  assert.match(sidebar, /bg-primary-500/);
+  assert.match(sidebar, /text-primary-400/);
+  assert.match(sidebar, /bg-primary-500\/15/);
+  assert.match(sidebar, /currentSidebarWidth = isSidebarCollapsed \? COLLAPSED_SIDEBAR_WIDTH : resolvedSidebarWidth/);
+  assert.match(sidebar, /data-slot="sidebar-resize-handle"/);
+  assert.match(sidebar, /sidebar-user-control/);
+  assert.match(sidebar, /prefetchSidebarRoute/);
+  assert.match(sidebar, /scheduleSidebarRoutePrefetch/);
+  assert.match(sidebar, /cancelSidebarRoutePrefetch/);
+  assert.match(sidebar, /onPointerDown=\{\(\) => prefetchSidebarRoute\(item\.to\)\}/);
+  assert.match(sidebar, /onMouseEnter=\{\(\) => scheduleSidebarRoutePrefetch\(item\.to\)\}/);
+  assert.match(sidebar, /onMouseLeave=\{\(\) => cancelSidebarRoutePrefetch\(item\.to\)\}/);
+  assert.match(sidebar, /onFocus=\{\(\) => scheduleSidebarRoutePrefetch\(item\.to\)\}/);
+  assert.match(sidebar, /onBlur=\{\(\) => cancelSidebarRoutePrefetch\(item\.to\)\}/);
+  assert.match(sidebar, /prefetchSidebarRoute\(accountSettingsTarget\)/);
+  assert.match(routePrefetch, /createSidebarRoutePrefetchController/);
+  assert.match(routePrefetch, /scheduleDelayMs = 120/);
+  assert.match(routePrefetch, /sdkwork-router-admin-overview/);
+  assert.match(routePrefetch, /sdkwork-router-admin-users/);
+  assert.match(routePrefetch, /sdkwork-router-admin-settings/);
+  assert.doesNotMatch(sidebar, /NavigationRail/);
+  assert.doesNotMatch(sidebar, /DropdownMenu/);
+  assert.doesNotMatch(sidebar, /AdminShellBrandMark/);
+  assert.doesNotMatch(sidebar, /AvatarFallback|<Avatar|import\s*\{\s*Avatar/);
+  assert.doesNotMatch(sidebar, /text-zinc-/);
+  assert.doesNotMatch(sidebar, /bg-zinc-/);
+  assert.doesNotMatch(sidebar, /dark:bg-zinc-/);
+  assert.doesNotMatch(sidebar, /border-white\//);
+  assert.doesNotMatch(sidebar, /bg-white\/\[/);
+  assert.doesNotMatch(sidebar, /SDKWork Router Admin/);
+  assert.doesNotMatch(sidebar, /t\('Control plane'\)/);
 });
 
 test('admin sidebar collapse heuristics and persisted preference mirror claw-studio', () => {

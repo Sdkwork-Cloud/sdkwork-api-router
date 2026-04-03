@@ -2563,6 +2563,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "sdkwork-api-domain-billing",
+ "sdkwork-api-policy-quota",
  "sdkwork-api-storage-core",
  "sdkwork-api-storage-sqlite",
  "tokio",
@@ -2649,6 +2650,8 @@ dependencies = [
  "reqwest",
  "sdkwork-api-app-credential",
  "sdkwork-api-app-routing",
+ "sdkwork-api-cache-core",
+ "sdkwork-api-cache-memory",
  "sdkwork-api-contract-openai",
  "sdkwork-api-domain-catalog",
  "sdkwork-api-domain-routing",
@@ -2677,7 +2680,9 @@ dependencies = [
  "argon2",
  "jsonwebtoken",
  "rand_core 0.6.4",
+ "sdkwork-api-domain-billing",
  "sdkwork-api-domain-identity",
+ "sdkwork-api-domain-routing",
  "sdkwork-api-domain-tenant",
  "sdkwork-api-storage-core",
  "sdkwork-api-storage-sqlite",
@@ -2704,10 +2709,12 @@ dependencies = [
  "anyhow",
  "sdkwork-api-app-extension",
  "sdkwork-api-domain-catalog",
+ "sdkwork-api-domain-identity",
  "sdkwork-api-domain-routing",
  "sdkwork-api-ext-provider-native-mock",
  "sdkwork-api-extension-core",
  "sdkwork-api-extension-host",
+ "sdkwork-api-policy-routing",
  "sdkwork-api-storage-core",
  "sdkwork-api-storage-sqlite",
  "serde_json",
@@ -2720,6 +2727,7 @@ name = "sdkwork-api-app-runtime"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum",
  "base64",
  "ed25519-dalek",
@@ -2728,6 +2736,9 @@ dependencies = [
  "sdkwork-api-app-credential",
  "sdkwork-api-app-extension",
  "sdkwork-api-app-gateway",
+ "sdkwork-api-cache-core",
+ "sdkwork-api-cache-memory",
+ "sdkwork-api-cache-redis",
  "sdkwork-api-config",
  "sdkwork-api-domain-catalog",
  "sdkwork-api-ext-provider-native-mock",
@@ -2768,10 +2779,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "sdkwork-api-cache-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "tokio",
+]
+
+[[package]]
+name = "sdkwork-api-cache-memory"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "sdkwork-api-cache-core",
+ "tokio",
+]
+
+[[package]]
+name = "sdkwork-api-cache-redis"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "sdkwork-api-cache-core",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "sdkwork-api-config"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "sdkwork-api-cache-core",
  "sdkwork-api-secret-core",
  "sdkwork-api-storage-core",
  "serde",
@@ -2951,6 +2994,7 @@ dependencies = [
  "serial_test",
  "sqlx",
  "tokio",
+ "toml",
  "tower",
 ]
 
@@ -2972,6 +3016,9 @@ dependencies = [
  "sdkwork-api-app-rate-limit",
  "sdkwork-api-app-routing",
  "sdkwork-api-app-usage",
+ "sdkwork-api-cache-core",
+ "sdkwork-api-cache-memory",
+ "sdkwork-api-cache-redis",
  "sdkwork-api-contract-openai",
  "sdkwork-api-domain-catalog",
  "sdkwork-api-domain-identity",
@@ -2981,6 +3028,7 @@ dependencies = [
  "sdkwork-api-interface-admin",
  "sdkwork-api-observability",
  "sdkwork-api-openapi",
+ "sdkwork-api-policy-billing",
  "sdkwork-api-provider-core",
  "sdkwork-api-storage-core",
  "sdkwork-api-storage-sqlite",
@@ -3047,12 +3095,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "sdkwork-api-policy-billing"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "sdkwork-api-domain-billing",
+]
+
+[[package]]
+name = "sdkwork-api-policy-quota"
+version = "0.1.0"
+dependencies = [
+ "sdkwork-api-domain-billing",
+]
+
+[[package]]
+name = "sdkwork-api-policy-routing"
+version = "0.1.0"
+dependencies = [
+ "sdkwork-api-domain-routing",
+]
+
+[[package]]
 name = "sdkwork-api-product-runtime"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "reqwest",
  "sdkwork-api-app-credential",
+ "sdkwork-api-app-gateway",
  "sdkwork-api-app-runtime",
  "sdkwork-api-config",
  "sdkwork-api-interface-admin",
@@ -3133,11 +3204,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "axum",
  "bytes",
  "http",
  "pingora-core",
  "pingora-http",
  "pingora-proxy",
+ "reqwest",
  "tokio",
 ]
 
@@ -3189,6 +3262,7 @@ dependencies = [
  "sdkwork-api-domain-usage",
  "sdkwork-api-extension-core",
  "sdkwork-api-secret-core",
+ "tokio",
 ]
 
 [[package]]

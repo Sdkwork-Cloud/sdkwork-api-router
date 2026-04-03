@@ -38,7 +38,7 @@ function Get-RouterDefaultInstallHome {
 
 function Get-RouterDefaultDevHome {
     param([Parameter(Mandatory = $true)][string]$RepoRoot)
-    return Join-Path $RepoRoot 'artifacts\runtime\dev'
+    return Join-Path $RepoRoot (Join-Path 'artifacts\runtime\dev' (Get-RouterRuntimePlatformKey))
 }
 
 function Test-RouterWindowsPlatform {
@@ -48,6 +48,42 @@ function Test-RouterWindowsPlatform {
     }
 
     return $PSVersionTable.PSEdition -eq 'Desktop'
+}
+
+function Get-RouterRuntimeArchitecture {
+    try {
+        $architecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+    } catch {
+        $architecture = [string]$env:PROCESSOR_ARCHITECTURE
+    }
+
+    switch ($architecture.ToUpperInvariant()) {
+        'AMD64' { return 'x64' }
+        'X64' { return 'x64' }
+        'ARM64' { return 'arm64' }
+        'X86' { return 'x86' }
+        'IA32' { return 'x86' }
+        default { return $architecture.ToLowerInvariant() }
+    }
+}
+
+function Get-RouterRuntimePlatformKey {
+    $platformName = 'unknown'
+    if (Test-RouterWindowsPlatform) {
+        $platformName = 'windows'
+    } else {
+        try {
+            if ([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Linux)) {
+                $platformName = 'linux'
+            } elseif ([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::OSX)) {
+                $platformName = 'macos'
+            }
+        } catch {
+            $platformName = 'unknown'
+        }
+    }
+
+    return "$platformName-$(Get-RouterRuntimeArchitecture)"
 }
 
 function Get-RouterBinaryName {
@@ -63,6 +99,264 @@ function Get-RouterBinaryName {
 function Ensure-RouterDirectory {
     param([Parameter(Mandatory = $true)][string]$DirectoryPath)
     New-Item -ItemType Directory -Force -Path $DirectoryPath | Out-Null
+}
+
+function Test-RouterWindowsStylePath {
+    param([Parameter(Mandatory = $true)][string]$PathValue)
+    return $PathValue -match '^[A-Za-z]:[\\/]' -or $PathValue -match '^(\\\\|//)'
+}
+
+function Test-RouterUnixAbsolutePath {
+    param([Parameter(Mandatory = $true)][string]$PathValue)
+    return $PathValue.StartsWith('/')
+}
+
+function Test-RouterPathHostCompatible {
+    param([Parameter(Mandatory = $true)][string]$PathValue)
+    if ([string]::IsNullOrWhiteSpace($PathValue)) {
+        return $true
+    }
+
+    if (Test-RouterWindowsPlatform) {
+        if ((Test-RouterUnixAbsolutePath -PathValue $PathValue) -and -not (Test-RouterWindowsStylePath -PathValue $PathValue)) {
+            return $false
+        }
+        return $true
+    }
+
+    return -not (Test-RouterWindowsStylePath -PathValue $PathValue)
+}
+
+function Resolve-RouterHostPath {
+    param(
+        [Parameter(Mandatory = $true)][string]$PathValue,
+        [Parameter(Mandatory = $true)][string]$DefaultValue
+    )
+
+    if (Test-RouterPathHostCompatible -PathValue $PathValue) {
+        return $PathValue
+    }
+
+    return $DefaultValue
+}
+
+function Test-RouterDatabaseUrlHostCompatible {
+    param([Parameter(Mandatory = $true)][string]$DatabaseUrl)
+    if ([string]::IsNullOrWhiteSpace($DatabaseUrl) -or -not $DatabaseUrl.StartsWith('sqlite://', [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $true
+    }
+
+    $databasePath = $DatabaseUrl.Substring('sqlite://'.Length)
+    return Test-RouterPathHostCompatible -PathValue $databasePath
+}
+
+function Resolve-RouterHostDatabaseUrl {
+    param(
+        [Parameter(Mandatory = $true)][string]$DatabaseUrl,
+        [Parameter(Mandatory = $true)][string]$DefaultValue
+    )
+
+    if (Test-RouterDatabaseUrlHostCompatible -DatabaseUrl $DatabaseUrl) {
+        return $DatabaseUrl
+    }
+
+    return $DefaultValue
+}
+
+function ConvertFrom-RouterBindAddress {
+    param([Parameter(Mandatory = $true)][string]$BindAddress)
+
+    if ($BindAddress -notmatch '^(?<host>\[[^\]]+\]|.+):(?<port>\d+)$') {
+        Throw-RouterError "invalid bind address: $BindAddress"
+    }
+
+    $bindHost = $Matches.host
+    if ($bindHost.StartsWith('[') -and $bindHost.EndsWith(']')) {
+        $bindHost = $bindHost.Substring(1, $bindHost.Length - 2)
+    }
+
+    $bindPort = 0
+    if (-not [int]::TryParse($Matches.port, [ref]$bindPort) -or $bindPort -lt 1 -or $bindPort -gt 65535) {
+        Throw-RouterError "invalid bind address: $BindAddress"
+    }
+
+    return [pscustomobject]@{
+        BindAddress = $BindAddress
+        Host = $bindHost
+        Port = $bindPort
+    }
+}
+
+function Resolve-RouterBindIpAddresses {
+    param([Parameter(Mandatory = $true)][string]$BindHost)
+
+    if ([string]::IsNullOrWhiteSpace($BindHost) -or $BindHost -eq '0.0.0.0') {
+        return @([System.Net.IPAddress]::Any)
+    }
+
+    if ($BindHost -eq '::' -or $BindHost -eq '[::]') {
+        return @([System.Net.IPAddress]::IPv6Any)
+    }
+
+    $ipAddress = $null
+    if ([System.Net.IPAddress]::TryParse($BindHost, [ref]$ipAddress)) {
+        return @($ipAddress)
+    }
+
+    try {
+        $resolvedAddresses = [System.Net.Dns]::GetHostAddresses($BindHost)
+    } catch {
+        Throw-RouterError "failed to resolve bind host '$BindHost': $($_.Exception.Message)"
+    }
+
+    if (-not $resolvedAddresses -or $resolvedAddresses.Count -eq 0) {
+        Throw-RouterError "failed to resolve bind host '$BindHost'"
+    }
+
+    return @($resolvedAddresses | Select-Object -Unique)
+}
+
+function Test-RouterBindAddressAvailability {
+    param([Parameter(Mandatory = $true)][string]$BindAddress)
+
+    $parsedBind = ConvertFrom-RouterBindAddress -BindAddress $BindAddress
+
+    foreach ($ipAddress in Resolve-RouterBindIpAddresses -BindHost $parsedBind.Host) {
+        $socket = $null
+        try {
+            $socket = [System.Net.Sockets.Socket]::new(
+                $ipAddress.AddressFamily,
+                [System.Net.Sockets.SocketType]::Stream,
+                [System.Net.Sockets.ProtocolType]::Tcp
+            )
+            $socket.ExclusiveAddressUse = $true
+            $socket.Bind([System.Net.IPEndPoint]::new($ipAddress, $parsedBind.Port))
+        } catch [System.Net.Sockets.SocketException] {
+            $reason = if ($_.Exception.SocketErrorCode -eq [System.Net.Sockets.SocketError]::AddressAlreadyInUse) {
+                'address already in use'
+            } else {
+                $_.Exception.Message
+            }
+
+            return [pscustomobject]@{
+                BindAddress = $BindAddress
+                Available = $false
+                Reason = $reason
+            }
+        } finally {
+            if ($null -ne $socket) {
+                $socket.Dispose()
+            }
+        }
+    }
+
+    return [pscustomobject]@{
+        BindAddress = $BindAddress
+        Available = $true
+        Reason = ''
+    }
+}
+
+function Get-RouterListeningPortConflicts {
+    param([Parameter(Mandatory = $true)][string[]]$BindAddresses)
+
+    $conflicts = @()
+    foreach ($bindAddress in $BindAddresses) {
+        if ([string]::IsNullOrWhiteSpace($bindAddress)) {
+            continue
+        }
+
+        $availability = Test-RouterBindAddressAvailability -BindAddress $bindAddress
+        if (-not $availability.Available) {
+            $conflicts += $availability
+        }
+    }
+
+    return @($conflicts)
+}
+
+function Assert-RouterBindAddressesAvailable {
+    param(
+        [Parameter(Mandatory = $true)][string[]]$BindAddresses,
+        [string]$ServiceLabel = 'service'
+    )
+
+    $conflicts = @(Get-RouterListeningPortConflicts -BindAddresses $BindAddresses)
+    if ($conflicts.Count -eq 0) {
+        return
+    }
+
+    $messageLines = @("$ServiceLabel cannot start because required listen ports are already in use:")
+    foreach ($conflict in $conflicts) {
+        $messageLines += "  $($conflict.BindAddress) ($($conflict.Reason))"
+    }
+    $messageLines += 'Stop the conflicting process or override the bind addresses before retrying.'
+
+    Throw-RouterError ($messageLines -join [Environment]::NewLine)
+}
+
+function ConvertTo-RouterRoleList {
+    param([string]$RolesValue = '')
+
+    $roles = @()
+    foreach ($rawRole in ($RolesValue -split '[,;]')) {
+        $role = $rawRole.Trim()
+        if ($role) {
+            $roles += $role
+        }
+    }
+
+    if ($roles.Count -eq 0) {
+        return @('web', 'gateway', 'admin', 'portal')
+    }
+
+    return $roles
+}
+
+function Get-RouterReleaseDryRunPlanJson {
+    param(
+        [Parameter(Mandatory = $true)][string]$ConfigDir,
+        [Parameter(Mandatory = $true)][string]$DatabaseUrl,
+        [Parameter(Mandatory = $true)][string]$WebBind,
+        [Parameter(Mandatory = $true)][string]$GatewayBind,
+        [Parameter(Mandatory = $true)][string]$AdminBind,
+        [Parameter(Mandatory = $true)][string]$PortalBind,
+        [string]$ConfigFile = '',
+        [string]$Roles = '',
+        [string]$NodeIdPrefix = '',
+        [string]$GatewayUpstream = '',
+        [string]$AdminUpstream = '',
+        [string]$PortalUpstream = '',
+        [Parameter(Mandatory = $true)][string]$AdminSiteDir,
+        [Parameter(Mandatory = $true)][string]$PortalSiteDir
+    )
+
+    $plan = [ordered]@{
+        mode = 'dry-run'
+        plan_format = 'json'
+        roles = @(ConvertTo-RouterRoleList -RolesValue $Roles)
+        public_web_bind = $WebBind
+        database_url = $DatabaseUrl
+        config_dir = $ConfigDir
+        config_file = if ($ConfigFile) { $ConfigFile } else { $null }
+        node_id_prefix = if ($NodeIdPrefix) { $NodeIdPrefix } else { $null }
+        binds = [ordered]@{
+            gateway = $GatewayBind
+            admin = $AdminBind
+            portal = $PortalBind
+        }
+        site_dirs = [ordered]@{
+            admin = $AdminSiteDir
+            portal = $PortalSiteDir
+        }
+        upstreams = [ordered]@{
+            gateway = if ($GatewayUpstream) { $GatewayUpstream } else { $null }
+            admin = if ($AdminUpstream) { $AdminUpstream } else { $null }
+            portal = if ($PortalUpstream) { $PortalUpstream } else { $null }
+        }
+    }
+
+    return $plan | ConvertTo-Json -Depth 4
 }
 
 function Import-RouterEnvFile {
@@ -107,33 +401,247 @@ function Test-RouterProcessRunning {
     return $null -ne $process
 }
 
-function Clear-RouterStalePidFile {
-    param([Parameter(Mandatory = $true)][string]$PidFile)
-    if (-not (Test-Path $PidFile)) {
-        return $true
+function Get-RouterProcessFingerprint {
+    param([Parameter(Mandatory = $true)][int]$ProcessId)
+
+    $process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+    if ($null -eq $process) {
+        return ''
     }
 
-    $pidValue = (Get-Content $PidFile -ErrorAction SilentlyContinue | Select-Object -First 1).Trim()
-    if ([string]::IsNullOrWhiteSpace($pidValue)) {
-        Remove-Item $PidFile -Force -ErrorAction SilentlyContinue
-        return $true
+    try {
+        return $process.StartTime.ToUniversalTime().ToString('o')
+    } catch {
+        return ''
     }
-
-    if (Test-RouterProcessRunning -PidValue $pidValue) {
-        return $false
-    }
-
-    Remove-Item $PidFile -Force -ErrorAction SilentlyContinue
-    return $true
 }
 
-function Assert-RouterNotRunning {
+function Get-RouterPidFileValue {
     param([Parameter(Mandatory = $true)][string]$PidFile)
-    if (Clear-RouterStalePidFile -PidFile $PidFile) {
+
+    if (-not (Test-Path $PidFile)) {
+        return ''
+    }
+
+    $rawPidValue = Get-Content $PidFile -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($null -eq $rawPidValue) {
+        return ''
+    }
+
+    return ([string]$rawPidValue).Trim()
+}
+
+function Remove-RouterManagedStateFile {
+    param([string]$StateFile = '')
+
+    if ([string]::IsNullOrWhiteSpace($StateFile)) {
         return
     }
 
-    $pidValue = (Get-Content $PidFile | Select-Object -First 1).Trim()
+    Remove-Item $StateFile -Force -ErrorAction SilentlyContinue
+}
+
+function ConvertTo-RouterStateFileLine {
+    param(
+        [Parameter(Mandatory = $true)][string]$Key,
+        [Parameter(Mandatory = $true)][string]$Value
+    )
+
+    $escapedValue = $Value.Replace('\', '\\').Replace('"', '\"')
+    return "$Key=`"$escapedValue`""
+}
+
+function Get-RouterManagedState {
+    param([string]$StateFile = '')
+
+    if ([string]::IsNullOrWhiteSpace($StateFile) -or -not (Test-Path $StateFile)) {
+        return $null
+    }
+
+    $state = @{}
+    foreach ($rawLine in Get-Content $StateFile -ErrorAction SilentlyContinue) {
+        $line = ([string]$rawLine).Trim()
+        if ([string]::IsNullOrWhiteSpace($line) -or $line.StartsWith('#')) {
+            continue
+        }
+
+        $separatorIndex = $line.IndexOf('=')
+        if ($separatorIndex -lt 1) {
+            continue
+        }
+
+        $key = $line.Substring(0, $separatorIndex).Trim()
+        $value = $line.Substring($separatorIndex + 1).Trim()
+        if ($value.Length -ge 2) {
+            $quote = $value[0]
+            if (($quote -eq '"' -or $quote -eq "'") -and $value[-1] -eq $quote) {
+                $value = $value.Substring(1, $value.Length - 2)
+                if ($quote -eq '"') {
+                    $value = $value.Replace('\"', '"').Replace('\\', '\')
+                }
+            }
+        }
+
+        $state[$key] = $value
+    }
+
+    if ($state.Count -eq 0) {
+        return $null
+    }
+
+    $processId = 0
+    [void][int]::TryParse([string]$state.SDKWORK_ROUTER_MANAGED_PID, [ref]$processId)
+
+    $unifiedAccessEnabled = $false
+    if ($state.ContainsKey('SDKWORK_ROUTER_UNIFIED_ACCESS_ENABLED')) {
+        [void][bool]::TryParse([string]$state.SDKWORK_ROUTER_UNIFIED_ACCESS_ENABLED, [ref]$unifiedAccessEnabled)
+    }
+
+    return [pscustomobject]@{
+        ProcessId = $processId
+        ProcessFingerprint = [string]$state.SDKWORK_ROUTER_PROCESS_FINGERPRINT
+        Mode = [string]$state.SDKWORK_ROUTER_MODE
+        WebBind = [string]$state.SDKWORK_WEB_BIND
+        GatewayBind = [string]$state.SDKWORK_GATEWAY_BIND
+        AdminBind = [string]$state.SDKWORK_ADMIN_BIND
+        PortalBind = [string]$state.SDKWORK_PORTAL_BIND
+        UnifiedAccessEnabled = $unifiedAccessEnabled
+        AdminAppUrl = [string]$state.SDKWORK_ROUTER_ADMIN_APP_URL
+        PortalAppUrl = [string]$state.SDKWORK_ROUTER_PORTAL_APP_URL
+    }
+}
+
+function Write-RouterManagedStateFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$StateFile,
+        [Parameter(Mandatory = $true)][int]$ProcessId,
+        [string]$ProcessFingerprint = '',
+        [Parameter(Mandatory = $true)][string]$Mode,
+        [Parameter(Mandatory = $true)][string]$WebBind,
+        [Parameter(Mandatory = $true)][string]$GatewayBind,
+        [Parameter(Mandatory = $true)][string]$AdminBind,
+        [Parameter(Mandatory = $true)][string]$PortalBind,
+        [bool]$UnifiedAccessEnabled = $true,
+        [string]$AdminAppUrl = '',
+        [string]$PortalAppUrl = ''
+    )
+
+    $directory = Split-Path -Parent $StateFile
+    if (-not [string]::IsNullOrWhiteSpace($directory)) {
+        Ensure-RouterDirectory -DirectoryPath $directory
+    }
+
+    $lines = @(
+        (ConvertTo-RouterStateFileLine -Key 'SDKWORK_ROUTER_MANAGED_PID' -Value ([string]$ProcessId)),
+        (ConvertTo-RouterStateFileLine -Key 'SDKWORK_ROUTER_PROCESS_FINGERPRINT' -Value $ProcessFingerprint),
+        (ConvertTo-RouterStateFileLine -Key 'SDKWORK_ROUTER_MODE' -Value $Mode),
+        (ConvertTo-RouterStateFileLine -Key 'SDKWORK_WEB_BIND' -Value $WebBind),
+        (ConvertTo-RouterStateFileLine -Key 'SDKWORK_GATEWAY_BIND' -Value $GatewayBind),
+        (ConvertTo-RouterStateFileLine -Key 'SDKWORK_ADMIN_BIND' -Value $AdminBind),
+        (ConvertTo-RouterStateFileLine -Key 'SDKWORK_PORTAL_BIND' -Value $PortalBind),
+        (ConvertTo-RouterStateFileLine -Key 'SDKWORK_ROUTER_UNIFIED_ACCESS_ENABLED' -Value ([string]$UnifiedAccessEnabled)),
+        (ConvertTo-RouterStateFileLine -Key 'SDKWORK_ROUTER_ADMIN_APP_URL' -Value $AdminAppUrl),
+        (ConvertTo-RouterStateFileLine -Key 'SDKWORK_ROUTER_PORTAL_APP_URL' -Value $PortalAppUrl)
+    )
+
+    Set-Content -Path $StateFile -Value $lines -Encoding utf8
+}
+
+function Clear-RouterStalePidFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$PidFile,
+        [string]$StateFile = ''
+    )
+    if (-not (Test-Path $PidFile)) {
+        Remove-RouterManagedStateFile -StateFile $StateFile
+        return $true
+    }
+
+    $pidValue = Get-RouterPidFileValue -PidFile $PidFile
+    if ([string]::IsNullOrWhiteSpace($pidValue)) {
+        Remove-Item $PidFile -Force -ErrorAction SilentlyContinue
+        Remove-RouterManagedStateFile -StateFile $StateFile
+        return $true
+    }
+
+    if (-not (Test-RouterProcessRunning -PidValue $pidValue)) {
+        Remove-Item $PidFile -Force -ErrorAction SilentlyContinue
+        Remove-RouterManagedStateFile -StateFile $StateFile
+        return $true
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($StateFile)) {
+        $managedState = Get-RouterManagedState -StateFile $StateFile
+        if ($null -eq $managedState -or $managedState.ProcessId -ne [int]$pidValue) {
+            Remove-Item $PidFile -Force -ErrorAction SilentlyContinue
+            Remove-RouterManagedStateFile -StateFile $StateFile
+            return $true
+        }
+
+        $currentFingerprint = Get-RouterProcessFingerprint -ProcessId ([int]$pidValue)
+        if (-not [string]::IsNullOrWhiteSpace($managedState.ProcessFingerprint) -and $managedState.ProcessFingerprint -ne $currentFingerprint) {
+            Remove-Item $PidFile -Force -ErrorAction SilentlyContinue
+            Remove-RouterManagedStateFile -StateFile $StateFile
+            return $true
+        }
+    }
+
+    return $false
+}
+
+function Get-RouterManagedProcessId {
+    param(
+        [Parameter(Mandatory = $true)][string]$PidFile,
+        [string]$StateFile = ''
+    )
+
+    if (-not (Test-Path $PidFile)) {
+        Remove-RouterManagedStateFile -StateFile $StateFile
+        return 0
+    }
+
+    $pidValue = Get-RouterPidFileValue -PidFile $PidFile
+    if ([string]::IsNullOrWhiteSpace($pidValue)) {
+        Remove-Item $PidFile -Force -ErrorAction SilentlyContinue
+        Remove-RouterManagedStateFile -StateFile $StateFile
+        return 0
+    }
+
+    if (-not (Test-RouterProcessRunning -PidValue $pidValue)) {
+        Remove-Item $PidFile -Force -ErrorAction SilentlyContinue
+        Remove-RouterManagedStateFile -StateFile $StateFile
+        return 0
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($StateFile)) {
+        $managedState = Get-RouterManagedState -StateFile $StateFile
+        if ($null -eq $managedState -or $managedState.ProcessId -ne [int]$pidValue) {
+            Remove-Item $PidFile -Force -ErrorAction SilentlyContinue
+            Remove-RouterManagedStateFile -StateFile $StateFile
+            return 0
+        }
+
+        $currentFingerprint = Get-RouterProcessFingerprint -ProcessId ([int]$pidValue)
+        if (-not [string]::IsNullOrWhiteSpace($managedState.ProcessFingerprint) -and $managedState.ProcessFingerprint -ne $currentFingerprint) {
+            Remove-Item $PidFile -Force -ErrorAction SilentlyContinue
+            Remove-RouterManagedStateFile -StateFile $StateFile
+            return 0
+        }
+    }
+
+    return [int]$pidValue
+}
+
+function Assert-RouterNotRunning {
+    param(
+        [Parameter(Mandatory = $true)][string]$PidFile,
+        [string]$StateFile = ''
+    )
+    $pidValue = Get-RouterManagedProcessId -PidFile $PidFile -StateFile $StateFile
+    if ($pidValue -le 0) {
+        return
+    }
+
     Throw-RouterError "process already running with pid $pidValue (pid file: $PidFile)"
 }
 
@@ -152,6 +660,24 @@ function Wait-RouterProcessExit {
     }
 
     return -not (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)
+}
+
+function Confirm-RouterProcessAlive {
+    param(
+        [Parameter(Mandatory = $true)][int]$ProcessId,
+        [int]$WaitSeconds = 2
+    )
+
+    $deadline = (Get-Date).AddSeconds($WaitSeconds)
+    while ((Get-Date) -lt $deadline) {
+        if (-not (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)) {
+            return $false
+        }
+
+        Start-Sleep -Milliseconds 250
+    }
+
+    return $true
 }
 
 function Get-RouterChildProcessIds {
@@ -219,7 +745,10 @@ function Stop-RouterProcessTree {
     }
 
     if (Test-RouterWindowsPlatform) {
-        & cmd.exe /c "taskkill /PID $ProcessId /T" | Out-Null
+        try {
+            & cmd.exe /c "taskkill /PID $ProcessId /T >nul 2>nul" | Out-Null
+        } catch {
+        }
         if (Wait-RouterProcessExit -ProcessId $ProcessId -WaitSeconds $WaitSeconds) {
             return $true
         }
@@ -228,7 +757,10 @@ function Stop-RouterProcessTree {
             return $false
         }
 
-        & cmd.exe /c "taskkill /PID $ProcessId /T /F" | Out-Null
+        try {
+            & cmd.exe /c "taskkill /PID $ProcessId /T /F >nul 2>nul" | Out-Null
+        } catch {
+        }
         return (Wait-RouterProcessExit -ProcessId $ProcessId -WaitSeconds $WaitSeconds)
     }
 
@@ -263,14 +795,20 @@ function Start-RouterBackgroundProcess {
         [Parameter(Mandatory = $true)][string]$StderrLog
     )
 
-    return Start-Process `
-        -FilePath $FilePath `
-        -ArgumentList $ArgumentList `
-        -WorkingDirectory $WorkingDirectory `
-        -RedirectStandardOutput $StdoutLog `
-        -RedirectStandardError $StderrLog `
-        -NoNewWindow `
-        -PassThru
+    $startProcessArgs = @{
+        FilePath = $FilePath
+        WorkingDirectory = $WorkingDirectory
+        RedirectStandardOutput = $StdoutLog
+        RedirectStandardError = $StderrLog
+        NoNewWindow = $true
+        PassThru = $true
+    }
+
+    if ($ArgumentList.Count -gt 0) {
+        $startProcessArgs.ArgumentList = $ArgumentList
+    }
+
+    return Start-Process @startProcessArgs
 }
 
 function Resolve-RouterHealthUrl {

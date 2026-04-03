@@ -1,5 +1,11 @@
 import { formatUnits } from 'sdkwork-router-portal-commons/format-core';
+import { translatePortalText } from 'sdkwork-router-portal-commons/i18n-core';
 import type {
+  BillingEventAccountingModeSummary,
+  BillingEventCapabilitySummary,
+  BillingEventGroupSummary,
+  BillingEventRecord,
+  BillingEventSummary,
   ProjectBillingSummary,
   RechargePack,
   SubscriptionPlan,
@@ -7,6 +13,12 @@ import type {
 } from 'sdkwork-router-portal-types';
 
 import type { BillingRecommendation } from '../types';
+import type { BillingEventAnalyticsViewModel } from '../types';
+
+export type BillingEventCsvDocument = {
+  headers: string[];
+  rows: Array<Array<string | number>>;
+};
 
 function buildDailyUsageSeries(usageRecords: UsageRecord[]): number[] {
   const daily = new Map<string, number>();
@@ -62,8 +74,10 @@ function buildRunway(
 
   if (summary.exhausted) {
     return {
-      label: '0 days',
-      detail: 'Visible quota is already exhausted, so the workspace needs an immediate recharge or plan change before additional traffic is expected.',
+      label: translatePortalText('0 days'),
+      detail: translatePortalText(
+        'Visible quota is already exhausted, so the workspace needs an immediate recharge or plan change before additional traffic is expected.',
+      ),
       projected_days: 0,
       daily_units,
     };
@@ -71,8 +85,10 @@ function buildRunway(
 
   if (summary.remaining_units === null || summary.remaining_units === undefined) {
     return {
-      label: 'Unlimited',
-      detail: 'The current billing summary exposes no visible quota ceiling, so the portal treats runway as unlimited for this workspace.',
+      label: translatePortalText('Unlimited'),
+      detail: translatePortalText(
+        'The current billing summary exposes no visible quota ceiling, so the portal treats runway as unlimited for this workspace.',
+      ),
       projected_days: null,
       daily_units,
     };
@@ -80,19 +96,26 @@ function buildRunway(
 
   if (!daily_units) {
     return {
-      label: 'Needs first traffic signal',
-      detail: 'There is not enough recorded usage yet to project a meaningful burn pace. Send live traffic, then revisit billing decisions.',
+      label: translatePortalText('Needs first traffic signal'),
+      detail: translatePortalText(
+        'There is not enough recorded usage yet to project a meaningful burn pace. Send live traffic, then revisit billing decisions.',
+      ),
       projected_days: null,
       daily_units: null,
     };
   }
 
   const projected_days = Math.floor(summary.remaining_units / daily_units);
-  const label = projected_days < 1 ? '< 1 day' : `${projected_days} days`;
+  const label = projected_days < 1
+    ? translatePortalText('< 1 day')
+    : translatePortalText('{days} days', { days: projected_days });
 
   return {
     label,
-    detail: `Estimated from an exponentially smoothed burn pace of ${formatUnits(daily_units)} token units per day.`,
+    detail: translatePortalText(
+      'Estimated from an exponentially smoothed burn pace of {units} token units per day.',
+      { units: formatUnits(daily_units) },
+    ),
     projected_days,
     daily_units,
   };
@@ -105,28 +128,44 @@ function buildRecommendedBundle(
 ): BillingRecommendation['bundle'] {
   if (!plan && !pack) {
     return {
-      title: 'Billing catalog unavailable',
-      detail: 'The portal could not build a plan-plus-pack recommendation from the current seed catalog.',
+      title: translatePortalText('Billing catalog unavailable'),
+      detail: translatePortalText(
+        'The portal could not build a plan-plus-pack recommendation from the current seed catalog.',
+      ),
     };
   }
 
   if (summary.exhausted) {
     return {
-      title: `${plan?.name ?? 'Subscription'} + ${pack?.label ?? 'Recharge pack'}`,
-      detail: 'The workspace needs both immediate runway recovery and a steadier monthly posture, so the portal recommends a plan and a recharge together.',
+      title: translatePortalText('{plan} + {pack}', {
+        plan: plan?.name ?? translatePortalText('Subscription'),
+        pack: pack?.label ?? translatePortalText('Recharge pack'),
+      }),
+      detail: translatePortalText(
+        'The workspace needs both immediate runway recovery and a steadier monthly posture, so the portal recommends a plan and a recharge together.',
+      ),
     };
   }
 
   if ((summary.remaining_units ?? 0) < 10_000) {
     return {
-      title: `${plan?.name ?? 'Subscription'} with ${pack?.label ?? 'Recharge pack'} as buffer`,
-      detail: 'Current quota is still active, but remaining headroom is tight enough that a plan-plus-buffer path is the lowest-friction next move.',
+      title: translatePortalText('{plan} with {pack} as buffer', {
+        plan: plan?.name ?? translatePortalText('Subscription'),
+        pack: pack?.label ?? translatePortalText('Recharge pack'),
+      }),
+      detail: translatePortalText(
+        'Current quota is still active, but remaining headroom is tight enough that a plan-plus-buffer path is the lowest-friction next move.',
+      ),
     };
   }
 
   return {
-    title: `${plan?.name ?? 'Subscription'} as the next growth step`,
-    detail: 'The workspace is stable today, so the recommended bundle focuses on the cleanest subscription path while keeping the top-up pack available only if demand spikes.',
+    title: translatePortalText('{plan} as the next growth step', {
+      plan: plan?.name ?? translatePortalText('Subscription'),
+    }),
+    detail: translatePortalText(
+      'The workspace is stable today, so the recommended bundle focuses on the cleanest subscription path while keeping the top-up pack available only if demand spikes.',
+    ),
   };
 }
 
@@ -151,8 +190,14 @@ export function recommendBillingChange(
 
   if (summary.exhausted && recommendedPlan && recommendedPack) {
     return {
-      title: 'Quota is exhausted',
-      detail: `Move to ${recommendedPlan.name} or add ${recommendedPack.label} to restore headroom immediately.`,
+      title: translatePortalText('Quota is exhausted'),
+      detail: translatePortalText(
+        'Move to {plan} or add {pack} to restore headroom immediately.',
+        {
+          plan: recommendedPlan.name,
+          pack: recommendedPack.label,
+        },
+      ),
       plan: recommendedPlan,
       pack: recommendedPack,
       runway,
@@ -162,8 +207,14 @@ export function recommendBillingChange(
 
   if ((summary.remaining_units ?? 0) < 10_000 && recommendedPlan && recommendedPack) {
     return {
-      title: 'Headroom is getting tight',
-      detail: `Add ${recommendedPack.label} for near-term coverage, or move to ${recommendedPlan.name} for a steadier monthly posture.`,
+      title: translatePortalText('Headroom is getting tight'),
+      detail: translatePortalText(
+        'Add {pack} for near-term coverage, or move to {plan} for a steadier monthly posture.',
+        {
+          pack: recommendedPack.label,
+          plan: recommendedPlan.name,
+        },
+      ),
       plan: recommendedPlan,
       pack: recommendedPack,
       runway,
@@ -172,10 +223,18 @@ export function recommendBillingChange(
   }
 
   return {
-    title: recommendedPlan ? 'Current workspace is stable' : 'Billing catalog unavailable',
+    title: recommendedPlan
+      ? translatePortalText('Current workspace is stable')
+      : translatePortalText('Billing catalog unavailable'),
     detail: recommendedPlan
-      ? `Based on a projected monthly demand of ${formatUnits(projectedMonthlyUnits)} units, ${recommendedPlan.name} is the cleanest next subscription step when traffic grows.`
-      : 'The portal could not load a live commerce catalog for this workspace.',
+      ? translatePortalText(
+        'Based on a projected monthly demand of {units} units, {plan} is the cleanest next subscription step when traffic grows.',
+        {
+          units: formatUnits(projectedMonthlyUnits),
+          plan: recommendedPlan.name,
+        },
+      )
+      : translatePortalText('The portal could not load a live commerce catalog for this workspace.'),
     plan: recommendedPlan,
     pack: recommendedPack,
     runway,
@@ -195,4 +254,169 @@ export function isRecommendedPack(
   recommendation: BillingRecommendation,
 ): boolean {
   return recommendation.pack?.id === pack.id;
+}
+
+function sortCapabilityMix(
+  items: BillingEventCapabilitySummary[],
+): BillingEventCapabilitySummary[] {
+  return [...items]
+    .filter((item) => item.event_count > 0)
+    .sort((left, right) =>
+      right.total_customer_charge - left.total_customer_charge
+      || right.request_count - left.request_count
+      || right.total_tokens - left.total_tokens
+      || left.capability.localeCompare(right.capability),
+    );
+}
+
+function sortGroupChargeback(
+  items: BillingEventGroupSummary[],
+): BillingEventGroupSummary[] {
+  return [...items]
+    .filter((item) => item.event_count > 0)
+    .sort((left, right) =>
+      right.total_customer_charge - left.total_customer_charge
+      || right.request_count - left.request_count
+      || (left.api_key_group_id ?? '').localeCompare(right.api_key_group_id ?? ''),
+    );
+}
+
+function sortAccountingModeMix(
+  items: BillingEventAccountingModeSummary[],
+): BillingEventAccountingModeSummary[] {
+  return [...items]
+    .filter((item) => item.event_count > 0)
+    .sort((left, right) =>
+      right.total_customer_charge - left.total_customer_charge
+      || right.request_count - left.request_count
+      || left.accounting_mode.localeCompare(right.accounting_mode),
+    );
+}
+
+function sortRecentEvents(events: BillingEventRecord[]): BillingEventRecord[] {
+  return [...events].sort((left, right) =>
+    right.created_at_ms - left.created_at_ms
+    || right.customer_charge - left.customer_charge
+    || right.units - left.units
+    || left.event_id.localeCompare(right.event_id),
+  );
+}
+
+export function buildBillingEventAnalytics(
+  summary: BillingEventSummary,
+  events: BillingEventRecord[],
+  limits: {
+    capabilities?: number;
+    groups?: number;
+    accounting_modes?: number;
+    recent_events?: number;
+  } = {},
+): BillingEventAnalyticsViewModel {
+  const capabilityLimit = limits.capabilities ?? 6;
+  const groupLimit = limits.groups ?? 6;
+  const accountingModeLimit = limits.accounting_modes ?? 3;
+  const recentEventLimit = limits.recent_events ?? 6;
+
+  return {
+    totals: {
+      total_events: summary.total_events,
+      total_request_count: summary.total_request_count,
+      total_tokens: summary.total_tokens,
+      total_image_count: summary.total_image_count,
+      total_audio_seconds: summary.total_audio_seconds,
+      total_video_seconds: summary.total_video_seconds,
+      total_music_seconds: summary.total_music_seconds,
+      total_upstream_cost: summary.total_upstream_cost,
+      total_customer_charge: summary.total_customer_charge,
+    },
+    top_capabilities: sortCapabilityMix(summary.capabilities).slice(0, capabilityLimit),
+    group_chargeback: sortGroupChargeback(summary.groups).slice(0, groupLimit),
+    accounting_mode_mix: sortAccountingModeMix(summary.accounting_modes).slice(
+      0,
+      accountingModeLimit,
+    ),
+    recent_events: sortRecentEvents(events).slice(0, recentEventLimit),
+    routing_evidence: {
+      events_with_profile: events.filter((event) => event.applied_routing_profile_id).length,
+      events_with_compiled_snapshot: events.filter(
+        (event) => event.compiled_routing_snapshot_id,
+      ).length,
+      events_with_fallback_reason: events.filter((event) => event.fallback_reason).length,
+    },
+  };
+}
+
+export function buildBillingEventCsvDocument(
+  events: BillingEventRecord[],
+): BillingEventCsvDocument {
+  return {
+    headers: [
+      'event_id',
+      'tenant_id',
+      'project_id',
+      'api_key_group_id',
+      'capability',
+      'route_key',
+      'usage_model',
+      'provider_id',
+      'accounting_mode',
+      'operation_kind',
+      'modality',
+      'api_key_hash',
+      'channel_id',
+      'reference_id',
+      'latency_ms',
+      'units',
+      'request_count',
+      'input_tokens',
+      'output_tokens',
+      'total_tokens',
+      'cache_read_tokens',
+      'cache_write_tokens',
+      'image_count',
+      'audio_seconds',
+      'video_seconds',
+      'music_seconds',
+      'upstream_cost',
+      'customer_charge',
+      'applied_routing_profile_id',
+      'compiled_routing_snapshot_id',
+      'fallback_reason',
+      'created_at',
+    ],
+    rows: events.map((event) => [
+      event.event_id,
+      event.tenant_id,
+      event.project_id,
+      event.api_key_group_id ?? '',
+      event.capability,
+      event.route_key,
+      event.usage_model,
+      event.provider_id,
+      event.accounting_mode,
+      event.operation_kind,
+      event.modality,
+      event.api_key_hash ?? '',
+      event.channel_id ?? '',
+      event.reference_id ?? '',
+      event.latency_ms ?? '',
+      event.units,
+      event.request_count,
+      event.input_tokens,
+      event.output_tokens,
+      event.total_tokens,
+      event.cache_read_tokens,
+      event.cache_write_tokens,
+      event.image_count,
+      event.audio_seconds,
+      event.video_seconds,
+      event.music_seconds,
+      event.upstream_cost.toFixed(4),
+      event.customer_charge.toFixed(4),
+      event.applied_routing_profile_id ?? '',
+      event.compiled_routing_snapshot_id ?? '',
+      event.fallback_reason ?? '',
+      new Date(event.created_at_ms).toISOString(),
+    ]),
+  };
 }

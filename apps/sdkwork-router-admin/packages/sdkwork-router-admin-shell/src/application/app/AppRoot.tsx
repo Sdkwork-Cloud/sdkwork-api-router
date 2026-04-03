@@ -1,13 +1,13 @@
 import { AdminWorkbenchProvider } from 'sdkwork-router-admin-core';
 
-import { MainLayout } from '../layouts/MainLayout';
 import { AppProviders } from '../providers/AppProviders';
+import { AppRoutes } from '../router/AppRoutes';
 
 export function AppRoot() {
   return (
     <AppProviders>
       <AdminWorkbenchProvider>
-        <MainLayout />
+        <AppRoutes />
       </AdminWorkbenchProvider>
     </AppProviders>
   );

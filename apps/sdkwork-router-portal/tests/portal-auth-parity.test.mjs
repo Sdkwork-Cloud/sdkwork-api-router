@@ -90,7 +90,6 @@ test('portal auth visuals follow the claw-style split card layout instead of the
   assert.match(authPage, /Smartphone/);
   assert.match(authPage, /Button/);
   assert.match(authPage, /Input/);
-  assert.match(authPage, /LeadingIconInput/);
   assert.match(authPage, /DEV_PORTAL_CREDENTIALS/);
   assert.match(authPage, /import\.meta\.env\.DEV/);
   assert.match(authPage, /portal@sdkwork\.local/);
@@ -104,7 +103,8 @@ test('portal auth visuals follow the claw-style split card layout instead of the
   assert.match(authPage, /md:w-2\/5/);
   assert.match(authPage, /md:w-3\/5/);
   assert.match(authPage, /withRedirect\('/);
-  assert.doesNotMatch(authPage, /className="h-10 pl-10 pr-3"/);
+  assert.doesNotMatch(authPage, /LeadingIconInput/);
+  assert.match(authPage, /absolute left-4 top-1\/2/);
   assert.doesNotMatch(authPage, /<button/);
   assert.doesNotMatch(authPage, /AuthShell/);
   assert.doesNotMatch(appRoutes, /function AuthLayout/);
@@ -129,15 +129,40 @@ test('portal auth localizes qr guidance and field placeholders through the share
   assert.match(commons, /'Enter your password'/);
 });
 
-test('portal shell profile dock is wired to shared auth state instead of logout-only props', () => {
-  const sidebar = read('packages/sdkwork-router-portal-core/src/components/Sidebar.tsx');
-  const profileDock = read('packages/sdkwork-router-portal-core/src/components/SidebarProfileDock.tsx');
+test('portal sidebar user control is wired to shared auth state instead of legacy profile-dock props', () => {
+  const desktopShell = read('packages/sdkwork-router-portal-core/src/components/PortalDesktopShell.tsx');
+  const navigationRail = read('packages/sdkwork-router-portal-core/src/components/PortalNavigationRail.tsx');
   const app = read('packages/sdkwork-router-portal-core/src/application/app/PortalProductApp.tsx');
 
-  assert.match(sidebar, /usePortalAuthStore/);
-  assert.match(profileDock, /usePortalAuthStore/);
-  assert.match(profileDock, /isAuthenticated/);
-  assert.match(profileDock, /signOut/);
+  assert.match(desktopShell, /PortalNavigationRail/);
+  assert.match(navigationRail, /usePortalAuthStore/);
+  assert.match(navigationRail, /signOut/);
+  assert.match(navigationRail, /storedWorkspace/);
+  assert.match(navigationRail, /workspace \?\? storedWorkspace/);
+  assert.match(navigationRail, /data-slot="sidebar-user-control"/);
+  assert.match(navigationRail, /setIsUserMenuOpen/);
+  assert.match(navigationRail, /onOpenSettings/);
+  assert.match(navigationRail, /resolvePortalPath\('user'\)/);
+  assert.match(navigationRail, /User details/);
+  assert.match(navigationRail, /Sign out/);
+  assert.doesNotMatch(navigationRail, /workspaceIdentity/);
   assert.match(app, /usePortalAuthStore/);
   assert.doesNotMatch(app, /const \[authenticated, setAuthenticated\]/);
+});
+
+test('portal auth package removes the stale auth shell wrapper after the router-driven page lands', () => {
+  const authLegacyShellPath = path.join(
+    appRoot,
+    'packages',
+    'sdkwork-router-portal-auth',
+    'src',
+    'components',
+    'index.tsx',
+  );
+  const authTypes = read('packages/sdkwork-router-portal-auth/src/types/index.ts');
+
+  assert.equal(existsSync(authLegacyShellPath), false);
+  assert.doesNotMatch(authTypes, /AuthShellProps/);
+  assert.doesNotMatch(authTypes, /AuthShellStoryItem/);
+  assert.doesNotMatch(authTypes, /AuthShellPreviewItem/);
 });

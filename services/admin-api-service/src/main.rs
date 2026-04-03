@@ -1,6 +1,7 @@
 use sdkwork_api_app_credential::CredentialSecretManager;
+use sdkwork_api_app_gateway::configure_capability_catalog_cache_store;
 use sdkwork_api_app_runtime::{
-    build_admin_store_from_config, resolve_service_runtime_node_id,
+    build_admin_store_from_config, build_cache_runtime_from_config, resolve_service_runtime_node_id,
     start_extension_runtime_rollout_supervision, start_standalone_runtime_supervision,
     StandaloneListenerHost, StandaloneServiceKind, StandaloneServiceReloadHandles,
 };
@@ -14,6 +15,10 @@ async fn main() -> anyhow::Result<()> {
     init_tracing("admin-api-service");
     let (config_loader, config) = StandaloneConfigLoader::from_env()?;
     config.apply_to_process_env();
+    let cache_runtime = build_cache_runtime_from_config(&config).await?;
+    if config.cache_backend.supports_shared_cache_coherence() {
+        configure_capability_catalog_cache_store(cache_runtime.cache_store());
+    }
     let live_store = Reloadable::new(build_admin_store_from_config(&config).await?);
     let live_admin_jwt = Reloadable::new(config.admin_jwt_signing_secret.clone());
     let live_secret_manager =

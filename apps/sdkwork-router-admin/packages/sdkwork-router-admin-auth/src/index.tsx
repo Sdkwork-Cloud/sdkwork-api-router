@@ -1,26 +1,34 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { ArrowRight, Chrome, Github, Lock, Mail, QrCode, Smartphone, User } from 'lucide-react';
 import {
-  ArrowRight,
-  Chrome,
-  Github,
-  Lock,
-  Mail,
-  QrCode,
-  Smartphone,
-  User,
-} from 'lucide-react';
+  useEffect,
+  useState,
+  type ComponentPropsWithoutRef,
+  type ComponentType,
+  type FormEvent,
+  type ReactNode,
+} from 'react';
 import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { Button, Label, LeadingIconInput, useAdminI18n } from 'sdkwork-router-admin-commons';
+import { Badge, Button, Input, Label } from '@sdkwork/ui-pc-react';
 
-import { ADMIN_ROUTE_PATHS } from 'sdkwork-router-admin-core';
+import { ADMIN_ROUTE_PATHS, useAdminI18n } from 'sdkwork-router-admin-core';
 
 type AuthMode = 'login' | 'register' | 'forgot';
 
 const DEFAULT_LOGIN_STATUS = 'Authenticate to open the super-admin workspace.';
+const SSO_NOTICE =
+  'Use the operator email and password flow for admin access. External SSO remains disabled in this workspace.';
 const DEV_ADMIN_CREDENTIALS = {
   email: 'admin@sdkwork.local',
   password: 'ChangeMe123!',
 };
+
+type AuthBadgeProps = {
+  children?: ReactNode;
+  className?: string;
+  variant?: 'default' | 'secondary' | 'outline' | 'danger' | 'success' | 'warning';
+};
+
+const AuthBadge = Badge as unknown as ComponentType<AuthBadgeProps>;
 
 function resolveAuthMode(pathname: string): AuthMode {
   if (pathname === ADMIN_ROUTE_PATHS.REGISTER) {
@@ -52,40 +60,64 @@ function resolveRedirectTarget(rawTarget: string | null) {
   return rawTarget;
 }
 
-function titleByMode(mode: AuthMode) {
-  if (mode === 'register') {
-    return 'Create an account';
+function authCopy(mode: AuthMode) {
+  switch (mode) {
+    case 'register':
+      return {
+        title: 'Create operator access',
+        description:
+          'Request operator access and continue into the router control plane once an existing admin provisions your identity.',
+        submitLabel: 'Request access',
+        alternateLabel: 'Sign in',
+        alternatePath: ADMIN_ROUTE_PATHS.LOGIN,
+        modeLabel: 'Request access',
+      };
+    case 'forgot':
+      return {
+        title: 'Recover access',
+        description:
+          'Password reset links are not enabled for this workspace yet. Continue back to sign in with your operator email.',
+        submitLabel: 'Back to login',
+        alternateLabel: 'Create access',
+        alternatePath: ADMIN_ROUTE_PATHS.REGISTER,
+        modeLabel: 'Recovery',
+      };
+    case 'login':
+    default:
+      return {
+        title: 'Welcome back',
+        description: 'Sign in to continue to your router admin workspace.',
+        submitLabel: 'Sign in',
+        alternateLabel: 'Sign up',
+        alternatePath: ADMIN_ROUTE_PATHS.REGISTER,
+        modeLabel: 'Sign in',
+      };
   }
-
-  if (mode === 'forgot') {
-    return 'Reset password';
-  }
-
-  return 'Welcome back';
 }
 
-function descriptionByMode(mode: AuthMode) {
-  if (mode === 'register') {
-    return 'Join us to start building amazing things.';
-  }
-
-  if (mode === 'forgot') {
-    return 'Enter your email to receive a reset link.';
-  }
-
-  return 'Enter your details to access your account.';
-}
-
-function submitLabelByMode(mode: AuthMode, loading: boolean) {
-  if (mode === 'login') {
-    return loading ? 'Signing In...' : 'Sign In';
-  }
-
-  if (mode === 'register') {
-    return 'Sign Up';
-  }
-
-  return 'Send Reset Link';
+function AuthTextInput({
+  icon,
+  inputClassName,
+  style,
+  type,
+  ...props
+}: Omit<ComponentPropsWithoutRef<'input'>, 'className'> & {
+  icon: ReactNode;
+  inputClassName?: string;
+}) {
+  return (
+    <div className="relative block w-full">
+      <span className="pointer-events-none absolute left-4 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center text-zinc-400 dark:text-zinc-500">
+        {icon}
+      </span>
+      <Input
+        {...props}
+        className={['h-10 pr-3', inputClassName].filter(Boolean).join(' ')}
+        style={{ ...style, paddingLeft: '2.75rem' }}
+        type={type ?? 'text'}
+      />
+    </div>
+  );
 }
 
 export function AdminLoginPage({
@@ -105,6 +137,7 @@ export function AdminLoginPage({
   const [searchParams] = useSearchParams();
   const mode = resolveAuthMode(location.pathname);
   const redirectTarget = resolveRedirectTarget(searchParams.get('redirect'));
+  const copy = authCopy(mode);
   const [email, setEmail] = useState(
     import.meta.env.DEV && mode === 'login' ? DEV_ADMIN_CREDENTIALS.email : '',
   );
@@ -112,7 +145,7 @@ export function AdminLoginPage({
     import.meta.env.DEV && mode === 'login' ? DEV_ADMIN_CREDENTIALS.password : '',
   );
   const [name, setName] = useState('');
-  const [modeNotice, setModeNotice] = useState('');
+  const [feedback, setFeedback] = useState('');
   const showDevCredentials = import.meta.env.DEV && mode === 'login';
 
   useEffect(() => {
@@ -123,7 +156,7 @@ export function AdminLoginPage({
   }, [searchParams]);
 
   useEffect(() => {
-    setModeNotice('');
+    setFeedback('');
   }, [mode]);
 
   useEffect(() => {
@@ -135,31 +168,25 @@ export function AdminLoginPage({
     setPassword((current) => current || DEV_ADMIN_CREDENTIALS.password);
   }, [showDevCredentials]);
 
-  const withRedirect = (pathname: string) => {
+  function withRedirect(pathname: string, extra: Record<string, string> = {}) {
     const params = new URLSearchParams();
+
     if (redirectTarget !== ADMIN_ROUTE_PATHS.OVERVIEW) {
       params.set('redirect', redirectTarget);
     }
 
-    if (email.trim()) {
-      params.set('email', email.trim());
-    }
+    Object.entries(extra).forEach(([key, value]) => {
+      if (value) {
+        params.set(key, value);
+      }
+    });
 
     const queryString = params.toString();
     return queryString ? `${pathname}?${queryString}` : pathname;
-  };
+  }
 
-  const authNotice = (() => {
-    if (modeNotice) {
-      return modeNotice;
-    }
-
-    if (mode === 'login' && status && status !== DEFAULT_LOGIN_STATUS) {
-      return t(status);
-    }
-
-    return '';
-  })();
+  const visibleFeedback =
+    feedback || (mode === 'login' && status && status !== DEFAULT_LOGIN_STATUS ? t(status) : '');
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -170,20 +197,16 @@ export function AdminLoginPage({
     }
 
     if (mode === 'register') {
-      setModeNotice(
+      setFeedback(
         t(
           'Operator account requests stay inside the control plane. Ask an existing admin to provision {name} access from Users.',
-          { name: email.trim() || name.trim() || t('your') },
+          { name: name.trim() || email.trim() || t('your') },
         ),
       );
       return;
     }
 
-    setModeNotice(
-      t(
-        'Password resets are managed by an authenticated admin in Users. Contact the platform owner to rotate your credential safely.',
-      ),
-    );
+    navigate(withRedirect(ADMIN_ROUTE_PATHS.LOGIN, { email }), { replace: true });
   }
 
   if (isAuthenticated) {
@@ -191,210 +214,238 @@ export function AdminLoginPage({
   }
 
   return (
-    <div className="adminx-auth-frame">
-      <div className="adminx-auth-aside">
-        <div className="adminx-auth-aside-overlay" />
-        <div className="adminx-auth-aside-inner">
-          <div className="adminx-auth-qr-badge">
-            <QrCode className="adminx-auth-qr-badge-icon" />
-          </div>
-          <h2 className="adminx-auth-qr-title">{t('Scan to Login')}</h2>
-          <p className="adminx-auth-qr-desc">
-            {t('Use the SDKWork mobile app to scan the QR code for instant access.')}
-          </p>
+    <div className="flex min-h-screen items-center justify-center bg-zinc-50 p-4 dark:bg-zinc-950 sm:p-8">
+      <div className="flex w-full max-w-4xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl dark:bg-zinc-900 md:flex-row">
+        <div className="relative flex w-full flex-col items-center justify-center overflow-hidden bg-zinc-900 p-8 text-white dark:bg-black md:w-2/5">
+          <div className="absolute inset-0 bg-gradient-to-br from-[var(--sdk-color-brand-primary)]/25 to-transparent" />
+          <div className="relative z-10 flex flex-col items-center text-center">
+            <AuthBadge
+              className="mb-6 border-white/20 bg-white/10 text-white"
+              variant="outline"
+            >
+              {t('Router Admin')}
+            </AuthBadge>
 
-          <div className="adminx-auth-qr-card">
-            <div className="adminx-auth-qr-placeholder" aria-hidden="true">
-              <QrCode className="adminx-auth-qr-placeholder-icon" />
+            <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-[var(--sdk-color-brand-primary)] shadow-lg">
+              <QrCode className="h-8 w-8 text-white" />
             </div>
-          </div>
+            <h2 className="mb-2 text-2xl font-bold">{t('QR login')}</h2>
+            <p className="mb-8 max-w-[220px] text-sm text-zinc-400">
+              {t(
+                'Open the SDKWork app and scan this code to continue without typing credentials.',
+              )}
+            </p>
 
-          <div className="adminx-auth-qr-footer">
-            <Smartphone className="adminx-auth-qr-footer-icon" />
-            <span>{t('Open SDKWork App')}</span>
+            <div className="mb-6 rounded-2xl bg-white p-4 shadow-xl">
+              <div className="flex h-48 w-48 items-center justify-center rounded-xl border-2 border-dashed border-zinc-300 bg-zinc-100">
+                <QrCode className="h-24 w-24 text-zinc-400" />
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 text-sm text-zinc-400">
+              <Smartphone className="h-4 w-4" />
+              <span>{t('Open app to scan')}</span>
+            </div>
           </div>
         </div>
-      </div>
 
-      <div className="adminx-auth-content">
-        <div className="adminx-auth-content-inner">
-          <div className="adminx-auth-heading">
-            <h1 className="adminx-auth-title">{t(titleByMode(mode))}</h1>
-            <p className="adminx-auth-subtitle">{t(descriptionByMode(mode))}</p>
-          </div>
-
-          <form onSubmit={handleSubmit} className="adminx-auth-form">
-            {mode === 'register' ? (
-              <div className="adminx-auth-form-group">
-                <Label className="adminx-auth-label">{t('Full Name')}</Label>
-                <LeadingIconInput
-                  className="adminx-auth-input-shell"
-                  icon={<User className="adminx-auth-input-icon" />}
-                  iconClassName="text-[#a1a1aa]"
-                  inputClassName="adminx-auth-input-element"
-                  type="text"
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                  placeholder={t('John Doe')}
-                  autoComplete="name"
-                  required
-                />
+        <div className="w-full p-8 md:w-3/5 md:p-12">
+          <div className="mx-auto max-w-md">
+            <div className="mb-8">
+              <div className="mb-3 flex items-center gap-3">
+                <AuthBadge variant="secondary">
+                  {t(mode === 'login' ? 'Operator session' : 'Workspace access')}
+                </AuthBadge>
+                <AuthBadge variant="outline">{t(copy.modeLabel)}</AuthBadge>
               </div>
-            ) : null}
-
-            <div className="adminx-auth-form-group">
-              <Label className="adminx-auth-label">{t('Email Address')}</Label>
-              <LeadingIconInput
-                className="adminx-auth-input-shell"
-                icon={<Mail className="adminx-auth-input-icon" />}
-                iconClassName="text-[#a1a1aa]"
-                inputClassName="adminx-auth-input-element"
-                type="email"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                placeholder={t('you@example.com')}
-                autoComplete="email"
-                required
-              />
+              <h1 className="mb-2 text-3xl font-black tracking-tight text-zinc-900 dark:text-white">
+                {t(copy.title)}
+              </h1>
+              <p className="text-zinc-500 dark:text-zinc-400">{t(copy.description)}</p>
             </div>
 
-            {mode !== 'forgot' ? (
-              <div className="adminx-auth-form-group">
-                <div className="adminx-auth-label-row">
-                  <Label className="adminx-auth-label">{t('Password')}</Label>
-                  {mode === 'login' ? (
-                    <Button
-                      type="button"
-                      onClick={() => navigate(withRedirect(ADMIN_ROUTE_PATHS.FORGOT_PASSWORD))}
-                      className="adminx-auth-link-button h-auto rounded-none px-0 py-0 shadow-none hover:bg-transparent"
-                      variant="ghost"
-                    >
-                      {t('Forgot password')}
-                    </Button>
-                  ) : null}
+            <form className="space-y-5" onSubmit={handleSubmit}>
+              {mode === 'register' ? (
+                <div>
+                  <Label className="mb-1.5 block text-zinc-700 dark:text-zinc-300">
+                    {t('Name')}
+                  </Label>
+                  <AuthTextInput
+                    autoComplete="name"
+                    icon={<User className="h-5 w-5" />}
+                    onChange={(event) => setName(event.target.value)}
+                    placeholder={t('Workspace owner')}
+                    required
+                    type="text"
+                    value={name}
+                  />
                 </div>
-                <LeadingIconInput
-                  className="adminx-auth-input-shell"
-                  icon={<Lock className="adminx-auth-input-icon" />}
-                  iconClassName="text-[#a1a1aa]"
-                  inputClassName="adminx-auth-input-element"
-                  type="password"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  placeholder={t('Enter your password')}
-                  autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+              ) : null}
+
+              <div>
+                <Label className="mb-1.5 block text-zinc-700 dark:text-zinc-300">
+                  {t('Email')}
+                </Label>
+                <AuthTextInput
+                  autoComplete="email"
+                  icon={<Mail className="h-5 w-5" />}
+                  onChange={(event) => setEmail(event.target.value)}
+                  placeholder={t('name@example.com')}
                   required
+                  type="email"
+                  value={email}
                 />
+              </div>
+
+              {mode !== 'forgot' ? (
+                <div>
+                  <div className="mb-1.5 flex items-center justify-between">
+                    <Label className="text-zinc-700 dark:text-zinc-300">{t('Password')}</Label>
+                    {mode === 'login' ? (
+                      <Button
+                        className="h-auto rounded-none p-0 text-sm font-medium text-[var(--sdk-color-brand-primary)] shadow-none hover:bg-transparent hover:text-[var(--sdk-color-brand-primary-hover)]"
+                        onClick={() =>
+                          navigate(withRedirect(ADMIN_ROUTE_PATHS.FORGOT_PASSWORD, { email }))
+                        }
+                        type="button"
+                        variant="ghost"
+                      >
+                        {t('Forgot password?')}
+                      </Button>
+                    ) : null}
+                  </div>
+                  <AuthTextInput
+                    autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
+                    icon={<Lock className="h-5 w-5" />}
+                    onChange={(event) => setPassword(event.target.value)}
+                    placeholder={
+                      mode === 'register' ? t('Create a password') : t('Enter your password')
+                    }
+                    required
+                    type="password"
+                    value={password}
+                  />
+                </div>
+              ) : null}
+
+              <Button
+                className="h-auto w-full rounded-xl py-3 font-bold shadow-sm"
+                loading={mode === 'login' ? loading : false}
+                type="submit"
+                variant="primary"
+              >
+                {t(mode === 'login' && loading ? 'Signing In...' : copy.submitLabel)}
+                <ArrowRight className="h-4 w-4" />
+              </Button>
+            </form>
+
+            {showDevCredentials ? (
+              <p className="mt-4 text-sm font-medium text-zinc-500 dark:text-zinc-400">
+                {t(
+                  'Local dev credentials are prefilled: {email} / {password}.',
+                  DEV_ADMIN_CREDENTIALS,
+                )}
+              </p>
+            ) : null}
+
+            {visibleFeedback ? (
+              <p
+                className={[
+                  'mt-4 text-sm font-medium',
+                  mode === 'login' ? 'text-rose-500' : 'text-zinc-500 dark:text-zinc-400',
+                ].join(' ')}
+              >
+                {visibleFeedback}
+              </p>
+            ) : null}
+
+            {mode === 'login' ? (
+              <div className="mt-8">
+                <div className="relative">
+                  <div className="absolute inset-0 flex items-center">
+                    <div className="w-full border-t border-zinc-200 dark:border-zinc-800" />
+                  </div>
+                  <div className="relative flex justify-center text-sm">
+                    <span className="bg-white px-2 text-zinc-500 dark:bg-zinc-900">
+                      {t('Continue with')}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="mt-6 grid grid-cols-2 gap-3">
+                  <Button
+                    className="h-auto w-full rounded-xl border border-zinc-200 bg-white px-4 py-2.5 text-sm font-medium text-zinc-700 shadow-sm transition-colors hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                    onClick={() => setFeedback(t(SSO_NOTICE))}
+                    type="button"
+                    variant="outline"
+                  >
+                    <Github className="h-5 w-5" />
+                    {t('GitHub')}
+                  </Button>
+                  <Button
+                    className="h-auto w-full rounded-xl border border-zinc-200 bg-white px-4 py-2.5 text-sm font-medium text-zinc-700 shadow-sm transition-colors hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                    onClick={() => setFeedback(t(SSO_NOTICE))}
+                    type="button"
+                    variant="outline"
+                  >
+                    <Chrome className="h-5 w-5" />
+                    {t('Google')}
+                  </Button>
+                </div>
               </div>
             ) : null}
 
-            <Button
-              type="submit"
-              disabled={mode === 'login' ? loading : false}
-              className="adminx-auth-primary-button h-auto rounded-xl px-4 py-3"
-              variant="default"
-            >
-              <span>{t(submitLabelByMode(mode, loading))}</span>
-              <ArrowRight className="adminx-auth-primary-button-icon" />
-            </Button>
-          </form>
-
-          {showDevCredentials ? (
-            <div className="adminx-auth-inline-notice">
-              {t('Local dev credentials are prefilled: {email} / {password}.', DEV_ADMIN_CREDENTIALS)}
-            </div>
-          ) : null}
-
-          {authNotice ? <div className="adminx-auth-inline-notice">{authNotice}</div> : null}
-
-          {mode === 'login' ? (
-            <div className="adminx-auth-provider-section">
-              <div className="adminx-auth-divider">
-                <div className="adminx-auth-divider-line" />
-                <span>{t('Or continue with')}</span>
-              </div>
-
-              <div className="adminx-auth-provider-grid">
+            <div className="mt-8 text-center text-sm text-zinc-600 dark:text-zinc-400">
+              {mode === 'login' ? (
+                <>
+                  {t('No account?')}{' '}
+                  <Button
+                    className="h-auto rounded-none p-0 font-bold text-[var(--sdk-color-brand-primary)] shadow-none hover:bg-transparent hover:text-[var(--sdk-color-brand-primary-hover)]"
+                    onClick={() => navigate(withRedirect(copy.alternatePath))}
+                    type="button"
+                    variant="ghost"
+                  >
+                    {t(copy.alternateLabel)}
+                  </Button>
+                </>
+              ) : mode === 'register' ? (
+                <>
+                  {t('Already have an account?')}{' '}
+                  <Button
+                    className="h-auto rounded-none p-0 font-bold text-[var(--sdk-color-brand-primary)] shadow-none hover:bg-transparent hover:text-[var(--sdk-color-brand-primary-hover)]"
+                    onClick={() => navigate(withRedirect(copy.alternatePath))}
+                    type="button"
+                    variant="ghost"
+                  >
+                    {t(copy.alternateLabel)}
+                  </Button>
+                </>
+              ) : (
                 <Button
+                  className="mx-auto h-auto gap-1 rounded-none p-0 font-bold text-[var(--sdk-color-brand-primary)] shadow-none hover:bg-transparent hover:text-[var(--sdk-color-brand-primary-hover)]"
+                  onClick={() => navigate(withRedirect(ADMIN_ROUTE_PATHS.LOGIN, { email }))}
                   type="button"
-                  className="adminx-auth-provider-button"
-                  variant="secondary"
-                  onClick={() =>
-                    setModeNotice(
-                      'Use the operator email and password flow for admin access. External SSO remains disabled in this workspace.',
-                    )
-                  }
+                  variant="ghost"
                 >
-                  <Github className="adminx-auth-provider-icon" />
-                  <span>{t('GitHub')}</span>
+                  <ArrowRight className="h-4 w-4 rotate-180" />
+                  {t('Back to login')}
                 </Button>
-                <Button
-                  type="button"
-                  className="adminx-auth-provider-button"
-                  variant="secondary"
-                  onClick={() =>
-                    setModeNotice(
-                      'Use the operator email and password flow for admin access. External SSO remains disabled in this workspace.',
-                    )
-                  }
-                >
-                  <Chrome className="adminx-auth-provider-icon" />
-                  <span>{t('Google')}</span>
-                </Button>
-              </div>
+              )}
             </div>
-          ) : null}
 
-          <div className="adminx-auth-mode-switch">
-            {mode === 'login' ? (
-              <>
-                <span>{t("Don't have an account?")}</span>{' '}
+            {mode === 'forgot' ? (
+              <div className="mt-4 text-center">
                 <Button
-                  type="button"
+                  className="h-auto rounded-none p-0 text-sm font-medium text-[var(--sdk-color-brand-primary)] shadow-none hover:bg-transparent hover:text-[var(--sdk-color-brand-primary-hover)]"
                   onClick={() => navigate(withRedirect(ADMIN_ROUTE_PATHS.REGISTER))}
-                  className="adminx-auth-mode-link h-auto rounded-none px-0 py-0 shadow-none hover:bg-transparent"
-                  variant="ghost"
-                >
-                  {t('Sign Up')}
-                </Button>
-              </>
-            ) : mode === 'register' ? (
-              <>
-                <span>{t('Already have an account?')}</span>{' '}
-                <Button
                   type="button"
-                  onClick={() => navigate(withRedirect(ADMIN_ROUTE_PATHS.LOGIN))}
-                  className="adminx-auth-mode-link h-auto rounded-none px-0 py-0 shadow-none hover:bg-transparent"
                   variant="ghost"
                 >
-                  {t('Sign In')}
+                  {t('Create account')}
                 </Button>
-              </>
-            ) : (
-              <Button
-                type="button"
-                onClick={() => navigate(withRedirect(ADMIN_ROUTE_PATHS.LOGIN))}
-                className="adminx-auth-back-link h-auto rounded-none px-0 py-0 shadow-none hover:bg-transparent"
-                variant="ghost"
-              >
-                <ArrowRight className="adminx-auth-back-link-icon" />
-                <span>{t('Back to login')}</span>
-              </Button>
-            )}
+              </div>
+            ) : null}
           </div>
-
-          {mode === 'forgot' ? (
-            <div className="adminx-auth-secondary-switch">
-              <Button
-                type="button"
-                onClick={() => navigate(withRedirect(ADMIN_ROUTE_PATHS.REGISTER))}
-                className="adminx-auth-mode-link h-auto rounded-none px-0 py-0 shadow-none hover:bg-transparent"
-                variant="ghost"
-              >
-                {t('Sign Up')}
-              </Button>
-            </div>
-          ) : null}
         </div>
       </div>
     </div>

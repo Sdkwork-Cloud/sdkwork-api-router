@@ -26,9 +26,12 @@ if ([string]::IsNullOrWhiteSpace($RuntimeHome)) {
 }
 
 $runtimeHome = if (Test-Path $RuntimeHome) { (Resolve-Path $RuntimeHome).Path } else { $RuntimeHome }
-$pidFile = Join-Path $runtimeHome 'var\run\router-product-service.pid'
-$stdoutLog = Join-Path $runtimeHome 'var\log\router-product-service.stdout.log'
-$stderrLog = Join-Path $runtimeHome 'var\log\router-product-service.stderr.log'
+$runDirectory = Join-Path $runtimeHome 'var\run'
+$logDirectory = Join-Path $runtimeHome 'var\log'
+$pidFile = Join-Path $runDirectory 'router-product-service.pid'
+$stateFile = Join-Path $runDirectory 'router-product-service.state.env'
+$stdoutLog = Join-Path $logDirectory 'router-product-service.stdout.log'
+$stderrLog = Join-Path $logDirectory 'router-product-service.stderr.log'
 
 if ($DryRun) {
     Write-RouterInfo "would stop router-product-service using pid file $pidFile"
@@ -36,19 +39,15 @@ if ($DryRun) {
 }
 
 if (-not (Test-Path $pidFile)) {
+    Remove-RouterManagedStateFile -StateFile $stateFile
     Write-RouterInfo "pid file not found, nothing to stop: $pidFile"
     return
 }
 
-$pidValue = (Get-Content $pidFile -ErrorAction SilentlyContinue | Select-Object -First 1).Trim()
-if ([string]::IsNullOrWhiteSpace($pidValue)) {
+$pidValue = Get-RouterManagedProcessId -PidFile $pidFile -StateFile $stateFile
+if ($pidValue -le 0) {
     Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
-    Write-RouterInfo "removed empty pid file: $pidFile"
-    return
-}
-
-if (-not (Test-RouterProcessRunning -PidValue $pidValue)) {
-    Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
+    Remove-RouterManagedStateFile -StateFile $stateFile
     Write-RouterInfo "process already stopped, removed stale pid file: $pidFile"
     return
 }
@@ -61,4 +60,5 @@ if (-not $stopped) {
 }
 
 Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
+Remove-RouterManagedStateFile -StateFile $stateFile
 Write-RouterInfo "stopped router-product-service pid=$pidValue"

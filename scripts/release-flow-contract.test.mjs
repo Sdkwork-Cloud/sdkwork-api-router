@@ -59,6 +59,28 @@ test('tauri package scripts stay portable across admin, portal, and console apps
   assert.doesNotMatch(portalPackage.scripts['tauri:build'], /powershell/i);
 });
 
+test('web workspace scripts stay portable across Windows, native Unix, and WSL-mounted worktrees', () => {
+  const adminPackage = JSON.parse(read('apps/sdkwork-router-admin/package.json'));
+  const portalPackage = JSON.parse(read('apps/sdkwork-router-portal/package.json'));
+  const pnpmLaunchLib = read('scripts/dev/pnpm-launch-lib.mjs');
+
+  for (const pkg of [adminPackage, portalPackage]) {
+    assert.match(pkg.scripts.dev, /^vite(?:\s|$)/);
+    assert.match(pkg.scripts.build, /^vite(?:\s|$)/);
+    assert.match(pkg.scripts.typecheck, /^tsc(?:\s|$)/);
+    assert.match(pkg.scripts.preview, /^vite(?:\s|$)/);
+    assert.doesNotMatch(pkg.scripts.dev, /run-frontend-tool/);
+    assert.doesNotMatch(pkg.scripts.build, /run-frontend-tool/);
+    assert.doesNotMatch(pkg.scripts.typecheck, /run-frontend-tool/);
+    assert.doesNotMatch(pkg.scripts.preview, /run-frontend-tool/);
+  }
+
+  assert.match(pnpmLaunchLib, /requiredBinCommands/);
+  assert.match(pnpmLaunchLib, /node_modules', '\.bin'/);
+  assert.match(pnpmLaunchLib, /platform === 'win32'/);
+  assert.match(pnpmLaunchLib, /\.cmd/);
+});
+
 test('desktop tauri configs enable bundling for native release packaging', () => {
   const adminTauriConfig = JSON.parse(read('apps/sdkwork-router-admin/src-tauri/tauri.conf.json'));
   const portalTauriConfig = JSON.parse(read('apps/sdkwork-router-portal/src-tauri/tauri.conf.json'));
@@ -105,6 +127,7 @@ test('release target helpers and desktop release runner resolve explicit target 
   const helperPath = path.join(rootDir, 'scripts', 'release', 'desktop-targets.mjs');
   const runnerPath = path.join(rootDir, 'scripts', 'release', 'run-desktop-release-build.mjs');
   const packagerPath = path.join(rootDir, 'scripts', 'release', 'package-release-assets.mjs');
+  const workspaceTargetDirPath = path.join(rootDir, 'scripts', 'workspace-target-dir.mjs');
 
   assert.equal(existsSync(helperPath), true, 'missing scripts/release/desktop-targets.mjs');
   assert.equal(existsSync(runnerPath), true, 'missing scripts/release/run-desktop-release-build.mjs');
@@ -113,6 +136,7 @@ test('release target helpers and desktop release runner resolve explicit target 
   const helper = await import(pathToFileURL(helperPath).href);
   const runner = await import(pathToFileURL(runnerPath).href);
   const packager = await import(pathToFileURL(packagerPath).href);
+  const workspaceTargetDir = await import(pathToFileURL(workspaceTargetDirPath).href);
 
   assert.equal(typeof helper.parseDesktopTargetTriple, 'function');
   assert.equal(typeof helper.resolveDesktopReleaseTarget, 'function');
@@ -126,6 +150,13 @@ test('release target helpers and desktop release runner resolve explicit target 
   assert.equal(typeof packager.listNativeDesktopAppIds, 'function');
   assert.equal(typeof packager.buildNativeProductServerArchiveBaseName, 'function');
   assert.equal(typeof packager.createTarCommandPlan, 'function');
+  assert.equal(typeof workspaceTargetDir.resolveWorkspaceTargetDir, 'function');
+
+  const expectedWorkspaceTargetDir = workspaceTargetDir.resolveWorkspaceTargetDir({
+    workspaceRoot: rootDir,
+    env: process.env,
+    platform: process.platform,
+  });
 
   assert.deepEqual(
     helper.parseDesktopTargetTriple('aarch64-pc-windows-msvc'),
@@ -240,15 +271,13 @@ test('release target helpers and desktop release runner resolve explicit target 
         'bundle',
       ).replaceAll('\\', '/'),
       path.join(
-        rootDir,
-        'target',
+        expectedWorkspaceTargetDir,
         'x86_64-pc-windows-msvc',
         'release',
         'bundle',
       ).replaceAll('\\', '/'),
       path.join(
-        rootDir,
-        'target',
+        expectedWorkspaceTargetDir,
         'release',
         'bundle',
       ).replaceAll('\\', '/'),

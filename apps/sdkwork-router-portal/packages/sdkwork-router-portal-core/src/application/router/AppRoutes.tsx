@@ -7,58 +7,51 @@ import {
   useNavigate,
   useSearchParams,
 } from 'react-router-dom';
+import { usePortalI18n } from 'sdkwork-router-portal-commons';
 import type {
   PortalDashboardSummary,
   PortalRouteKey,
+  PortalTopLevelRouteKey,
   PortalWorkspaceSummary,
 } from 'sdkwork-router-portal-types';
 
 import { MainLayout } from '../layouts/MainLayout';
+import { PortalSiteLayout } from '../layouts/PortalSiteLayout';
 import { resolvePortalPath } from './routeManifest';
 import { PORTAL_ROUTE_PATHS, toRouteElementPath } from './routePaths';
 
-const PortalAccountPage = lazy(async () => ({
-  default: (await import('sdkwork-router-portal-account')).PortalAccountPage,
-}));
-const PortalApiKeysPage = lazy(async () => ({
-  default: (await import('sdkwork-router-portal-api-keys')).PortalApiKeysPage,
-}));
 const PortalAuthPage = lazy(async () => ({
   default: (await import('sdkwork-router-portal-auth')).AuthPage,
 }));
-const PortalBillingPage = lazy(async () => ({
-  default: (await import('sdkwork-router-portal-billing')).PortalBillingPage,
+const PortalConsoleRoute = lazy(async () => ({
+  default: (await import('sdkwork-router-portal-console')).PortalConsoleRoute,
 }));
-const PortalCreditsPage = lazy(async () => ({
-  default: (await import('sdkwork-router-portal-credits')).PortalCreditsPage,
+const PortalDocsPage = lazy(async () => ({
+  default: (await import('sdkwork-router-portal-docs')).PortalDocsPage,
 }));
-const PortalDashboardPage = lazy(async () => ({
-  default: (await import('sdkwork-router-portal-dashboard')).PortalDashboardPage,
+const PortalDownloadsPage = lazy(async () => ({
+  default: (await import('sdkwork-router-portal-downloads')).PortalDownloadsPage,
 }));
-const PortalGatewayPage = lazy(async () => ({
-  default: (await import('sdkwork-router-portal-gateway')).PortalGatewayPage,
+const PortalHomePage = lazy(async () => ({
+  default: (await import('sdkwork-router-portal-home')).PortalHomePage,
 }));
-const PortalRoutingPage = lazy(async () => ({
-  default: (await import('sdkwork-router-portal-routing')).PortalRoutingPage,
-}));
-const PortalUserPage = lazy(async () => ({
-  default: (await import('sdkwork-router-portal-user')).PortalUserPage,
-}));
-const PortalUsagePage = lazy(async () => ({
-  default: (await import('sdkwork-router-portal-usage')).PortalUsagePage,
+const PortalModelsPage = lazy(async () => ({
+  default: (await import('sdkwork-router-portal-models')).PortalModelsPage,
 }));
 
 function PortalBootScreen({ status }: { status: string }) {
+  const { t } = usePortalI18n();
+
   return (
     <section className="grid min-h-screen place-items-center px-6 py-10">
       <div className="grid w-[min(560px,100%)] gap-4 rounded-[32px] border border-[color:var(--portal-contrast-border)] [background:var(--portal-surface-contrast)] p-8 shadow-[var(--portal-shadow-strong)]">
         <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--portal-text-muted-on-contrast)]">
-          Portal Bootstrap
+          {t('Portal Bootstrap')}
         </p>
         <h1 className="text-4xl font-semibold tracking-tight text-[var(--portal-text-on-contrast)]">
-          Restoring workspace access
+          {t('Restoring workspace access')}
         </h1>
-        <p className="text-sm leading-6 text-[var(--portal-text-muted-on-contrast)]">{status}</p>
+        <p className="text-sm leading-6 text-[var(--portal-text-muted-on-contrast)]">{t(status)}</p>
       </div>
     </section>
   );
@@ -92,6 +85,15 @@ function buildAuthHref(pathname: string, redirectTarget?: string): string {
   return query ? `${pathname}?${query}` : pathname;
 }
 
+function isPublicPortalPath(pathname: string): boolean {
+  return (
+    pathname === PORTAL_ROUTE_PATHS.home ||
+    pathname === PORTAL_ROUTE_PATHS.models ||
+    pathname === PORTAL_ROUTE_PATHS.docs ||
+    pathname === PORTAL_ROUTE_PATHS.downloads
+  );
+}
+
 export function AppRoutes({
   authenticated,
   bootStatus,
@@ -115,41 +117,36 @@ export function AppRoutes({
   const redirectTarget = resolveRedirectTarget(searchParams.get('redirect'));
   const requestedTarget = `${location.pathname}${location.search}`;
 
-  function navigateToRoute(routeKey: Parameters<typeof resolvePortalPath>[0]) {
+  function navigateToRoute(routeKey: PortalRouteKey | PortalTopLevelRouteKey) {
     navigate(resolvePortalPath(routeKey));
   }
 
   function renderProtectedRoute(routeKey: PortalRouteKey) {
     switch (routeKey) {
       case 'gateway':
-        return <PortalGatewayPage onNavigate={navigateToRoute} />;
       case 'dashboard':
+      case 'routing':
+      case 'api-keys':
+      case 'usage':
+      case 'user':
+      case 'credits':
+      case 'recharge':
+      case 'billing':
+      case 'account':
         return (
-          <PortalDashboardPage
-            initialSnapshot={dashboardSnapshot}
+          <PortalConsoleRoute
+            dashboardSnapshot={dashboardSnapshot}
             onNavigate={navigateToRoute}
+            routeKey={routeKey}
+            workspace={workspace}
           />
         );
-      case 'routing':
-        return <PortalRoutingPage onNavigate={navigateToRoute} />;
-      case 'api-keys':
-        return <PortalApiKeysPage onNavigate={navigateToRoute} />;
-      case 'usage':
-        return <PortalUsagePage onNavigate={navigateToRoute} />;
-      case 'user':
-        return <PortalUserPage onNavigate={navigateToRoute} workspace={workspace} />;
-      case 'credits':
-        return <PortalCreditsPage onNavigate={navigateToRoute} />;
-      case 'billing':
-        return <PortalBillingPage onNavigate={navigateToRoute} />;
-      case 'account':
-        return <PortalAccountPage onNavigate={navigateToRoute} workspace={workspace} />;
       default:
         return null;
     }
   }
 
-  if (!bootstrapped) {
+  if (!bootstrapped && !isPublicPortalPath(location.pathname)) {
     return <PortalBootScreen status={bootStatus} />;
   }
 
@@ -158,12 +155,35 @@ export function AppRoutes({
       <Routes>
         <Route
           element={
-            <Navigate
-              replace
-              to={authenticated ? PORTAL_ROUTE_PATHS.dashboard : PORTAL_ROUTE_PATHS.login}
-            />
+            <PortalSiteLayout>
+              <PortalHomePage />
+            </PortalSiteLayout>
           }
           path=""
+        />
+        <Route
+          element={
+            <PortalSiteLayout>
+              <PortalModelsPage />
+            </PortalSiteLayout>
+          }
+          path={toRouteElementPath(PORTAL_ROUTE_PATHS.models)}
+        />
+        <Route
+          element={
+            <PortalSiteLayout>
+              <PortalDocsPage />
+            </PortalSiteLayout>
+          }
+          path={toRouteElementPath(PORTAL_ROUTE_PATHS.docs)}
+        />
+        <Route
+          element={
+            <PortalSiteLayout>
+              <PortalDownloadsPage />
+            </PortalSiteLayout>
+          }
+          path={toRouteElementPath(PORTAL_ROUTE_PATHS.downloads)}
         />
         <Route
           element={
@@ -207,6 +227,19 @@ export function AppRoutes({
           }
           path={toRouteElementPath(PORTAL_ROUTE_PATHS['forgot-password'])}
         />
+        <Route
+          element={
+            <Navigate
+              replace
+              to={
+                authenticated
+                  ? PORTAL_ROUTE_PATHS.dashboard
+                  : buildAuthHref(PORTAL_ROUTE_PATHS.login, PORTAL_ROUTE_PATHS.dashboard)
+              }
+            />
+          }
+          path={toRouteElementPath(PORTAL_ROUTE_PATHS.console)}
+        />
         {(
           [
             'gateway',
@@ -216,6 +249,7 @@ export function AppRoutes({
             'usage',
             'user',
             'credits',
+            'recharge',
             'billing',
             'account',
           ] as PortalRouteKey[]
@@ -241,7 +275,7 @@ export function AppRoutes({
           element={
             <Navigate
               replace
-              to={authenticated ? PORTAL_ROUTE_PATHS.dashboard : PORTAL_ROUTE_PATHS.login}
+              to={PORTAL_ROUTE_PATHS.home}
             />
           }
           path="*"

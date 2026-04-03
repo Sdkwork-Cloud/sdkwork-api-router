@@ -7,23 +7,23 @@ export const PORTAL_DEFAULT_SIDEBAR_WIDTH = 252;
 export const PORTAL_MIN_SIDEBAR_WIDTH = 220;
 export const PORTAL_MAX_SIDEBAR_WIDTH = 360;
 
-export const PORTAL_THEME_MODE_OPTIONS: Array<{ id: PortalThemeMode; label: string }> = [
-  { id: 'light', label: 'Light' },
-  { id: 'dark', label: 'Dark' },
-  { id: 'system', label: 'System' },
+export const PORTAL_THEME_MODE_OPTIONS: Array<{ id: PortalThemeMode; labelKey: string }> = [
+  { id: 'light', labelKey: 'Light' },
+  { id: 'dark', labelKey: 'Dark' },
+  { id: 'system', labelKey: 'System' },
 ];
 
 export const PORTAL_THEME_COLOR_OPTIONS: Array<{
   id: PortalThemeColor;
-  label: string;
+  labelKey: string;
   previewClassName: string;
 }> = [
-  { id: 'tech-blue', label: 'Tech Blue', previewClassName: 'bg-sky-500' },
-  { id: 'lobster', label: 'Lobster', previewClassName: 'bg-red-500' },
-  { id: 'green-tech', label: 'Green Tech', previewClassName: 'bg-emerald-500' },
-  { id: 'zinc', label: 'Zinc', previewClassName: 'bg-zinc-500' },
-  { id: 'violet', label: 'Violet', previewClassName: 'bg-violet-500' },
-  { id: 'rose', label: 'Rose', previewClassName: 'bg-rose-500' },
+  { id: 'tech-blue', labelKey: 'Tech Blue', previewClassName: 'bg-sky-500' },
+  { id: 'lobster', labelKey: 'Lobster', previewClassName: 'bg-red-500' },
+  { id: 'green-tech', labelKey: 'Green Tech', previewClassName: 'bg-emerald-500' },
+  { id: 'zinc', labelKey: 'Zinc', previewClassName: 'bg-zinc-500' },
+  { id: 'violet', labelKey: 'Violet', previewClassName: 'bg-violet-500' },
+  { id: 'rose', labelKey: 'Rose', previewClassName: 'bg-rose-500' },
 ];
 
 export function clampSidebarWidth(width: number): number {

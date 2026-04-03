@@ -1,10 +1,15 @@
-import type { ComponentType } from 'react';
 import { Check, Laptop, Moon, Sun } from 'lucide-react';
+import {
+  Badge,
+  Button,
+  FormGrid,
+  FormSection,
+  SettingsField,
+} from '@sdkwork/ui-pc-react';
 
-import { Button, useAdminI18n } from 'sdkwork-router-admin-commons';
-import { useAdminAppStore } from 'sdkwork-router-admin-core';
+import { useAdminAppStore, useAdminI18n } from 'sdkwork-router-admin-core';
 
-import { SettingsSection } from './Shared';
+import { SettingsBadge, SettingsChoiceButton, SettingsSummaryCard } from './Shared';
 
 const THEME_COLORS = [
   { id: 'tech-blue', label: 'tech-blue', colorClass: 'bg-sky-500' },
@@ -15,134 +20,88 @@ const THEME_COLORS = [
   { id: 'rose', label: 'rose', colorClass: 'bg-rose-500' },
 ] as const;
 
-function ThemeModeCard({
-  active,
-  description,
-  icon: Icon,
-  label,
-  onClick,
-}: {
-  active: boolean;
-  description: string;
-  icon: ComponentType<{ className?: string }>;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <Button
-      type="button"
-      onClick={onClick}
-      className={`h-auto w-full flex-col items-center justify-center gap-3 whitespace-normal rounded-xl border-2 p-4 text-center shadow-none ${
-        active
-          ? 'border-primary-500 bg-primary-50/50 dark:bg-primary-500/10'
-          : 'border-zinc-200 bg-white hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-zinc-700'
-      }`}
-      variant="ghost"
-    >
-      <Icon
-        className={`h-6 w-6 ${
-          active ? 'text-primary-500 dark:text-primary-400' : 'text-zinc-500 dark:text-zinc-400'
-        }`}
-      />
-      <span
-        className={`text-sm font-medium ${
-          active
-            ? 'text-primary-700 dark:text-primary-300'
-            : 'text-zinc-700 dark:text-zinc-300'
-        }`}
-      >
-        {label}
-      </span>
-      <span className="text-center text-xs leading-6 text-zinc-500 dark:text-zinc-400">
-        {description}
-      </span>
-    </Button>
-  );
-}
-
 export function AppearanceSettings() {
   const { setThemeColor, setThemeMode, themeColor, themeMode } = useAdminAppStore();
   const { t } = useAdminI18n();
 
   return (
     <div className="space-y-8">
-      <div>
-        <h2 className="mb-1 text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
-          {t('Appearance')}
-        </h2>
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">
-          {t('Theme mode and accent color stay synchronized across header, sidebar, and page surfaces.')}
-        </p>
-      </div>
+      <FormSection
+        actions={<SettingsBadge variant="secondary">{t('Theme posture')}</SettingsBadge>}
+        description={t('Choose how the shell follows light, dark, or system appearance.')}
+        title={t('Theme mode')}
+      >
+        <FormGrid columns={3}>
+          <SettingsChoiceButton
+            active={themeMode === 'light'}
+            description={t('Bright shell with frosted content panes.')}
+            icon={Sun}
+            label={t('Light')}
+            onClick={() => setThemeMode('light')}
+          />
+          <SettingsChoiceButton
+            active={themeMode === 'dark'}
+            description={t('Claw-style low-glare shell with higher contrast.')}
+            icon={Moon}
+            label={t('Dark')}
+            onClick={() => setThemeMode('dark')}
+          />
+          <SettingsChoiceButton
+            active={themeMode === 'system'}
+            description={t('Follow the device preference automatically.')}
+            icon={Laptop}
+            label={t('System')}
+            onClick={() => setThemeMode('system')}
+          />
+        </FormGrid>
+      </FormSection>
 
-      <div className="space-y-6">
-        <SettingsSection
-          eyebrow={t('Appearance')}
-          title={t('Theme mode')}
-          description={t('Choose how the shell follows light, dark, or system appearance.')}
+      <FormSection
+        actions={<SettingsBadge variant="outline">{t('Accent')}</SettingsBadge>}
+        description={t('Theme color updates accent surfaces without changing the shell contract.')}
+        title={t('Theme color')}
+      >
+        <SettingsField
+          description={t('Accent preset')}
+          label={t('Theme color')}
+          layout="vertical"
         >
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <ThemeModeCard
-              active={themeMode === 'light'}
-              description={t('Bright shell with frosted content panes.')}
-              icon={Sun}
-              label={t('Light')}
-              onClick={() => setThemeMode('light')}
-            />
-            <ThemeModeCard
-              active={themeMode === 'dark'}
-              description={t('Claw-style low-glare shell with higher contrast.')}
-              icon={Moon}
-              label={t('Dark')}
-              onClick={() => setThemeMode('dark')}
-            />
-            <ThemeModeCard
-              active={themeMode === 'system'}
-              description={t('Follow the device preference automatically.')}
-              icon={Laptop}
-              label={t('System')}
-              onClick={() => setThemeMode('system')}
-            />
-          </div>
-        </SettingsSection>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {THEME_COLORS.map((color) => {
+              const active = themeColor === color.id;
 
-        <SettingsSection
-          eyebrow={t('Accent')}
-          title={t('Theme color')}
-          description={t('Theme color updates accent surfaces without changing the claw-style shell contract.')}
-        >
-          <div className="flex flex-wrap gap-4">
-            {THEME_COLORS.map((color) => (
-              <Button
-                key={color.id}
-                type="button"
-                onClick={() => setThemeColor(color.id)}
-                className="group relative h-auto flex-col items-center gap-2 whitespace-normal rounded-none p-0 shadow-none hover:bg-transparent"
-                variant="ghost"
-              >
-                <div
-                  className={`flex h-10 w-10 items-center justify-center rounded-full ${color.colorClass} shadow-sm ring-2 ring-offset-2 transition-all dark:ring-offset-zinc-950 ${
-                    themeColor === color.id
-                      ? 'scale-110 ring-zinc-900 dark:ring-zinc-100'
-                      : 'ring-transparent hover:scale-105'
-                  }`}
+              return (
+                <Button
+                  className="h-auto justify-start px-4 py-4"
+                  key={color.id}
+                  onClick={() => setThemeColor(color.id)}
+                  type="button"
+                  variant={active ? 'primary' : 'outline'}
                 >
-                  {themeColor === color.id ? <Check className="h-5 w-5 text-white" /> : null}
-                </div>
-                <span
-                  className={`text-xs font-medium ${
-                    themeColor === color.id
-                      ? 'text-zinc-900 dark:text-zinc-100'
-                      : 'text-zinc-500 group-hover:text-zinc-700 dark:text-zinc-400 dark:group-hover:text-zinc-300'
-                  }`}
-                >
-                  {t(color.label)}
-                </span>
-              </Button>
-            ))}
+                  <span className="flex w-full items-center gap-3">
+                    <span
+                      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${color.colorClass}`}
+                    >
+                      {active ? <Check className="h-4 w-4 text-white" /> : null}
+                    </span>
+                    <span className="flex min-w-0 flex-1 flex-col items-start text-left">
+                      <span className="text-sm font-semibold">{t(color.label)}</span>
+                      <span className="text-xs font-normal opacity-80">
+                        {t('Accent preset')}
+                      </span>
+                    </span>
+                  </span>
+                </Button>
+              );
+            })}
           </div>
-        </SettingsSection>
-      </div>
+        </SettingsField>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <SettingsSummaryCard label={t('Theme mode')} value={t(themeMode)} />
+          <SettingsSummaryCard label={t('Theme color')} value={t(themeColor)} />
+        </div>
+      </FormSection>
     </div>
   );
 }

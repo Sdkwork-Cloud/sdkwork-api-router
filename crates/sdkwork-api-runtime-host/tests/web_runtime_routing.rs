@@ -117,10 +117,10 @@ fn resolve_static_asset_maps_hashed_assets_and_rejects_traversal() {
 }
 
 #[test]
-fn local_defaults_bind_pingora_for_public_access() {
-    let config = RuntimeHostConfig::local_defaults("0.0.0.0:3001");
+fn local_defaults_bind_public_web_host_with_9980_series_upstreams() {
+    let config = RuntimeHostConfig::local_defaults("0.0.0.0:9983");
 
-    assert_eq!(config.bind_addr, "0.0.0.0:3001");
+    assert_eq!(config.bind_addr, "0.0.0.0:9983");
     assert_eq!(
         config.admin_site_dir,
         PathBuf::from("apps/sdkwork-router-admin/dist")
@@ -129,4 +129,7 @@ fn local_defaults_bind_pingora_for_public_access() {
         config.portal_site_dir,
         PathBuf::from("apps/sdkwork-router-portal/dist")
     );
+    assert_eq!(config.admin_upstream, "127.0.0.1:9981");
+    assert_eq!(config.portal_upstream, "127.0.0.1:9982");
+    assert_eq!(config.gateway_upstream, "127.0.0.1:9980");
 }

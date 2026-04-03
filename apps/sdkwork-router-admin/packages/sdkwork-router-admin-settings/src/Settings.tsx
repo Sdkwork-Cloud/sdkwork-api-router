@@ -1,51 +1,66 @@
-import { LayoutPanelLeft, Monitor, PanelsTopLeft, ShieldCheck } from 'lucide-react';
-import { motion } from 'motion/react';
-import { useEffect, useMemo, useState } from 'react';
+import {
+  startTransition,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
+import {
+  LayoutPanelLeft,
+  Monitor,
+  PanelsTopLeft,
+  ShieldCheck,
+} from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
+import {
+  Badge,
+  Button,
+  InlineAlert,
+  SettingsCenter,
+  type SettingsCenterSection,
+} from '@sdkwork/ui-pc-react';
 
-import { SearchInput, useAdminI18n } from 'sdkwork-router-admin-commons';
+import { useAdminI18n } from 'sdkwork-router-admin-core';
 
 import { AppearanceSettings } from './AppearanceSettings';
 import { GeneralSettings } from './GeneralSettings';
 import { NavigationSettings } from './NavigationSettings';
-import { SettingsNavButton } from './Shared';
+import { SettingsBadge } from './Shared';
 import { WorkspaceSettings } from './WorkspaceSettings';
 
-const SETTINGS_TABS = [
-  {
-    id: 'general',
-    label: 'General',
-    icon: ShieldCheck,
-    keywords: 'workspace operator language',
-  },
-  {
-    id: 'appearance',
-    label: 'Appearance',
-    icon: Monitor,
-    keywords: 'theme mode theme color',
-  },
-  {
-    id: 'navigation',
-    label: 'Navigation',
-    icon: LayoutPanelLeft,
-    keywords: 'sidebar visibility routing',
-  },
-  {
-    id: 'workspace',
-    label: 'Workspace',
-    icon: PanelsTopLeft,
-    keywords: 'persistence canvas locale',
-  },
-] as const;
+type SettingsTab = 'general' | 'appearance' | 'navigation' | 'workspace';
 
-type SettingsTab = (typeof SETTINGS_TABS)[number]['id'];
+type SettingsItemDefinition = {
+  description: string;
+  group: string;
+  icon: typeof ShieldCheck;
+  id: SettingsTab;
+  keywords: string[];
+  label: string;
+};
 
 function resolveTab(requestedTab: string | null): SettingsTab {
-  if (SETTINGS_TABS.some((tab) => tab.id === requestedTab)) {
-    return requestedTab as SettingsTab;
+  if (
+    requestedTab === 'general'
+    || requestedTab === 'appearance'
+    || requestedTab === 'navigation'
+    || requestedTab === 'workspace'
+  ) {
+    return requestedTab;
   }
 
   return 'general';
+}
+
+function itemMatchesQuery(item: SettingsItemDefinition, query: string) {
+  if (!query) {
+    return true;
+  }
+
+  return [item.label, item.description, item.group, ...item.keywords]
+    .join(' ')
+    .toLowerCase()
+    .includes(query);
 }
 
 export function SettingsPage() {
@@ -53,23 +68,99 @@ export function SettingsPage() {
   const [search, setSearch] = useState('');
   const { t } = useAdminI18n();
   const activeTab = resolveTab(searchParams.get('tab'));
+  const deferredSearch = useDeferredValue(search.trim().toLowerCase());
 
-  const filteredTabs = useMemo(
+  const items = useMemo<SettingsItemDefinition[]>(
+    () => [
+      {
+        id: 'general',
+        label: t('General'),
+        description: t('Operator identity, locale, and shell posture summary'),
+        icon: ShieldCheck,
+        group: t('Workspace'),
+        keywords: ['workspace', 'operator', 'language', 'summary'],
+      },
+      {
+        id: 'appearance',
+        label: t('Appearance'),
+        description: t('Theme mode, accent preset, and shared shell look'),
+        icon: Monitor,
+        group: t('Shell'),
+        keywords: ['theme', 'color', 'mode', 'appearance'],
+      },
+      {
+        id: 'navigation',
+        label: t('Navigation'),
+        description: t('Sidebar visibility, rail behavior, and module exposure'),
+        icon: LayoutPanelLeft,
+        group: t('Shell'),
+        keywords: ['sidebar', 'navigation', 'routes', 'rail'],
+      },
+      {
+        id: 'workspace',
+        label: t('Workspace'),
+        description: t('Persistence, content region, and shell continuity'),
+        icon: PanelsTopLeft,
+        group: t('Workspace'),
+        keywords: ['workspace', 'persistence', 'canvas', 'continuity'],
+      },
+    ],
+    [t],
+  );
+
+  const visibleItemIds = useMemo(
     () =>
-      SETTINGS_TABS.filter((tab) => {
-        const haystack = `${tab.label} ${tab.keywords}`.toLowerCase();
-        return haystack.includes(search.toLowerCase());
-      }),
-    [search],
+      items
+        .filter((item) => itemMatchesQuery(item, deferredSearch))
+        .map((item) => item.id),
+    [deferredSearch, items],
   );
 
   useEffect(() => {
-    if (filteredTabs.length && !filteredTabs.some((tab) => tab.id === activeTab)) {
-      const nextSearchParams = new URLSearchParams(searchParams);
-      nextSearchParams.set('tab', filteredTabs[0].id);
-      setSearchParams(nextSearchParams, { replace: true });
+    if (!visibleItemIds.length || visibleItemIds.includes(activeTab)) {
+      return;
     }
-  }, [activeTab, filteredTabs, searchParams, setSearchParams]);
+
+    const nextSearchParams = new URLSearchParams(searchParams);
+    nextSearchParams.set('tab', visibleItemIds[0]);
+    startTransition(() => {
+      setSearchParams(nextSearchParams, { replace: true });
+    });
+  }, [activeTab, searchParams, setSearchParams, visibleItemIds]);
+
+  const sections = useMemo<SettingsCenterSection[]>(
+    () => [
+      {
+        title: t('Control plane'),
+        items: items
+          .filter((item) => item.group === t('Workspace'))
+          .map((item) => ({
+            id: item.id,
+            label: item.label,
+            description: item.description,
+            keywords: item.keywords,
+            icon: <item.icon className="h-4 w-4" />,
+            badge:
+              item.id === activeTab ? (
+                <SettingsBadge variant="secondary">{t('Live')}</SettingsBadge>
+              ) : undefined,
+          })),
+      },
+      {
+        title: t('Shell'),
+        items: items
+          .filter((item) => item.group === t('Shell'))
+          .map((item) => ({
+            id: item.id,
+            label: item.label,
+            description: item.description,
+            keywords: item.keywords,
+            icon: <item.icon className="h-4 w-4" />,
+          })),
+      },
+    ],
+    [activeTab, items, t],
+  );
 
   const renderActivePanel = () => {
     switch (activeTab) {
@@ -86,62 +177,66 @@ export function SettingsPage() {
   };
 
   return (
-    <div className="flex h-full bg-zinc-50/50 dark:bg-zinc-950/50">
-      <div className="flex w-72 shrink-0 flex-col border-r border-zinc-200 bg-zinc-50/80 backdrop-blur-xl dark:border-zinc-800 dark:bg-zinc-900/80">
-        <div className="p-6 pb-4">
-          <h1 className="mb-6 text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
-            {t('Settings')}
-          </h1>
-          <SearchInput
-            placeholder={t('Search settings')}
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            inputClassName="h-10 pr-4 text-[13px]"
-          />
+    <SettingsCenter
+      actions={
+        <div className="flex items-center gap-2">
+          <SettingsBadge variant="secondary">{t('settings center')}</SettingsBadge>
+          {search ? (
+            <Button onClick={() => setSearch('')} type="button" variant="ghost">
+              {t('Clear filters')}
+            </Button>
+          ) : null}
         </div>
-
-        <nav className="scrollbar-hide flex-1 space-y-1.5 overflow-y-auto px-4 pb-6">
-          {filteredTabs.length ? (
-            filteredTabs.map((tab) => {
-              const Icon = tab.icon;
-
-              return (
-                // data-settings-tab is applied by SettingsNavButton so the left-nav shell stays query-driven.
-                <SettingsNavButton
-                  key={tab.id}
-                  tabId={tab.id}
-                  active={activeTab === tab.id}
-                  icon={Icon}
-                  label={t(tab.label)}
-                  onClick={() => {
-                    const nextSearchParams = new URLSearchParams(searchParams);
-                    nextSearchParams.set('tab', tab.id);
-                    setSearchParams(nextSearchParams, { replace: true });
-                  }}
-                />
-              );
-            })
-          ) : (
-            <div className="px-3 py-4 text-center text-sm text-zinc-500 dark:text-zinc-400">
-              {t('No settings sections match the current filter.')}
-            </div>
+      }
+      activeItem={activeTab}
+      description={t(
+        'This workspace keeps operator preferences, shell posture, and control plane continuity aligned with claw-studio while preserving router-admin workflows.',
+      )}
+      emptyState={
+        <InlineAlert
+          description={t('Try a different keyword or browse the navigation without a search term.')}
+          showIcon
+          title={t('No settings match your search')}
+          tone="warning"
+        />
+      }
+      navFooter={
+        <InlineAlert
+          description={t(
+            'The left rail remains the navigation source of truth and the right canvas remains the only content display region for every admin page.',
           )}
-        </nav>
-      </div>
-
-      <div className="scrollbar-hide flex-1 overflow-x-hidden overflow-y-auto">
-        <div className="mx-auto w-full max-w-5xl p-8 md:p-12">
-          <motion.div
-            key={activeTab}
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.2 }}
-            className="w-full"
-          >
-            {renderActivePanel()}
-          </motion.div>
+          showIcon
+          title={t('Shell continuity')}
+          tone="info"
+        />
+      }
+      navHeader={
+        <div className="space-y-3">
+          <SettingsBadge variant="outline">{t('Control plane')}</SettingsBadge>
+          <div className="space-y-1">
+            <div className="text-base font-semibold text-[var(--sdk-color-text-primary)]">
+              {t('control plane settings center')}
+            </div>
+            <div className="text-sm text-[var(--sdk-color-text-secondary)]">
+              {t('Search and switch settings without leaving the shared desktop shell.')}
+            </div>
+          </div>
         </div>
-      </div>
-    </div>
+      }
+      onActiveItemChange={(itemId) => {
+        const nextSearchParams = new URLSearchParams(searchParams);
+        nextSearchParams.set('tab', itemId);
+        startTransition(() => {
+          setSearchParams(nextSearchParams, { replace: true });
+        });
+      }}
+      onSearchChange={setSearch}
+      searchPlaceholder={t('Search settings')}
+      searchValue={search}
+      sections={sections}
+      title={t('Settings center')}
+    >
+      {renderActivePanel()}
+    </SettingsCenter>
   );
 }

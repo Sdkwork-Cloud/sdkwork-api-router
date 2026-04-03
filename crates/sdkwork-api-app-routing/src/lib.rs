@@ -9,11 +9,16 @@ use sdkwork_api_app_extension::{
 };
 use sdkwork_api_domain_catalog::ProxyProvider;
 use sdkwork_api_domain_routing::{
-    select_policy, ProjectRoutingPreferences, ProviderHealthSnapshot, RoutingCandidateAssessment,
-    RoutingCandidateHealth, RoutingDecision, RoutingDecisionLog, RoutingDecisionSource,
-    RoutingPolicy, RoutingStrategy,
+    select_policy, CompiledRoutingSnapshotRecord, ProjectRoutingPreferences,
+    ProviderHealthSnapshot, RoutingCandidateAssessment, RoutingCandidateHealth, RoutingDecision,
+    RoutingDecisionLog, RoutingDecisionSource, RoutingPolicy, RoutingProfileRecord,
+    RoutingStrategy,
 };
 use sdkwork_api_extension_core::{ExtensionInstallation, ExtensionInstance};
+use sdkwork_api_policy_routing::{
+    builtin_routing_strategy_registry, RoutingStrategyExecutionInput,
+    RoutingStrategyExecutionResult,
+};
 use sdkwork_api_storage_core::AdminStore;
 use serde_json::Value;
 
@@ -38,11 +43,29 @@ pub struct CreateRoutingPolicyInput<'a> {
     pub require_healthy: bool,
 }
 
+pub struct CreateRoutingProfileInput<'a> {
+    pub profile_id: &'a str,
+    pub tenant_id: &'a str,
+    pub project_id: &'a str,
+    pub name: &'a str,
+    pub slug: &'a str,
+    pub description: Option<&'a str>,
+    pub active: bool,
+    pub strategy: Option<RoutingStrategy>,
+    pub ordered_provider_ids: &'a [String],
+    pub default_provider_id: Option<&'a str>,
+    pub max_cost: Option<f64>,
+    pub max_latency_ms: Option<u64>,
+    pub require_healthy: bool,
+    pub preferred_region: Option<&'a str>,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct RouteSelectionContext<'a> {
     pub decision_source: RoutingDecisionSource,
     pub tenant_id: Option<&'a str>,
     pub project_id: Option<&'a str>,
+    pub api_key_group_id: Option<&'a str>,
     pub requested_region: Option<&'a str>,
     pub selection_seed: Option<u64>,
 }
@@ -53,6 +76,7 @@ impl<'a> RouteSelectionContext<'a> {
             decision_source,
             tenant_id: None,
             project_id: None,
+            api_key_group_id: None,
             requested_region: None,
             selection_seed: None,
         }
@@ -65,6 +89,11 @@ impl<'a> RouteSelectionContext<'a> {
 
     pub fn with_project_id_option(mut self, project_id: Option<&'a str>) -> Self {
         self.project_id = project_id;
+        self
+    }
+
+    pub fn with_api_key_group_id_option(mut self, api_key_group_id: Option<&'a str>) -> Self {
+        self.api_key_group_id = api_key_group_id;
         self
     }
 
@@ -136,6 +165,68 @@ pub async fn list_routing_policies(store: &dyn AdminStore) -> Result<Vec<Routing
     store.list_routing_policies().await
 }
 
+pub fn create_routing_profile(
+    input: CreateRoutingProfileInput<'_>,
+) -> Result<RoutingProfileRecord> {
+    ensure!(
+        !input.profile_id.trim().is_empty(),
+        "profile_id must not be empty"
+    );
+    ensure!(
+        !input.tenant_id.trim().is_empty(),
+        "tenant_id must not be empty"
+    );
+    ensure!(
+        !input.project_id.trim().is_empty(),
+        "project_id must not be empty"
+    );
+    ensure!(!input.name.trim().is_empty(), "name must not be empty");
+    ensure!(!input.slug.trim().is_empty(), "slug must not be empty");
+
+    let now = current_time_millis();
+    let profile = RoutingProfileRecord::new(
+        input.profile_id.trim(),
+        input.tenant_id.trim(),
+        input.project_id.trim(),
+        input.name.trim(),
+        input.slug.trim(),
+    )
+    .with_description_option(normalize_optional_text(input.description))
+    .with_active(input.active)
+    .with_strategy(
+        input
+            .strategy
+            .unwrap_or(RoutingStrategy::DeterministicPriority),
+    )
+    .with_ordered_provider_ids(input.ordered_provider_ids.to_vec())
+    .with_default_provider_id_option(normalize_optional_text(input.default_provider_id))
+    .with_max_cost_option(input.max_cost)
+    .with_max_latency_ms_option(input.max_latency_ms)
+    .with_require_healthy(input.require_healthy)
+    .with_preferred_region_option(normalize_optional_text(input.preferred_region))
+    .with_created_at_ms(now)
+    .with_updated_at_ms(now);
+
+    Ok(profile)
+}
+
+pub async fn persist_routing_profile(
+    store: &dyn AdminStore,
+    profile: &RoutingProfileRecord,
+) -> Result<RoutingProfileRecord> {
+    store.insert_routing_profile(profile).await
+}
+
+pub async fn list_routing_profiles(store: &dyn AdminStore) -> Result<Vec<RoutingProfileRecord>> {
+    store.list_routing_profiles().await
+}
+
+pub async fn list_compiled_routing_snapshots(
+    store: &dyn AdminStore,
+) -> Result<Vec<CompiledRoutingSnapshotRecord>> {
+    store.list_compiled_routing_snapshots().await
+}
+
 pub async fn list_routing_decision_logs(store: &dyn AdminStore) -> Result<Vec<RoutingDecisionLog>> {
     store.list_routing_decision_logs().await
 }
@@ -185,7 +276,9 @@ pub async fn simulate_route_with_store_selection_context(
         store,
         capability,
         model,
+        context.tenant_id,
         context.project_id,
+        context.api_key_group_id,
         normalize_region_option(context.requested_region),
         context.selection_seed,
     )
@@ -236,9 +329,13 @@ pub async fn select_route_with_store_context(
     )
     .with_tenant_id_option(context.tenant_id.map(ToOwned::to_owned))
     .with_project_id_option(context.project_id.map(ToOwned::to_owned))
+    .with_api_key_group_id_option(context.api_key_group_id.map(ToOwned::to_owned))
     .with_matched_policy_id_option(decision.matched_policy_id.clone())
+    .with_applied_routing_profile_id_option(decision.applied_routing_profile_id.clone())
+    .with_compiled_routing_snapshot_id_option(decision.compiled_routing_snapshot_id.clone())
     .with_selection_seed_option(context.selection_seed.or(decision.selection_seed))
     .with_selection_reason_option(decision.selection_reason.clone())
+    .with_fallback_reason_option(decision.fallback_reason.clone())
     .with_requested_region_option(decision.requested_region.clone())
     .with_slo_state(decision.slo_applied, decision.slo_degraded)
     .with_assessments(decision.assessments.clone());
@@ -250,7 +347,9 @@ async fn simulate_route_with_store_inner(
     store: &dyn AdminStore,
     capability: &str,
     model: &str,
+    tenant_id: Option<&str>,
     project_id: Option<&str>,
+    api_key_group_id: Option<&str>,
     requested_region: Option<String>,
     selection_seed: Option<u64>,
 ) -> Result<RoutingDecision> {
@@ -258,7 +357,13 @@ async fn simulate_route_with_store_inner(
         Some(project_id) => store.find_project_routing_preferences(project_id).await?,
         None => None,
     };
+    let applied_routing_profile =
+        load_group_routing_profile(store, tenant_id, project_id, api_key_group_id).await?;
+    let applied_routing_profile_id = applied_routing_profile
+        .as_ref()
+        .map(|profile| profile.profile_id.clone());
     let requested_region = requested_region
+        .or_else(|| preferred_region_from_routing_profile(applied_routing_profile.as_ref()))
         .or_else(|| preferred_region_from_preferences(project_preferences.as_ref()));
 
     let mut model_candidate_ids: Vec<String> = store
@@ -276,6 +381,7 @@ async fn simulate_route_with_store_inner(
     let effective_policy = effective_routing_policy(
         matched_policy,
         project_preferences.as_ref(),
+        applied_routing_profile.as_ref(),
         capability,
         model,
     );
@@ -300,13 +406,55 @@ async fn simulate_route_with_store_inner(
                 .collect::<Vec<_>>();
 
             if candidate_ids.is_empty() {
+                let compiled_snapshot_id = persist_compiled_routing_snapshot(
+                    store,
+                    capability,
+                    model,
+                    tenant_id,
+                    project_id,
+                    api_key_group_id,
+                    matched_policy,
+                    project_preferences.as_ref(),
+                    applied_routing_profile_id.as_deref(),
+                    effective_policy.as_ref(),
+                    requested_region.as_deref(),
+                    STRATEGY_STATIC_FALLBACK,
+                    &[],
+                )
+                .await?;
                 return Ok(simulate_route(capability, model)?
+                    .with_applied_routing_profile_id_option(applied_routing_profile_id.clone())
+                    .with_compiled_routing_snapshot_id(compiled_snapshot_id)
+                    .with_fallback_reason(
+                        "no catalog-backed or policy-backed candidates were available",
+                    )
                     .with_requested_region_option(requested_region.clone()));
             }
 
             candidate_ids
         } else {
+            let compiled_snapshot_id = persist_compiled_routing_snapshot(
+                store,
+                capability,
+                model,
+                tenant_id,
+                project_id,
+                api_key_group_id,
+                matched_policy,
+                project_preferences.as_ref(),
+                applied_routing_profile_id.as_deref(),
+                effective_policy.as_ref(),
+                requested_region.as_deref(),
+                STRATEGY_STATIC_FALLBACK,
+                &[],
+            )
+            .await?;
             return Ok(simulate_route(capability, model)?
+                .with_applied_routing_profile_id_option(applied_routing_profile_id.clone())
+                .with_compiled_routing_snapshot_id(compiled_snapshot_id)
+                .with_fallback_reason(
+                    "no catalog-backed or policy-backed candidates were available",
+                )
                 .with_requested_region_option(requested_region.clone()));
         }
     } else {
@@ -315,6 +463,23 @@ async fn simulate_route_with_store_inner(
             None => model_candidate_ids,
         }
     };
+
+    let compiled_routing_snapshot_id = persist_compiled_routing_snapshot(
+        store,
+        capability,
+        model,
+        tenant_id,
+        project_id,
+        api_key_group_id,
+        matched_policy,
+        project_preferences.as_ref(),
+        applied_routing_profile_id.as_deref(),
+        effective_policy.as_ref(),
+        requested_region.as_deref(),
+        resolved_compiled_snapshot_strategy(effective_policy.as_ref()),
+        &candidate_ids,
+    )
+    .await?;
 
     let installations = store.list_extension_installations().await?;
     let installations_by_id = installations
@@ -353,8 +518,17 @@ async fn simulate_route_with_store_inner(
         requested_region.as_deref(),
         selection_seed,
     );
+    let CandidateSelection {
+        selected_index,
+        strategy,
+        selection_seed,
+        selection_reason,
+        fallback_reason,
+        slo_applied,
+        slo_degraded,
+    } = selection;
     let selected = assessments
-        .get(selection.selected_index)
+        .get(selected_index)
         .map(|assessment| assessment.provider_id.clone())
         .unwrap_or_else(|| candidate_ids[0].clone());
 
@@ -364,12 +538,15 @@ async fn simulate_route_with_store_inner(
         .collect::<Vec<_>>();
 
     let mut decision = RoutingDecision::new(selected, ranked_candidate_ids)
-        .with_strategy(selection.strategy)
-        .with_selection_reason(selection.selection_reason)
+        .with_applied_routing_profile_id_option(applied_routing_profile_id)
+        .with_compiled_routing_snapshot_id(compiled_routing_snapshot_id)
+        .with_strategy(strategy)
+        .with_selection_reason(selection_reason)
+        .with_fallback_reason_option(fallback_reason)
         .with_requested_region_option(requested_region)
-        .with_slo_state(selection.slo_applied, selection.slo_degraded)
+        .with_slo_state(slo_applied, slo_degraded)
         .with_assessments(assessments);
-    if let Some(selection_seed) = selection.selection_seed {
+    if let Some(selection_seed) = selection_seed {
         decision = decision.with_selection_seed(selection_seed);
     }
     Ok(match matched_policy {
@@ -378,36 +555,188 @@ async fn simulate_route_with_store_inner(
     })
 }
 
+async fn load_group_routing_profile(
+    store: &dyn AdminStore,
+    tenant_id: Option<&str>,
+    project_id: Option<&str>,
+    api_key_group_id: Option<&str>,
+) -> Result<Option<RoutingProfileRecord>> {
+    let Some(group_id) = api_key_group_id else {
+        return Ok(None);
+    };
+
+    let Some(group) = store.find_api_key_group(group_id).await? else {
+        return Ok(None);
+    };
+
+    if let Some(tenant_id) = tenant_id {
+        if group.tenant_id != tenant_id {
+            return Ok(None);
+        }
+    }
+
+    if let Some(project_id) = project_id {
+        if group.project_id != project_id {
+            return Ok(None);
+        }
+    }
+
+    let Some(profile_id) = group.default_routing_profile_id.as_deref() else {
+        return Ok(None);
+    };
+
+    let Some(profile) = store.find_routing_profile(profile_id).await? else {
+        return Ok(None);
+    };
+
+    if !profile.active
+        || profile.tenant_id != group.tenant_id
+        || profile.project_id != group.project_id
+    {
+        return Ok(None);
+    }
+
+    Ok(Some(profile))
+}
+
 fn preferred_region_from_preferences(
     preferences: Option<&ProjectRoutingPreferences>,
 ) -> Option<String> {
     preferences.and_then(|preferences| preferences.preferred_region.clone())
 }
 
+fn preferred_region_from_routing_profile(profile: Option<&RoutingProfileRecord>) -> Option<String> {
+    profile.and_then(|profile| profile.preferred_region.clone())
+}
+
 fn effective_routing_policy(
     matched_policy: Option<&RoutingPolicy>,
+    preferences: Option<&ProjectRoutingPreferences>,
+    routing_profile: Option<&RoutingProfileRecord>,
+    capability: &str,
+    model: &str,
+) -> Option<RoutingPolicy> {
+    let policy =
+        apply_project_routing_preferences(matched_policy.cloned(), preferences, capability, model);
+    apply_routing_profile(policy, routing_profile, capability, model)
+}
+
+fn resolved_compiled_snapshot_strategy(effective_policy: Option<&RoutingPolicy>) -> &'static str {
+    match effective_policy {
+        Some(policy) => policy.strategy.as_str(),
+        None => RoutingStrategy::DeterministicPriority.as_str(),
+    }
+}
+
+async fn persist_compiled_routing_snapshot(
+    store: &dyn AdminStore,
+    capability: &str,
+    route_key: &str,
+    tenant_id: Option<&str>,
+    project_id: Option<&str>,
+    api_key_group_id: Option<&str>,
+    matched_policy: Option<&RoutingPolicy>,
+    project_preferences: Option<&ProjectRoutingPreferences>,
+    applied_routing_profile_id: Option<&str>,
+    effective_policy: Option<&RoutingPolicy>,
+    preferred_region: Option<&str>,
+    strategy: &str,
+    ordered_provider_ids: &[String],
+) -> Result<String> {
+    let now = current_time_millis();
+    let snapshot_id = build_compiled_routing_snapshot_id(
+        tenant_id,
+        project_id,
+        api_key_group_id,
+        capability,
+        route_key,
+    );
+    let snapshot = CompiledRoutingSnapshotRecord::new(&snapshot_id, capability, route_key)
+        .with_tenant_id_option(tenant_id.map(ToOwned::to_owned))
+        .with_project_id_option(project_id.map(ToOwned::to_owned))
+        .with_api_key_group_id_option(api_key_group_id.map(ToOwned::to_owned))
+        .with_matched_policy_id_option(matched_policy.map(|policy| policy.policy_id.clone()))
+        .with_project_routing_preferences_project_id_option(
+            project_preferences.map(|preferences| preferences.project_id.clone()),
+        )
+        .with_applied_routing_profile_id_option(applied_routing_profile_id.map(ToOwned::to_owned))
+        .with_strategy(strategy)
+        .with_ordered_provider_ids(ordered_provider_ids.to_vec())
+        .with_default_provider_id_option(
+            effective_policy.and_then(|policy| policy.default_provider_id.clone()),
+        )
+        .with_max_cost_option(effective_policy.and_then(|policy| policy.max_cost))
+        .with_max_latency_ms_option(effective_policy.and_then(|policy| policy.max_latency_ms))
+        .with_require_healthy(
+            effective_policy
+                .map(|policy| policy.require_healthy)
+                .unwrap_or(false),
+        )
+        .with_preferred_region_option(preferred_region.map(ToOwned::to_owned))
+        .with_created_at_ms(now)
+        .with_updated_at_ms(now);
+    store.insert_compiled_routing_snapshot(&snapshot).await?;
+    Ok(snapshot_id)
+}
+
+fn build_compiled_routing_snapshot_id(
+    tenant_id: Option<&str>,
+    project_id: Option<&str>,
+    api_key_group_id: Option<&str>,
+    capability: &str,
+    route_key: &str,
+) -> String {
+    format!(
+        "routing-snapshot-{}-{}-{}-{}-{}",
+        snapshot_id_segment(tenant_id, "global"),
+        snapshot_id_segment(project_id, "global"),
+        snapshot_id_segment(api_key_group_id, "default"),
+        sanitize_snapshot_segment(capability),
+        sanitize_snapshot_segment(route_key),
+    )
+}
+
+fn snapshot_id_segment(value: Option<&str>, fallback: &str) -> String {
+    value
+        .map(sanitize_snapshot_segment)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| fallback.to_owned())
+}
+
+fn sanitize_snapshot_segment(value: &str) -> String {
+    let mut sanitized = String::with_capacity(value.len());
+    let mut last_was_dash = false;
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() {
+            sanitized.push(ch.to_ascii_lowercase());
+            last_was_dash = false;
+        } else if !last_was_dash {
+            sanitized.push('-');
+            last_was_dash = true;
+        }
+    }
+    sanitized.trim_matches('-').to_owned()
+}
+
+fn apply_project_routing_preferences(
+    base_policy: Option<RoutingPolicy>,
     preferences: Option<&ProjectRoutingPreferences>,
     capability: &str,
     model: &str,
 ) -> Option<RoutingPolicy> {
     let Some(preferences) = preferences else {
-        return matched_policy.cloned();
+        return base_policy;
     };
 
-    let base_policy = matched_policy
-        .cloned()
+    let base_policy = base_policy
         .unwrap_or_else(|| RoutingPolicy::new("project-routing-preferences", capability, model));
-    let base_ordered_provider_ids = base_policy.ordered_provider_ids.clone();
-    let base_default_provider_id = base_policy.default_provider_id.clone();
-    let base_max_cost = base_policy.max_cost;
-    let base_max_latency_ms = base_policy.max_latency_ms;
-    let base_require_healthy = base_policy.require_healthy;
 
     Some(
         base_policy
+            .clone()
             .with_strategy(preferences.strategy)
             .with_ordered_provider_ids(if preferences.ordered_provider_ids.is_empty() {
-                base_ordered_provider_ids
+                base_policy.ordered_provider_ids.clone()
             } else {
                 preferences.ordered_provider_ids.clone()
             })
@@ -415,14 +744,57 @@ fn effective_routing_policy(
                 preferences
                     .default_provider_id
                     .clone()
-                    .or(base_default_provider_id),
+                    .or(base_policy.default_provider_id.clone()),
             )
-            .with_max_cost_option(combine_optional_f64(base_max_cost, preferences.max_cost))
+            .with_max_cost_option(combine_optional_f64(
+                base_policy.max_cost,
+                preferences.max_cost,
+            ))
             .with_max_latency_ms_option(combine_optional_u64(
-                base_max_latency_ms,
+                base_policy.max_latency_ms,
                 preferences.max_latency_ms,
             ))
-            .with_require_healthy(base_require_healthy || preferences.require_healthy),
+            .with_require_healthy(base_policy.require_healthy || preferences.require_healthy),
+    )
+}
+
+fn apply_routing_profile(
+    base_policy: Option<RoutingPolicy>,
+    routing_profile: Option<&RoutingProfileRecord>,
+    capability: &str,
+    model: &str,
+) -> Option<RoutingPolicy> {
+    let Some(routing_profile) = routing_profile else {
+        return base_policy;
+    };
+
+    let base_policy = base_policy
+        .unwrap_or_else(|| RoutingPolicy::new("group-routing-profile", capability, model));
+
+    Some(
+        base_policy
+            .clone()
+            .with_strategy(routing_profile.strategy)
+            .with_ordered_provider_ids(if routing_profile.ordered_provider_ids.is_empty() {
+                base_policy.ordered_provider_ids.clone()
+            } else {
+                routing_profile.ordered_provider_ids.clone()
+            })
+            .with_default_provider_id_option(
+                routing_profile
+                    .default_provider_id
+                    .clone()
+                    .or(base_policy.default_provider_id.clone()),
+            )
+            .with_max_cost_option(combine_optional_f64(
+                base_policy.max_cost,
+                routing_profile.max_cost,
+            ))
+            .with_max_latency_ms_option(combine_optional_u64(
+                base_policy.max_latency_ms,
+                routing_profile.max_latency_ms,
+            ))
+            .with_require_healthy(base_policy.require_healthy || routing_profile.require_healthy),
     )
 }
 
@@ -444,13 +816,35 @@ fn combine_optional_u64(base: Option<u64>, overlay: Option<u64>) -> Option<u64> 
     }
 }
 
+fn normalize_optional_text(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
 struct CandidateSelection {
     selected_index: usize,
     strategy: String,
     selection_seed: Option<u64>,
     selection_reason: String,
+    fallback_reason: Option<String>,
     slo_applied: bool,
     slo_degraded: bool,
+}
+
+impl From<RoutingStrategyExecutionResult> for CandidateSelection {
+    fn from(value: RoutingStrategyExecutionResult) -> Self {
+        Self {
+            selected_index: value.selected_index,
+            strategy: value.strategy,
+            selection_seed: value.selection_seed,
+            selection_reason: value.selection_reason,
+            fallback_reason: value.fallback_reason,
+            slo_applied: value.slo_applied,
+            slo_degraded: value.slo_degraded,
+        }
+    }
 }
 
 fn select_candidate(
@@ -462,395 +856,21 @@ fn select_candidate(
     let routing_strategy = matched_policy
         .map(|policy| policy.strategy)
         .unwrap_or(RoutingStrategy::DeterministicPriority);
-    match routing_strategy {
-        RoutingStrategy::DeterministicPriority => {
-            let selected_index = 0;
-            let selection_reason = assessments
-                .get_mut(selected_index)
-                .map(|assessment| {
-                    assessment.reasons.push(
-                        "selected as the first healthy available provider in configured priority order"
-                            .to_owned(),
-                    );
-                    selected_assessment_reason(assessment)
-                })
-                .unwrap_or_else(|| {
-                    "selected the first healthy available candidate in configured priority order"
-                        .to_owned()
-                });
-            CandidateSelection {
-                selected_index,
-                strategy: RoutingStrategy::DeterministicPriority.as_str().to_owned(),
-                selection_seed: None,
-                selection_reason,
-                slo_applied: false,
-                slo_degraded: false,
-            }
-        }
-        RoutingStrategy::WeightedRandom => {
-            let selection_seed = provided_selection_seed.unwrap_or_else(generate_selection_seed);
-            let (selected_index, selection_reason) =
-                select_weighted_candidate(assessments, selection_seed);
-            CandidateSelection {
-                selected_index,
-                strategy: RoutingStrategy::WeightedRandom.as_str().to_owned(),
-                selection_seed: Some(selection_seed),
-                selection_reason,
-                slo_applied: false,
-                slo_degraded: false,
-            }
-        }
-        RoutingStrategy::SloAware => select_slo_aware_candidate(assessments, matched_policy),
-        RoutingStrategy::GeoAffinity => {
-            select_geo_affinity_candidate(assessments, requested_region)
-        }
-    }
-}
-
-fn select_geo_affinity_candidate(
-    assessments: &mut [RoutingCandidateAssessment],
-    requested_region: Option<&str>,
-) -> CandidateSelection {
-    let Some(requested_region) = requested_region else {
-        let selected_index = 0;
-        let selection_reason = assessments
-            .get_mut(selected_index)
-            .map(|assessment| {
-                assessment.reasons.push(
-                    "selected as the top-ranked candidate because no requested region was provided"
-                        .to_owned(),
-                );
-                format!(
-                    "selected {} as the top-ranked candidate because no requested region was provided",
-                    assessment.provider_id
-                )
-            })
-            .unwrap_or_else(|| "geo-affinity routing had no assessed candidates".to_owned());
-        return CandidateSelection {
-            selected_index,
-            strategy: RoutingStrategy::GeoAffinity.as_str().to_owned(),
-            selection_seed: None,
-            selection_reason,
-            slo_applied: false,
-            slo_degraded: false,
-        };
-    };
-
-    let has_healthy_available_candidate = assessments.iter().any(|assessment| {
-        assessment.available && assessment.health == RoutingCandidateHealth::Healthy
+    let registry = builtin_routing_strategy_registry();
+    let plugin = registry.resolve(routing_strategy).unwrap_or_else(|| {
+        registry
+            .resolve(RoutingStrategy::DeterministicPriority)
+            .expect("builtin deterministic-priority routing plugin must exist")
     });
 
-    let mut eligible_indices = Vec::new();
-    let mut matching_indices = Vec::new();
-    for (index, assessment) in assessments.iter_mut().enumerate() {
-        let region_match = assessment.region.as_deref() == Some(requested_region);
-        assessment.region_match = Some(region_match);
-
-        if !assessment.available {
-            assessment.reasons.push(
-                "excluded from geo-affinity selection because candidate is unavailable".to_owned(),
-            );
-            continue;
-        }
-        if has_healthy_available_candidate && assessment.health == RoutingCandidateHealth::Unhealthy
-        {
-            assessment.reasons.push(
-                "excluded from geo-affinity selection because a healthy candidate is available"
-                    .to_owned(),
-            );
-            continue;
-        }
-
-        eligible_indices.push(index);
-        if region_match {
-            assessment.reasons.push(format!(
-                "eligible for geo-affinity selection because region matches requested region {requested_region}"
-            ));
-            matching_indices.push(index);
-        } else if let Some(region) = assessment.region.as_deref() {
-            assessment.reasons.push(format!(
-                "excluded from geo-affinity selection because region {region} does not match requested region {requested_region}"
-            ));
-        } else {
-            assessment.reasons.push(format!(
-                "excluded from geo-affinity selection because candidate region is unknown for requested region {requested_region}"
-            ));
-        }
-    }
-
-    if let Some(&selected_index) = matching_indices.first() {
-        let provider_id = assessments
-            .get(selected_index)
-            .map(|assessment| assessment.provider_id.clone())
-            .unwrap_or_default();
-        if let Some(assessment) = assessments.get_mut(selected_index) {
-            assessment.reasons.push(format!(
-                "selected as the top-ranked candidate matching requested region {requested_region}"
-            ));
-        }
-        CandidateSelection {
-            selected_index,
-            strategy: RoutingStrategy::GeoAffinity.as_str().to_owned(),
-            selection_seed: None,
-            selection_reason: format!(
-                "selected {provider_id} as the top-ranked candidate matching requested region {requested_region}"
-            ),
-            slo_applied: false,
-            slo_degraded: false,
-        }
-    } else if let Some(&selected_index) = eligible_indices.first() {
-        let provider_id = assessments
-            .get(selected_index)
-            .map(|assessment| assessment.provider_id.clone())
-            .unwrap_or_default();
-        if let Some(assessment) = assessments.get_mut(selected_index) {
-            assessment.reasons.push(format!(
-                "selected as the top-ranked fallback because no candidate matched requested region {requested_region}"
-            ));
-        }
-        CandidateSelection {
-            selected_index,
-            strategy: RoutingStrategy::GeoAffinity.as_str().to_owned(),
-            selection_seed: None,
-            selection_reason: format!(
-                "selected {provider_id} as the top-ranked fallback because no candidate matched requested region {requested_region}"
-            ),
-            slo_applied: false,
-            slo_degraded: false,
-        }
-    } else {
-        let selected_index = 0;
-        let selection_reason = assessments
-            .get_mut(selected_index)
-            .map(|assessment| {
-                assessment.reasons.push(format!(
-                    "selected as the top-ranked fallback because geo-affinity had no eligible candidate for requested region {requested_region}"
-                ));
-                format!(
-                    "selected {} because geo-affinity had no eligible candidate for requested region {requested_region}",
-                    assessment.provider_id
-                )
-            })
-            .unwrap_or_else(|| {
-                format!(
-                    "geo-affinity routing had no eligible candidate for requested region {requested_region}"
-                )
-            });
-        CandidateSelection {
-            selected_index,
-            strategy: RoutingStrategy::GeoAffinity.as_str().to_owned(),
-            selection_seed: None,
-            selection_reason,
-            slo_applied: false,
-            slo_degraded: false,
-        }
-    }
-}
-
-fn select_slo_aware_candidate(
-    assessments: &mut [RoutingCandidateAssessment],
-    matched_policy: Option<&RoutingPolicy>,
-) -> CandidateSelection {
-    let Some(policy) = matched_policy else {
-        return CandidateSelection {
-            selected_index: 0,
-            strategy: RoutingStrategy::SloAware.as_str().to_owned(),
-            selection_seed: None,
-            selection_reason: "selected the top-ranked candidate because no routing policy was available for SLO evaluation".to_owned(),
-            slo_applied: false,
-            slo_degraded: false,
-        };
-    };
-
-    let slo_applied =
-        policy.max_cost.is_some() || policy.max_latency_ms.is_some() || policy.require_healthy;
-    if !slo_applied {
-        for assessment in assessments.iter_mut() {
-            assessment.slo_eligible = Some(true);
-        }
-
-        let selection_reason = assessments
-            .first()
-            .map(|assessment| {
-                format!(
-                    "selected {} as the top-ranked candidate because the slo_aware policy had no active SLO thresholds",
-                    assessment.provider_id
-                )
-            })
-            .unwrap_or_else(|| "slo_aware policy had no assessed candidates".to_owned());
-        return CandidateSelection {
-            selected_index: 0,
-            strategy: RoutingStrategy::SloAware.as_str().to_owned(),
-            selection_seed: None,
-            selection_reason,
-            slo_applied: false,
-            slo_degraded: false,
-        };
-    }
-
-    let mut eligible_indices = Vec::new();
-    for (index, assessment) in assessments.iter_mut().enumerate() {
-        let violations = slo_violations_for_candidate(assessment, policy);
-        assessment.slo_violations = violations.clone();
-        assessment.slo_eligible = Some(violations.is_empty());
-        if violations.is_empty() {
-            assessment
-                .reasons
-                .push("eligible for active SLO thresholds".to_owned());
-            eligible_indices.push(index);
-        } else {
-            assessment.reasons.push(format!(
-                "excluded from SLO-aware selection because {}",
-                violations.join(", ")
-            ));
-        }
-    }
-
-    if let Some(&selected_index) = eligible_indices.first() {
-        let provider_id = assessments
-            .get(selected_index)
-            .map(|assessment| assessment.provider_id.clone())
-            .unwrap_or_default();
-        if let Some(assessment) = assessments.get_mut(selected_index) {
-            assessment
-                .reasons
-                .push("selected as the top-ranked SLO-compliant candidate".to_owned());
-        }
-        CandidateSelection {
-            selected_index,
-            strategy: RoutingStrategy::SloAware.as_str().to_owned(),
-            selection_seed: None,
-            selection_reason: format!(
-                "selected {provider_id} as the top-ranked SLO-compliant candidate"
-            ),
-            slo_applied: true,
-            slo_degraded: false,
-        }
-    } else {
-        let selected_index = 0;
-        let provider_id = assessments
-            .get(selected_index)
-            .map(|assessment| assessment.provider_id.clone())
-            .unwrap_or_default();
-        if let Some(assessment) = assessments.get_mut(selected_index) {
-            assessment.reasons.push(
-                "selected as a degraded fallback because no candidate satisfied the active SLO thresholds"
-                    .to_owned(),
-            );
-        }
-        CandidateSelection {
-            selected_index,
-            strategy: RoutingStrategy::SloAware.as_str().to_owned(),
-            selection_seed: None,
-            selection_reason: format!(
-                "degraded to {provider_id} because no candidate satisfied the active SLO thresholds"
-            ),
-            slo_applied: true,
-            slo_degraded: true,
-        }
-    }
-}
-
-fn select_weighted_candidate(
-    assessments: &mut [RoutingCandidateAssessment],
-    selection_seed: u64,
-) -> (usize, String) {
-    let has_healthy_available_candidate = assessments.iter().any(|assessment| {
-        assessment.available && assessment.health == RoutingCandidateHealth::Healthy
-    });
-
-    let mut eligible = Vec::new();
-    for (index, assessment) in assessments.iter_mut().enumerate() {
-        let resolved_weight = resolved_weight(assessment.weight);
-        if !assessment.available {
-            assessment
-                .reasons
-                .push("excluded from weighted selection because candidate is unavailable".into());
-            continue;
-        }
-        if has_healthy_available_candidate && assessment.health == RoutingCandidateHealth::Unhealthy
-        {
-            assessment.reasons.push(
-                "excluded from weighted selection because a healthier candidate is available"
-                    .into(),
-            );
-            continue;
-        }
-        if resolved_weight == 0 {
-            assessment
-                .reasons
-                .push("excluded from weighted selection because resolved weight is 0".into());
-            continue;
-        }
-
-        assessment.reasons.push(format!(
-            "eligible for weighted selection with resolved weight = {resolved_weight}"
-        ));
-        eligible.push((index, resolved_weight));
-    }
-
-    if eligible.is_empty() {
-        let selected_index = 0;
-        let selection_reason = assessments
-            .get_mut(selected_index)
-            .map(|assessment| {
-                assessment.reasons.push(
-                    "weighted routing fell back to the top-ranked candidate because no candidate was eligible".into(),
-                );
-                format!(
-                    "selected {} because weighted routing had no eligible candidate",
-                    assessment.provider_id
-                )
-            })
-            .unwrap_or_else(|| {
-                "weighted routing had no eligible candidate and no assessed candidates".to_owned()
-            });
-        return (selected_index, selection_reason);
-    }
-
-    let total_weight = eligible.iter().map(|(_, weight)| *weight).sum::<u64>();
-    let bucket = selection_seed % total_weight;
-    let mut cumulative_weight = 0_u64;
-    let mut selected_index = eligible[0].0;
-    for (index, weight) in eligible {
-        cumulative_weight += weight;
-        if bucket < cumulative_weight {
-            selected_index = index;
-            break;
-        }
-    }
-
-    let selected_provider_id = assessments
-        .get(selected_index)
-        .map(|assessment| assessment.provider_id.clone())
-        .unwrap_or_default();
-    if let Some(selected_assessment) = assessments.get_mut(selected_index) {
-        selected_assessment.reasons.push(format!(
-            "selected by weighted seed {selection_seed} across total eligible weight {total_weight}"
-        ));
-    }
-
-    (
-        selected_index,
-        format!(
-            "selected {selected_provider_id} by weighted seed {selection_seed} across total eligible weight {total_weight}"
-        ),
-    )
-}
-
-fn selected_assessment_reason(assessment: &RoutingCandidateAssessment) -> String {
-    if assessment.reasons.is_empty() {
-        format!(
-            "selected {} as the top-ranked candidate",
-            assessment.provider_id
-        )
-    } else {
-        format!(
-            "selected {} because {}",
-            assessment.provider_id,
-            assessment.reasons.join(", ")
-        )
-    }
+    plugin
+        .execute(RoutingStrategyExecutionInput {
+            assessments,
+            matched_policy,
+            requested_region,
+            provided_selection_seed,
+        })
+        .into()
 }
 
 fn generate_selection_seed() -> u64 {
@@ -872,47 +892,6 @@ fn current_time_millis() -> u64 {
 
 fn generate_decision_id(created_at_ms: u64) -> String {
     format!("route-dec-{}-{}", created_at_ms, generate_selection_seed())
-}
-
-fn slo_violations_for_candidate(
-    assessment: &RoutingCandidateAssessment,
-    policy: &RoutingPolicy,
-) -> Vec<String> {
-    let mut violations = Vec::new();
-
-    if !assessment.available {
-        violations.push("candidate is unavailable".to_owned());
-    }
-
-    if policy.require_healthy && assessment.health != RoutingCandidateHealth::Healthy {
-        violations.push("health requirement not satisfied".to_owned());
-    }
-
-    if let Some(max_cost) = policy.max_cost {
-        match assessment.cost {
-            Some(cost) if cost > max_cost => {
-                violations.push(format!("cost {cost} exceeds max_cost {max_cost}"));
-            }
-            Some(_) => {}
-            None => violations.push("cost evidence missing for required SLO threshold".to_owned()),
-        }
-    }
-
-    if let Some(max_latency_ms) = policy.max_latency_ms {
-        match assessment.latency_ms {
-            Some(latency_ms) if latency_ms > max_latency_ms => {
-                violations.push(format!(
-                    "latency {latency_ms}ms exceeds max_latency_ms {max_latency_ms}"
-                ));
-            }
-            Some(_) => {}
-            None => {
-                violations.push("latency evidence missing for required SLO threshold".to_owned())
-            }
-        }
-    }
-
-    violations
 }
 
 fn assess_candidate(

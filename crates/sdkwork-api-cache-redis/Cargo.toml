@@ -1,0 +1,19 @@
+[package]
+name = "sdkwork-api-cache-redis"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+sdkwork-api-cache-core = { path = "../sdkwork-api-cache-core" }
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["io-util", "net"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+
+[lib]
+path = "src/lib.rs"

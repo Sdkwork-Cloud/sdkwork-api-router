@@ -14,6 +14,7 @@ pub mod fine_tuning;
 pub mod images;
 pub mod models;
 pub mod moderations;
+pub mod music;
 pub mod realtime;
 pub mod responses;
 pub mod runs;

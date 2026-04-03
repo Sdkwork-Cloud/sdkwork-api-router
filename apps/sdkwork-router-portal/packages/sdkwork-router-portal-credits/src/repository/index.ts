@@ -1,33 +1,31 @@
 import {
   createPortalCommerceOrder,
+  getPortalBillingEventSummary,
   getPortalCommerceCatalog,
   getPortalBillingSummary,
-  listPortalBillingLedger,
+  listPortalCommerceOrders,
   previewPortalCommerceQuote,
 } from 'sdkwork-router-portal-portal-api';
 import type {
-  LedgerEntry,
   PortalCommerceOrder,
   PortalCommerceQuote,
-  PortalCommerceCoupon,
-  ProjectBillingSummary,
 } from 'sdkwork-router-portal-types';
 
-export async function loadCreditsPageData(): Promise<{
-  summary: ProjectBillingSummary;
-  ledger: LedgerEntry[];
-  coupons: PortalCommerceCoupon[];
-}> {
-  const [summary, ledger, catalog] = await Promise.all([
+import type { CreditsPageData } from '../types';
+
+export async function loadCreditsPageData(): Promise<CreditsPageData> {
+  const [summary, catalog, orders, billing_event_summary] = await Promise.all([
     getPortalBillingSummary(),
-    listPortalBillingLedger(),
     getPortalCommerceCatalog(),
+    listPortalCommerceOrders(),
+    getPortalBillingEventSummary(),
   ]);
 
   return {
     summary,
-    ledger,
     coupons: catalog.coupons.filter((coupon) => coupon.bonus_units > 0),
+    orders,
+    billing_event_summary,
   };
 }
 

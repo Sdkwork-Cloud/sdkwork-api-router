@@ -1,6 +1,8 @@
+use sdkwork_api_domain_identity::ApiKeyGroupRecord;
 use sdkwork_api_domain_routing::{
-    ProviderHealthSnapshot, RoutingCandidateAssessment, RoutingDecisionLog, RoutingDecisionSource,
-    RoutingPolicy, RoutingStrategy,
+    CompiledRoutingSnapshotRecord, ProviderHealthSnapshot, RoutingCandidateAssessment,
+    RoutingDecisionLog, RoutingDecisionSource, RoutingPolicy, RoutingProfileRecord,
+    RoutingStrategy,
 };
 use sdkwork_api_storage_sqlite::{run_migrations, SqliteAdminStore};
 
@@ -46,6 +48,83 @@ async fn sqlite_store_round_trips_slo_policy_fields() {
     assert_eq!(policies[0].max_cost, Some(0.30));
     assert_eq!(policies[0].max_latency_ms, Some(250));
     assert!(policies[0].require_healthy);
+}
+
+#[tokio::test]
+async fn sqlite_store_persists_routing_profiles_with_provider_order() {
+    let pool = run_migrations("sqlite::memory:").await.unwrap();
+    let store = SqliteAdminStore::new(pool);
+
+    let profile = RoutingProfileRecord::new(
+        "profile-priority",
+        "tenant-1",
+        "project-1",
+        "Priority Live",
+        "priority-live",
+    )
+    .with_description("Prefer OpenRouter first")
+    .with_strategy(RoutingStrategy::GeoAffinity)
+    .with_ordered_provider_ids(vec![
+        "provider-openrouter".to_owned(),
+        "provider-openai-official".to_owned(),
+    ])
+    .with_default_provider_id("provider-openai-official")
+    .with_max_cost(0.25)
+    .with_max_latency_ms(200)
+    .with_require_healthy(true)
+    .with_preferred_region("us-east")
+    .with_created_at_ms(123)
+    .with_updated_at_ms(456);
+
+    store.insert_routing_profile(&profile).await.unwrap();
+
+    let found = store
+        .find_routing_profile("profile-priority")
+        .await
+        .unwrap()
+        .expect("routing profile");
+    assert_eq!(found, profile);
+
+    let profiles = store.list_routing_profiles().await.unwrap();
+    assert_eq!(profiles, vec![profile]);
+}
+
+#[tokio::test]
+async fn sqlite_store_persists_compiled_routing_snapshots() {
+    let pool = run_migrations("sqlite::memory:").await.unwrap();
+    let store = SqliteAdminStore::new(pool);
+
+    let snapshot = CompiledRoutingSnapshotRecord::new(
+        "snapshot-tenant-1-project-1-group-live-chat_completion-gpt-4-1",
+        "chat_completion",
+        "gpt-4.1",
+    )
+    .with_tenant_id("tenant-1")
+    .with_project_id("project-1")
+    .with_api_key_group_id("group-live")
+    .with_matched_policy_id("policy-gpt-4-1")
+    .with_project_routing_preferences_project_id("project-1")
+    .with_applied_routing_profile_id("profile-priority")
+    .with_strategy("geo_affinity")
+    .with_ordered_provider_ids(vec![
+        "provider-openrouter".to_owned(),
+        "provider-openai-official".to_owned(),
+    ])
+    .with_default_provider_id("provider-openrouter")
+    .with_max_cost(0.25)
+    .with_max_latency_ms(200)
+    .with_require_healthy(true)
+    .with_preferred_region("us-east")
+    .with_created_at_ms(123)
+    .with_updated_at_ms(456);
+
+    store
+        .insert_compiled_routing_snapshot(&snapshot)
+        .await
+        .unwrap();
+
+    let snapshots = store.list_compiled_routing_snapshots().await.unwrap();
+    assert_eq!(snapshots, vec![snapshot]);
 }
 
 #[tokio::test]
@@ -121,6 +200,103 @@ async fn sqlite_store_round_trips_requested_region_in_routing_decision_logs() {
     assert_eq!(logs[0].requested_region.as_deref(), Some("us-east"));
     assert_eq!(logs[0].assessments[0].region.as_deref(), Some("us-east"));
     assert_eq!(logs[0].assessments[0].region_match, Some(true));
+}
+
+#[tokio::test]
+async fn sqlite_store_round_trips_api_key_group_id_in_routing_decision_logs() {
+    let pool = run_migrations("sqlite::memory:").await.unwrap();
+    let store = SqliteAdminStore::new(pool);
+
+    let log = RoutingDecisionLog::new(
+        "decision-group",
+        RoutingDecisionSource::Gateway,
+        "chat_completion",
+        "gpt-4.1",
+        "provider-openai-official",
+        "deterministic_priority",
+        400,
+    )
+    .with_tenant_id("tenant-1")
+    .with_project_id("project-1")
+    .with_api_key_group_id("group-live")
+    .with_applied_routing_profile_id("profile-priority")
+    .with_compiled_routing_snapshot_id("snapshot-live")
+    .with_fallback_reason("no fallback applied");
+
+    store.insert_routing_decision_log(&log).await.unwrap();
+
+    let logs = store.list_routing_decision_logs().await.unwrap();
+    assert_eq!(logs.len(), 1);
+    assert_eq!(logs[0].api_key_group_id.as_deref(), Some("group-live"));
+    assert_eq!(
+        logs[0].applied_routing_profile_id.as_deref(),
+        Some("profile-priority")
+    );
+    assert_eq!(
+        logs[0].compiled_routing_snapshot_id.as_deref(),
+        Some("snapshot-live")
+    );
+    assert_eq!(
+        logs[0].fallback_reason.as_deref(),
+        Some("no fallback applied")
+    );
+}
+
+#[tokio::test]
+async fn sqlite_store_round_trips_default_routing_profile_id_in_api_key_groups() {
+    let pool = run_migrations("sqlite::memory:").await.unwrap();
+    let store = SqliteAdminStore::new(pool);
+
+    let group = ApiKeyGroupRecord::new(
+        "group-live",
+        "tenant-1",
+        "project-1",
+        "live",
+        "Production Keys",
+        "production-keys",
+    )
+    .with_default_routing_profile_id("profile-priority")
+    .with_created_at_ms(123)
+    .with_updated_at_ms(456);
+
+    store.insert_api_key_group(&group).await.unwrap();
+
+    let found = store
+        .find_api_key_group("group-live")
+        .await
+        .unwrap()
+        .expect("api key group");
+    assert_eq!(
+        found.default_routing_profile_id.as_deref(),
+        Some("profile-priority")
+    );
+}
+
+#[tokio::test]
+async fn sqlite_store_round_trips_default_accounting_mode_in_api_key_groups() {
+    let pool = run_migrations("sqlite::memory:").await.unwrap();
+    let store = SqliteAdminStore::new(pool);
+
+    let group = ApiKeyGroupRecord::new(
+        "group-byok",
+        "tenant-1",
+        "project-1",
+        "live",
+        "BYOK Keys",
+        "byok-keys",
+    )
+    .with_default_accounting_mode("byok")
+    .with_created_at_ms(123)
+    .with_updated_at_ms(456);
+
+    store.insert_api_key_group(&group).await.unwrap();
+
+    let found = store
+        .find_api_key_group("group-byok")
+        .await
+        .unwrap()
+        .expect("api key group");
+    assert_eq!(found.default_accounting_mode.as_deref(), Some("byok"));
 }
 
 #[tokio::test]

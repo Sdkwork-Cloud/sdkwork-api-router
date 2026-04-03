@@ -1,13 +1,55 @@
 use anyhow::{ensure, Result};
 use async_trait::async_trait;
-use sdkwork_api_domain_billing::{BillingSummary, LedgerEntry, ProjectBillingSummary};
+use sdkwork_api_domain_billing::{
+    BillingEventAccountingModeSummary, BillingEventCapabilitySummary,
+    BillingEventGroupSummary, BillingEventProjectSummary, BillingEventRecord, BillingEventSummary,
+    BillingSummary, LedgerEntry, ProjectBillingSummary,
+};
+use sdkwork_api_policy_quota::{
+    builtin_quota_policy_registry, QuotaPolicyExecutionInput, STRICTEST_LIMIT_QUOTA_POLICY_ID,
+};
 use sdkwork_api_storage_core::AdminStore;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-pub use sdkwork_api_domain_billing::{QuotaCheckResult, QuotaPolicy};
+pub use sdkwork_api_domain_billing::{BillingAccountingMode, QuotaCheckResult, QuotaPolicy};
 
 pub fn service_name() -> &'static str {
     "billing-service"
+}
+
+pub struct CreateBillingEventInput<'a> {
+    pub event_id: &'a str,
+    pub tenant_id: &'a str,
+    pub project_id: &'a str,
+    pub api_key_group_id: Option<&'a str>,
+    pub capability: &'a str,
+    pub route_key: &'a str,
+    pub usage_model: &'a str,
+    pub provider_id: &'a str,
+    pub accounting_mode: BillingAccountingMode,
+    pub operation_kind: &'a str,
+    pub modality: &'a str,
+    pub api_key_hash: Option<&'a str>,
+    pub channel_id: Option<&'a str>,
+    pub reference_id: Option<&'a str>,
+    pub latency_ms: Option<u64>,
+    pub units: u64,
+    pub request_count: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub total_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_write_tokens: u64,
+    pub image_count: u64,
+    pub audio_seconds: f64,
+    pub video_seconds: f64,
+    pub music_seconds: f64,
+    pub upstream_cost: f64,
+    pub customer_charge: f64,
+    pub applied_routing_profile_id: Option<&'a str>,
+    pub compiled_routing_snapshot_id: Option<&'a str>,
+    pub fallback_reason: Option<&'a str>,
+    pub created_at_ms: u64,
 }
 
 pub fn create_quota_policy(
@@ -30,6 +72,88 @@ pub fn book_usage_cost(project_id: &str, units: u64, amount: f64) -> Result<Ledg
     Ok(LedgerEntry::new(project_id, units, amount))
 }
 
+pub fn create_billing_event(input: CreateBillingEventInput<'_>) -> Result<BillingEventRecord> {
+    ensure!(!input.event_id.trim().is_empty(), "event_id must not be empty");
+    ensure!(!input.tenant_id.trim().is_empty(), "tenant_id must not be empty");
+    ensure!(!input.project_id.trim().is_empty(), "project_id must not be empty");
+    ensure!(!input.capability.trim().is_empty(), "capability must not be empty");
+    ensure!(
+        !input.usage_model.trim().is_empty(),
+        "usage_model must not be empty"
+    );
+    ensure!(
+        !input.provider_id.trim().is_empty(),
+        "provider_id must not be empty"
+    );
+    ensure!(
+        !input.operation_kind.trim().is_empty(),
+        "operation_kind must not be empty"
+    );
+    ensure!(!input.modality.trim().is_empty(), "modality must not be empty");
+    ensure!(input.upstream_cost >= 0.0, "upstream_cost must not be negative");
+    ensure!(
+        input.customer_charge >= 0.0,
+        "customer_charge must not be negative"
+    );
+
+    let route_key = if input.route_key.trim().is_empty() {
+        input.usage_model.trim()
+    } else {
+        input.route_key.trim()
+    };
+    let request_count = input.request_count.max(1);
+    let total_tokens = if input.total_tokens == 0 {
+        input
+            .input_tokens
+            .saturating_add(input.output_tokens)
+    } else {
+        input.total_tokens
+    };
+
+    let mut event = BillingEventRecord::new(
+        input.event_id.trim(),
+        input.tenant_id.trim(),
+        input.project_id.trim(),
+        input.capability.trim(),
+        route_key,
+        input.usage_model.trim(),
+        input.provider_id.trim(),
+        input.accounting_mode,
+        input.created_at_ms,
+    )
+    .with_operation(input.operation_kind.trim(), input.modality.trim())
+    .with_request_facts(
+        input.api_key_hash.map(str::trim),
+        input.channel_id.map(str::trim),
+        input.reference_id.map(str::trim),
+        input.latency_ms,
+    )
+    .with_units(input.units)
+    .with_request_count(request_count)
+    .with_token_usage(input.input_tokens, input.output_tokens, total_tokens)
+    .with_cache_token_usage(input.cache_read_tokens, input.cache_write_tokens)
+    .with_media_usage(
+        input.image_count,
+        input.audio_seconds,
+        input.video_seconds,
+        input.music_seconds,
+    )
+    .with_financials(input.upstream_cost, input.customer_charge)
+    .with_routing_evidence(
+        input.applied_routing_profile_id.map(str::trim),
+        input.compiled_routing_snapshot_id.map(str::trim),
+        input.fallback_reason.map(str::trim),
+    );
+
+    if let Some(api_key_group_id) = input.api_key_group_id.map(str::trim) {
+        if !api_key_group_id.is_empty() {
+            event = event.with_api_key_group_id(api_key_group_id);
+        }
+    }
+
+    Ok(event)
+}
+
 pub async fn persist_ledger_entry(
     store: &dyn AdminStore,
     project_id: &str,
@@ -40,8 +164,19 @@ pub async fn persist_ledger_entry(
     store.insert_ledger_entry(&entry).await
 }
 
+pub async fn persist_billing_event(
+    store: &dyn AdminStore,
+    event: &BillingEventRecord,
+) -> Result<BillingEventRecord> {
+    store.insert_billing_event(event).await
+}
+
 pub async fn list_ledger_entries(store: &dyn AdminStore) -> Result<Vec<LedgerEntry>> {
     store.list_ledger_entries().await
+}
+
+pub async fn list_billing_events(store: &dyn AdminStore) -> Result<Vec<BillingEventRecord>> {
+    store.list_billing_events().await
 }
 
 pub async fn persist_quota_policy(
@@ -89,22 +224,19 @@ where
         .into_iter()
         .map(|entry| entry.units)
         .sum();
-
-    let effective_policy = store
+    let policies = store
         .list_quota_policies_for_project(project_id)
-        .await?
-        .into_iter()
-        .filter(|policy| policy.enabled)
-        .min_by(|left, right| {
-            left.max_units
-                .cmp(&right.max_units)
-                .then_with(|| left.policy_id.cmp(&right.policy_id))
-        });
+        .await?;
+    let registry = builtin_quota_policy_registry();
+    let plugin = registry
+        .resolve(STRICTEST_LIMIT_QUOTA_POLICY_ID)
+        .expect("builtin strictest-limit quota policy plugin must exist");
 
-    Ok(match effective_policy {
-        Some(policy) => QuotaCheckResult::from_policy(&policy, used_units, requested_units),
-        None => QuotaCheckResult::allowed_without_policy(requested_units, used_units),
-    })
+    Ok(plugin.execute(QuotaPolicyExecutionInput {
+        policies: &policies,
+        used_units,
+        requested_units,
+    }))
 }
 
 pub fn summarize_billing_snapshot(
@@ -196,8 +328,219 @@ pub fn summarize_billing_snapshot(
     }
 }
 
+pub fn summarize_billing_events(events: &[BillingEventRecord]) -> BillingEventSummary {
+    if events.is_empty() {
+        return BillingEventSummary::empty();
+    }
+
+    #[derive(Default)]
+    struct ProjectAccumulator {
+        event_count: u64,
+        request_count: u64,
+        total_units: u64,
+        total_input_tokens: u64,
+        total_output_tokens: u64,
+        total_tokens: u64,
+        total_image_count: u64,
+        total_audio_seconds: f64,
+        total_video_seconds: f64,
+        total_music_seconds: f64,
+        total_upstream_cost: f64,
+        total_customer_charge: f64,
+    }
+
+    #[derive(Default)]
+    struct GroupAccumulator {
+        project_ids: BTreeSet<String>,
+        event_count: u64,
+        request_count: u64,
+        total_upstream_cost: f64,
+        total_customer_charge: f64,
+    }
+
+    #[derive(Default)]
+    struct CapabilityAccumulator {
+        event_count: u64,
+        request_count: u64,
+        total_tokens: u64,
+        image_count: u64,
+        audio_seconds: f64,
+        video_seconds: f64,
+        music_seconds: f64,
+        total_upstream_cost: f64,
+        total_customer_charge: f64,
+    }
+
+    #[derive(Default)]
+    struct AccountingModeAccumulator {
+        event_count: u64,
+        request_count: u64,
+        total_upstream_cost: f64,
+        total_customer_charge: f64,
+    }
+
+    let mut projects = BTreeMap::<String, ProjectAccumulator>::new();
+    let mut groups = BTreeMap::<Option<String>, GroupAccumulator>::new();
+    let mut capabilities = BTreeMap::<String, CapabilityAccumulator>::new();
+    let mut accounting_modes = BTreeMap::<BillingAccountingMode, AccountingModeAccumulator>::new();
+
+    for event in events {
+        let project = projects.entry(event.project_id.clone()).or_default();
+        project.event_count += 1;
+        project.request_count += event.request_count;
+        project.total_units += event.units;
+        project.total_input_tokens += event.input_tokens;
+        project.total_output_tokens += event.output_tokens;
+        project.total_tokens += event.total_tokens;
+        project.total_image_count += event.image_count;
+        project.total_audio_seconds += event.audio_seconds;
+        project.total_video_seconds += event.video_seconds;
+        project.total_music_seconds += event.music_seconds;
+        project.total_upstream_cost += event.upstream_cost;
+        project.total_customer_charge += event.customer_charge;
+
+        let group = groups.entry(event.api_key_group_id.clone()).or_default();
+        group.project_ids.insert(event.project_id.clone());
+        group.event_count += 1;
+        group.request_count += event.request_count;
+        group.total_upstream_cost += event.upstream_cost;
+        group.total_customer_charge += event.customer_charge;
+
+        let capability = capabilities.entry(event.capability.clone()).or_default();
+        capability.event_count += 1;
+        capability.request_count += event.request_count;
+        capability.total_tokens += event.total_tokens;
+        capability.image_count += event.image_count;
+        capability.audio_seconds += event.audio_seconds;
+        capability.video_seconds += event.video_seconds;
+        capability.music_seconds += event.music_seconds;
+        capability.total_upstream_cost += event.upstream_cost;
+        capability.total_customer_charge += event.customer_charge;
+
+        let mode = accounting_modes.entry(event.accounting_mode).or_default();
+        mode.event_count += 1;
+        mode.request_count += event.request_count;
+        mode.total_upstream_cost += event.upstream_cost;
+        mode.total_customer_charge += event.customer_charge;
+    }
+
+    let mut project_summaries = projects
+        .into_iter()
+        .map(|(project_id, summary)| BillingEventProjectSummary {
+            project_id,
+            event_count: summary.event_count,
+            request_count: summary.request_count,
+            total_units: summary.total_units,
+            total_input_tokens: summary.total_input_tokens,
+            total_output_tokens: summary.total_output_tokens,
+            total_tokens: summary.total_tokens,
+            total_image_count: summary.total_image_count,
+            total_audio_seconds: summary.total_audio_seconds,
+            total_video_seconds: summary.total_video_seconds,
+            total_music_seconds: summary.total_music_seconds,
+            total_upstream_cost: summary.total_upstream_cost,
+            total_customer_charge: summary.total_customer_charge,
+        })
+        .collect::<Vec<_>>();
+    project_summaries.sort_by(|left, right| {
+        right
+            .total_customer_charge
+            .total_cmp(&left.total_customer_charge)
+            .then_with(|| right.request_count.cmp(&left.request_count))
+            .then_with(|| left.project_id.cmp(&right.project_id))
+    });
+
+    let mut group_summaries = groups
+        .into_iter()
+        .map(|(api_key_group_id, summary)| BillingEventGroupSummary {
+            api_key_group_id,
+            project_count: summary.project_ids.len() as u64,
+            event_count: summary.event_count,
+            request_count: summary.request_count,
+            total_upstream_cost: summary.total_upstream_cost,
+            total_customer_charge: summary.total_customer_charge,
+        })
+        .collect::<Vec<_>>();
+    group_summaries.sort_by(|left, right| {
+        right
+            .total_customer_charge
+            .total_cmp(&left.total_customer_charge)
+            .then_with(|| right.request_count.cmp(&left.request_count))
+            .then_with(|| left.api_key_group_id.cmp(&right.api_key_group_id))
+    });
+
+    let mut capability_summaries = capabilities
+        .into_iter()
+        .map(|(capability, summary)| BillingEventCapabilitySummary {
+            capability,
+            event_count: summary.event_count,
+            request_count: summary.request_count,
+            total_tokens: summary.total_tokens,
+            image_count: summary.image_count,
+            audio_seconds: summary.audio_seconds,
+            video_seconds: summary.video_seconds,
+            music_seconds: summary.music_seconds,
+            total_upstream_cost: summary.total_upstream_cost,
+            total_customer_charge: summary.total_customer_charge,
+        })
+        .collect::<Vec<_>>();
+    capability_summaries.sort_by(|left, right| {
+        right
+            .request_count
+            .cmp(&left.request_count)
+            .then_with(|| left.capability.cmp(&right.capability))
+    });
+
+    let mut accounting_mode_summaries = accounting_modes
+        .into_iter()
+        .map(|(accounting_mode, summary)| BillingEventAccountingModeSummary {
+            accounting_mode,
+            event_count: summary.event_count,
+            request_count: summary.request_count,
+            total_upstream_cost: summary.total_upstream_cost,
+            total_customer_charge: summary.total_customer_charge,
+        })
+        .collect::<Vec<_>>();
+    accounting_mode_summaries.sort_by(|left, right| {
+        right
+            .total_customer_charge
+            .total_cmp(&left.total_customer_charge)
+            .then_with(|| right.event_count.cmp(&left.event_count))
+            .then_with(|| left.accounting_mode.cmp(&right.accounting_mode))
+    });
+
+    BillingEventSummary {
+        total_events: events.len() as u64,
+        project_count: project_summaries.len() as u64,
+        group_count: group_summaries.len() as u64,
+        capability_count: capability_summaries.len() as u64,
+        total_request_count: events.iter().map(|event| event.request_count).sum(),
+        total_units: events.iter().map(|event| event.units).sum(),
+        total_input_tokens: events.iter().map(|event| event.input_tokens).sum(),
+        total_output_tokens: events.iter().map(|event| event.output_tokens).sum(),
+        total_tokens: events.iter().map(|event| event.total_tokens).sum(),
+        total_image_count: events.iter().map(|event| event.image_count).sum(),
+        total_audio_seconds: events.iter().map(|event| event.audio_seconds).sum(),
+        total_video_seconds: events.iter().map(|event| event.video_seconds).sum(),
+        total_music_seconds: events.iter().map(|event| event.music_seconds).sum(),
+        total_upstream_cost: events.iter().map(|event| event.upstream_cost).sum(),
+        total_customer_charge: events.iter().map(|event| event.customer_charge).sum(),
+        projects: project_summaries,
+        groups: group_summaries,
+        capabilities: capability_summaries,
+        accounting_modes: accounting_mode_summaries,
+    }
+}
+
 pub async fn summarize_billing_from_store(store: &dyn AdminStore) -> Result<BillingSummary> {
     let entries = list_ledger_entries(store).await?;
     let policies = list_quota_policies(store).await?;
     Ok(summarize_billing_snapshot(&entries, &policies))
+}
+
+pub async fn summarize_billing_events_from_store(
+    store: &dyn AdminStore,
+) -> Result<BillingEventSummary> {
+    let events = list_billing_events(store).await?;
+    Ok(summarize_billing_events(&events))
 }

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use reqwest::Client;
-use sdkwork_api_config::StandaloneConfigLoader;
+use sdkwork_api_config::{CacheBackendKind, StandaloneConfigLoader};
 use sdkwork_api_product_runtime::{
     ProductRuntimeRole, ProductSiteDirs, RouterProductRuntime, RouterProductRuntimeOptions,
 };
@@ -160,6 +160,157 @@ async fn server_product_runtime_rejects_web_role_without_required_api_upstreams(
     .expect("web-only server runtime without API upstreams should fail");
 
     assert!(error.to_string().contains("gateway upstream"));
+}
+
+#[tokio::test]
+async fn product_runtime_supports_redis_cache_backend_during_startup() {
+    let config_root = temp_root("runtime-cache-backend");
+    let (loader, mut config) = StandaloneConfigLoader::from_local_root_and_pairs(
+        &config_root,
+        std::iter::empty::<(&str, &str)>(),
+    )
+    .unwrap();
+    let redis_server = MinimalRedisPingServer::start();
+    config.cache_backend = CacheBackendKind::Redis;
+    config.cache_url = Some(redis_server.url_with_db(0));
+
+    let runtime = RouterProductRuntime::start(
+        loader,
+        config,
+        RouterProductRuntimeOptions::desktop(ProductSiteDirs::new(
+            config_root.join("unused-admin-site"),
+            config_root.join("unused-portal-site"),
+        ))
+        .with_roles(Vec::<ProductRuntimeRole>::new()),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(runtime.snapshot().roles, Vec::<String>::new());
+}
+
+struct MinimalRedisPingServer {
+    address: String,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl MinimalRedisPingServer {
+    fn start() -> Self {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let address = listener.local_addr().unwrap().to_string();
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let thread_stop = stop.clone();
+        let thread = std::thread::spawn(move || {
+            while !thread_stop.load(std::sync::atomic::Ordering::Relaxed) {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        stream.set_nonblocking(false).unwrap();
+                        loop {
+                        match read_minimal_resp_array(&mut stream) {
+                            Ok(Some(command)) => match String::from_utf8_lossy(&command[0])
+                                .to_ascii_uppercase()
+                                .as_str()
+                            {
+                                "PING" => {
+                                    use std::io::Write;
+                                    stream.write_all(b"+PONG\r\n").unwrap();
+                                    stream.flush().unwrap();
+                                }
+                                "AUTH" | "SELECT" => {
+                                    use std::io::Write;
+                                    stream.write_all(b"+OK\r\n").unwrap();
+                                    stream.flush().unwrap();
+                                }
+                                other => panic!("unexpected minimal redis command: {other}"),
+                            },
+                            Ok(None) => break,
+                            Err(error)
+                                if matches!(
+                                    error.kind(),
+                                    std::io::ErrorKind::UnexpectedEof
+                                        | std::io::ErrorKind::ConnectionReset
+                                        | std::io::ErrorKind::TimedOut
+                                ) =>
+                            {
+                                break
+                            }
+                            Err(error) => panic!("minimal redis server read failed: {error}"),
+                        }
+                    }
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("minimal redis accept failed: {error}"),
+                }
+            }
+        });
+
+        Self {
+            address,
+            stop,
+            thread: Some(thread),
+        }
+    }
+
+    fn url_with_db(&self, db: u32) -> String {
+        format!("redis://{}/{db}", self.address)
+    }
+}
+
+impl Drop for MinimalRedisPingServer {
+    fn drop(&mut self) {
+        self.stop
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        let _ = std::net::TcpStream::connect(&self.address);
+        if let Some(thread) = self.thread.take() {
+            thread.join().unwrap();
+        }
+    }
+}
+
+fn read_minimal_resp_array(
+    stream: &mut std::net::TcpStream,
+) -> std::io::Result<Option<Vec<Vec<u8>>>> {
+    let mut marker = [0_u8; 1];
+    match std::io::Read::read_exact(stream, &mut marker) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+        Err(error) => return Err(error),
+    }
+    assert_eq!(marker[0], b'*');
+    let count = read_minimal_resp_line(stream)?.parse::<usize>().unwrap();
+    let mut values = Vec::with_capacity(count);
+    for _ in 0..count {
+        let mut bulk_marker = [0_u8; 1];
+        std::io::Read::read_exact(stream, &mut bulk_marker)?;
+        assert_eq!(bulk_marker[0], b'$');
+        let length = read_minimal_resp_line(stream)?.parse::<usize>().unwrap();
+        let mut value = vec![0_u8; length];
+        std::io::Read::read_exact(stream, &mut value)?;
+        let mut crlf = [0_u8; 2];
+        std::io::Read::read_exact(stream, &mut crlf)?;
+        values.push(value);
+    }
+    Ok(Some(values))
+}
+
+fn read_minimal_resp_line(stream: &mut std::net::TcpStream) -> std::io::Result<String> {
+    let mut bytes = Vec::new();
+    loop {
+        let mut byte = [0_u8; 1];
+        std::io::Read::read_exact(stream, &mut byte)?;
+        if byte[0] == b'\r' {
+            let mut newline = [0_u8; 1];
+            std::io::Read::read_exact(stream, &mut newline)?;
+            assert_eq!(newline[0], b'\n');
+            break;
+        }
+        bytes.push(byte[0]);
+    }
+    Ok(String::from_utf8(bytes).unwrap())
 }
 
 fn temp_root(label: &str) -> PathBuf {

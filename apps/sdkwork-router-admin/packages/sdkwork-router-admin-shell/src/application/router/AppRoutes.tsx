@@ -1,16 +1,18 @@
+import { LoadingBlock } from '@sdkwork/ui-pc-react/components/ui/feedback';
 import { lazy, Suspense, type ReactNode } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
-import { useAdminI18n } from 'sdkwork-router-admin-commons';
 
 import { AdminLoginPage } from 'sdkwork-router-admin-auth';
 import {
   ADMIN_ROUTE_PATHS,
   adminRoutePathByKey,
   isAdminAuthPath,
+  useAdminI18n,
   useAdminWorkbench,
 } from 'sdkwork-router-admin-core';
 import type { AdminRouteKey } from 'sdkwork-router-admin-types';
 
+import { MainLayout } from '../layouts/MainLayout';
 import { ROUTE_PATHS } from './routePaths';
 
 const OverviewPage = lazy(async () => ({
@@ -27,6 +29,9 @@ const CouponsPage = lazy(async () => ({
 }));
 const GatewayAccessPage = lazy(async () => ({
   default: (await import('sdkwork-router-admin-apirouter')).GatewayAccessPage,
+}));
+const GatewayRateLimitsPage = lazy(async () => ({
+  default: (await import('sdkwork-router-admin-apirouter')).GatewayRateLimitsPage,
 }));
 const GatewayRoutesPage = lazy(async () => ({
   default: (await import('sdkwork-router-admin-apirouter')).GatewayRoutesPage,
@@ -50,7 +55,7 @@ const SettingsPage = lazy(async () => ({
   default: (await import('sdkwork-router-admin-settings')).SettingsPage,
 }));
 
-function PageFrame({
+function RouteStage({
   children,
   routeKey,
 }: {
@@ -58,10 +63,8 @@ function PageFrame({
   routeKey: string;
 }) {
   return (
-    <div key={routeKey} className="adminx-page-frame">
-      <div className="adminx-page-frame-shell">
-        <div className="adminx-page-frame-scroll">{children}</div>
-      </div>
+    <div className="admin-shell-route-stage" data-route-key={routeKey} key={routeKey}>
+      <div className="admin-shell-route-scroll">{children}</div>
     </div>
   );
 }
@@ -70,10 +73,15 @@ function LoadingScreen() {
   const { t } = useAdminI18n();
 
   return (
-    <div className="adminx-shell-loading">
-      <div className="adminx-shell-loading-orb" />
-      <strong>{t('Synchronizing operator workspace...')}</strong>
-      <span>{t('Restoring theme, session, and live control-plane state.')}</span>
+    <div className="admin-shell-route-stage admin-shell-route-stage-loading">
+      <div className="admin-shell-route-scroll">
+        <div className="flex min-h-full flex-col items-center justify-center gap-4 text-center">
+          <LoadingBlock label={t('Synchronizing operator workspace...')} />
+          <p className="max-w-md text-sm text-[var(--sdk-color-text-secondary)]">
+            {t('Restoring theme, session, and live control-plane state.')}
+          </p>
+        </div>
+      </div>
     </div>
   );
 }
@@ -105,7 +113,7 @@ function withRedirect(pathname: string, rawTarget: string | null) {
   return `${pathname}?${params.toString()}`;
 }
 
-function ProtectedRoute({ children }: { children: React.ReactNode }) {
+function ProtectedRoute({ children }: { children: ReactNode }) {
   const location = useLocation();
   const { authResolved, sessionUser } = useAdminWorkbench();
 
@@ -116,8 +124,8 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   if (!sessionUser) {
     return (
       <Navigate
-        to={withRedirect(ROUTE_PATHS.LOGIN, `${location.pathname}${location.search}`)}
         replace
+        to={withRedirect(ROUTE_PATHS.LOGIN, `${location.pathname}${location.search}`)}
       />
     );
   }
@@ -134,9 +142,11 @@ function ProtectedPage({
 }) {
   return (
     <ProtectedRoute>
-      <PageFrame routeKey={routeKey}>
-        <Suspense fallback={<LoadingScreen />}>{children}</Suspense>
-      </PageFrame>
+      <MainLayout>
+        <RouteStage routeKey={routeKey}>
+          <Suspense fallback={<LoadingScreen />}>{children}</Suspense>
+        </RouteStage>
+      </MainLayout>
     </ProtectedRoute>
   );
 }
@@ -144,19 +154,14 @@ function ProtectedPage({
 export function AppRoutes() {
   const location = useLocation();
   const navigate = useNavigate();
+  const workbench = useAdminWorkbench();
   const {
     authResolved,
-    handleLogin,
-    sessionUser,
-    snapshot,
-    status,
-    loading,
-    refreshWorkspace,
-  } = useAdminWorkbench();
-  const {
     handleCreateApiKey,
-    handleUpdateApiKey,
+    handleCreateRoutingProfile,
+    handleCreateRateLimitPolicy,
     handleDeleteApiKey,
+    handleDeleteApiKeyGroup,
     handleDeleteChannel,
     handleDeleteChannelModel,
     handleDeleteCoupon,
@@ -168,6 +173,7 @@ export function AppRoutes() {
     handleDeleteProject,
     handleDeleteProvider,
     handleDeleteTenant,
+    handleLogin,
     handleReloadRuntimes,
     handleSaveChannel,
     handleSaveChannelModel,
@@ -175,16 +181,24 @@ export function AppRoutes() {
     handleSaveCredential,
     handleSaveModel,
     handleSaveModelPrice,
+    handleSaveApiKeyGroup,
     handleSaveOperatorUser,
     handleSavePortalUser,
     handleSaveProject,
     handleSaveProvider,
     handleSaveTenant,
+    handleToggleApiKeyGroup,
     handleToggleCoupon,
     handleToggleOperatorUser,
     handleTogglePortalUser,
+    handleUpdateApiKey,
     handleUpdateApiKeyStatus,
-  } = useAdminWorkbench();
+    loading,
+    refreshWorkspace,
+    sessionUser,
+    snapshot,
+    status,
+  } = workbench;
 
   const navigateToRoute = (routeKey: AdminRouteKey) => {
     navigate(adminRoutePathByKey[routeKey]);
@@ -194,194 +208,197 @@ export function AppRoutes() {
     <LoadingScreen />
   ) : (
     <AdminLoginPage
-      status={status}
-      loading={loading}
       isAuthenticated={Boolean(sessionUser)}
+      loading={loading}
       onLogin={handleLogin}
+      status={status}
     />
   );
 
   return (
     <Routes>
       <Route
-        path={ROUTE_PATHS.AUTH}
         element={
           <Navigate
-            to={withRedirect(ROUTE_PATHS.LOGIN, new URLSearchParams(location.search).get('redirect'))}
             replace
+            to={withRedirect(ROUTE_PATHS.LOGIN, new URLSearchParams(location.search).get('redirect'))}
           />
         }
+        path={ROUTE_PATHS.AUTH}
       />
+      <Route element={authRouteElement} path={ROUTE_PATHS.LOGIN} />
+      <Route element={authRouteElement} path={ROUTE_PATHS.REGISTER} />
+      <Route element={authRouteElement} path={ROUTE_PATHS.FORGOT_PASSWORD} />
       <Route
-        path={ROUTE_PATHS.LOGIN}
-        element={authRouteElement}
-      />
-      <Route
-        path={ROUTE_PATHS.REGISTER}
-        element={authRouteElement}
-      />
-      <Route
-        path={ROUTE_PATHS.FORGOT_PASSWORD}
-        element={authRouteElement}
-      />
-      <Route
-        path={ROUTE_PATHS.OVERVIEW}
         element={
           <ProtectedPage routeKey={location.pathname}>
-            <OverviewPage snapshot={snapshot} onNavigate={navigateToRoute} />
+            <OverviewPage onNavigate={navigateToRoute} snapshot={snapshot} />
           </ProtectedPage>
         }
+        path={ROUTE_PATHS.OVERVIEW}
       />
       <Route
-        path={ROUTE_PATHS.USERS}
         element={
           <ProtectedPage routeKey={location.pathname}>
             <UsersPage
-              snapshot={snapshot}
+              onDeleteOperatorUser={handleDeleteOperatorUser}
+              onDeletePortalUser={handleDeletePortalUser}
               onSaveOperatorUser={handleSaveOperatorUser}
               onSavePortalUser={handleSavePortalUser}
               onToggleOperatorUser={handleToggleOperatorUser}
               onTogglePortalUser={handleTogglePortalUser}
-              onDeleteOperatorUser={handleDeleteOperatorUser}
-              onDeletePortalUser={handleDeletePortalUser}
+              snapshot={snapshot}
             />
           </ProtectedPage>
         }
+        path={ROUTE_PATHS.USERS}
       />
       <Route
-        path={ROUTE_PATHS.TENANTS}
         element={
           <ProtectedPage routeKey={location.pathname}>
             <TenantsPage
-              snapshot={snapshot}
-              onSaveTenant={handleSaveTenant}
-              onSaveProject={handleSaveProject}
               onCreateApiKey={handleCreateApiKey}
-              onUpdateApiKeyStatus={handleUpdateApiKeyStatus}
               onDeleteApiKey={handleDeleteApiKey}
-              onDeleteTenant={handleDeleteTenant}
               onDeleteProject={handleDeleteProject}
+              onDeleteTenant={handleDeleteTenant}
+              onSaveProject={handleSaveProject}
+              onSaveTenant={handleSaveTenant}
+              onUpdateApiKeyStatus={handleUpdateApiKeyStatus}
+              snapshot={snapshot}
             />
           </ProtectedPage>
         }
+        path={ROUTE_PATHS.TENANTS}
       />
       <Route
-        path={ROUTE_PATHS.COUPONS}
         element={
           <ProtectedPage routeKey={location.pathname}>
             <CouponsPage
-              snapshot={snapshot}
+              onDeleteCoupon={handleDeleteCoupon}
               onSaveCoupon={handleSaveCoupon}
               onToggleCoupon={handleToggleCoupon}
-              onDeleteCoupon={handleDeleteCoupon}
+              snapshot={snapshot}
             />
           </ProtectedPage>
         }
+        path={ROUTE_PATHS.COUPONS}
       />
       <Route
+        element={<Navigate replace to={ROUTE_PATHS.API_ROUTER_API_KEYS} />}
         path={ROUTE_PATHS.API_ROUTER_ROOT}
-        element={<Navigate to={ROUTE_PATHS.API_ROUTER_API_KEYS} replace />}
       />
       <Route
-        path={ROUTE_PATHS.API_ROUTER_API_KEYS}
         element={
           <ProtectedPage routeKey={location.pathname}>
             <GatewayAccessPage
-              snapshot={snapshot}
-              onRefreshWorkspace={refreshWorkspace}
               onCreateApiKey={handleCreateApiKey}
+              onDeleteApiKey={handleDeleteApiKey}
+              onDeleteApiKeyGroup={handleDeleteApiKeyGroup}
+              onRefreshWorkspace={refreshWorkspace}
+              onSaveApiKeyGroup={handleSaveApiKeyGroup}
+              onToggleApiKeyGroup={handleToggleApiKeyGroup}
               onUpdateApiKey={handleUpdateApiKey}
               onUpdateApiKeyStatus={handleUpdateApiKeyStatus}
-              onDeleteApiKey={handleDeleteApiKey}
+              snapshot={snapshot}
             />
           </ProtectedPage>
         }
+        path={ROUTE_PATHS.API_ROUTER_API_KEYS}
       />
       <Route
-        path={ROUTE_PATHS.API_ROUTER_ROUTE_CONFIG}
+        element={
+          <ProtectedPage routeKey={location.pathname}>
+            <GatewayRateLimitsPage
+              onCreateRateLimitPolicy={handleCreateRateLimitPolicy}
+              snapshot={snapshot}
+            />
+          </ProtectedPage>
+        }
+        path={ROUTE_PATHS.API_ROUTER_RATE_LIMITS}
+      />
+      <Route
         element={
           <ProtectedPage routeKey={location.pathname}>
             <GatewayRoutesPage
-              snapshot={snapshot}
+              onCreateRoutingProfile={handleCreateRoutingProfile}
+              onDeleteProvider={handleDeleteProvider}
               onRefreshWorkspace={refreshWorkspace}
               onSaveProvider={handleSaveProvider}
-              onDeleteProvider={handleDeleteProvider}
+              snapshot={snapshot}
             />
           </ProtectedPage>
         }
+        path={ROUTE_PATHS.API_ROUTER_ROUTE_CONFIG}
       />
       <Route
-        path={ROUTE_PATHS.API_ROUTER_MODEL_MAPPING}
         element={
           <ProtectedPage routeKey={location.pathname}>
             <GatewayModelMappingsPage snapshot={snapshot} />
           </ProtectedPage>
         }
+        path={ROUTE_PATHS.API_ROUTER_MODEL_MAPPING}
       />
       <Route
-        path={ROUTE_PATHS.API_ROUTER_USAGE_RECORDS}
         element={
           <ProtectedPage routeKey={location.pathname}>
-            <GatewayUsagePage
-              snapshot={snapshot}
-              onRefreshWorkspace={refreshWorkspace}
-            />
+            <GatewayUsagePage onRefreshWorkspace={refreshWorkspace} snapshot={snapshot} />
           </ProtectedPage>
         }
+        path={ROUTE_PATHS.API_ROUTER_USAGE_RECORDS}
       />
       <Route
-        path={ROUTE_PATHS.CATALOG}
         element={
           <ProtectedPage routeKey={location.pathname}>
             <CatalogPage
-              snapshot={snapshot}
-              onSaveChannel={handleSaveChannel}
-              onSaveProvider={handleSaveProvider}
-              onSaveCredential={handleSaveCredential}
-              onSaveModel={handleSaveModel}
-              onSaveChannelModel={handleSaveChannelModel}
-              onSaveModelPrice={handleSaveModelPrice}
               onDeleteChannel={handleDeleteChannel}
-              onDeleteProvider={handleDeleteProvider}
+              onDeleteChannelModel={handleDeleteChannelModel}
               onDeleteCredential={handleDeleteCredential}
               onDeleteModel={handleDeleteModel}
-              onDeleteChannelModel={handleDeleteChannelModel}
               onDeleteModelPrice={handleDeleteModelPrice}
+              onDeleteProvider={handleDeleteProvider}
+              onSaveChannel={handleSaveChannel}
+              onSaveChannelModel={handleSaveChannelModel}
+              onSaveCredential={handleSaveCredential}
+              onSaveModel={handleSaveModel}
+              onSaveModelPrice={handleSaveModelPrice}
+              onSaveProvider={handleSaveProvider}
+              snapshot={snapshot}
             />
           </ProtectedPage>
         }
+        path={ROUTE_PATHS.CATALOG}
       />
       <Route
-        path={ROUTE_PATHS.TRAFFIC}
         element={
           <ProtectedPage routeKey={location.pathname}>
             <TrafficPage snapshot={snapshot} />
           </ProtectedPage>
         }
+        path={ROUTE_PATHS.TRAFFIC}
       />
       <Route
-        path={ROUTE_PATHS.OPERATIONS}
         element={
           <ProtectedPage routeKey={location.pathname}>
-            <OperationsPage
-              snapshot={snapshot}
-              onReloadRuntimes={handleReloadRuntimes}
-            />
+            <OperationsPage onReloadRuntimes={handleReloadRuntimes} snapshot={snapshot} />
           </ProtectedPage>
         }
+        path={ROUTE_PATHS.OPERATIONS}
       />
       <Route
-        path={ROUTE_PATHS.SETTINGS}
         element={
           <ProtectedPage routeKey={location.pathname}>
             <SettingsPage />
           </ProtectedPage>
         }
+        path={ROUTE_PATHS.SETTINGS}
       />
-      <Route path={ADMIN_ROUTE_PATHS.ROOT} element={<Navigate to={ROUTE_PATHS.OVERVIEW} replace />} />
       <Route
+        element={<Navigate replace to={ROUTE_PATHS.OVERVIEW} />}
+        path={ADMIN_ROUTE_PATHS.ROOT}
+      />
+      <Route
+        element={<Navigate replace to={sessionUser ? ROUTE_PATHS.OVERVIEW : ROUTE_PATHS.LOGIN} />}
         path="*"
-        element={<Navigate to={sessionUser ? ROUTE_PATHS.OVERVIEW : ROUTE_PATHS.LOGIN} replace />}
       />
     </Routes>
   );

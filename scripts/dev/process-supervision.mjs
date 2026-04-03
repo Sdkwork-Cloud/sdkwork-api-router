@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import process from 'node:process';
 
 function hasChildExited(child) {
@@ -6,6 +7,44 @@ function hasChildExited(child) {
 
 export function didChildExitFail(code, signal) {
   return Boolean(signal) || (code ?? 0) !== 0;
+}
+
+function terminateWindowsProcessTree(child, forceSignal, spawnImpl) {
+  if (!child?.pid) {
+    return false;
+  }
+
+  const args = ['/PID', String(child.pid), '/T'];
+  if (forceSignal) {
+    args.push('/F');
+  }
+
+  try {
+    const killer = spawnImpl('taskkill', args, {
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    if (killer && typeof killer.once === 'function') {
+      killer.once('error', () => {});
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function requestChildTermination(child, signal, { platform, spawnImpl }) {
+  if (
+    platform === 'win32'
+    && terminateWindowsProcessTree(child, signal === 'SIGKILL', spawnImpl)
+  ) {
+    return;
+  }
+
+  try {
+    child.kill(signal);
+  } catch {
+  }
 }
 
 export function waitForChildExit(
@@ -17,6 +56,8 @@ export function waitForChildExit(
     settleAfterForceMs = 5000,
     setTimer = setTimeout,
     clearTimer = clearTimeout,
+    platform = process.platform,
+    spawnImpl = spawn,
   } = {},
 ) {
   if (!child || hasChildExited(child)) {
@@ -46,10 +87,7 @@ export function waitForChildExit(
     const onExit = () => finish();
     child.once('exit', onExit);
 
-    try {
-      child.kill(termSignal);
-    } catch {
-    }
+    requestChildTermination(child, termSignal, { platform, spawnImpl });
 
     forceTimer = setTimer(() => {
       if (hasChildExited(child)) {
@@ -57,10 +95,7 @@ export function waitForChildExit(
         return;
       }
 
-      try {
-        child.kill(forceSignal);
-      } catch {
-      }
+      requestChildTermination(child, forceSignal, { platform, spawnImpl });
 
       settleTimer = setTimer(() => finish(), settleAfterForceMs);
     }, forceKillAfterMs);

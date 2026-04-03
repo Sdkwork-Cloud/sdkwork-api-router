@@ -8,7 +8,8 @@ use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use sdkwork_api_extension_core::{
-    ExtensionInstallation, ExtensionInstance, ExtensionKind, ExtensionManifest, ExtensionRuntime,
+    ExtensionInstallation, ExtensionInstance, ExtensionKind, ExtensionManifest, ExtensionModality,
+    ExtensionRuntime,
 };
 use sdkwork_api_extension_host::{
     discover_extension_packages, ensure_connector_runtime_started, shutdown_connector_runtime,
@@ -46,6 +47,10 @@ fn host_starts_discovered_connector_process_and_reports_health() {
             "0.1.0",
             ExtensionRuntime::Builtin,
         )
+        .with_supported_modality(ExtensionModality::Image)
+        .with_supported_modality(ExtensionModality::Audio)
+        .with_supported_modality(ExtensionModality::Video)
+        .with_supported_modality(ExtensionModality::File)
         .with_entrypoint("powershell.exe"),
     );
     host.register_discovered_manifest(packages[0].clone());
@@ -179,9 +184,12 @@ kind = "provider"
 version = "0.1.0"
 display_name = "Custom OpenAI"
 runtime = "connector"
+runtime_compat_version = "sdkwork.runtime/v1"
 protocol = "openai"
 entrypoint = "powershell.exe"
+config_schema_version = "1.0"
 channel_bindings = ["sdkwork.channel.openai"]
+supported_modalities = ["text", "image", "audio", "video", "file"]
 
 [[capabilities]]
 operation = "chat.completions.create"

@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
 import jiti from '../node_modules/.pnpm/jiti@2.6.1/node_modules/jiti/lib/jiti.mjs';
 
 const appRoot = path.resolve(import.meta.dirname, '..');
+
+function read(relativePath) {
+  return readFileSync(path.join(appRoot, relativePath), 'utf8');
+}
 
 function loadGatewayServices() {
   const load = jiti(import.meta.url, { moduleCache: false });
@@ -19,6 +24,19 @@ function loadGatewayServices() {
     ),
   );
 }
+
+test('gateway page centers the command center on the shared management workbench', () => {
+  const gatewayPage = read('packages/sdkwork-router-portal-gateway/src/pages/index.tsx');
+  const gatewayComponents = read('packages/sdkwork-router-portal-gateway/src/components/index.tsx');
+
+  assert.match(gatewayPage, /ManagementWorkbench/);
+  assert.match(gatewayPage, /title=\{t\('Command workbench'\)\}/);
+  assert.match(gatewayPage, /data-slot="portal-gateway-filter-bar"/);
+  assert.match(gatewayPage, /Refresh command center/);
+  assert.match(gatewayPage, /Refresh service health/);
+  assert.doesNotMatch(gatewayPage, /<Surface/);
+  assert.doesNotMatch(gatewayComponents, /export \{ Surface \}/);
+});
 
 test('gateway command center derives launch readiness blockers and desktop runtime controls', () => {
   const { buildGatewayCommandCenterSnapshot } = loadGatewayServices();

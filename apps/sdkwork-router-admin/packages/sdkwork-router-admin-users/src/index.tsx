@@ -1,47 +1,37 @@
-import { useDeferredValue, useEffect, useState } from 'react';
-import type { FormEvent } from 'react';
-
+import { useDeferredValue, useEffect, useMemo, useState } from 'react';
+import type { ChangeEvent, FormEvent } from 'react';
 import {
-  AdminDialog,
-  ConfirmDialog,
-  DataTable,
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogTrigger,
-  FormField,
+  Button,
+  Card,
+  CardContent,
   Input,
-  InlineButton,
-  PageToolbar,
-  Pill,
-  Select,
-  ToolbarDisclosure,
-  ToolbarField,
-  ToolbarInline,
-  ToolbarSearchField,
-} from 'sdkwork-router-admin-commons';
+  Label,
+  StatusBadge,
+  type DataTableColumn,
+} from '@sdkwork/ui-pc-react';
+import { Plus, Search } from 'lucide-react';
+import { useAdminI18n } from 'sdkwork-router-admin-core';
 import type { AdminPageProps, ManagedUser } from 'sdkwork-router-admin-types';
 
-const bootstrapOperatorEmail = 'admin@sdkwork.local';
-const bootstrapPortalEmail = 'portal@sdkwork.local';
-
-type SaveOperatorUserInput = {
-  id?: string;
-  email: string;
-  display_name: string;
-  password?: string;
-  active: boolean;
-};
-
-type SavePortalUserInput = {
-  id?: string;
-  email: string;
-  display_name: string;
-  password?: string;
-  workspace_tenant_id: string;
-  workspace_project_id: string;
-  active: boolean;
-};
+import { OperatorUserDialog } from './page/OperatorUserDialog';
+import { PortalUserDialog } from './page/PortalUserDialog';
+import { UsersDetailDrawer } from './page/UsersDetailDrawer';
+import { UsersRegistrySection } from './page/UsersRegistrySection';
+import {
+  ConfirmActionDialog,
+  SelectField,
+  defaultProjectId,
+  defaultTenantId,
+  emptyOperatorDraft,
+  emptyPortalDraft,
+  isProtectedUser,
+  matchesFilters,
+  operatorDraftFromUser,
+  portalDraftFromUser,
+  type PendingDelete,
+  type SaveOperatorUserInput,
+  type SavePortalUserInput,
+} from './page/shared';
 
 type UsersPageProps = AdminPageProps & {
   onSaveOperatorUser: (input: SaveOperatorUserInput) => Promise<void> | void;
@@ -52,92 +42,6 @@ type UsersPageProps = AdminPageProps & {
   onDeletePortalUser: (userId: string) => Promise<void> | void;
 };
 
-type OperatorDraft = {
-  id?: string;
-  email: string;
-  display_name: string;
-  password: string;
-  active: boolean;
-};
-
-type PortalDraft = {
-  id?: string;
-  email: string;
-  display_name: string;
-  password: string;
-  workspace_tenant_id: string;
-  workspace_project_id: string;
-  active: boolean;
-};
-
-type PendingDelete =
-  | { kind: 'operator'; user: ManagedUser }
-  | { kind: 'portal'; user: ManagedUser }
-  | null;
-
-function defaultTenantId(snapshot: AdminPageProps['snapshot']): string {
-  return snapshot.tenants[0]?.id ?? 'tenant_local_demo';
-}
-
-function defaultProjectId(
-  snapshot: AdminPageProps['snapshot'],
-  tenantId: string,
-): string {
-  return (
-    snapshot.projects.find((project) => project.tenant_id === tenantId)?.id
-    ?? snapshot.projects[0]?.id
-    ?? 'project_local_demo'
-  );
-}
-
-function emptyOperatorDraft(): OperatorDraft {
-  return {
-    email: '',
-    display_name: '',
-    password: '',
-    active: true,
-  };
-}
-
-function emptyPortalDraft(snapshot: AdminPageProps['snapshot']): PortalDraft {
-  const tenantId = defaultTenantId(snapshot);
-  return {
-    email: '',
-    display_name: '',
-    password: '',
-    workspace_tenant_id: tenantId,
-    workspace_project_id: defaultProjectId(snapshot, tenantId),
-    active: true,
-  };
-}
-
-function matchesFilters(
-  user: ManagedUser,
-  deferredQuery: string,
-  roleFilter: 'all' | 'operator' | 'portal',
-  statusFilter: 'all' | 'active' | 'disabled',
-): boolean {
-  const roleMatches = roleFilter === 'all' || user.role === roleFilter;
-  const statusMatches = statusFilter === 'all'
-    || (statusFilter === 'active' && user.active)
-    || (statusFilter === 'disabled' && !user.active);
-
-  if (!roleMatches || !statusMatches) {
-    return false;
-  }
-
-  const haystack = [
-    user.display_name,
-    user.email,
-    user.workspace_tenant_id ?? '',
-    user.workspace_project_id ?? '',
-  ]
-    .join(' ')
-    .toLowerCase();
-
-  return haystack.includes(deferredQuery);
-}
-
 export function UsersPage({
   snapshot,
   onSaveOperatorUser,
@@ -147,11 +51,15 @@ export function UsersPage({
   onDeleteOperatorUser,
   onDeletePortalUser,
 }: UsersPageProps) {
+  const { formatNumber, t } = useAdminI18n();
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState<'all' | 'operator' | 'portal'>('all');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'disabled'>('all');
-  const [operatorDraft, setOperatorDraft] = useState<OperatorDraft>(() => emptyOperatorDraft());
-  const [portalDraft, setPortalDraft] = useState<PortalDraft>(() => emptyPortalDraft(snapshot));
+  const [statusFilter, setStatusFilter] =
+    useState<'all' | 'active' | 'disabled'>('all');
+  const [operatorDraft, setOperatorDraft] = useState(() => emptyOperatorDraft());
+  const [portalDraft, setPortalDraft] = useState(() => emptyPortalDraft(snapshot));
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const [isDetailDrawerOpen, setIsDetailDrawerOpen] = useState(false);
   const [isOperatorDialogOpen, setIsOperatorDialogOpen] = useState(false);
   const [isPortalDialogOpen, setIsPortalDialogOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete>(null);
@@ -184,13 +92,29 @@ export function UsersPage({
     });
   }, [snapshot.projects, snapshot.tenants]);
 
-  const filteredUsers = [...snapshot.operatorUsers, ...snapshot.portalUsers]
-    .filter((user) => matchesFilters(user, deferredQuery, roleFilter, statusFilter))
-    .sort((left, right) => (
-      left.role.localeCompare(right.role)
-      || left.display_name.localeCompare(right.display_name)
-      || left.email.localeCompare(right.email)
-    ));
+  const filteredUsers = useMemo(
+    () =>
+      [...snapshot.operatorUsers, ...snapshot.portalUsers]
+        .filter((user) =>
+          matchesFilters(user, deferredQuery, roleFilter, statusFilter),
+        )
+        .sort(
+          (left, right) =>
+            left.role.localeCompare(right.role)
+            || left.display_name.localeCompare(right.display_name)
+            || left.email.localeCompare(right.email),
+        ),
+    [deferredQuery, roleFilter, snapshot.operatorUsers, snapshot.portalUsers, statusFilter],
+  );
+
+  useEffect(() => {
+    if (selectedUserId && !filteredUsers.some((user) => user.id === selectedUserId)) {
+      setSelectedUserId(null);
+      setIsDetailDrawerOpen(false);
+    }
+  }, [filteredUsers, selectedUserId]);
+
+  const selectedUser = filteredUsers.find((user) => user.id === selectedUserId) ?? null;
   const availableProjects = snapshot.projects.filter(
     (project) => project.tenant_id === portalDraft.workspace_tenant_id,
   );
@@ -206,6 +130,83 @@ export function UsersPage({
   const selectedProjectTokens = snapshot.usageRecords
     .filter((record) => record.project_id === portalDraft.workspace_project_id)
     .reduce((sum, record) => sum + record.total_tokens, 0);
+  const selectedUserProject = snapshot.projects.find(
+    (project) => project.id === selectedUser?.workspace_project_id,
+  );
+  const selectedUserTraffic = snapshot.usageSummary.projects.find(
+    (project) => project.project_id === selectedUser?.workspace_project_id,
+  );
+  const selectedUserBilling = snapshot.billingSummary.projects.find(
+    (project) => project.project_id === selectedUser?.workspace_project_id,
+  );
+
+  const columns = useMemo<DataTableColumn<ManagedUser>[]>(
+    () => [
+      {
+        id: 'user',
+        header: t('User'),
+        cell: (user) => (
+          <div className="space-y-1">
+            <div className="font-medium text-[var(--sdk-color-text-primary)]">
+              {user.display_name}
+            </div>
+            <div className="text-sm text-[var(--sdk-color-text-secondary)]">
+              {user.email}
+            </div>
+          </div>
+        ),
+      },
+      {
+        id: 'type',
+        header: t('Type'),
+        cell: (user) => (
+          <StatusBadge
+            showIcon
+            status={user.role}
+            variant={user.role === 'operator' ? 'success' : 'secondary'}
+          />
+        ),
+        width: 140,
+      },
+      {
+        id: 'workspace',
+        header: t('Workspace'),
+        cell: (user) => (
+          <div className="space-y-1 text-sm text-[var(--sdk-color-text-secondary)]">
+            <div>{user.workspace_tenant_id ?? t('control-plane')}</div>
+            <div>{user.workspace_project_id ?? t('shared operator context')}</div>
+          </div>
+        ),
+      },
+      {
+        id: 'requests',
+        header: t('Requests'),
+        align: 'right',
+        cell: (user) => formatNumber(user.request_count),
+        width: 120,
+      },
+      {
+        id: 'tokens',
+        header: t('Tokens'),
+        align: 'right',
+        cell: (user) => formatNumber(user.total_tokens),
+        width: 140,
+      },
+      {
+        id: 'status',
+        header: t('Status'),
+        cell: (user) => (
+          <StatusBadge
+            showIcon
+            status={user.active ? 'active' : 'disabled'}
+            variant={user.active ? 'success' : 'danger'}
+          />
+        ),
+        width: 140,
+      },
+    ],
+    [formatNumber, t],
+  );
 
   function resetOperatorDialog() {
     setIsOperatorDialogOpen(false);
@@ -217,41 +218,44 @@ export function UsersPage({
     setPortalDraft(emptyPortalDraft(snapshot));
   }
 
+  function handleOperatorDialogOpenChange(open: boolean) {
+    if (!open) {
+      resetOperatorDialog();
+      return;
+    }
+
+    setIsOperatorDialogOpen(true);
+  }
+
+  function handlePortalDialogOpenChange(open: boolean) {
+    if (!open) {
+      resetPortalDialog();
+      return;
+    }
+
+    setIsPortalDialogOpen(true);
+  }
+
   function openOperatorDialog(user?: ManagedUser) {
-    setOperatorDraft(
-      user
-        ? {
-            id: user.id,
-            email: user.email,
-            display_name: user.display_name,
-            password: '',
-            active: user.active,
-          }
-        : emptyOperatorDraft(),
-    );
+    setOperatorDraft(user ? operatorDraftFromUser(user) : emptyOperatorDraft());
     setIsOperatorDialogOpen(true);
   }
 
   function openPortalDialog(user?: ManagedUser) {
-    setPortalDraft(
-      user
-        ? {
-            id: user.id,
-            email: user.email,
-            display_name: user.display_name,
-            password: '',
-            workspace_tenant_id: user.workspace_tenant_id ?? defaultTenantId(snapshot),
-            workspace_project_id:
-              user.workspace_project_id
-              ?? defaultProjectId(
-                snapshot,
-                user.workspace_tenant_id ?? defaultTenantId(snapshot),
-              ),
-            active: user.active,
-          }
-        : emptyPortalDraft(snapshot),
-    );
+    setPortalDraft(user ? portalDraftFromUser(user, snapshot) : emptyPortalDraft(snapshot));
     setIsPortalDialogOpen(true);
+  }
+
+  function openDetailDrawer(user: ManagedUser) {
+    setSelectedUserId(user.id);
+    setIsDetailDrawerOpen(true);
+  }
+
+  function handleDetailDrawerOpenChange(open: boolean) {
+    setIsDetailDrawerOpen(open);
+    if (!open) {
+      setSelectedUserId(null);
+    }
   }
 
   async function handleOperatorSubmit(event: FormEvent<HTMLFormElement>) {
@@ -292,400 +296,202 @@ export function UsersPage({
     }
 
     setPendingDelete(null);
+    setSelectedUserId(null);
+    setIsDetailDrawerOpen(false);
   }
 
+  const operatorCount = filteredUsers.filter((user) => user.role === 'operator').length;
+  const portalCount = filteredUsers.length - operatorCount;
+  const activeCount = filteredUsers.filter((user) => user.active).length;
+
   return (
-    <div className="adminx-page-grid">
-      <PageToolbar
-        compact
-        actions={(
-          <>
-            <Dialog
-              open={isOperatorDialogOpen}
-              onOpenChange={(nextOpen) => {
-                if (!nextOpen) {
-                  resetOperatorDialog();
-                  return;
-                }
-                setIsOperatorDialogOpen(true);
-              }}
+    <>
+      <div className="flex h-full min-h-0 flex-col gap-4 p-4 lg:p-5">
+        <Card className="shrink-0">
+          <CardContent className="p-4">
+            <form
+              className="flex flex-wrap items-center gap-3"
+              onSubmit={(event) => event.preventDefault()}
             >
-              <DialogTrigger asChild>
-                <InlineButton tone="primary" onClick={() => openOperatorDialog()}>
-                  New operator
-                </InlineButton>
-              </DialogTrigger>
-              <DialogContent size="medium">
-                <AdminDialog
-                    title={operatorDraft.id ? 'Edit operator' : 'Create operator'}
-                    detail="Operators manage catalog, traffic, and runtime posture. Keep this population tightly controlled and only rotate passwords when needed."
-                  >
-                  <form className="adminx-form-grid" onSubmit={(event) => void handleOperatorSubmit(event)}>
-                    <FormField label="Display name">
-                      <Input
-                        value={operatorDraft.display_name}
-                        onChange={(event) =>
-                          setOperatorDraft((current) => ({
-                            ...current,
-                            display_name: event.target.value,
-                          }))}
-                        required
-                      />
-                    </FormField>
-                    <FormField label="Email">
-                      <Input
-                        value={operatorDraft.email}
-                        onChange={(event) =>
-                          setOperatorDraft((current) => ({
-                            ...current,
-                            email: event.target.value,
-                          }))}
-                        type="email"
-                        required
-                      />
-                    </FormField>
-                    <FormField
-                      label={operatorDraft.id ? 'New password' : 'Password'}
-                      hint={operatorDraft.id ? 'Leave blank to preserve the current password.' : 'Set a strong operator password.'}
-                    >
-                      <Input
-                        value={operatorDraft.password}
-                        onChange={(event) =>
-                          setOperatorDraft((current) => ({
-                            ...current,
-                            password: event.target.value,
-                          }))}
-                        type="password"
-                        required={!operatorDraft.id}
-                      />
-                    </FormField>
-                    <FormField label="Status">
-                      <Select
-                        value={operatorDraft.active ? 'active' : 'disabled'}
-                        onChange={(event) =>
-                          setOperatorDraft((current) => ({
-                            ...current,
-                            active: event.target.value === 'active',
-                          }))}
-                      >
-                        <option value="active">Active</option>
-                        <option value="disabled">Disabled</option>
-                      </Select>
-                    </FormField>
-                    <DialogFooter>
-                      <InlineButton onClick={resetOperatorDialog}>Cancel</InlineButton>
-                      <InlineButton tone="primary" type="submit">
-                        {operatorDraft.id ? 'Save operator' : 'Create operator'}
-                      </InlineButton>
-                    </DialogFooter>
-                  </form>
-                </AdminDialog>
-              </DialogContent>
-            </Dialog>
+              <div className="min-w-[18rem] flex-[1.5]">
+                <Label className="sr-only" htmlFor="users-search">
+                  {t('Search users')}
+                </Label>
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--sdk-color-text-muted)]" />
+                  <Input
+                    className="pl-9"
+                    id="users-search"
+                    onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                      setSearch(event.target.value)
+                    }
+                    placeholder={t('name, email, tenant, project')}
+                    value={search}
+                  />
+                </div>
+              </div>
 
-            <Dialog
-              open={isPortalDialogOpen}
-              onOpenChange={(nextOpen) => {
-                if (!nextOpen) {
-                  resetPortalDialog();
-                  return;
-                }
-                setIsPortalDialogOpen(true);
-              }}
-            >
-              <DialogTrigger asChild>
-                <InlineButton onClick={() => openPortalDialog()}>
-                  New portal user
-                </InlineButton>
-              </DialogTrigger>
-              <DialogContent size="large">
-                <AdminDialog
-                  title={portalDraft.id ? 'Edit portal user' : 'Create portal user'}
-                    detail="Portal identities are scoped to a tenant and project so usage, billing, and request posture remain attributable after every change."
-                  >
-                    <form className="adminx-form-grid" onSubmit={(event) => void handlePortalSubmit(event)}>
-                      <FormField label="Display name">
-                      <Input
-                          value={portalDraft.display_name}
-                          onChange={(event) =>
-                            setPortalDraft((current) => ({
-                              ...current,
-                            display_name: event.target.value,
-                          }))}
-                          required
-                        />
-                      </FormField>
-                      <FormField label="Email">
-                      <Input
-                          value={portalDraft.email}
-                          onChange={(event) =>
-                            setPortalDraft((current) => ({
-                              ...current,
-                            email: event.target.value,
-                          }))}
-                        type="email"
-                        required
-                      />
-                    </FormField>
-                    <FormField
-                        label={portalDraft.id ? 'New password' : 'Password'}
-                        hint={portalDraft.id ? 'Leave blank to keep the current secret.' : 'Set an initial portal password.'}
-                      >
-                      <Input
-                          value={portalDraft.password}
-                          onChange={(event) =>
-                            setPortalDraft((current) => ({
-                              ...current,
-                            password: event.target.value,
-                          }))}
-                        type="password"
-                        required={!portalDraft.id}
-                      />
-                      </FormField>
-                      <FormField label="Workspace tenant">
-                        {snapshot.tenants.length ? (
-                        <Select
-                            value={portalDraft.workspace_tenant_id}
-                            onChange={(event) => {
-                              const nextTenantId = event.target.value;
-                              setPortalDraft((current) => ({
-                              ...current,
-                              workspace_tenant_id: nextTenantId,
-                              workspace_project_id: defaultProjectId(snapshot, nextTenantId),
-                            }));
-                          }}
-                        >
-                            {snapshot.tenants.map((tenant) => (
-                              <option key={tenant.id} value={tenant.id}>
-                                {tenant.name} ({tenant.id})
-                              </option>
-                            ))}
-                          </Select>
-                        ) : (
-                        <Input
-                            value={portalDraft.workspace_tenant_id}
-                            onChange={(event) =>
-                              setPortalDraft((current) => ({
-                                ...current,
-                              workspace_tenant_id: event.target.value,
-                            }))}
-                        />
-                      )}
-                      </FormField>
-                      <FormField label="Workspace project">
-                        {availableProjects.length ? (
-                        <Select
-                            value={portalDraft.workspace_project_id}
-                            onChange={(event) =>
-                              setPortalDraft((current) => ({
-                                ...current,
-                                workspace_project_id: event.target.value,
-                              }))}
-                          >
-                            {availableProjects.map((project) => (
-                              <option key={project.id} value={project.id}>
-                                {project.name} ({project.id})
-                              </option>
-                            ))}
-                          </Select>
-                        ) : (
-                        <Input
-                            value={portalDraft.workspace_project_id}
-                            onChange={(event) =>
-                              setPortalDraft((current) => ({
-                                ...current,
-                              workspace_project_id: event.target.value,
-                            }))}
-                        />
-                        )}
-                      </FormField>
-                      <FormField label="Status">
-                      <Select
-                          value={portalDraft.active ? 'active' : 'disabled'}
-                          onChange={(event) =>
-                            setPortalDraft((current) => ({
-                              ...current,
-                              active: event.target.value === 'active',
-                            }))}
-                        >
-                          <option value="active">Active</option>
-                          <option value="disabled">Disabled</option>
-                        </Select>
-                      </FormField>
-                    <div className="adminx-note">
-                      <strong>Selected workspace posture</strong>
-                      <p>
-                        {selectedProject?.name ?? 'Unassigned workspace'}
-                        {' | '}
-                        Requests: {selectedProjectTraffic?.request_count ?? 0}
-                        {' | '}
-                        Usage units: {selectedProjectBilling?.used_units ?? 0}
-                        {' | '}
-                        Tokens: {selectedProjectTokens}
-                      </p>
-                    </div>
-                    <DialogFooter>
-                      <InlineButton onClick={resetPortalDialog}>Cancel</InlineButton>
-                      <InlineButton tone="primary" type="submit">
-                        {portalDraft.id ? 'Save portal user' : 'Create portal user'}
-                      </InlineButton>
-                    </DialogFooter>
-                  </form>
-                </AdminDialog>
-              </DialogContent>
-            </Dialog>
-          </>
-        )}
-      >
-        <ToolbarInline className="adminx-toolbar-inline-users">
-          <ToolbarSearchField
-            label="Search users"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="name, email, tenant, project"
-          />
-          <ToolbarDisclosure>
-            <ToolbarInline className="adminx-toolbar-inline-users-filters">
-              <ToolbarField label="User type">
-                <Select
+              <div className="min-w-[12rem]">
+                <SelectField<'all' | 'operator' | 'portal'>
+                  label={t('User type')}
+                  labelVisibility="sr-only"
+                  onValueChange={setRoleFilter}
+                  options={[
+                    { label: t('All users'), value: 'all' },
+                    { label: t('Operators'), value: 'operator' },
+                    { label: t('Portal users'), value: 'portal' },
+                  ]}
                   value={roleFilter}
-                  onChange={(event) =>
-                    setRoleFilter(event.target.value as 'all' | 'operator' | 'portal')}
-                >
-                  <option value="all">All users</option>
-                  <option value="operator">Operators</option>
-                  <option value="portal">Portal users</option>
-                </Select>
-              </ToolbarField>
-              <ToolbarField label="Status">
-                <Select
+                />
+              </div>
+
+              <div className="min-w-[12rem]">
+                <SelectField<'all' | 'active' | 'disabled'>
+                  label={t('Status')}
+                  labelVisibility="sr-only"
+                  onValueChange={setStatusFilter}
+                  options={[
+                    { label: t('All statuses'), value: 'all' },
+                    { label: t('Active'), value: 'active' },
+                    { label: t('Disabled'), value: 'disabled' },
+                  ]}
                   value={statusFilter}
-                  onChange={(event) =>
-                    setStatusFilter(event.target.value as 'all' | 'active' | 'disabled')}
-                >
-                  <option value="all">All statuses</option>
-                  <option value="active">Active</option>
-                  <option value="disabled">Disabled</option>
-                </Select>
-              </ToolbarField>
-            </ToolbarInline>
-          </ToolbarDisclosure>
-        </ToolbarInline>
-      </PageToolbar>
+                />
+              </div>
 
-      <DataTable
-        columns={[
-          {
-            key: 'user',
-            label: 'User',
-            render: (user) => (
-              <div className="adminx-table-cell-stack">
-                <strong>{user.display_name}</strong>
-                <span>{user.email}</span>
+              <div className="ml-auto flex flex-wrap items-center self-center gap-2">
+                <div className="hidden text-sm text-[var(--sdk-color-text-secondary)] xl:block">
+                  {t('{count} visible', { count: formatNumber(filteredUsers.length) })}
+                  {' | '}
+                  {t('{count} active', { count: formatNumber(activeCount) })}
+                </div>
+                <Button onClick={() => openOperatorDialog()} type="button" variant="primary">
+                  <Plus className="w-4 h-4" />
+                  {t('New Operator')}
+                </Button>
+                <Button onClick={() => openPortalDialog()} type="button" variant="outline">
+                  <Plus className="w-4 h-4" />
+                  {t('New Portal User')}
+                </Button>
               </div>
-            ),
-          },
-          {
-            key: 'type',
-            label: 'Type',
-            render: (user) => (
-              <div className="adminx-table-cell-stack">
-                <Pill tone={user.role === 'operator' ? 'live' : 'default'}>{user.role}</Pill>
-                <span>{user.id}</span>
-              </div>
-            ),
-          },
-          {
-            key: 'workspace',
-            label: 'Workspace',
-            render: (user) => (
-              <div className="adminx-table-cell-stack">
-                <strong>{user.workspace_tenant_id ?? '-'}</strong>
-                <span>{user.workspace_project_id ?? 'control-plane'}</span>
-              </div>
-            ),
-          },
-          { key: 'requests', label: 'Requests', render: (user) => user.request_count },
-          { key: 'tokens', label: 'Tokens', render: (user) => user.total_tokens },
-          {
-            key: 'status',
-            label: 'Status',
-            render: (user) => (
-              <Pill tone={user.active ? 'live' : 'danger'}>
-                {user.active ? 'active' : 'disabled'}
-              </Pill>
-            ),
-          },
-          {
-            key: 'actions',
-            label: 'Actions',
-            render: (user) => (
-              <div className="adminx-row">
-                <InlineButton
-                  onClick={() => {
-                    if (user.role === 'operator') {
-                      openOperatorDialog(user);
-                      return;
-                    }
+            </form>
+          </CardContent>
+        </Card>
 
-                    openPortalDialog(user);
-                  }}
-                >
-                  {user.role === 'operator' ? 'Edit operator' : 'Edit portal user'}
-                </InlineButton>
-                <InlineButton
-                  onClick={() => {
-                    if (user.role === 'operator') {
-                      void onToggleOperatorUser(user.id, !user.active);
-                      return;
-                    }
+        <div className="min-h-0 flex-1">
+          <UsersRegistrySection
+            activeCount={activeCount}
+            columns={columns}
+            filteredUsers={filteredUsers}
+            onOpenOperatorDialog={openOperatorDialog}
+            onOpenPortalDialog={openPortalDialog}
+            onRequestDelete={(user) =>
+              setPendingDelete({
+                kind: user.role,
+                user,
+              })
+            }
+            onSelectUser={openDetailDrawer}
+            onToggleOperatorUser={onToggleOperatorUser}
+            onTogglePortalUser={onTogglePortalUser}
+            operatorCount={operatorCount}
+            portalCount={portalCount}
+            selectedUserId={selectedUserId}
+            sessionUserId={snapshot.sessionUser?.id ?? null}
+          />
+        </div>
+      </div>
 
-                    void onTogglePortalUser(user.id, !user.active);
-                  }}
-                >
-                  {user.active ? 'Disable' : 'Restore'}
-                </InlineButton>
-                <InlineButton
-                  tone="danger"
-                  disabled={
-                    (user.role === 'operator'
-                      && (user.email === bootstrapOperatorEmail
-                        || user.id === snapshot.sessionUser?.id))
-                    || (user.role === 'portal' && user.email === bootstrapPortalEmail)
-                  }
-                  onClick={() =>
-                    setPendingDelete({
-                      kind: user.role,
-                      user,
-                    })}
-                >
-                  Delete
-                </InlineButton>
-              </div>
-            ),
-          },
-        ]}
-        rows={filteredUsers}
-        empty="No users match the current filter."
-        getKey={(user) => user.id}
+      <UsersDetailDrawer
+        isProtected={
+          selectedUser ? isProtectedUser(selectedUser, snapshot.sessionUser?.id ?? null) : false
+        }
+        onDelete={() => {
+          if (!selectedUser) {
+            return;
+          }
+          setPendingDelete({
+            kind: selectedUser.role,
+            user: selectedUser,
+          });
+        }}
+        onEdit={() => {
+          if (!selectedUser) {
+            return;
+          }
+          setIsDetailDrawerOpen(false);
+          if (selectedUser.role === 'operator') {
+            openOperatorDialog(selectedUser);
+            return;
+          }
+          openPortalDialog(selectedUser);
+        }}
+        onOpenChange={handleDetailDrawerOpenChange}
+        onToggleStatus={() => {
+          if (!selectedUser) {
+            return;
+          }
+          if (selectedUser.role === 'operator') {
+            void onToggleOperatorUser(selectedUser.id, !selectedUser.active);
+            return;
+          }
+          void onTogglePortalUser(selectedUser.id, !selectedUser.active);
+        }}
+        open={isDetailDrawerOpen}
+        user={selectedUser}
+        userBilling={selectedUserBilling}
+        userProject={selectedUserProject}
+        userTraffic={selectedUserTraffic}
       />
 
-      <ConfirmDialog
+      <OperatorUserDialog
+        draft={operatorDraft}
+        onOpenChange={handleOperatorDialogOpenChange}
+        onSubmit={(event) => void handleOperatorSubmit(event)}
+        open={isOperatorDialogOpen}
+        setDraft={setOperatorDraft}
+      />
+
+      <PortalUserDialog
+        availableProjects={availableProjects}
+        draft={portalDraft}
+        onOpenChange={handlePortalDialogOpenChange}
+        onSubmit={(event) => void handlePortalSubmit(event)}
+        open={isPortalDialogOpen}
+        selectedProject={selectedProject}
+        selectedProjectBilling={selectedProjectBilling}
+        selectedProjectTokens={selectedProjectTokens}
+        selectedProjectTraffic={selectedProjectTraffic}
+        setDraft={setPortalDraft}
+        snapshot={snapshot}
+      />
+
+      <ConfirmActionDialog
+        confirmLabel={t('Delete now')}
+        description={
+          pendingDelete
+            ? t(
+                'Remove {name} ({email}) from the directory. This action cannot be undone from this console.',
+                {
+                  email: pendingDelete.user.email,
+                  name: pendingDelete.user.display_name,
+                },
+              )
+            : ''
+        }
+        onConfirm={() => void confirmDelete()}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPendingDelete(null);
+          }
+        }}
         open={Boolean(pendingDelete)}
         title={
           pendingDelete?.kind === 'operator'
-            ? 'Delete operator account'
-            : 'Delete portal account'
+            ? t('Delete operator account')
+            : t('Delete portal account')
         }
-        detail={
-          pendingDelete
-            ? `Remove ${pendingDelete.user.display_name} (${pendingDelete.user.email}) from the directory. This action cannot be undone from this workbench.`
-            : ''
-        }
-        confirmLabel="Delete now"
-        onClose={() => setPendingDelete(null)}
-        onConfirm={confirmDelete}
       />
-    </div>
+    </>
   );
 }

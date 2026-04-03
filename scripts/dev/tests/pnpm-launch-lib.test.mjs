@@ -1,22 +1,87 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import {
+  frontendInstallRequired,
+  frontendInstallStatus,
+  pnpmArgumentPrefix,
+  pnpmDisplayCommand,
   pnpmExecutable,
+  pnpmProcessSpec,
   pnpmSpawnOptions,
+  shouldReuseExistingFrontendDist,
 } from '../pnpm-launch-lib.mjs';
 
 const repoRoot = path.resolve(import.meta.dirname, '..', '..', '..');
 
-test('pnpmExecutable selects the platform-specific launcher', () => {
-  assert.equal(pnpmExecutable('win32'), 'pnpm.cmd');
+function withTempApp(callback) {
+  const tempRoot = mkdtempSync(path.join(os.tmpdir(), 'sdkwork-router-pnpm-'));
+  const appRoot = path.join(tempRoot, 'app');
+  mkdirSync(appRoot, { recursive: true });
+
+  try {
+    callback(appRoot);
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+}
+
+test('pnpmExecutable uses node.exe on Windows so pnpm can run without cmd.exe shelling', () => {
+  assert.equal(pnpmExecutable('win32', 'C:/Tools/node.exe'), 'C:/Tools/node.exe');
   assert.equal(pnpmExecutable('linux'), 'pnpm');
   assert.equal(pnpmExecutable('darwin'), 'pnpm');
 });
 
-test('pnpmSpawnOptions enables Windows shell execution without opening another window', () => {
+test('pnpmArgumentPrefix resolves the bundled pnpm.cjs script on Windows', () => {
+  assert.deepEqual(
+    pnpmArgumentPrefix({
+      platform: 'win32',
+      execPath: 'C:/Tools/node.exe',
+    }),
+    [path.join('C:/Tools', 'node_modules', 'pnpm', 'bin', 'pnpm.cjs')],
+  );
+  assert.deepEqual(
+    pnpmArgumentPrefix({
+      platform: 'linux',
+      execPath: '/usr/bin/node',
+    }),
+    [],
+  );
+});
+
+test('pnpmProcessSpec wraps Windows pnpm invocations in a hidden PowerShell command', () => {
+  const processSpec = pnpmProcessSpec(['--dir', 'apps/sdkwork-router-admin', 'install'], {
+    platform: 'win32',
+    execPath: 'C:/Tools/node.exe',
+  });
+
+  assert.equal(processSpec.command, 'powershell.exe');
+  assert.deepEqual(processSpec.args.slice(0, 4), [
+    '-NoProfile',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-Command',
+  ]);
+  assert.match(processSpec.args[4], /node\.exe/);
+  assert.match(processSpec.args[4], /pnpm\.cjs/);
+  assert.match(processSpec.args[4], /sdkwork-router-admin/);
+});
+
+test('pnpmDisplayCommand shows the direct node-plus-pnpm command used on Windows', () => {
+  const command = pnpmDisplayCommand(['build'], {
+    platform: 'win32',
+    execPath: 'C:/Tools/node.exe',
+  });
+
+  assert.match(command, /^C:\/Tools\/node\.exe /);
+  assert.match(command, /node_modules[\\/]+pnpm[\\/]+bin[\\/]+pnpm\.cjs/);
+  assert.match(command, / build$/);
+});
+
+test('pnpmSpawnOptions keeps Windows launches direct and hidden without opening another shell window', () => {
   const env = { PATH: 'C:/pnpm' };
   const options = pnpmSpawnOptions({
     platform: 'win32',
@@ -30,7 +95,7 @@ test('pnpmSpawnOptions enables Windows shell execution without opening another w
       ...env,
       NODE_OPTIONS: options.env.NODE_OPTIONS,
     },
-    shell: true,
+    shell: false,
     stdio: 'inherit',
     windowsHide: true,
   });
@@ -74,7 +139,6 @@ test('dev launchers use the shared pnpm helper for Windows-safe process spawning
   const scriptPaths = [
     path.join(repoRoot, 'scripts', 'dev', 'start-admin.mjs'),
     path.join(repoRoot, 'scripts', 'dev', 'start-portal.mjs'),
-    path.join(repoRoot, 'scripts', 'dev', 'start-console.mjs'),
     path.join(repoRoot, 'scripts', 'dev', 'start-web.mjs'),
   ];
 
@@ -83,4 +147,187 @@ test('dev launchers use the shared pnpm helper for Windows-safe process spawning
     assert.match(script, /pnpm-launch-lib\.mjs/);
     assert.match(script, /pnpmSpawnOptions/);
   }
+});
+
+test('frontend launchers repair installs in place without deleting node_modules first', () => {
+  const scriptPaths = [
+    path.join(repoRoot, 'scripts', 'dev', 'start-admin.mjs'),
+    path.join(repoRoot, 'scripts', 'dev', 'start-portal.mjs'),
+    path.join(repoRoot, 'scripts', 'dev', 'start-web.mjs'),
+    path.join(repoRoot, 'scripts', 'dev', 'start-console.mjs'),
+    path.join(repoRoot, 'scripts', 'build-router-desktop-assets.mjs'),
+    path.join(repoRoot, 'scripts', 'check-router-product.mjs'),
+  ];
+
+  for (const scriptPath of scriptPaths) {
+    const script = readFileSync(scriptPath, 'utf8');
+    assert.doesNotMatch(script, /removeFrontendNodeModules/);
+    assert.match(script, /frontendInstallStatus/);
+    assert.match(script, /['"]install['"]/);
+  }
+});
+
+test('preview installs can reuse existing dist on Windows spawn EPERM when explicitly allowed', () => {
+  assert.equal(
+    shouldReuseExistingFrontendDist({
+      platform: 'win32',
+      stepArgs: ['--dir', 'apps/sdkwork-router-admin', 'install'],
+      status: 1,
+      errorMessage: 'spawnSync powershell.exe EPERM',
+      distExists: true,
+      allowInstallReuse: true,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldReuseExistingFrontendDist({
+      platform: 'win32',
+      stepArgs: ['--dir', 'apps/sdkwork-router-admin', 'install'],
+      status: 1,
+      errorMessage: 'spawnSync powershell.exe EPERM',
+      distExists: true,
+      allowInstallReuse: false,
+    }),
+    false,
+  );
+});
+
+test('frontendInstallRequired returns true when node_modules is missing', () => {
+  withTempApp((appRoot) => {
+    assert.equal(frontendInstallRequired({ appRoot, requiredPackages: ['vite'] }), true);
+  });
+});
+
+test('frontendInstallRequired returns true when pnpm metadata is missing even if node_modules exists', () => {
+  withTempApp((appRoot) => {
+    mkdirSync(path.join(appRoot, 'node_modules'), { recursive: true });
+
+    assert.equal(frontendInstallRequired({ appRoot, requiredPackages: ['vite'] }), true);
+  });
+});
+
+test('frontendInstallRequired returns true when required frontend packages are missing', () => {
+  withTempApp((appRoot) => {
+    const nodeModulesRoot = path.join(appRoot, 'node_modules');
+    mkdirSync(nodeModulesRoot, { recursive: true });
+    writeFileSync(path.join(nodeModulesRoot, '.modules.yaml'), 'layoutVersion: 5\n');
+
+    assert.equal(frontendInstallRequired({ appRoot, requiredPackages: ['vite'] }), true);
+  });
+});
+
+test('frontendInstallRequired returns false when pnpm metadata and required packages exist', () => {
+  withTempApp((appRoot) => {
+    const nodeModulesRoot = path.join(appRoot, 'node_modules');
+    const viteRoot = path.join(nodeModulesRoot, 'vite');
+    const tauriCliRoot = path.join(nodeModulesRoot, '@tauri-apps', 'cli');
+
+    mkdirSync(viteRoot, { recursive: true });
+    mkdirSync(tauriCliRoot, { recursive: true });
+    writeFileSync(path.join(nodeModulesRoot, '.modules.yaml'), 'layoutVersion: 5\n');
+    writeFileSync(path.join(viteRoot, 'package.json'), '{"name":"vite"}\n');
+    writeFileSync(path.join(tauriCliRoot, 'package.json'), '{"name":"@tauri-apps/cli"}\n');
+
+    assert.equal(
+      frontendInstallRequired({
+        appRoot,
+        requiredPackages: ['vite', '@tauri-apps/cli'],
+      }),
+      false,
+    );
+  });
+});
+
+test('frontendInstallStatus returns unhealthy when required packages exist but the toolchain check fails', () => {
+  withTempApp((appRoot) => {
+    const nodeModulesRoot = path.join(appRoot, 'node_modules');
+    const viteRoot = path.join(nodeModulesRoot, 'vite');
+
+    mkdirSync(viteRoot, { recursive: true });
+    writeFileSync(path.join(nodeModulesRoot, '.modules.yaml'), 'layoutVersion: 5\n');
+    writeFileSync(path.join(viteRoot, 'package.json'), '{"name":"vite"}\n');
+
+    assert.equal(
+      frontendInstallStatus({
+        appRoot,
+        requiredPackages: ['vite'],
+        verifyInstalled: () => false,
+      }),
+      'unhealthy',
+    );
+  });
+});
+
+test('frontendInstallStatus returns ready when required packages exist and the toolchain check succeeds', () => {
+  withTempApp((appRoot) => {
+    const nodeModulesRoot = path.join(appRoot, 'node_modules');
+    const viteRoot = path.join(nodeModulesRoot, 'vite');
+    const binRoot = path.join(nodeModulesRoot, '.bin');
+
+    mkdirSync(viteRoot, { recursive: true });
+    mkdirSync(binRoot, { recursive: true });
+    writeFileSync(path.join(nodeModulesRoot, '.modules.yaml'), 'layoutVersion: 5\n');
+    writeFileSync(path.join(viteRoot, 'package.json'), '{"name":"vite"}\n');
+    writeFileSync(path.join(binRoot, 'vite'), '#!/usr/bin/env node\n');
+
+    assert.equal(
+      frontendInstallStatus({
+        appRoot,
+        platform: 'linux',
+        requiredPackages: ['vite'],
+        requiredBinCommands: ['vite'],
+        verifyInstalled: () => true,
+      }),
+      'ready',
+    );
+  });
+});
+
+test('frontendInstallStatus returns unhealthy on Windows when required command shims are missing', () => {
+  withTempApp((appRoot) => {
+    const nodeModulesRoot = path.join(appRoot, 'node_modules');
+    const viteRoot = path.join(nodeModulesRoot, 'vite');
+    const binRoot = path.join(nodeModulesRoot, '.bin');
+
+    mkdirSync(viteRoot, { recursive: true });
+    mkdirSync(binRoot, { recursive: true });
+    writeFileSync(path.join(nodeModulesRoot, '.modules.yaml'), 'layoutVersion: 5\n');
+    writeFileSync(path.join(viteRoot, 'package.json'), '{"name":"vite"}\n');
+    writeFileSync(path.join(binRoot, 'vite'), '#!/usr/bin/env node\n');
+
+    assert.equal(
+      frontendInstallStatus({
+        appRoot,
+        platform: 'win32',
+        requiredPackages: ['vite'],
+        requiredBinCommands: ['vite'],
+      }),
+      'unhealthy',
+    );
+  });
+});
+
+test('frontendInstallStatus accepts Windows command shims case-insensitively', () => {
+  withTempApp((appRoot) => {
+    const nodeModulesRoot = path.join(appRoot, 'node_modules');
+    const viteRoot = path.join(nodeModulesRoot, 'vite');
+    const binRoot = path.join(nodeModulesRoot, '.bin');
+
+    mkdirSync(viteRoot, { recursive: true });
+    mkdirSync(binRoot, { recursive: true });
+    writeFileSync(path.join(nodeModulesRoot, '.modules.yaml'), 'layoutVersion: 5\n');
+    writeFileSync(path.join(viteRoot, 'package.json'), '{"name":"vite"}\n');
+    writeFileSync(path.join(binRoot, 'vite'), '#!/usr/bin/env node\n');
+    writeFileSync(path.join(binRoot, 'vite.CMD'), '@echo off\r\n');
+
+    assert.equal(
+      frontendInstallStatus({
+        appRoot,
+        platform: 'win32',
+        requiredPackages: ['vite'],
+        requiredBinCommands: ['vite'],
+      }),
+      'ready',
+    );
+  });
 });

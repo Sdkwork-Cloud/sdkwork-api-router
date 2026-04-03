@@ -34,6 +34,16 @@ async fn creates_canonical_ai_tables_with_only_ai_prefixed_physical_tables() {
         "ai_model",
         "ai_model_price",
         "ai_app_api_keys",
+        "ai_account",
+        "ai_account_benefit_lot",
+        "ai_account_hold",
+        "ai_account_ledger_entry",
+        "ai_request_meter_fact",
+        "ai_request_meter_metric",
+        "ai_request_settlement",
+        "ai_pricing_plan",
+        "ai_pricing_rate",
+        "ai_billing_events",
         "ai_gateway_rate_limit_policies",
         "ai_gateway_rate_limit_windows",
     ] {
@@ -465,7 +475,7 @@ async fn seed_legacy_schema(database_url: &str) {
     pool.close().await;
 }
 
-fn legacy_compatibility_names() -> [&'static str; 26] {
+fn legacy_compatibility_names() -> [&'static str; 27] {
     [
         "identity_users",
         "admin_users",
@@ -483,6 +493,7 @@ fn legacy_compatibility_names() -> [&'static str; 26] {
         "routing_decision_logs",
         "routing_provider_health",
         "usage_records",
+        "billing_events",
         "billing_ledger_entries",
         "billing_quota_policies",
         "identity_gateway_api_keys",

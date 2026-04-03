@@ -19,6 +19,18 @@ pub enum ExtensionRuntime {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtensionModality {
+    Text,
+    Image,
+    Audio,
+    Video,
+    File,
+    Embedding,
+    Music,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ExtensionProtocol {
     #[serde(rename = "openai")]
     OpenAi,
@@ -200,12 +212,18 @@ pub struct ExtensionManifest {
     pub version: String,
     pub display_name: String,
     pub runtime: ExtensionRuntime,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub supported_modalities: Vec<ExtensionModality>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub protocol: Option<ExtensionProtocol>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entrypoint: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_compat_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub config_schema: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_schema_version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credential_schema: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -233,9 +251,12 @@ impl ExtensionManifest {
             kind,
             version: version.into(),
             runtime,
+            supported_modalities: vec![ExtensionModality::Text],
             protocol: None,
             entrypoint: None,
+            runtime_compat_version: Some(default_runtime_compat_version().to_owned()),
             config_schema: None,
+            config_schema_version: Some(default_config_schema_version().to_owned()),
             credential_schema: None,
             permissions: Vec::new(),
             health: None,
@@ -264,13 +285,33 @@ impl ExtensionManifest {
         self
     }
 
+    pub fn with_supported_modality(mut self, modality: ExtensionModality) -> Self {
+        if !self.supported_modalities.contains(&modality) {
+            self.supported_modalities.push(modality);
+        }
+        self
+    }
+
     pub fn with_protocol(mut self, protocol: ExtensionProtocol) -> Self {
         self.protocol = Some(protocol);
         self
     }
 
+    pub fn with_runtime_compat_version(
+        mut self,
+        runtime_compat_version: impl Into<String>,
+    ) -> Self {
+        self.runtime_compat_version = Some(runtime_compat_version.into());
+        self
+    }
+
     pub fn with_config_schema(mut self, config_schema: impl Into<String>) -> Self {
         self.config_schema = Some(config_schema.into());
+        self
+    }
+
+    pub fn with_config_schema_version(mut self, config_schema_version: impl Into<String>) -> Self {
+        self.config_schema_version = Some(config_schema_version.into());
         self
     }
 
@@ -403,4 +444,12 @@ impl ExtensionInstance {
 
 fn default_config() -> Value {
     Value::Object(Default::default())
+}
+
+fn default_runtime_compat_version() -> &'static str {
+    "sdkwork.runtime/v1"
+}
+
+fn default_config_schema_version() -> &'static str {
+    "1.0"
 }

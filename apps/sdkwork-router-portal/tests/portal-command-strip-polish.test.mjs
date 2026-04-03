@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -9,19 +9,50 @@ function read(relativePath) {
   return readFileSync(path.join(appRoot, relativePath), 'utf8');
 }
 
-test('portal shell replaces the mission strip with compact workspace navigation', () => {
-  const sidebar = read('packages/sdkwork-router-portal-core/src/components/Sidebar.tsx');
-  const profileDock = read('packages/sdkwork-router-portal-core/src/components/SidebarProfileDock.tsx');
-  const shellStatus = read('packages/sdkwork-router-portal-core/src/components/ShellStatus.tsx');
+test('portal shell replaces the mission strip with a claw-style grouped sidebar', () => {
+  const desktopShell = read('packages/sdkwork-router-portal-core/src/components/PortalDesktopShell.tsx');
+  const navigationRail = read('packages/sdkwork-router-portal-core/src/components/PortalNavigationRail.tsx');
+  const sidebarPath = path.join(
+    appRoot,
+    'packages',
+    'sdkwork-router-portal-core',
+    'src',
+    'components',
+    'Sidebar.tsx',
+  );
+  const profileDockPath = path.join(
+    appRoot,
+    'packages',
+    'sdkwork-router-portal-core',
+    'src',
+    'components',
+    'SidebarProfileDock.tsx',
+  );
+  const shellStatusPath = path.join(
+    appRoot,
+    'packages',
+    'sdkwork-router-portal-core',
+    'src',
+    'components',
+    'ShellStatus.tsx',
+  );
 
-  assert.doesNotMatch(sidebar, /Active workspace/);
-  assert.match(shellStatus, /Workspace status/);
-  assert.match(sidebar, /SidebarProfileDock/);
-  assert.match(sidebar, /routeGroups\.map/);
-  assert.match(profileDock, /data-slot="portal-sidebar-footer-settings"/);
-  assert.match(profileDock, /data-slot="portal-sidebar-user-control"/);
-  assert.doesNotMatch(profileDock, /Active workspace/);
-  assert.match(profileDock, /Sign out/);
-  assert.doesNotMatch(sidebar, /Mission strip/);
-  assert.doesNotMatch(shellStatus, /Primary mission/);
+  assert.match(desktopShell, /PortalNavigationRail/);
+  assert.match(desktopShell, /sidebar=\{/);
+  assert.match(desktopShell, /sidebarWidth=\{currentSidebarWidth\}/);
+  assert.doesNotMatch(desktopShell, /navigation=\{/);
+  assert.match(navigationRail, /PanelLeftOpen/);
+  assert.match(navigationRail, /PanelLeftClose/);
+  assert.match(navigationRail, /data-slot="sidebar-edge-control"/);
+  assert.match(navigationRail, /data-slot="sidebar-resize-handle"/);
+  assert.match(navigationRail, /data-slot="sidebar-user-control"/);
+  assert.match(navigationRail, /Sign out/);
+  assert.doesNotMatch(navigationRail, /Active workspace/);
+  assert.doesNotMatch(navigationRail, /Mission strip/);
+  assert.doesNotMatch(navigationRail, /<NavigationRail|NavigationRail\s*\}\s*from/);
+  assert.doesNotMatch(navigationRail, /Developer portal/);
+  assert.doesNotMatch(navigationRail, /SDKWork Router/);
+  assert.equal(existsSync(sidebarPath), false);
+  assert.equal(existsSync(profileDockPath), false);
+  assert.equal(existsSync(shellStatusPath), false);
 });

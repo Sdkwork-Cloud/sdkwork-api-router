@@ -1,6 +1,7 @@
 use sdkwork_api_domain_routing::{
-    ProviderHealthSnapshot, RoutingCandidateAssessment, RoutingCandidateHealth, RoutingDecision,
-    RoutingDecisionLog, RoutingDecisionSource, RoutingPolicy, RoutingStrategy,
+    CompiledRoutingSnapshotRecord, ProviderHealthSnapshot, RoutingCandidateAssessment,
+    RoutingCandidateHealth, RoutingDecision, RoutingDecisionLog, RoutingDecisionSource,
+    RoutingPolicy, RoutingProfileRecord, RoutingStrategy,
 };
 
 #[test]
@@ -103,6 +104,125 @@ fn policy_can_switch_to_slo_aware_strategy_with_thresholds() {
 }
 
 #[test]
+fn routing_profile_retains_workspace_scoped_policy_bundle() {
+    let profile = RoutingProfileRecord::new(
+        "profile-priority",
+        "tenant-1",
+        "project-1",
+        "Priority Live",
+        "priority-live",
+    )
+    .with_description("Prefer OpenRouter first")
+    .with_strategy(RoutingStrategy::GeoAffinity)
+    .with_ordered_provider_ids(vec![
+        "provider-openrouter".to_owned(),
+        "provider-openai-official".to_owned(),
+    ])
+    .with_default_provider_id("provider-openai-official")
+    .with_max_cost(0.25)
+    .with_max_latency_ms(200)
+    .with_require_healthy(true)
+    .with_preferred_region("us-east")
+    .with_created_at_ms(100)
+    .with_updated_at_ms(200);
+
+    assert_eq!(profile.profile_id, "profile-priority");
+    assert_eq!(profile.tenant_id, "tenant-1");
+    assert_eq!(profile.project_id, "project-1");
+    assert_eq!(profile.slug, "priority-live");
+    assert_eq!(
+        profile.description.as_deref(),
+        Some("Prefer OpenRouter first")
+    );
+    assert_eq!(profile.strategy, RoutingStrategy::GeoAffinity);
+    assert_eq!(
+        profile.ordered_provider_ids,
+        vec![
+            "provider-openrouter".to_owned(),
+            "provider-openai-official".to_owned(),
+        ]
+    );
+    assert_eq!(
+        profile.default_provider_id.as_deref(),
+        Some("provider-openai-official")
+    );
+    assert_eq!(profile.max_cost, Some(0.25));
+    assert_eq!(profile.max_latency_ms, Some(200));
+    assert!(profile.require_healthy);
+    assert_eq!(profile.preferred_region.as_deref(), Some("us-east"));
+    assert!(profile.active);
+    assert_eq!(profile.created_at_ms, 100);
+    assert_eq!(profile.updated_at_ms, 200);
+}
+
+#[test]
+fn compiled_routing_snapshot_retains_effective_route_state() {
+    let snapshot = CompiledRoutingSnapshotRecord::new(
+        "snapshot-tenant-1-project-1-group-live-chat_completion-gpt-4-1",
+        "chat_completion",
+        "gpt-4.1",
+    )
+    .with_tenant_id("tenant-1")
+    .with_project_id("project-1")
+    .with_api_key_group_id("group-live")
+    .with_matched_policy_id("policy-gpt-4-1")
+    .with_project_routing_preferences_project_id("project-1")
+    .with_applied_routing_profile_id("profile-priority")
+    .with_strategy("geo_affinity")
+    .with_ordered_provider_ids(vec![
+        "provider-openrouter".to_owned(),
+        "provider-openai-official".to_owned(),
+    ])
+    .with_default_provider_id("provider-openrouter")
+    .with_max_cost(0.25)
+    .with_max_latency_ms(200)
+    .with_require_healthy(true)
+    .with_preferred_region("us-east")
+    .with_created_at_ms(100)
+    .with_updated_at_ms(200);
+
+    assert_eq!(
+        snapshot.snapshot_id,
+        "snapshot-tenant-1-project-1-group-live-chat_completion-gpt-4-1"
+    );
+    assert_eq!(snapshot.capability, "chat_completion");
+    assert_eq!(snapshot.route_key, "gpt-4.1");
+    assert_eq!(snapshot.tenant_id.as_deref(), Some("tenant-1"));
+    assert_eq!(snapshot.project_id.as_deref(), Some("project-1"));
+    assert_eq!(snapshot.api_key_group_id.as_deref(), Some("group-live"));
+    assert_eq!(
+        snapshot.matched_policy_id.as_deref(),
+        Some("policy-gpt-4-1")
+    );
+    assert_eq!(
+        snapshot.project_routing_preferences_project_id.as_deref(),
+        Some("project-1")
+    );
+    assert_eq!(
+        snapshot.applied_routing_profile_id.as_deref(),
+        Some("profile-priority")
+    );
+    assert_eq!(snapshot.strategy, "geo_affinity");
+    assert_eq!(
+        snapshot.ordered_provider_ids,
+        vec![
+            "provider-openrouter".to_owned(),
+            "provider-openai-official".to_owned(),
+        ]
+    );
+    assert_eq!(
+        snapshot.default_provider_id.as_deref(),
+        Some("provider-openrouter")
+    );
+    assert_eq!(snapshot.max_cost, Some(0.25));
+    assert_eq!(snapshot.max_latency_ms, Some(200));
+    assert!(snapshot.require_healthy);
+    assert_eq!(snapshot.preferred_region.as_deref(), Some("us-east"));
+    assert_eq!(snapshot.created_at_ms, 100);
+    assert_eq!(snapshot.updated_at_ms, 200);
+}
+
+#[test]
 fn assessment_can_record_slo_eligibility_and_violations() {
     let assessment = RoutingCandidateAssessment::new("provider-a")
         .with_slo_eligible(false)
@@ -120,6 +240,16 @@ fn routing_decision_log_captures_auditable_selection_context() {
         .with_available(true)
         .with_health(RoutingCandidateHealth::Healthy)
         .with_slo_eligible(true);
+    let decision = RoutingDecision::new("provider-a", vec!["provider-a".into()])
+        .with_matched_policy_id("policy-slo")
+        .with_applied_routing_profile_id("profile-priority")
+        .with_compiled_routing_snapshot_id("snapshot-1")
+        .with_strategy("slo_aware")
+        .with_selection_seed(42)
+        .with_selection_reason("selected provider-a as the top-ranked SLO-compliant candidate")
+        .with_fallback_reason("no fallback applied")
+        .with_slo_state(true, false)
+        .with_assessments(vec![assessment.clone()]);
     let log = RoutingDecisionLog::new(
         "decision-1",
         RoutingDecisionSource::Gateway,
@@ -132,15 +262,39 @@ fn routing_decision_log_captures_auditable_selection_context() {
     .with_tenant_id("tenant-1")
     .with_project_id("project-1")
     .with_matched_policy_id("policy-slo")
+    .with_applied_routing_profile_id("profile-priority")
+    .with_compiled_routing_snapshot_id("snapshot-1")
     .with_selection_seed(42)
     .with_selection_reason("selected provider-a as the top-ranked SLO-compliant candidate")
+    .with_fallback_reason("no fallback applied")
     .with_slo_state(true, false)
     .with_assessments(vec![assessment]);
 
+    assert_eq!(
+        decision.applied_routing_profile_id.as_deref(),
+        Some("profile-priority")
+    );
+    assert_eq!(
+        decision.compiled_routing_snapshot_id.as_deref(),
+        Some("snapshot-1")
+    );
+    assert_eq!(
+        decision.fallback_reason.as_deref(),
+        Some("no fallback applied")
+    );
     assert_eq!(log.decision_source, RoutingDecisionSource::Gateway);
     assert_eq!(log.tenant_id.as_deref(), Some("tenant-1"));
     assert_eq!(log.project_id.as_deref(), Some("project-1"));
     assert_eq!(log.matched_policy_id.as_deref(), Some("policy-slo"));
+    assert_eq!(
+        log.applied_routing_profile_id.as_deref(),
+        Some("profile-priority")
+    );
+    assert_eq!(
+        log.compiled_routing_snapshot_id.as_deref(),
+        Some("snapshot-1")
+    );
+    assert_eq!(log.fallback_reason.as_deref(), Some("no fallback applied"));
     assert_eq!(log.strategy, "slo_aware");
     assert!(log.slo_applied);
     assert!(!log.slo_degraded);

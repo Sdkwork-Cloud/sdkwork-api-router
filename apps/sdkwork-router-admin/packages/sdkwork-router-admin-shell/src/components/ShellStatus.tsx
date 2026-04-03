@@ -1,4 +1,4 @@
-import { ShieldCheck } from 'lucide-react';
+import { StatusBadge } from '@sdkwork/ui-pc-react/components/ui';
 
 function compactStatusLabel(status: string) {
   const normalized = status.toLowerCase();
@@ -18,11 +18,32 @@ function compactStatusLabel(status: string) {
   return status;
 }
 
+function resolveStatusToken(status: string) {
+  const normalized = status.toLowerCase();
+
+  if (normalized.includes('synchronized') || normalized.includes('restored')) {
+    return 'live';
+  }
+
+  if (normalized.includes('refresh') || normalized.includes('loading')) {
+    return 'syncing';
+  }
+
+  if (normalized.includes('authenticate') || normalized.includes('awaiting')) {
+    return 'pending';
+  }
+
+  return 'active';
+}
+
 export function ShellStatus({ status }: { status: string }) {
   return (
-    <div className="adminx-shell-meta-pill adminx-shell-meta-pill-status" title={status}>
-      <ShieldCheck className="adminx-shell-meta-icon" />
-      <span>{compactStatusLabel(status)}</span>
+    <div className="whitespace-nowrap">
+      <StatusBadge
+        label={compactStatusLabel(status)}
+        showIcon
+        status={resolveStatusToken(status)}
+      />
     </div>
   );
 }

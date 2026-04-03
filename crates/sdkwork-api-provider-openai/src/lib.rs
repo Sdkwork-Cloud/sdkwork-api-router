@@ -29,6 +29,7 @@ use sdkwork_api_contract_openai::images::{
     CreateImageEditRequest, CreateImageRequest, CreateImageVariationRequest,
 };
 use sdkwork_api_contract_openai::moderations::CreateModerationRequest;
+use sdkwork_api_contract_openai::music::{CreateMusicLyricsRequest, CreateMusicRequest};
 use sdkwork_api_contract_openai::realtime::CreateRealtimeSessionRequest;
 use sdkwork_api_contract_openai::responses::{
     CompactResponseRequest, CountResponseInputTokensRequest, CreateResponseRequest,
@@ -1221,6 +1222,41 @@ impl OpenAiProviderAdapter {
         .await
     }
 
+    pub async fn music(&self, api_key: &str, request: &CreateMusicRequest) -> Result<Value> {
+        self.post_json("/v1/music", api_key, request).await
+    }
+
+    pub async fn list_music(&self, api_key: &str) -> Result<Value> {
+        self.get_json("/v1/music", api_key).await
+    }
+
+    pub async fn retrieve_music(&self, api_key: &str, music_id: &str) -> Result<Value> {
+        self.get_json(&format!("/v1/music/{music_id}"), api_key)
+            .await
+    }
+
+    pub async fn delete_music(&self, api_key: &str, music_id: &str) -> Result<Value> {
+        self.delete_json(&format!("/v1/music/{music_id}"), api_key)
+            .await
+    }
+
+    pub async fn music_content(
+        &self,
+        api_key: &str,
+        music_id: &str,
+    ) -> Result<ProviderStreamOutput> {
+        self.get_stream(&format!("/v1/music/{music_id}/content"), api_key)
+            .await
+    }
+
+    pub async fn music_lyrics(
+        &self,
+        api_key: &str,
+        request: &CreateMusicLyricsRequest,
+    ) -> Result<Value> {
+        self.post_json("/v1/music/lyrics", api_key, request).await
+    }
+
     pub async fn videos(&self, api_key: &str, request: &CreateVideoRequest) -> Result<Value> {
         self.post_json("/v1/videos", api_key, request).await
     }
@@ -1705,6 +1741,24 @@ impl ProviderExecutionAdapter for OpenAiProviderAdapter {
             ProviderRequest::Moderations(request) => Ok(ProviderOutput::Json(
                 self.moderations(api_key, request).await?,
             )),
+            ProviderRequest::Music(request) => {
+                Ok(ProviderOutput::Json(self.music(api_key, request).await?))
+            }
+            ProviderRequest::MusicList => {
+                Ok(ProviderOutput::Json(self.list_music(api_key).await?))
+            }
+            ProviderRequest::MusicRetrieve(music_id) => {
+                Ok(ProviderOutput::Json(self.retrieve_music(api_key, music_id).await?))
+            }
+            ProviderRequest::MusicDelete(music_id) => {
+                Ok(ProviderOutput::Json(self.delete_music(api_key, music_id).await?))
+            }
+            ProviderRequest::MusicContent(music_id) => {
+                Ok(ProviderOutput::Stream(self.music_content(api_key, music_id).await?))
+            }
+            ProviderRequest::MusicLyrics(request) => {
+                Ok(ProviderOutput::Json(self.music_lyrics(api_key, request).await?))
+            }
             ProviderRequest::ImagesGenerations(request) => Ok(ProviderOutput::Json(
                 self.images_generations(api_key, request).await?,
             )),

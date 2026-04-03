@@ -1,4 +1,5 @@
 import type { GatewayApiKeyRecord, UsageRecord } from 'sdkwork-router-portal-types';
+import { translatePortalText } from 'sdkwork-router-portal-commons/i18n-core';
 
 import type {
   BuildPortalUsageViewModelInput,
@@ -66,8 +67,8 @@ function buildUsageTableRow(
   const apiKeyHash = record.api_key_hash?.trim() ?? '';
   const apiKeyLabel = apiKeyHash
     ? buildApiKeyOption(apiKeyHash, apiKeyByHash).label
-    : 'Workspace token';
-  const channelLabel = record.channel_id?.trim() || 'Unassigned';
+    : translatePortalText('Workspace token');
+  const channelLabel = record.channel_id?.trim() || translatePortalText('Unassigned');
 
   return {
     ...record,
@@ -146,7 +147,7 @@ export function buildPortalUsageViewModel(
     },
     filter_options: {
       api_keys: [
-        { value: 'all', label: 'All API keys' },
+        { value: 'all', label: translatePortalText('All API keys') },
         ...allApiKeyHashes.map((hashedKey) => buildApiKeyOption(hashedKey, apiKeyByHash)),
       ],
       channels: ['all', ...channels],

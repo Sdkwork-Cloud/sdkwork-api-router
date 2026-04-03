@@ -12,6 +12,7 @@
     }
   },
   "dependencies": {
+    "@sdkwork/ui-pc-react": "file:../../../../../sdkwork-ui/sdkwork-ui-pc-react",
     "@tauri-apps/api": "^2.8.0",
     "lucide-react": "^0.546.0",
     "motion": "^12.35.0",
@@ -20,7 +21,6 @@
     "sdkwork-router-admin-apirouter": "workspace:*",
     "sdkwork-router-admin-auth": "workspace:*",
     "sdkwork-router-admin-catalog": "workspace:*",
-    "sdkwork-router-admin-commons": "workspace:*",
     "sdkwork-router-admin-core": "workspace:*",
     "sdkwork-router-admin-coupons": "workspace:*",
     "sdkwork-router-admin-operations": "workspace:*",

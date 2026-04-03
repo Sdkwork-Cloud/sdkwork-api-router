@@ -1,3 +1,4 @@
+use sdkwork_api_config::CacheBackendKind;
 use sdkwork_api_config::LocalConfigPaths;
 use sdkwork_api_config::RuntimeMode;
 use sdkwork_api_config::SecretBackendKind;
@@ -28,6 +29,8 @@ fn standalone_defaults_are_local_friendly() {
     assert!(config.require_signed_native_dynamic_extensions);
     assert!(config.extension_trusted_signers.is_empty());
     assert_eq!(config.extension_hot_reload_interval_secs, 0);
+    assert_eq!(config.cache_backend, CacheBackendKind::Memory);
+    assert!(config.cache_url.is_none());
     assert_eq!(config.secret_backend, SecretBackendKind::DatabaseEncrypted);
     assert_eq!(
         config.admin_jwt_signing_secret,
@@ -165,6 +168,42 @@ fn parses_extension_discovery_settings_from_pairs() {
 }
 
 #[test]
+fn parses_cache_backend_and_optional_cache_url_from_pairs() {
+    let config = StandaloneConfig::from_pairs([
+        ("SDKWORK_CACHE_BACKEND", "redis"),
+        ("SDKWORK_CACHE_URL", "redis://127.0.0.1:6379/0"),
+    ])
+    .unwrap();
+    let values = config
+        .resolved_env_pairs()
+        .into_iter()
+        .collect::<std::collections::HashMap<_, _>>();
+
+    assert_eq!(config.cache_backend, CacheBackendKind::Redis);
+    assert_eq!(
+        config.cache_url.as_deref(),
+        Some("redis://127.0.0.1:6379/0")
+    );
+    assert_eq!(values["SDKWORK_CACHE_BACKEND"], "redis");
+    assert_eq!(values["SDKWORK_CACHE_URL"], "redis://127.0.0.1:6379/0");
+}
+
+#[test]
+fn non_reloadable_changed_fields_include_cache_backend_and_cache_url() {
+    let current = StandaloneConfig::default();
+    let next = StandaloneConfig {
+        cache_backend: CacheBackendKind::Redis,
+        cache_url: Some("redis://127.0.0.1:6379/7".to_owned()),
+        ..current.clone()
+    };
+
+    let changed = current.non_reloadable_changed_fields(&next);
+
+    assert!(changed.contains(&"cache_backend"));
+    assert!(changed.contains(&"cache_url"));
+}
+
+#[test]
 fn local_config_paths_use_sdkwork_router_root() {
     let paths = LocalConfigPaths::from_home_dir(PathBuf::from("/tmp/sdkwork-user"));
 
@@ -257,6 +296,31 @@ extension_paths:
                 .into_owned(),
         ]
     );
+}
+
+#[test]
+fn loads_cache_settings_from_config_file_and_allows_env_override_to_clear_cache_url() {
+    let root = temp_config_root("cache-config");
+    fs::write(
+        root.join("config.yaml"),
+        r#"
+cache_backend: "redis"
+cache_url: "redis://cache.internal:6379/2"
+"#,
+    )
+    .unwrap();
+
+    let config = StandaloneConfig::from_local_root_and_pairs(
+        &root,
+        [
+            ("SDKWORK_CACHE_BACKEND", "memory"),
+            ("SDKWORK_CACHE_URL", ""),
+        ],
+    )
+    .unwrap();
+
+    assert_eq!(config.cache_backend, CacheBackendKind::Memory);
+    assert!(config.cache_url.is_none());
 }
 
 #[test]

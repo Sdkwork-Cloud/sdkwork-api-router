@@ -1,6 +1,7 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use sdkwork_api_app_identity::persist_gateway_api_key;
+use sdkwork_api_app_identity::persist_gateway_api_key_with_metadata;
+use sdkwork_api_domain_identity::ApiKeyGroupRecord;
 use sdkwork_api_storage_sqlite::SqliteAdminStore;
 use serde_json::Value;
 use sqlx::SqlitePool;
@@ -25,9 +26,28 @@ async fn memory_pool() -> SqlitePool {
 async fn stateful_gateway_requires_api_key_and_uses_request_context() {
     let pool = memory_pool().await;
     let store = SqliteAdminStore::new(pool.clone());
-    let created = persist_gateway_api_key(&store, "tenant-live", "project-live", "live")
-        .await
-        .unwrap();
+    let group = ApiKeyGroupRecord::new(
+        "group-live",
+        "tenant-live",
+        "project-live",
+        "live",
+        "Production keys",
+        "production-keys",
+    );
+    store.insert_api_key_group(&group).await.unwrap();
+    let created = persist_gateway_api_key_with_metadata(
+        &store,
+        "tenant-live",
+        "project-live",
+        "live",
+        "Production request key",
+        None,
+        None,
+        None,
+        Some(&group.group_id),
+    )
+    .await
+    .unwrap();
 
     let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool.clone());
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool);
@@ -68,6 +88,7 @@ async fn stateful_gateway_requires_api_key_and_uses_request_context() {
     assert_eq!(authorized.status(), StatusCode::OK);
 
     let ledger = admin_app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("GET")
@@ -82,6 +103,23 @@ async fn stateful_gateway_requires_api_key_and_uses_request_context() {
     assert_eq!(ledger.status(), StatusCode::OK);
     let ledger_json = read_json(ledger).await;
     assert_eq!(ledger_json[0]["project_id"], "project-live");
+
+    let routing_logs = admin_app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/admin/routing/decision-logs")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(routing_logs.status(), StatusCode::OK);
+    let routing_logs_json = read_json(routing_logs).await;
+    assert_eq!(routing_logs_json[0]["project_id"], "project-live");
+    assert_eq!(routing_logs_json[0]["api_key_group_id"], "group-live");
 }
 
 #[tokio::test]

@@ -11,22 +11,24 @@ function read(relativePath) {
 
 test('portal route pages expose contextual handoffs to the next user action', () => {
   const apiKeysPage = read('packages/sdkwork-router-portal-api-keys/src/pages/index.tsx');
-  const apiKeysToolbar = read('packages/sdkwork-router-portal-api-keys/src/components/PortalApiKeyManagerToolbar.tsx');
+  const apiKeyTable = read('packages/sdkwork-router-portal-api-keys/src/components/PortalApiKeyTable.tsx');
   const usagePage = read('packages/sdkwork-router-portal-usage/src/pages/index.tsx');
   const creditsPage = read('packages/sdkwork-router-portal-credits/src/pages/index.tsx');
   const billingPage = read('packages/sdkwork-router-portal-billing/src/pages/index.tsx');
   const userPage = read('packages/sdkwork-router-portal-user/src/pages/index.tsx');
   const accountPage = read('packages/sdkwork-router-portal-account/src/pages/index.tsx');
 
-  assert.match(apiKeysPage, /PortalApiKeyManagerToolbar/);
-  assert.match(apiKeysToolbar, /Open usage/);
-  assert.match(usagePage, /Manage keys/);
-  assert.match(usagePage, /Review billing/);
-  assert.match(creditsPage, /Search offers or ledger/);
-  assert.match(billingPage, /Open credits/);
+  assert.match(apiKeysPage, /PortalApiKeyDrawers/);
+  assert.match(apiKeyTable, /View details/);
+  assert.doesNotMatch(usagePage, /Manage keys/);
+  assert.doesNotMatch(usagePage, /Review billing/);
+  assert.match(creditsPage, /Redeem code/);
+  assert.match(creditsPage, /Invite rewards/);
+  assert.match(creditsPage, /Redeem history/);
+  assert.match(billingPage, /Open redeem/);
   assert.match(billingPage, /Open usage/);
   assert.match(billingPage, /Open account/);
   assert.doesNotMatch(billingPage, /Activation path/);
   assert.match(userPage, /Return to command center/);
-  assert.match(accountPage, /Search ledger/);
+  assert.match(accountPage, /Search account history/);
 });

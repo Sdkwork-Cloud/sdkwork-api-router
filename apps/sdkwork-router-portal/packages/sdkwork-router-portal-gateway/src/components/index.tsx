@@ -1,8 +1,6 @@
-import {
-  InlineButton,
-  Pill,
-  Surface,
-} from 'sdkwork-router-portal-commons';
+import { usePortalI18n } from 'sdkwork-router-portal-commons';
+import { Button } from 'sdkwork-router-portal-commons/framework/actions';
+import { Badge } from 'sdkwork-router-portal-commons/framework/display';
 
 import type {
   GatewayLaunchReadinessSummary,
@@ -37,6 +35,8 @@ export function GatewayPostureGrid({ cards }: { cards: GatewayPostureCard[] }) {
 }
 
 export function GatewayModeGrid({ cards }: { cards: GatewayModeCard[] }) {
+  const { t } = usePortalI18n();
+
   return (
     <div className="grid gap-4">
       {cards.map((card) => (
@@ -53,7 +53,7 @@ export function GatewayModeGrid({ cards }: { cards: GatewayModeCard[] }) {
                 {card.summary}
               </p>
             </div>
-            <Pill tone="positive">{card.title}</Pill>
+            <Badge variant="success">{t('Ready')}</Badge>
           </div>
           <pre className="mt-4 overflow-x-auto rounded-2xl bg-zinc-950 p-4 text-sm leading-6 text-zinc-300">
             <code>{card.command}</code>
@@ -116,12 +116,12 @@ export function GatewayReadinessGrid({
             {action.detail}
           </p>
           <div className="mt-4">
-            <InlineButton
+            <Button
               onClick={() => onNavigate(action.route)}
-              tone={action.tone ?? 'secondary'}
+              variant={action.tone ?? 'secondary'}
             >
               {action.cta}
-            </InlineButton>
+            </Button>
           </div>
         </article>
       ))}
@@ -131,11 +131,11 @@ export function GatewayReadinessGrid({
 
 function launchReadinessTone(status: GatewayLaunchReadinessSummary['status']) {
   if (status === 'ready') {
-    return 'positive';
+    return 'success';
   }
 
   if (status === 'watch') {
-    return 'accent';
+    return 'default';
   }
 
   return 'warning';
@@ -146,23 +146,25 @@ export function GatewayLaunchReadinessPanel({
 }: {
   readiness: GatewayLaunchReadinessSummary;
 }) {
+  const { t } = usePortalI18n();
+
   return (
     <div className="grid gap-4 xl:grid-cols-[0.72fr_1.28fr]">
       <article className="rounded-[24px] border border-zinc-200 bg-zinc-50/80 p-5 dark:border-zinc-800 dark:bg-zinc-900/60">
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400">
-          Launch readiness
+          {t('Launch readiness')}
         </p>
         <div className="mt-4 flex items-center justify-between gap-3">
           <strong className="text-5xl font-semibold tracking-tight text-zinc-950 dark:text-zinc-50">
             {readiness.score}
           </strong>
-          <Pill tone={launchReadinessTone(readiness.status)}>
+          <Badge variant={launchReadinessTone(readiness.status)}>
             {readiness.status === 'ready'
-              ? 'Ready'
+              ? t('Ready')
               : readiness.status === 'watch'
-                ? 'Watch'
-                : 'Blocked'}
-          </Pill>
+                ? t('Watch')
+                : t('Blocked')}
+          </Badge>
         </div>
         <strong className="mt-4 block text-lg font-semibold text-zinc-950 dark:text-zinc-50">
           {readiness.headline}
@@ -181,7 +183,7 @@ export function GatewayLaunchReadinessPanel({
             {readiness.blockers.length ? (
               readiness.blockers.map((entry) => <li key={entry}>{entry}</li>)
             ) : (
-              <li>No hard blockers are currently holding the launch posture.</li>
+              <li>{t('No hard blockers are currently holding the launch posture.')}</li>
             )}
           </ul>
         </article>
@@ -194,7 +196,7 @@ export function GatewayLaunchReadinessPanel({
             {readiness.watchpoints.length ? (
               readiness.watchpoints.map((entry) => <li key={entry}>{entry}</li>)
             ) : (
-              <li>No watchpoints are currently diluting the launch posture.</li>
+              <li>{t('No watchpoints are currently diluting the launch posture.')}</li>
             )}
           </ul>
         </article>
@@ -212,6 +214,8 @@ export function GatewayRuntimeControlsGrid({
   onAction: (action: GatewayRuntimeControl['action']) => void;
   busyAction?: GatewayRuntimeControl['action'] | null;
 }) {
+  const { t } = usePortalI18n();
+
   return (
     <div className="grid gap-4 xl:grid-cols-2">
       {controls.map((control) => (
@@ -226,13 +230,13 @@ export function GatewayRuntimeControlsGrid({
             {control.detail}
           </p>
           <div className="mt-4">
-            <InlineButton
+            <Button
               disabled={!control.enabled || busyAction === control.action}
               onClick={() => onAction(control.action)}
-              tone={control.tone ?? 'secondary'}
+              variant={control.tone ?? 'secondary'}
             >
-              {busyAction === control.action ? 'Restarting desktop runtime...' : control.cta}
-            </InlineButton>
+              {busyAction === control.action ? t('Restarting desktop runtime...') : control.cta}
+            </Button>
           </div>
         </article>
       ))}
@@ -240,4 +244,5 @@ export function GatewayRuntimeControlsGrid({
   );
 }
 
-export { Surface };
+
+

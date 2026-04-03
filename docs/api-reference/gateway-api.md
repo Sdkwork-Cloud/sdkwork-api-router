@@ -47,6 +47,7 @@ OpenAPI is generated from the current `axum` route implementation, so the JSON d
 | realtime | `POST /realtime/sessions` | realtime session creation |
 | evals | `GET/POST /evals`, `GET/POST/DELETE /evals/{eval_id}`, nested runs and output item routes | evaluation workflows |
 | videos | `GET/POST /videos`, retrieve, delete, content, remix, edits, extensions, extend, and character routes | includes both canonical and nested video resources |
+| music | `GET/POST /music`, `GET/DELETE /music/{music_id}`, `GET /music/{music_id}/content`, `POST /music/lyrics` | resource-oriented music generation, retrieval, binary content fetch, and lyrics creation |
 
 ## Gateway Semantics
 
@@ -54,6 +55,7 @@ OpenAPI is generated from the current `axum` route implementation, so the JSON d
 - usage and billing are recorded against authenticated projects in stateful mode
 - create-like routes may preserve route-key-based provider selection while recording usage against created resource IDs
 - generation-style routes such as chat, completions, responses, embeddings, and moderations keep billing keyed to the request model even when upstream responses return resource IDs
+- generation-style media routes such as images, videos, and music keep billing keyed to the request model while preserving created resource IDs as downstream references
 
 ## Helpful Headers
 

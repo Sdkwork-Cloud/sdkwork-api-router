@@ -13,7 +13,7 @@ use sdkwork_api_extension_abi::{
     SDKWORK_EXTENSION_ABI_VERSION,
 };
 use sdkwork_api_extension_core::{
-    CapabilityDescriptor, CompatibilityLevel, ExtensionKind, ExtensionManifest,
+    CapabilityDescriptor, CompatibilityLevel, ExtensionKind, ExtensionManifest, ExtensionModality,
     ExtensionPermission, ExtensionProtocol, ExtensionRuntime,
 };
 
@@ -36,6 +36,9 @@ fn manifest_json() -> &'static CString {
                 )
                 .with_display_name("Native Mock")
                 .with_protocol(ExtensionProtocol::OpenAi)
+                .with_supported_modality(ExtensionModality::Audio)
+                .with_supported_modality(ExtensionModality::Video)
+                .with_supported_modality(ExtensionModality::File)
                 .with_channel_binding("sdkwork.channel.openai")
                 .with_permission(ExtensionPermission::NetworkOutbound)
                 .with_capability(CapabilityDescriptor::new(

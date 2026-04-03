@@ -3,7 +3,9 @@ use std::sync::Arc;
 use axum::body::{to_bytes, Body};
 use axum::http::{Request, StatusCode};
 use sdkwork_api_domain_catalog::{Channel, ModelCatalogEntry, ProxyProvider};
-use sdkwork_api_domain_routing::{RoutingDecisionLog, RoutingDecisionSource};
+use sdkwork_api_domain_routing::{
+    CompiledRoutingSnapshotRecord, RoutingDecisionLog, RoutingDecisionSource,
+};
 use sdkwork_api_storage_sqlite::SqliteAdminStore;
 use serde_json::Value;
 use sqlx::SqlitePool;
@@ -126,7 +128,7 @@ async fn portal_routing_preferences_preview_and_logs_are_project_scoped() {
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    "{\"preset_id\":\"reliability\",\"strategy\":\"slo_aware\",\"ordered_provider_ids\":[\"provider-openrouter\",\"provider-openai-official\"],\"default_provider_id\":\"provider-openai-official\",\"max_cost\":0.3,\"max_latency_ms\":250,\"require_healthy\":true,\"preferred_region\":\"us-east\"}",
+                    "{\"preset_id\":\"reliability\",\"strategy\":\"geo_affinity\",\"ordered_provider_ids\":[\"provider-openrouter\",\"provider-openai-official\"],\"default_provider_id\":\"provider-openai-official\",\"max_cost\":0.3,\"max_latency_ms\":250,\"require_healthy\":true,\"preferred_region\":\"us-east\"}",
                 ))
                 .unwrap(),
         )
@@ -137,7 +139,7 @@ async fn portal_routing_preferences_preview_and_logs_are_project_scoped() {
     let preferences_json = read_json(preferences_response).await;
     assert_eq!(preferences_json["project_id"], project_id);
     assert_eq!(preferences_json["preset_id"], "reliability");
-    assert_eq!(preferences_json["strategy"], "slo_aware");
+    assert_eq!(preferences_json["strategy"], "geo_affinity");
     assert_eq!(preferences_json["preferred_region"], "us-east");
 
     let get_preferences_response = app
@@ -181,7 +183,16 @@ async fn portal_routing_preferences_preview_and_logs_are_project_scoped() {
     let preview_json = read_json(preview_response).await;
     assert_eq!(preview_json["selected_provider_id"], "provider-openrouter");
     assert_eq!(preview_json["requested_region"], "us-east");
-    assert_eq!(preview_json["strategy"], "slo_aware");
+    assert_eq!(preview_json["strategy"], "geo_affinity");
+    let preview_snapshot_id = preview_json["compiled_routing_snapshot_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(preview_snapshot_id.starts_with("routing-snapshot-"));
+    assert_eq!(
+        preview_json["fallback_reason"],
+        "no candidate matched requested region us-east"
+    );
 
     let logs_response = app
         .clone()
@@ -201,8 +212,18 @@ async fn portal_routing_preferences_preview_and_logs_are_project_scoped() {
     assert_eq!(logs_json.as_array().unwrap().len(), 1);
     assert_eq!(logs_json[0]["project_id"], project_id);
     assert_eq!(logs_json[0]["decision_source"], "portal_simulation");
+    assert_eq!(
+        logs_json[0]["compiled_routing_snapshot_id"],
+        preview_snapshot_id
+    );
+    assert_eq!(logs_json[0]["requested_region"], "us-east");
+    assert_eq!(
+        logs_json[0]["fallback_reason"],
+        "no candidate matched requested region us-east"
+    );
 
     let summary_response = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("GET")
@@ -223,10 +244,133 @@ async fn portal_routing_preferences_preview_and_logs_are_project_scoped() {
         summary_json["preview"]["selected_provider_id"],
         "provider-openrouter"
     );
+    assert_eq!(summary_json["preview"]["strategy"], "geo_affinity");
+    assert_eq!(
+        summary_json["preview"]["compiled_routing_snapshot_id"],
+        preview_snapshot_id
+    );
+    assert_eq!(summary_json["preview"]["requested_region"], "us-east");
+    assert_eq!(
+        summary_json["preview"]["fallback_reason"],
+        "no candidate matched requested region us-east"
+    );
     assert_eq!(
         summary_json["provider_options"].as_array().unwrap().len(),
         2
     );
+
+    let snapshots_response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/portal/routing/snapshots")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(snapshots_response.status(), StatusCode::OK);
+    let snapshots_json = read_json(snapshots_response).await;
+    let snapshots = snapshots_json.as_array().unwrap();
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0]["snapshot_id"], preview_snapshot_id);
+    assert_eq!(snapshots[0]["project_id"], project_id);
+    assert_eq!(snapshots[0]["strategy"], "geo_affinity");
+    assert_eq!(snapshots[0]["preferred_region"], "us-east");
+}
+
+#[tokio::test]
+async fn portal_routing_snapshots_are_workspace_scoped() {
+    let pool = memory_pool().await;
+    let store = Arc::new(SqliteAdminStore::new(pool));
+
+    let app = sdkwork_api_interface_portal::portal_router_with_store(store.clone());
+    let token = portal_token(app.clone()).await;
+
+    let workspace_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/portal/workspace")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let workspace_json = read_json(workspace_response).await;
+    let tenant_id = workspace_json["tenant"]["id"].as_str().unwrap().to_owned();
+    let project_id = workspace_json["project"]["id"].as_str().unwrap().to_owned();
+
+    store
+        .insert_compiled_routing_snapshot(
+            &CompiledRoutingSnapshotRecord::new(
+                "snapshot-workspace",
+                "chat_completion",
+                "gpt-4.1",
+            )
+            .with_tenant_id(&tenant_id)
+            .with_project_id(&project_id)
+            .with_api_key_group_id("group-live")
+            .with_matched_policy_id("policy-live")
+            .with_applied_routing_profile_id("profile-live")
+            .with_strategy("geo_affinity")
+            .with_ordered_provider_ids(vec![
+                "provider-openai".to_owned(),
+                "provider-anthropic".to_owned(),
+            ])
+            .with_default_provider_id("provider-openai")
+            .with_max_latency_ms(800)
+            .with_require_healthy(true)
+            .with_preferred_region("us-east")
+            .with_created_at_ms(1_700_000_000_000)
+            .with_updated_at_ms(1_700_000_000_100),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_compiled_routing_snapshot(
+            &CompiledRoutingSnapshotRecord::new("snapshot-foreign", "chat_completion", "gpt-4.1")
+                .with_tenant_id("tenant-other")
+                .with_project_id("project-other")
+                .with_strategy("weighted_random")
+                .with_ordered_provider_ids(vec!["provider-other".to_owned()])
+                .with_created_at_ms(1_700_000_000_000)
+                .with_updated_at_ms(1_700_000_000_100),
+        )
+        .await
+        .unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/portal/routing/snapshots")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let snapshots_json = read_json(response).await;
+    let snapshots = snapshots_json.as_array().unwrap();
+
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0]["snapshot_id"], "snapshot-workspace");
+    assert_eq!(snapshots[0]["tenant_id"], tenant_id);
+    assert_eq!(snapshots[0]["project_id"], project_id);
+    assert_eq!(snapshots[0]["api_key_group_id"], "group-live");
+    assert_eq!(snapshots[0]["matched_policy_id"], "policy-live");
+    assert_eq!(snapshots[0]["applied_routing_profile_id"], "profile-live");
+    assert_eq!(snapshots[0]["strategy"], "geo_affinity");
+    assert_eq!(snapshots[0]["default_provider_id"], "provider-openai");
+    assert_eq!(snapshots[0]["preferred_region"], "us-east");
+    assert_eq!(snapshots[0]["require_healthy"], true);
 }
 
 #[tokio::test]
@@ -238,6 +382,7 @@ async fn portal_routing_routes_require_authentication() {
         "/portal/routing/summary",
         "/portal/routing/preferences",
         "/portal/routing/decision-logs",
+        "/portal/routing/snapshots",
     ] {
         let response = app
             .clone()

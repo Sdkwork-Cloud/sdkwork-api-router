@@ -1,23 +1,24 @@
 # SDKWork Router Admin
 
-`sdkwork-router-admin` is a standalone React workspace for the SDKWork Router super-admin surface.
+`sdkwork-router-admin` is the standalone React and Tauri workspace for the SDKWork Router control plane.
 
-## Goals
+## Architecture Goals
 
-- independent engineering project under `apps/`
-- product-grade super-admin UI for daily router operations
-- follows `ARCHITECT.md` package ownership and composition rules
-- ships as a standalone React workspace with its own `claw-studio`-aligned theme, routing shell, and package graph
-- operates on live admin-control-plane data for day-to-day management, audit, and runtime posture
+- use `@sdkwork/ui-pc-react` as the single shared UI foundation
+- keep the root app thin and move real composition into workspace packages
+- remove legacy local UI layers and avoid compatibility baggage
+- ship one consistent desktop shell across overview, users, tenants, gateway, catalog, traffic, operations, and settings
+- operate directly on live admin control-plane data
 
 ## Workspace Layout
 
 ```text
 apps/sdkwork-router-admin/
-├── src/        # root app shell composition only
-├── packages/   # reusable foundation and business modules
-├── tests/      # structure and architecture checks
-└── dist/       # production build output
+|- src/        # root app bootstrap only
+|- packages/   # foundation and business modules
+|- tests/      # architecture and product-surface verification
+|- src-tauri/  # desktop host and native commands
+`- dist/       # production build output
 ```
 
 ## Package Map
@@ -25,7 +26,6 @@ apps/sdkwork-router-admin/
 ### Foundation
 
 - `sdkwork-router-admin-types`
-- `sdkwork-router-admin-commons`
 - `sdkwork-router-admin-core`
 - `sdkwork-router-admin-shell`
 - `sdkwork-router-admin-admin-api`
@@ -41,44 +41,34 @@ apps/sdkwork-router-admin/
 - `sdkwork-router-admin-traffic`
 - `sdkwork-router-admin-operations`
 - `sdkwork-router-admin-settings`
+- `sdkwork-router-admin-apirouter`
 
-## Data Sources
+## UI Standard
 
-- live admin API:
-  - operator users
-  - portal users
-  - tenants
-  - projects
-  - gateway keys
-  - channels
-  - providers
-  - provider credentials
-  - models
-  - coupons
-  - usage records
-  - billing summary
-  - routing decision logs
-  - provider health
-  - runtime status
+- shared styles come from `@sdkwork/ui-pc-react/styles.css`
+- shell composition uses `DesktopShellFrame`, `NavigationRail`, `Toolbar`, `SettingsCenter`, and other shared primitives
+- local shell CSS is limited to host layout selectors in `packages/sdkwork-router-admin-shell/src/styles/shell-host.css`
+- theme state, locale, sidebar behavior, and workspace continuity are owned by `sdkwork-router-admin-core`
 
 ## Product Surfaces
 
-- `Overview`: global posture, operator alerts, top portal users, and hottest projects
-- `Users`: operator and portal user CRUD, password rotation, status management, and usage visibility
-- `Tenants`: tenant/project CRUD, gateway key issuance, revoke/restore, deletion, and workspace ownership checks
-- `Coupons`: live campaign CRUD and activation posture
-- `Catalog`: channel, proxy provider, provider credential, and model CRUD with credential coverage and secret rotation workflow
-- `Traffic`: multi-filter request query console, CSV export, usage records, billing rollups, request-log visibility, user traffic leaderboard, and project hotspots
-- `Operations`: provider health, runtime posture, and runtime reload controls
-- `Settings`: theme mode, theme color, sidebar visibility, and shell posture controls
+- `Overview`: platform posture, alerts, leaderboard signals, and hotspot summaries
+- `Users`: operator and portal identity CRUD, activation control, and lifecycle actions
+- `Tenants`: tenant and project management plus project-scoped gateway key issuance
+- `Coupons`: campaign management and activation posture
+- `API Router`: gateway access keys, route configuration, model mappings, and usage records
+- `Catalog`: channels, providers, credentials, model publications, and pricing rows
+- `Traffic`: request visibility, usage rollups, CSV export, user leaderboard, and project hotspots
+- `Operations`: provider health, runtime posture, and reload workflows
+- `Settings`: shared settings center for locale, appearance, navigation, and workspace posture
 
 ## Shell Model
 
-- `react-router-dom` browser routes under `/admin/`
-- claw-studio style shell with top header, left sidebar, and right content region
-- click-to-collapse and resize-capable sidebar
-- persistent theme mode and accent theme selection
-- login kept outside the authenticated shell
+- `react-router-dom` browser routes mounted under `/admin/`
+- authenticated desktop shell with a shared top toolbar, left navigation rail, and right content canvas
+- login isolated outside the authenticated shell
+- persisted theme mode, accent preset, sidebar width, collapse behavior, and hidden routes
+- lazy-loaded page modules behind a shared loading state
 
 ## Commands
 
@@ -93,36 +83,18 @@ pnpm tauri:build
 
 The Vite dev server proxies `/api/admin/*` to `http://127.0.0.1:8081/admin/*`.
 
-## Desktop Product Host
+## Desktop Host
 
-The admin desktop shell now uses the shared `sdkwork-api-product-runtime` instead of a hard-coded web host bootstrap.
+The desktop app uses the shared `sdkwork-api-product-runtime` instead of a hard-coded local web host.
 
-That means the admin desktop app:
-
-- starts the same shared router product runtime used by the portal desktop app
-- serves both bundled admin and portal static sites
-- exposes the same public web host contract as server mode
-- keeps the existing admin IPC commands while resolving the runtime base URL at startup
-
-The admin Tauri bundle includes:
-
-- `embedded-sites/admin`
-- `embedded-sites/portal`
-
-This keeps the super-admin desktop experience aligned with the server-delivered `/admin/*` and `/portal/*` contract.
+That keeps the admin desktop app aligned with the server-delivered `/admin/*` contract while preserving native IPC commands for router operations.
 
 ## Relationship To Server Mode
 
-Server mode is owned by `apps/sdkwork-router-portal` through `pnpm server:start`, which launches `router-product-service`.
+Server mode remains owned by `apps/sdkwork-router-portal` through `pnpm server:start`, which launches `router-product-service`.
 
-Use the admin app when you want:
+Use this workspace when you need:
 
 - a local operator desktop shell
-- bundled admin plus portal assets
-- the full router product running on loopback for local operations
-
-Use server mode when you want:
-
-- browser access to `/admin/*` and `/portal/*`
-- a deployable service process
-- cluster role slicing across `web`, `gateway`, `admin`, and `portal`
+- bundled admin assets inside the Tauri host
+- direct control-plane operations in a standalone app boundary

@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
+pub use sdkwork_api_cache_core::CacheBackendKind;
 pub use sdkwork_api_secret_core::SecretBackendKind;
 use sdkwork_api_storage_core::StorageDialect;
 use serde::Deserialize;
@@ -14,6 +15,8 @@ const SDKWORK_GATEWAY_BIND: &str = "SDKWORK_GATEWAY_BIND";
 const SDKWORK_ADMIN_BIND: &str = "SDKWORK_ADMIN_BIND";
 const SDKWORK_PORTAL_BIND: &str = "SDKWORK_PORTAL_BIND";
 const SDKWORK_DATABASE_URL: &str = "SDKWORK_DATABASE_URL";
+const SDKWORK_CACHE_BACKEND: &str = "SDKWORK_CACHE_BACKEND";
+const SDKWORK_CACHE_URL: &str = "SDKWORK_CACHE_URL";
 const SDKWORK_EXTENSION_PATHS: &str = "SDKWORK_EXTENSION_PATHS";
 const SDKWORK_EXTENSION_ENABLE_CONNECTOR_EXTENSIONS: &str =
     "SDKWORK_EXTENSION_ENABLE_CONNECTOR_EXTENSIONS";
@@ -37,11 +40,13 @@ const SDKWORK_CREDENTIAL_LEGACY_MASTER_KEYS: &str = "SDKWORK_CREDENTIAL_LEGACY_M
 const SDKWORK_SECRET_LOCAL_FILE: &str = "SDKWORK_SECRET_LOCAL_FILE";
 const SDKWORK_SECRET_KEYRING_SERVICE: &str = "SDKWORK_SECRET_KEYRING_SERVICE";
 
-const MANAGED_ENV_KEYS: [&str; 17] = [
+const MANAGED_ENV_KEYS: [&str; 19] = [
     SDKWORK_GATEWAY_BIND,
     SDKWORK_ADMIN_BIND,
     SDKWORK_PORTAL_BIND,
     SDKWORK_DATABASE_URL,
+    SDKWORK_CACHE_BACKEND,
+    SDKWORK_CACHE_URL,
     SDKWORK_EXTENSION_PATHS,
     SDKWORK_EXTENSION_ENABLE_CONNECTOR_EXTENSIONS,
     SDKWORK_EXTENSION_ENABLE_NATIVE_DYNAMIC_EXTENSIONS,
@@ -113,6 +118,8 @@ pub struct StandaloneConfig {
     pub admin_bind: String,
     pub portal_bind: String,
     pub database_url: String,
+    pub cache_backend: CacheBackendKind,
+    pub cache_url: Option<String>,
     pub extension_paths: Vec<String>,
     pub enable_connector_extensions: bool,
     pub enable_native_dynamic_extensions: bool,
@@ -170,6 +177,8 @@ struct StandaloneConfigFile {
     admin_bind: Option<String>,
     portal_bind: Option<String>,
     database_url: Option<String>,
+    cache_backend: Option<String>,
+    cache_url: Option<String>,
     extension_paths: Option<Vec<String>>,
     enable_connector_extensions: Option<bool>,
     enable_native_dynamic_extensions: Option<bool>,
@@ -195,6 +204,8 @@ impl Default for StandaloneConfig {
             admin_bind: "127.0.0.1:8081".to_owned(),
             portal_bind: "127.0.0.1:8082".to_owned(),
             database_url: "sqlite://sdkwork-api-server.db".to_owned(),
+            cache_backend: CacheBackendKind::Memory,
+            cache_url: None,
             extension_paths: Vec::new(),
             enable_connector_extensions: true,
             enable_native_dynamic_extensions: false,
@@ -251,6 +262,10 @@ impl StandaloneConfig {
             (SDKWORK_ADMIN_BIND.to_owned(), self.admin_bind.clone()),
             (SDKWORK_PORTAL_BIND.to_owned(), self.portal_bind.clone()),
             (SDKWORK_DATABASE_URL.to_owned(), self.database_url.clone()),
+            (
+                SDKWORK_CACHE_BACKEND.to_owned(),
+                self.cache_backend.as_str().to_owned(),
+            ),
             (
                 SDKWORK_EXTENSION_ENABLE_CONNECTOR_EXTENSIONS.to_owned(),
                 self.enable_connector_extensions.to_string(),
@@ -312,6 +327,10 @@ impl StandaloneConfig {
             ));
         }
 
+        if let Some(cache_url) = &self.cache_url {
+            pairs.push((SDKWORK_CACHE_URL.to_owned(), cache_url.clone()));
+        }
+
         if !self.extension_trusted_signers.is_empty() {
             pairs.push((
                 SDKWORK_EXTENSION_TRUSTED_SIGNERS.to_owned(),
@@ -366,6 +385,12 @@ impl StandaloneConfig {
         }
         if self.database_url != next.database_url {
             fields.push("database_url");
+        }
+        if self.cache_backend != next.cache_backend {
+            fields.push("cache_backend");
+        }
+        if self.cache_url != next.cache_url {
+            fields.push("cache_url");
         }
         if self.admin_jwt_signing_secret != next.admin_jwt_signing_secret {
             fields.push("admin_jwt_signing_secret");
@@ -432,6 +457,8 @@ impl StandaloneConfig {
             admin_bind: "127.0.0.1:8081".to_owned(),
             portal_bind: "127.0.0.1:8082".to_owned(),
             database_url: sqlite_url_for_path(&paths.database_file),
+            cache_backend: CacheBackendKind::Memory,
+            cache_url: None,
             extension_paths: vec![paths.extensions_dir.to_string_lossy().into_owned()],
             enable_connector_extensions: true,
             enable_native_dynamic_extensions: false,
@@ -468,6 +495,17 @@ impl StandaloneConfig {
         }
         if let Some(value) = file.database_url {
             self.database_url = normalize_database_url(&value, base_dir);
+        }
+        if let Some(value) = file.cache_backend {
+            self.cache_backend = CacheBackendKind::parse(&value).with_context(|| {
+                format!(
+                    "invalid cache_backend value in config file {}",
+                    config_file.display()
+                )
+            })?;
+        }
+        if let Some(value) = file.cache_url {
+            self.cache_url = normalize_optional_string(value);
         }
         if let Some(value) = file.extension_paths {
             self.extension_paths = value
@@ -541,6 +579,12 @@ impl StandaloneConfig {
         }
         if let Some(value) = values.get(SDKWORK_DATABASE_URL) {
             self.database_url = value.clone();
+        }
+        if let Some(value) = values.get(SDKWORK_CACHE_BACKEND) {
+            self.cache_backend = CacheBackendKind::parse(value)?;
+        }
+        if let Some(value) = values.get(SDKWORK_CACHE_URL) {
+            self.cache_url = normalize_optional_string(value.clone());
         }
         if let Some(value) = values.get(SDKWORK_EXTENSION_PATHS) {
             self.extension_paths = std::env::split_paths(value)
@@ -954,6 +998,15 @@ fn parse_string_list_env(value: &str, key: &str) -> Result<Vec<String>> {
 
 fn join_env_list(values: &[String]) -> String {
     values.join(";")
+}
+
+fn normalize_optional_string(value: String) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_owned())
+    }
 }
 
 fn normalize_file_path_value(value: &str, base_dir: &Path) -> String {

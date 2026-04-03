@@ -1,4 +1,6 @@
 import {
+  getPortalBillingEventSummary,
+  getPortalCommerceMembership,
   getPortalDashboard,
   getPortalRoutingSummary,
   listPortalUsageRecords,
@@ -11,8 +13,10 @@ import type { PortalDashboardSnapshotBundle } from '../types';
 export async function loadPortalDashboardSnapshot(
   initialDashboard?: PortalDashboardSummary | null,
 ): Promise<PortalDashboardSnapshotBundle> {
-  const [dashboard, routing_summary, routing_logs, usage_records] = await Promise.all([
+  const [dashboard, membership, billing_event_summary, routing_summary, routing_logs, usage_records] = await Promise.all([
     initialDashboard ? Promise.resolve(initialDashboard) : getPortalDashboard(),
+    getPortalCommerceMembership(),
+    getPortalBillingEventSummary(),
     getPortalRoutingSummary(),
     listPortalRoutingDecisionLogs(),
     listPortalUsageRecords(),
@@ -20,6 +24,8 @@ export async function loadPortalDashboardSnapshot(
 
   return {
     dashboard,
+    membership,
+    billing_event_summary,
     routing_summary,
     routing_logs,
     usage_records,

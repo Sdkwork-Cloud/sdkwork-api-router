@@ -6,7 +6,7 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use ed25519_dalek::{Signer, SigningKey};
 use sdkwork_api_extension_core::{
     CapabilityDescriptor, CompatibilityLevel, ExtensionHealthContract, ExtensionKind,
-    ExtensionManifest, ExtensionPermission, ExtensionProtocol, ExtensionRuntime,
+    ExtensionManifest, ExtensionModality, ExtensionPermission, ExtensionProtocol, ExtensionRuntime,
     ExtensionSignature, ExtensionSignatureAlgorithm, ExtensionTrustDeclaration,
 };
 use sdkwork_api_extension_host::{
@@ -75,6 +75,60 @@ fn discovery_filters_disabled_runtimes() {
 }
 
 #[test]
+fn discovery_includes_native_dynamic_manifest_serialized_from_contract_builder() {
+    let root = temp_extension_root("native-dynamic-builder");
+    let package_dir = root.join("sdkwork-provider-native-mock");
+    fs::create_dir_all(&package_dir).unwrap();
+    let manifest = ExtensionManifest::new(
+        "sdkwork.provider.native.mock",
+        ExtensionKind::Provider,
+        "0.1.0",
+        ExtensionRuntime::NativeDynamic,
+    )
+    .with_display_name("Native Mock")
+    .with_protocol(ExtensionProtocol::OpenAi)
+    .with_entrypoint("native/mock.dll")
+    .with_channel_binding("sdkwork.channel.openai")
+    .with_permission(ExtensionPermission::NetworkOutbound)
+    .with_capability(CapabilityDescriptor::new(
+        "chat.completions.create",
+        CompatibilityLevel::Native,
+    ));
+    fs::write(
+        package_dir.join("sdkwork-extension.toml"),
+        toml::to_string(&manifest).unwrap(),
+    )
+    .unwrap();
+
+    let policy = ExtensionDiscoveryPolicy::new(vec![root.clone()])
+        .with_connector_extensions(false)
+        .with_native_dynamic_extensions(true)
+        .with_required_signatures_for_native_dynamic_extensions(false);
+
+    let packages = discover_extension_packages(&policy).expect("discovered packages");
+
+    assert_eq!(packages.len(), 1);
+    assert_eq!(
+        packages[0].manifest.runtime,
+        ExtensionRuntime::NativeDynamic
+    );
+    assert_eq!(
+        packages[0].manifest.runtime_compat_version.as_deref(),
+        Some("sdkwork.runtime/v1")
+    );
+    assert_eq!(
+        packages[0].manifest.config_schema_version.as_deref(),
+        Some("1.0")
+    );
+    assert_eq!(
+        packages[0].manifest.supported_modalities,
+        vec![ExtensionModality::Text]
+    );
+
+    cleanup_dir(&root);
+}
+
+#[test]
 fn discovery_validation_reports_missing_permissions_and_health_contract() {
     let root = temp_extension_root("validation");
     let package_dir = root.join("sdkwork-provider-validation-openai");
@@ -103,6 +157,44 @@ fn discovery_validation_reports_missing_permissions_and_health_contract() {
         .iter()
         .any(|issue| issue.code == "missing_health_contract"
             && issue.severity == ManifestValidationSeverity::Warning));
+
+    cleanup_dir(&root);
+}
+
+#[test]
+fn discovery_validation_reports_missing_runtime_contract_metadata() {
+    let root = temp_extension_root("runtime-contract-validation");
+    let package_dir = root.join("sdkwork-provider-runtime-contract-openai");
+    fs::create_dir_all(&package_dir).unwrap();
+    fs::write(
+        package_dir.join("sdkwork-extension.toml"),
+        runtime_contract_incomplete_manifest("sdkwork.provider.runtime-contract-openai"),
+    )
+    .unwrap();
+
+    let policy = ExtensionDiscoveryPolicy::new(vec![root.clone()])
+        .with_connector_extensions(true)
+        .with_native_dynamic_extensions(false);
+
+    let packages = discover_extension_packages(&policy).expect("discovered packages");
+    let report = validate_discovered_extension_package(&packages[0]);
+
+    assert!(!report.valid);
+    assert!(report
+        .issues
+        .iter()
+        .any(|issue| issue.code == "missing_supported_modalities"
+            && issue.severity == ManifestValidationSeverity::Error));
+    assert!(report
+        .issues
+        .iter()
+        .any(|issue| issue.code == "missing_runtime_compat_version"
+            && issue.severity == ManifestValidationSeverity::Error));
+    assert!(report
+        .issues
+        .iter()
+        .any(|issue| issue.code == "missing_config_schema_version"
+            && issue.severity == ManifestValidationSeverity::Error));
 
     cleanup_dir(&root);
 }
@@ -189,9 +281,12 @@ kind = "provider"
 version = "0.1.0"
 display_name = "Custom OpenAI"
 runtime = "{runtime}"
+runtime_compat_version = "sdkwork.runtime/v1"
 protocol = "{protocol}"
 entrypoint = "bin/sdkwork-provider-custom-openai"
+config_schema_version = "1.0"
 channel_bindings = ["sdkwork.channel.openai"]
+supported_modalities = ["text", "image", "audio", "video", "file"]
 permissions = ["network_outbound", "spawn_process"]
 
 [health]
@@ -232,9 +327,37 @@ kind = "provider"
 version = "0.1.0"
 display_name = "Validation OpenAI"
 runtime = "connector"
+runtime_compat_version = "sdkwork.runtime/v1"
 protocol = "openai"
 entrypoint = "bin/sdkwork-provider-validation-openai"
+config_schema_version = "1.0"
 channel_bindings = ["sdkwork.channel.openai"]
+supported_modalities = ["text"]
+
+[[capabilities]]
+operation = "chat.completions.create"
+compatibility = "relay"
+"#
+    )
+}
+
+fn runtime_contract_incomplete_manifest(extension_id: &str) -> String {
+    format!(
+        r#"
+api_version = "sdkwork.extension/v1"
+id = "{extension_id}"
+kind = "provider"
+version = "0.1.0"
+display_name = "Runtime Contract OpenAI"
+runtime = "connector"
+protocol = "openai"
+entrypoint = "bin/sdkwork-provider-runtime-contract-openai"
+channel_bindings = ["sdkwork.channel.openai"]
+permissions = ["network_outbound", "spawn_process"]
+
+[health]
+path = "/health"
+interval_secs = 30
 
 [[capabilities]]
 operation = "chat.completions.create"
@@ -253,6 +376,10 @@ fn base_connector_manifest(extension_id: &str) -> ExtensionManifest {
     .with_display_name("Trusted OpenAI")
     .with_protocol(ExtensionProtocol::OpenAi)
     .with_entrypoint("connector.ps1")
+    .with_supported_modality(ExtensionModality::Image)
+    .with_supported_modality(ExtensionModality::Audio)
+    .with_supported_modality(ExtensionModality::Video)
+    .with_supported_modality(ExtensionModality::File)
     .with_channel_binding("sdkwork.channel.openai")
     .with_permission(ExtensionPermission::NetworkOutbound)
     .with_permission(ExtensionPermission::SpawnProcess)
