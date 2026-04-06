@@ -12,6 +12,8 @@ Use this page together with:
 
 SDKWork ships two different script layers. They solve different problems.
 
+For repository ergonomics, root-level `start.*`, `build.*`, `install.*`, and `stop.*` scripts are thin compatibility wrappers. They exist so common entrypoint names stay available from the repository root, but the real lifecycle implementation remains owned by `bin/*`.
+
 ### `scripts/dev/*`
 
 These are the raw source-oriented launchers.

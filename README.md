@@ -237,6 +237,8 @@ Detailed source instructions:
 The repository now includes a deployment-oriented `bin/` script set that sits above the lower-level
 `scripts/dev/*` helpers.
 
+For repository ergonomics, root-level start/build/install/stop scripts are compatibility wrappers that delegate to `bin/*`, while the `bin/*` scripts remain the managed source of truth for lifecycle behavior.
+
 If you want one page that explains the full `build -> install -> start -> verify -> stop -> service registration`
 lifecycle, read [Script Lifecycle](./docs/getting-started/script-lifecycle.md) first.
 
