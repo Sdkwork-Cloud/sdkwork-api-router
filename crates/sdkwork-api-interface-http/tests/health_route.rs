@@ -3,7 +3,7 @@ use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
 
 #[tokio::test]
-async fn health_route_returns_ok_and_metrics_capture_it() {
+async fn health_route_returns_ok_and_metrics_require_bearer_token() {
     let app = sdkwork_api_interface_http::gateway_router();
     let health = app
         .clone()
@@ -45,10 +45,24 @@ async fn health_route_returns_ok_and_metrics_capture_it() {
         "gateway-caller-id"
     );
 
+    let unauthorized_metrics = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/metrics")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(unauthorized_metrics.status(), StatusCode::UNAUTHORIZED);
+
     let metrics = app
         .oneshot(
             Request::builder()
                 .uri("/metrics")
+                .header("authorization", "Bearer local-dev-metrics-token")
                 .body(Body::empty())
                 .unwrap(),
         )

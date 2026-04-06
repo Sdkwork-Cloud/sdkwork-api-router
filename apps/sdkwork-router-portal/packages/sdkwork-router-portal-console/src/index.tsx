@@ -5,6 +5,7 @@ import { PortalCreditsPage } from 'sdkwork-router-portal-credits';
 import { PortalDashboardPage } from 'sdkwork-router-portal-dashboard';
 import { PortalGatewayPage } from 'sdkwork-router-portal-gateway';
 import { PortalRechargePage } from 'sdkwork-router-portal-recharge';
+import { PortalSettlementsPage } from 'sdkwork-router-portal-settlements';
 import { PortalRoutingPage } from 'sdkwork-router-portal-routing';
 import type {
   PortalDashboardSummary,
@@ -49,6 +50,8 @@ export function PortalConsoleRoute({
       return <PortalRechargePage onNavigate={onNavigate} />;
     case 'billing':
       return <PortalBillingPage onNavigate={onNavigate} />;
+    case 'settlements':
+      return <PortalSettlementsPage onNavigate={onNavigate} />;
     case 'account':
       return <PortalAccountPage onNavigate={onNavigate} workspace={workspace} />;
     default:

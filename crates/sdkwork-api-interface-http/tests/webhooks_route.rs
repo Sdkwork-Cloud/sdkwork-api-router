@@ -68,6 +68,28 @@ async fn webhook_retrieve_route_returns_ok() {
 }
 
 #[tokio::test]
+async fn webhook_retrieve_route_returns_not_found_for_unknown_webhook() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/webhooks/wh_missing")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["message"], "Requested webhook was not found.");
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+}
+
+#[tokio::test]
 async fn webhook_update_route_returns_ok() {
     let app = sdkwork_api_interface_http::gateway_router();
     let response = app
@@ -87,6 +109,29 @@ async fn webhook_update_route_returns_ok() {
 }
 
 #[tokio::test]
+async fn webhook_update_route_returns_not_found_for_unknown_webhook() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/webhooks/wh_missing")
+                .header("content-type", "application/json")
+                .body(Body::from("{\"url\":\"https://example.com/webhook/v2\"}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["message"], "Requested webhook was not found.");
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+}
+
+#[tokio::test]
 async fn webhook_delete_route_returns_ok() {
     let app = sdkwork_api_interface_http::gateway_router();
     let response = app
@@ -101,6 +146,27 @@ async fn webhook_delete_route_returns_ok() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn webhook_delete_route_returns_not_found_for_unknown_webhook() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/v1/webhooks/wh_missing")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["message"], "Requested webhook was not found.");
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
 }
 
 #[tokio::test]
@@ -600,6 +666,111 @@ async fn stateful_webhooks_create_usage_uses_created_webhook_id_for_billing() {
         "https://example.com/webhook",
     )
     .await;
+}
+
+#[tokio::test]
+async fn stateful_webhook_retrieve_route_returns_not_found_without_usage() {
+    let pool = memory_pool().await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let api_key = support::issue_gateway_api_key(
+        &pool,
+        "tenant-webhook-retrieve-missing",
+        "project-webhook-retrieve-missing",
+    )
+    .await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+
+    let response = gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/webhooks/wh_missing")
+                .header("authorization", format!("Bearer {api_key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["message"], "Requested webhook was not found.");
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+
+    support::assert_no_usage_records(admin_app, &admin_token).await;
+}
+
+#[tokio::test]
+async fn stateful_webhook_update_route_returns_not_found_without_usage() {
+    let pool = memory_pool().await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let api_key = support::issue_gateway_api_key(
+        &pool,
+        "tenant-webhook-update-missing",
+        "project-webhook-update-missing",
+    )
+    .await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+
+    let response = gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/webhooks/wh_missing")
+                .header("authorization", format!("Bearer {api_key}"))
+                .header("content-type", "application/json")
+                .body(Body::from("{\"url\":\"https://example.com/webhook/v2\"}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["message"], "Requested webhook was not found.");
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+
+    support::assert_no_usage_records(admin_app, &admin_token).await;
+}
+
+#[tokio::test]
+async fn stateful_webhook_delete_route_returns_not_found_without_usage() {
+    let pool = memory_pool().await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let api_key = support::issue_gateway_api_key(
+        &pool,
+        "tenant-webhook-delete-missing",
+        "project-webhook-delete-missing",
+    )
+    .await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+
+    let response = gateway_app
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/v1/webhooks/wh_missing")
+                .header("authorization", format!("Bearer {api_key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["message"], "Requested webhook was not found.");
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+
+    support::assert_no_usage_records(admin_app, &admin_token).await;
 }
 
 async fn upstream_webhooks_handler(

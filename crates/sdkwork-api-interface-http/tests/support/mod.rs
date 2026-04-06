@@ -1,7 +1,7 @@
+use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use axum::Router;
-use base64::{engine::general_purpose::STANDARD, Engine as _};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use ed25519_dalek::SigningKey;
 use sdkwork_api_app_identity::persist_gateway_api_key;
 use sdkwork_api_ext_provider_native_mock::FIXTURE_EXTENSION_ID;
@@ -14,8 +14,8 @@ use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
 };
 use std::thread::{self, JoinHandle};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -52,6 +52,18 @@ pub async fn issue_admin_token(app: Router) -> String {
         .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     json["token"].as_str().unwrap().to_owned()
+}
+
+#[allow(dead_code)]
+pub fn sha256_hex_path(path: &Path) -> String {
+    use sha2::{Digest, Sha256};
+
+    let digest = Sha256::digest(std::fs::read(path).unwrap());
+    let mut encoded = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        encoded.push_str(&format!("{byte:02x}"));
+    }
+    encoded
 }
 
 #[allow(dead_code)]
@@ -96,6 +108,24 @@ pub async fn assert_single_usage_record_and_decision_log(
     assert_eq!(logs_json.as_array().unwrap().len(), 1);
     assert_eq!(logs_json[0]["route_key"], expected_route_key);
     assert_eq!(logs_json[0]["selected_provider_id"], expected_provider);
+}
+
+#[allow(dead_code)]
+pub async fn assert_no_usage_records(admin_app: Router, admin_token: &str) {
+    let usage = admin_app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/admin/usage/records")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(usage.status(), StatusCode::OK);
+    let usage_json = read_json(usage).await;
+    assert_eq!(usage_json.as_array().unwrap().len(), 0);
 }
 
 #[allow(dead_code)]
@@ -316,7 +346,6 @@ fn sign_native_dynamic_package(
     signing_key: &SigningKey,
 ) -> String {
     use ed25519_dalek::Signer;
-    use sha2::{Digest, Sha256};
 
     #[derive(serde::Serialize)]
     struct PackageSignaturePayload<'a> {
@@ -343,7 +372,7 @@ fn sign_native_dynamic_package(
                 .unwrap()
                 .to_string_lossy()
                 .replace('\\', "/"),
-            sha256: format!("{:x}", Sha256::digest(std::fs::read(&path).unwrap())),
+            sha256: sha256_hex_path(&path),
         })
         .collect::<Vec<_>>();
 
@@ -494,7 +523,10 @@ fn execute_fake_redis_command(
             let mut nx = false;
             let mut index = 3;
             while index < command.len() {
-                match String::from_utf8_lossy(&command[index]).to_ascii_uppercase().as_str() {
+                match String::from_utf8_lossy(&command[index])
+                    .to_ascii_uppercase()
+                    .as_str()
+                {
                     "PX" => {
                         ttl_ms = Some(
                             String::from_utf8_lossy(&command[index + 1])
@@ -519,8 +551,9 @@ fn execute_fake_redis_command(
                 key,
                 FakeRedisStringValue {
                     value,
-                    expires_at: ttl_ms
-                        .map(|ttl_ms| std::time::Instant::now() + std::time::Duration::from_millis(ttl_ms)),
+                    expires_at: ttl_ms.map(|ttl_ms| {
+                        std::time::Instant::now() + std::time::Duration::from_millis(ttl_ms)
+                    }),
                 },
             );
             RespValue::Simple("OK".to_owned())
@@ -577,9 +610,12 @@ fn execute_fake_redis_command(
 #[allow(dead_code)]
 fn purge_expired_strings(database: &mut FakeRedisDatabase) {
     let now = std::time::Instant::now();
-    database
-        .strings
-        .retain(|_, value| value.expires_at.map(|expires_at| expires_at > now).unwrap_or(true));
+    database.strings.retain(|_, value| {
+        value
+            .expires_at
+            .map(|expires_at| expires_at > now)
+            .unwrap_or(true)
+    });
 }
 
 #[allow(dead_code)]
@@ -596,7 +632,9 @@ fn read_resp_array(stream: &mut TcpStream) -> std::io::Result<Option<Vec<Vec<u8>
             "expected RESP array",
         ));
     }
-    let count = read_resp_line(stream)?.parse::<usize>().expect("array length");
+    let count = read_resp_line(stream)?
+        .parse::<usize>()
+        .expect("array length");
     let mut values = Vec::with_capacity(count);
     for _ in 0..count {
         let mut bulk_marker = [0_u8; 1];

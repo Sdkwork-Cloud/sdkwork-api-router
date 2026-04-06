@@ -38,7 +38,6 @@ import {
 } from 'sdkwork-router-portal-commons/framework/overlays';
 import { ManagementWorkbench } from 'sdkwork-router-portal-commons/framework/workbench';
 import {
-  SectionHeader,
   WorkspacePanel,
 } from 'sdkwork-router-portal-commons/framework/workspace';
 import { portalErrorMessage } from 'sdkwork-router-portal-portal-api';
@@ -1072,11 +1071,8 @@ export function PortalRoutingPage({ onNavigate }: PortalRoutingPageProps) {
       ? t('Guardrails applied')
       : t('Preview only');
 
-  const headerActions = (
-    <div
-      data-slot="portal-routing-toolbar"
-      className="flex flex-wrap items-center gap-2"
-    >
+  const toolbarActions = (
+    <div className="flex flex-wrap items-center justify-end gap-2">
       <Button onClick={() => setEditDialogOpen(true)} variant="primary">
         {t('Edit posture')}
       </Button>
@@ -1342,18 +1338,19 @@ export function PortalRoutingPage({ onNavigate }: PortalRoutingPageProps) {
       </Dialog>
 
       <div className="space-y-6">
-        <SectionHeader
-          actions={headerActions}
-        description={status}
-        eyebrow={t('Routing posture')}
-        meta={(
-          <div className="flex flex-wrap items-center gap-2">
+        <div
+          data-slot="portal-routing-toolbar"
+          className="flex flex-wrap items-start justify-between gap-3 rounded-[24px] border border-zinc-200/80 bg-zinc-50/85 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900/45"
+        >
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
             <Badge variant="default">{buildRoutingStrategyLabel(form.strategy)}</Badge>
             <Badge variant="outline">{`${t('Evidence entries')}: ${decisionLogs.length}`}</Badge>
+            <p className="min-w-[16rem] flex-1 leading-6 text-zinc-500 dark:text-zinc-400">
+              {status}
+            </p>
           </div>
-        )}
-        title={t('Routing')}
-        />
+          {toolbarActions}
+        </div>
 
         <div className="grid gap-6 xl:grid-cols-[0.94fr_1.06fr]">
           <WorkspacePanel

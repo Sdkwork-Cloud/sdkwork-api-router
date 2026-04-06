@@ -37,6 +37,32 @@ async fn files_route_returns_ok() {
 
 #[serial(extension_env)]
 #[tokio::test]
+async fn files_route_returns_invalid_request_for_blank_purpose() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/files")
+                .header(
+                    "content-type",
+                    "multipart/form-data; boundary=----sdkwork-boundary",
+                )
+                .body(Body::from(build_file_multipart_body_with_fields(
+                    "----sdkwork-boundary",
+                    "",
+                    "train.jsonl",
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_invalid_file_request(response, "File purpose is required.").await;
+}
+
+#[serial(extension_env)]
+#[tokio::test]
 async fn files_list_route_returns_ok() {
     let app = sdkwork_api_interface_http::gateway_router();
     let response = app
@@ -75,6 +101,29 @@ async fn file_retrieve_route_returns_ok() {
 
 #[serial(extension_env)]
 #[tokio::test]
+async fn file_retrieve_route_returns_not_found_for_unknown_file() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/files/file_missing")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["message"], "Requested file was not found.");
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+}
+
+#[serial(extension_env)]
+#[tokio::test]
 async fn file_delete_route_returns_ok() {
     let app = sdkwork_api_interface_http::gateway_router();
     let response = app
@@ -108,6 +157,51 @@ async fn file_content_route_returns_ok() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[serial(extension_env)]
+#[tokio::test]
+async fn file_delete_route_returns_not_found_for_unknown_file() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/v1/files/file_missing")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["message"], "Requested file was not found.");
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+}
+
+#[serial(extension_env)]
+#[tokio::test]
+async fn file_content_route_returns_not_found_error_for_unknown_file() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/files/file_missing/content")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["message"], "Requested file was not found.");
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
 }
 
 #[serial(extension_env)]
@@ -170,13 +264,15 @@ async fn stateless_files_routes_relay_to_openai_compatible_provider() {
         upstream_state.authorization.lock().unwrap().as_deref(),
         Some("Bearer sk-stateless-openai")
     );
-    assert!(upstream_state
-        .content_type
-        .lock()
-        .unwrap()
-        .as_deref()
-        .unwrap_or_default()
-        .starts_with("multipart/form-data"));
+    assert!(
+        upstream_state
+            .content_type
+            .lock()
+            .unwrap()
+            .as_deref()
+            .unwrap_or_default()
+            .starts_with("multipart/form-data")
+    );
 
     let list_response = app
         .clone()
@@ -407,13 +503,15 @@ async fn stateful_files_route_relays_to_openai_compatible_provider() {
         upstream_state.authorization.lock().unwrap().as_deref(),
         Some("Bearer sk-upstream-openai")
     );
-    assert!(upstream_state
-        .content_type
-        .lock()
-        .unwrap()
-        .as_deref()
-        .unwrap_or_default()
-        .starts_with("multipart/form-data"));
+    assert!(
+        upstream_state
+            .content_type
+            .lock()
+            .unwrap()
+            .as_deref()
+            .unwrap_or_default()
+            .starts_with("multipart/form-data")
+    );
     support::assert_single_usage_record_and_decision_log(
         admin_app.clone(),
         &admin_token,
@@ -678,13 +776,15 @@ async fn stateful_files_create_usage_uses_created_file_id_for_billing() {
         upstream_state.authorization.lock().unwrap().as_deref(),
         Some("Bearer sk-files-route")
     );
-    assert!(upstream_state
-        .content_type
-        .lock()
-        .unwrap()
-        .as_deref()
-        .unwrap_or_default()
-        .starts_with("multipart/form-data"));
+    assert!(
+        upstream_state
+            .content_type
+            .lock()
+            .unwrap()
+            .as_deref()
+            .unwrap_or_default()
+            .starts_with("multipart/form-data")
+    );
     support::assert_single_usage_record_and_decision_log(
         admin_app,
         &admin_token,
@@ -693,6 +793,115 @@ async fn stateful_files_create_usage_uses_created_file_id_for_billing() {
         "fine-tune",
     )
     .await;
+}
+
+#[serial(extension_env)]
+#[tokio::test]
+async fn stateful_file_retrieve_route_returns_not_found_without_usage() {
+    let pool = memory_pool().await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let api_key = support::issue_gateway_api_key(
+        &pool,
+        "tenant-file-retrieve-missing",
+        "project-file-retrieve-missing",
+    )
+    .await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+
+    let response = gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/files/file_missing")
+                .header("authorization", format!("Bearer {api_key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["message"], "Requested file was not found.");
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+
+    support::assert_no_usage_records(admin_app, &admin_token).await;
+}
+
+#[serial(extension_env)]
+#[tokio::test]
+async fn stateful_files_route_returns_invalid_request_without_usage() {
+    let pool = memory_pool().await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let api_key = support::issue_gateway_api_key(
+        &pool,
+        "tenant-file-create-invalid",
+        "project-file-create-invalid",
+    )
+    .await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+
+    let response = gateway_app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/files")
+                .header("authorization", format!("Bearer {api_key}"))
+                .header(
+                    "content-type",
+                    "multipart/form-data; boundary=----sdkwork-boundary",
+                )
+                .body(Body::from(build_file_multipart_body_with_fields(
+                    "----sdkwork-boundary",
+                    "",
+                    "train.jsonl",
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_invalid_file_request(response, "File purpose is required.").await;
+    support::assert_no_usage_records(admin_app, &admin_token).await;
+}
+
+#[serial(extension_env)]
+#[tokio::test]
+async fn stateful_file_delete_route_returns_not_found_without_usage() {
+    let pool = memory_pool().await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let api_key = support::issue_gateway_api_key(
+        &pool,
+        "tenant-file-delete-missing",
+        "project-file-delete-missing",
+    )
+    .await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+
+    let response = gateway_app
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/v1/files/file_missing")
+                .header("authorization", format!("Bearer {api_key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["message"], "Requested file was not found.");
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+
+    support::assert_no_usage_records(admin_app, &admin_token).await;
 }
 
 #[serial(extension_env)]
@@ -862,10 +1071,22 @@ async fn stateful_file_content_route_relays_to_native_dynamic_provider() {
 }
 
 fn build_file_multipart_body(boundary: &str) -> Vec<u8> {
+    build_file_multipart_body_with_fields(boundary, "fine-tune", "train.jsonl")
+}
+
+fn build_file_multipart_body_with_fields(boundary: &str, purpose: &str, filename: &str) -> Vec<u8> {
     format!(
-        "--{boundary}\r\nContent-Disposition: form-data; name=\"purpose\"\r\n\r\nfine-tune\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"train.jsonl\"\r\nContent-Type: application/jsonl\r\n\r\n{{}}\r\n--{boundary}--\r\n"
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"purpose\"\r\n\r\n{purpose}\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: application/jsonl\r\n\r\n{{}}\r\n--{boundary}--\r\n"
     )
     .into_bytes()
+}
+
+async fn assert_invalid_file_request(response: axum::response::Response, message: &str) {
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["message"], message);
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "invalid_file");
 }
 
 async fn upstream_files_handler(

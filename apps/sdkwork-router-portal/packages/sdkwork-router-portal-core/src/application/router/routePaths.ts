@@ -11,6 +11,8 @@ export const PORTAL_ROUTE_PATHS: Record<
   home: '/',
   console: '/console',
   models: '/models',
+  // api-reference: '/api-reference'
+  'api-reference': '/api-reference',
   docs: '/docs',
   downloads: '/downloads',
   login: '/login',
@@ -25,6 +27,7 @@ export const PORTAL_ROUTE_PATHS: Record<
   credits: '/console/redeem',
   recharge: '/console/recharge',
   billing: '/console/billing',
+  settlements: '/console/settlements',
   account: '/console/account',
 };
 

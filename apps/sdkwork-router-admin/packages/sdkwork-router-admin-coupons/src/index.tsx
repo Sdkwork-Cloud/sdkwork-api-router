@@ -11,7 +11,18 @@ import {
 } from '@sdkwork/ui-pc-react';
 import { Plus, Search } from 'lucide-react';
 import { useAdminI18n } from 'sdkwork-router-admin-core';
-import type { AdminPageProps, CouponRecord } from 'sdkwork-router-admin-types';
+import type {
+  AdminPageProps,
+  CampaignBudgetRecord,
+  CampaignBudgetStatus,
+  CouponCodeRecord,
+  CouponCodeStatus,
+  CouponRecord,
+  CouponTemplateRecord,
+  CouponTemplateStatus,
+  MarketingCampaignRecord,
+  MarketingCampaignStatus,
+} from 'sdkwork-router-admin-types';
 
 import { CouponDialog } from './page/CouponDialog';
 import { CouponsDetailDrawer } from './page/CouponsDetailDrawer';
@@ -33,6 +44,29 @@ type CouponsPageProps = AdminPageProps & {
   onSaveCoupon: (coupon: CouponRecord) => Promise<void> | void;
   onToggleCoupon: (coupon: CouponRecord) => Promise<void> | void;
   onDeleteCoupon: (couponId: string) => Promise<void> | void;
+  onUpdateMarketingCouponTemplateStatus: (
+    couponTemplateId: string,
+    status: CouponTemplateStatus,
+  ) => Promise<void> | void;
+  onUpdateMarketingCampaignStatus: (
+    marketingCampaignId: string,
+    status: MarketingCampaignStatus,
+  ) => Promise<void> | void;
+  onUpdateMarketingCampaignBudgetStatus: (
+    campaignBudgetId: string,
+    status: CampaignBudgetStatus,
+  ) => Promise<void> | void;
+  onUpdateMarketingCouponCodeStatus: (
+    couponCodeId: string,
+    status: CouponCodeStatus,
+  ) => Promise<void> | void;
+};
+
+type CouponGovernance = {
+  template: CouponTemplateRecord | null;
+  campaign: MarketingCampaignRecord | null;
+  budget: CampaignBudgetRecord | null;
+  code: CouponCodeRecord | null;
 };
 
 export function CouponsPage({
@@ -40,6 +74,10 @@ export function CouponsPage({
   onSaveCoupon,
   onToggleCoupon,
   onDeleteCoupon,
+  onUpdateMarketingCouponTemplateStatus,
+  onUpdateMarketingCampaignStatus,
+  onUpdateMarketingCampaignBudgetStatus,
+  onUpdateMarketingCouponCodeStatus,
 }: CouponsPageProps) {
   const { formatNumber, t } = useAdminI18n();
   const [draft, setDraft] = useState<CouponRecord>(createEmptyCouponDraft());
@@ -76,6 +114,22 @@ export function CouponsPage({
           (left.days ?? Number.MAX_SAFE_INTEGER)
           - (right.days ?? Number.MAX_SAFE_INTEGER),
       )[0] ?? null;
+  const activeTemplates = snapshot.couponTemplates.filter(
+    (template) => template.status === 'active',
+  );
+  const activeMarketingCampaigns = snapshot.marketingCampaigns.filter(
+    (campaign) => campaign.status === 'active',
+  );
+  const activeCampaignBudgets = snapshot.campaignBudgets.filter(
+    (budget) => budget.status === 'active',
+  );
+  const availableCodeCount = snapshot.couponCodes.filter(
+    (code) => code.status === 'available',
+  ).length;
+  const liveRedemptionCount = snapshot.couponRedemptions.filter(
+    (redemption) => redemption.redemption_status === 'redeemed',
+  ).length;
+  const rollbackTrailCount = snapshot.couponRollbacks.length;
 
   const filteredCoupons = useMemo(
     () =>
@@ -114,6 +168,18 @@ export function CouponsPage({
 
   const selectedCoupon =
     filteredCoupons.find((coupon) => coupon.id === selectedCouponId) ?? null;
+  const selectedCouponGovernance = useMemo(
+    () =>
+      selectedCoupon
+        ? resolveCouponGovernance(snapshot, selectedCoupon)
+        : {
+            template: null,
+            campaign: null,
+            budget: null,
+            code: null,
+          },
+    [selectedCoupon, snapshot],
+  );
 
   const columns = useMemo<DataTableColumn<CouponRecord>[]>(
     () => [
@@ -302,6 +368,61 @@ export function CouponsPage({
                 </Button>
               </div>
             </form>
+
+            <div className="mt-4 grid gap-3 xl:grid-cols-5">
+              {[
+                {
+                  title: t('Template governance'),
+                  value: formatNumber(activeTemplates.length),
+                  detail: t('{count} active templates', {
+                    count: formatNumber(activeTemplates.length),
+                  }),
+                },
+                {
+                  title: t('Campaign budgets'),
+                  value: formatNumber(activeCampaignBudgets.length),
+                  detail: t('{count} active campaigns', {
+                    count: formatNumber(activeMarketingCampaigns.length),
+                  }),
+                },
+                {
+                  title: t('Code vault'),
+                  value: formatNumber(availableCodeCount),
+                  detail: t('{count} total codes', {
+                    count: formatNumber(snapshot.couponCodes.length),
+                  }),
+                },
+                {
+                  title: t('Redemption ledger'),
+                  value: formatNumber(liveRedemptionCount),
+                  detail: t('{count} tracked redemptions', {
+                    count: formatNumber(snapshot.couponRedemptions.length),
+                  }),
+                },
+                {
+                  title: t('Rollback trail'),
+                  value: formatNumber(rollbackTrailCount),
+                  detail: t('{count} recorded rollbacks', {
+                    count: formatNumber(rollbackTrailCount),
+                  }),
+                },
+              ].map((item) => (
+                <div
+                  className="rounded-2xl border border-[var(--sdk-color-border-subtle)] bg-[var(--sdk-color-surface-muted)]/60 px-4 py-3"
+                  key={item.title}
+                >
+                  <div className="text-xs uppercase tracking-[0.18em] text-[var(--sdk-color-text-muted)]">
+                    {item.title}
+                  </div>
+                  <div className="mt-2 text-2xl font-semibold text-[var(--sdk-color-text-primary)]">
+                    {item.value}
+                  </div>
+                  <div className="mt-1 text-sm text-[var(--sdk-color-text-secondary)]">
+                    {item.detail}
+                  </div>
+                </div>
+              ))}
+            </div>
           </CardContent>
         </Card>
 
@@ -326,6 +447,7 @@ export function CouponsPage({
       </div>
 
       <CouponsDetailDrawer
+        governance={selectedCouponGovernance}
         onDelete={() => {
           if (!selectedCoupon) {
             return;
@@ -346,6 +468,18 @@ export function CouponsPage({
           }
           void onToggleCoupon(selectedCoupon);
         }}
+        onUpdateMarketingCampaignBudgetStatus={(campaignBudgetId, status) =>
+          void onUpdateMarketingCampaignBudgetStatus(campaignBudgetId, status)
+        }
+        onUpdateMarketingCampaignStatus={(marketingCampaignId, status) =>
+          void onUpdateMarketingCampaignStatus(marketingCampaignId, status)
+        }
+        onUpdateMarketingCouponCodeStatus={(couponCodeId, status) =>
+          void onUpdateMarketingCouponCodeStatus(couponCodeId, status)
+        }
+        onUpdateMarketingCouponTemplateStatus={(couponTemplateId, status) =>
+          void onUpdateMarketingCouponTemplateStatus(couponTemplateId, status)
+        }
         open={isDetailDrawerOpen}
         selectedCoupon={selectedCoupon}
       />
@@ -379,4 +513,92 @@ export function CouponsPage({
       />
     </>
   );
+}
+
+function resolveCouponGovernance(
+  snapshot: AdminPageProps['snapshot'],
+  coupon: CouponRecord,
+): CouponGovernance {
+  const normalizedCode = coupon.code.trim().toUpperCase();
+  const codes = snapshot.couponCodes
+    .filter((record) => record.code_value.trim().toUpperCase() === normalizedCode)
+    .sort((left, right) => right.updated_at_ms - left.updated_at_ms);
+  const code = codes[0] ?? null;
+  const template =
+    code
+      ? snapshot.couponTemplates.find(
+          (record) => record.coupon_template_id === code.coupon_template_id,
+        ) ?? null
+      : null;
+  const campaign = template
+    ? snapshot.marketingCampaigns
+        .filter((record) => record.coupon_template_id === template.coupon_template_id)
+        .sort(compareMarketingCampaigns)[0] ?? null
+    : null;
+  const budget = campaign
+    ? snapshot.campaignBudgets
+        .filter((record) => record.marketing_campaign_id === campaign.marketing_campaign_id)
+        .sort(compareCampaignBudgets)[0] ?? null
+    : null;
+
+  return {
+    template,
+    campaign,
+    budget,
+    code,
+  };
+}
+
+function compareMarketingCampaigns(
+  left: MarketingCampaignRecord,
+  right: MarketingCampaignRecord,
+): number {
+  return (
+    marketingCampaignPriority(right.status) - marketingCampaignPriority(left.status)
+    || right.updated_at_ms - left.updated_at_ms
+  );
+}
+
+function compareCampaignBudgets(
+  left: CampaignBudgetRecord,
+  right: CampaignBudgetRecord,
+): number {
+  return (
+    campaignBudgetPriority(right.status) - campaignBudgetPriority(left.status)
+    || right.updated_at_ms - left.updated_at_ms
+  );
+}
+
+function marketingCampaignPriority(status: MarketingCampaignStatus): number {
+  switch (status) {
+    case 'active':
+      return 5;
+    case 'scheduled':
+      return 4;
+    case 'paused':
+      return 3;
+    case 'draft':
+      return 2;
+    case 'ended':
+      return 1;
+    case 'archived':
+      return 0;
+    default:
+      return -1;
+  }
+}
+
+function campaignBudgetPriority(status: CampaignBudgetStatus): number {
+  switch (status) {
+    case 'active':
+      return 3;
+    case 'exhausted':
+      return 2;
+    case 'draft':
+      return 1;
+    case 'closed':
+      return 0;
+    default:
+      return -1;
+  }
 }

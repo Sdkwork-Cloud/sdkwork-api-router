@@ -110,6 +110,40 @@ async fn stateless_anthropic_messages_route_translates_to_chat_completions() {
 
 #[serial]
 #[tokio::test]
+async fn stateless_anthropic_messages_route_returns_invalid_request_for_missing_model() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/messages")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "model": "",
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": "route by anthropic"
+                            }
+                        ]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let json = read_json(response).await;
+    assert_eq!(json["type"], "error");
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["message"], "Chat completion model is required.");
+}
+
+#[serial]
+#[tokio::test]
 async fn stateful_anthropic_messages_route_accepts_x_api_key_and_records_usage() {
     let upstream_state = UpstreamCaptureState::default();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -181,6 +215,51 @@ async fn stateful_anthropic_messages_route_accepts_x_api_key_and_records_usage()
 
 #[serial]
 #[tokio::test]
+async fn stateful_anthropic_messages_route_returns_invalid_request_for_missing_model_without_usage(
+) {
+    let pool = memory_pool().await;
+    let api_key =
+        support::issue_gateway_api_key(&pool, "tenant-anthropic-invalid", "project-anthropic-invalid")
+            .await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+
+    let response = gateway_app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/messages")
+                .header("x-api-key", api_key)
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "model": "",
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": "route by anthropic"
+                            }
+                        ]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let json = read_json(response).await;
+    assert_eq!(json["type"], "error");
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["message"], "Chat completion model is required.");
+
+    support::assert_no_usage_records(admin_app, &admin_token).await;
+}
+
+#[serial]
+#[tokio::test]
 async fn stateless_anthropic_messages_stream_route_returns_anthropic_sse_events() {
     let upstream_state = UpstreamCaptureState::default();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -246,6 +325,90 @@ async fn stateless_anthropic_messages_stream_route_returns_anthropic_sse_events(
 
 #[serial]
 #[tokio::test]
+async fn stateless_anthropic_messages_stream_route_returns_invalid_request_for_missing_model() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/messages")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "model": "",
+                        "stream": true,
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": "stream to claude"
+                            }
+                        ]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let json = read_json(response).await;
+    assert_eq!(json["type"], "error");
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["message"], "Chat completion model is required.");
+}
+
+#[serial]
+#[tokio::test]
+async fn stateful_anthropic_messages_stream_route_returns_invalid_request_for_missing_model_without_usage(
+) {
+    let pool = memory_pool().await;
+    let api_key = support::issue_gateway_api_key(
+        &pool,
+        "tenant-anthropic-stream-invalid",
+        "project-anthropic-stream-invalid",
+    )
+    .await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+
+    let response = gateway_app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/messages")
+                .header("x-api-key", api_key)
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "model": "",
+                        "stream": true,
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": "stream to claude"
+                            }
+                        ]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let json = read_json(response).await;
+    assert_eq!(json["type"], "error");
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["message"], "Chat completion model is required.");
+
+    support::assert_no_usage_records(admin_app, &admin_token).await;
+}
+
+#[serial]
+#[tokio::test]
 async fn anthropic_count_tokens_route_returns_input_token_count() {
     let app = sdkwork_api_interface_http::gateway_router();
     let response = app
@@ -274,6 +437,83 @@ async fn anthropic_count_tokens_route_returns_input_token_count() {
     assert_eq!(response.status(), StatusCode::OK);
     let json = read_json(response).await;
     assert_eq!(json["input_tokens"], 42);
+}
+
+#[serial]
+#[tokio::test]
+async fn anthropic_count_tokens_route_returns_invalid_request_for_missing_model() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/messages/count_tokens")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "model": "",
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": "count my claude tokens"
+                            }
+                        ]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let json = read_json(response).await;
+    assert_eq!(json["type"], "error");
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["message"], "Response model is required.");
+}
+
+#[serial]
+#[tokio::test]
+async fn stateful_anthropic_count_tokens_route_returns_invalid_request_for_missing_model_without_usage(
+) {
+    let pool = memory_pool().await;
+    let api_key = support::issue_gateway_api_key(&pool, "tenant-anthropic-count-invalid", "project-anthropic-count-invalid").await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+
+    let response = gateway_app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/messages/count_tokens")
+                .header("x-api-key", api_key)
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "model": "",
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": "count my claude tokens"
+                            }
+                        ]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let json = read_json(response).await;
+    assert_eq!(json["type"], "error");
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["message"], "Response model is required.");
+
+    support::assert_no_usage_records(admin_app, &admin_token).await;
 }
 
 async fn read_json(response: axum::response::Response) -> Value {

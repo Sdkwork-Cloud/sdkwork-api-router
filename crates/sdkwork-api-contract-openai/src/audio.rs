@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateTranscriptionRequest {
     pub model: String,
     pub file_id: String,
@@ -15,7 +16,7 @@ impl CreateTranscriptionRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct TranscriptionObject {
     pub text: String,
 }
@@ -26,7 +27,7 @@ impl TranscriptionObject {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateTranslationRequest {
     pub model: String,
     pub file_id: String,
@@ -41,7 +42,7 @@ impl CreateTranslationRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct TranslationObject {
     pub text: String,
 }
@@ -52,7 +53,7 @@ impl TranslationObject {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateVoiceConsentRequest {
     pub voice: String,
     pub name: String,
@@ -73,7 +74,7 @@ impl CreateVoiceConsentRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct VoiceObject {
     pub id: String,
     pub object: &'static str,
@@ -90,7 +91,7 @@ impl VoiceObject {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ListVoicesResponse {
     pub object: &'static str,
     pub data: Vec<VoiceObject>,
@@ -105,7 +106,7 @@ impl ListVoicesResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct VoiceConsentObject {
     pub id: String,
     pub object: &'static str,
@@ -130,7 +131,7 @@ impl VoiceConsentObject {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateSpeechRequest {
     pub model: String,
     pub voice: String,
@@ -163,7 +164,7 @@ impl CreateSpeechRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct SpeechResponse {
     pub format: String,
     pub audio_base64: String,

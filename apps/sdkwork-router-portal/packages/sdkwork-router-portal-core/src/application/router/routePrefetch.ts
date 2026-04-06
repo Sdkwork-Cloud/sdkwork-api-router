@@ -12,6 +12,7 @@ const portalRouteModuleLoaders: Record<PortalRouteModuleId, () => Promise<unknow
   'sdkwork-router-portal-credits': () => import('sdkwork-router-portal-credits'),
   'sdkwork-router-portal-recharge': () => import('sdkwork-router-portal-recharge'),
   'sdkwork-router-portal-billing': () => import('sdkwork-router-portal-billing'),
+  'sdkwork-router-portal-settlements': () => import('sdkwork-router-portal-settlements'),
   'sdkwork-router-portal-account': () => import('sdkwork-router-portal-account'),
 };
 

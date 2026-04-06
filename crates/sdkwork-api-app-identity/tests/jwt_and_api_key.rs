@@ -6,6 +6,8 @@ const TEST_SIGNING_SECRET: &str = "test-admin-signing-secret";
 fn gateway_api_key_hash_is_not_plaintext() {
     let hash = hash_gateway_api_key("skw_live_example");
     assert_ne!(hash, "skw_live_example");
+    assert_eq!(hash.len(), 64);
+    assert!(hash.chars().all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase()));
 }
 
 #[test]

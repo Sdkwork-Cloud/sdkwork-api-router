@@ -256,3 +256,119 @@ test('portal account services aggregate total, today, 7-day, and monthly finance
   assert.equal(revenueView.visible_history[1].scope, 'linked');
   assert.equal(revenueView.visible_history[0].share_of_booked_amount, 180 / 240.5);
 });
+
+test('portal account services recover commerce order lineage from commercial ledger history', () => {
+  const { buildPortalAccountViewModel } = loadAccountServices();
+  const now = new Date('2026-04-03T10:00:00.000Z').getTime();
+
+  const viewModel = buildPortalAccountViewModel({
+    summary: {
+      project_id: 'project-demo',
+      entry_count: 1,
+      used_units: 0,
+      booked_amount: 180,
+      quota_limit_units: 8000,
+      remaining_units: 8000,
+      exhausted: false,
+    },
+    membership: null,
+    usageSummary: {
+      total_requests: 0,
+      project_count: 1,
+      model_count: 0,
+      provider_count: 0,
+      projects: [{ project_id: 'project-demo', request_count: 0 }],
+      providers: [],
+      models: [],
+    },
+    usageRecords: [],
+    ledger: [
+      { project_id: 'project-demo', units: 8000, amount: 180 },
+      { project_id: 'project-linked-a', units: 650, amount: 35 },
+    ],
+    billingEventSummary: {
+      total_events: 0,
+      project_count: 0,
+      group_count: 0,
+      capability_count: 0,
+      total_request_count: 0,
+      total_units: 0,
+      total_input_tokens: 0,
+      total_output_tokens: 0,
+      total_tokens: 0,
+      total_image_count: 0,
+      total_audio_seconds: 0,
+      total_video_seconds: 0,
+      total_music_seconds: 0,
+      total_upstream_cost: 0,
+      total_customer_charge: 0,
+      projects: [],
+      groups: [],
+      capabilities: [],
+      accounting_modes: [],
+    },
+    benefitLots: [
+      {
+        lot_id: 8001,
+        tenant_id: 1001,
+        organization_id: 2002,
+        account_id: 7001,
+        user_id: 9001,
+        benefit_type: 'cash_credit',
+        source_type: 'order',
+        source_id: 12345,
+        scope_json: '{"order_id":"order-recharge-1","project_id":"project-demo","target_kind":"recharge_pack"}',
+        original_quantity: 8000,
+        remaining_quantity: 8000,
+        held_quantity: 0,
+        priority: 10,
+        acquired_unit_cost: 0.0225,
+        issued_at_ms: now - 60 * 1000,
+        expires_at_ms: null,
+        status: 'active',
+        created_at_ms: now - 60 * 1000,
+        updated_at_ms: now - 60 * 1000,
+      },
+    ],
+    accountLedgerHistory: [
+      {
+        entry: {
+          ledger_entry_id: 8401,
+          tenant_id: 1001,
+          organization_id: 2002,
+          account_id: 7001,
+          user_id: 9001,
+          request_id: null,
+          hold_id: null,
+          entry_type: 'grant_issue',
+          benefit_type: 'cash_credit',
+          quantity: 8000,
+          amount: 180,
+          created_at_ms: now - 60 * 1000,
+        },
+        allocations: [
+          {
+            ledger_allocation_id: 8501,
+            tenant_id: 1001,
+            organization_id: 2002,
+            ledger_entry_id: 8401,
+            lot_id: 8001,
+            quantity_delta: 8000,
+            created_at_ms: now - 60 * 1000,
+          },
+        ],
+      },
+    ],
+    searchQuery: 'order-recharge-1',
+    historyView: 'revenue',
+    page: 1,
+    pageSize: 4,
+    now,
+  });
+
+  assert.equal(viewModel.pagination.total_items, 1);
+  assert.equal(viewModel.visible_history.length, 1);
+  assert.equal(viewModel.visible_history[0].order_id, 'order-recharge-1');
+  assert.equal(viewModel.visible_history[0].ledger_entry_type, 'grant_issue');
+  assert.equal(viewModel.visible_history[0].scope, 'current');
+});

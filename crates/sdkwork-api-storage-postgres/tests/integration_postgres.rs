@@ -1,4 +1,10 @@
-use sdkwork_api_domain_billing::{BillingAccountingMode, BillingEventRecord, QuotaPolicy};
+use sdkwork_api_domain_billing::{
+    AccountBenefitLotRecord, AccountBenefitSourceType, AccountBenefitType,
+    AccountHoldAllocationRecord, AccountHoldRecord, AccountLedgerAllocationRecord,
+    AccountLedgerEntryRecord, AccountLedgerEntryType, AccountRecord, AccountType,
+    BillingAccountingMode, BillingEventRecord, PricingPlanRecord, PricingRateRecord, QuotaPolicy,
+    RequestSettlementRecord, RequestSettlementStatus,
+};
 use sdkwork_api_domain_catalog::{
     Channel, ModelCatalogEntry, ProviderChannelBinding, ProxyProvider,
 };
@@ -7,10 +13,12 @@ use sdkwork_api_domain_routing::{
     ProviderHealthSnapshot, RoutingCandidateAssessment, RoutingDecisionLog, RoutingDecisionSource,
     RoutingPolicy, RoutingStrategy,
 };
-use sdkwork_api_domain_usage::UsageRecord;
+use sdkwork_api_domain_usage::{RequestMeterFactRecord, RequestMeterMetricRecord, UsageRecord};
 use sdkwork_api_secret_core::encrypt;
+use sdkwork_api_storage_core::{AccountKernelStore, AccountKernelTransactionExecutor};
 use sdkwork_api_storage_postgres::{run_migrations, PostgresAdminStore};
 use sqlx::PgPool;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[tokio::test]
 async fn postgres_store_persists_catalog_and_credentials_when_url_is_provided() {
@@ -332,6 +340,332 @@ async fn postgres_store_creates_canonical_identity_kernel_tables_when_url_is_pro
 }
 
 #[tokio::test]
+async fn postgres_store_round_trips_pricing_plans_and_rates_when_url_is_provided() {
+    let Some(database_url) = std::env::var("SDKWORK_TEST_POSTGRES_URL").ok() else {
+        return;
+    };
+
+    let pool = run_migrations(&database_url).await.unwrap();
+    let store = PostgresAdminStore::new(pool);
+    let seed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    let now_ms = 1_717_171_000 + seed;
+    let plan_id = 9_100_000 + seed;
+    let rate_id = 9_200_000 + seed;
+
+    let plan = PricingPlanRecord::new(plan_id, 1001, 2002, format!("workspace-retail-{seed}"), 1)
+        .with_display_name("Workspace Retail")
+        .with_currency_code("USD")
+        .with_credit_unit_code("credit")
+        .with_status("active")
+        .with_effective_from_ms(now_ms - 10_000)
+        .with_effective_to_ms(Some(now_ms + 86_400_000))
+        .with_created_at_ms(now_ms)
+        .with_updated_at_ms(now_ms + 1);
+    store.insert_pricing_plan_record(&plan).await.unwrap();
+
+    let rate = PricingRateRecord::new(rate_id, 1001, 2002, plan_id, "token.input")
+        .with_capability_code(Some("responses".to_owned()))
+        .with_model_code(Some("gpt-4.1".to_owned()))
+        .with_provider_code(Some("provider-openrouter".to_owned()))
+        .with_charge_unit("input_token")
+        .with_pricing_method("per_unit")
+        .with_quantity_step(1_000_000.0)
+        .with_unit_price(2.5)
+        .with_display_price_unit("USD / 1M input tokens")
+        .with_minimum_billable_quantity(0.0)
+        .with_minimum_charge(0.0)
+        .with_rounding_increment(1.0)
+        .with_rounding_mode("ceil")
+        .with_included_quantity(0.0)
+        .with_priority(100)
+        .with_notes(Some("Retail text input pricing".to_owned()))
+        .with_status("active")
+        .with_created_at_ms(now_ms)
+        .with_updated_at_ms(now_ms + 2);
+    store.insert_pricing_rate_record(&rate).await.unwrap();
+
+    let stored_plan = store
+        .list_pricing_plan_records()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|entry| entry.pricing_plan_id == plan_id)
+        .expect("pricing plan");
+    assert_eq!(stored_plan, plan);
+
+    let stored_rate = store
+        .list_pricing_rate_records()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|entry| entry.pricing_rate_id == rate_id)
+        .expect("pricing rate");
+    assert_eq!(stored_rate, rate);
+}
+
+#[tokio::test]
+async fn postgres_store_round_trips_commercial_account_read_models_when_url_is_provided() {
+    let Some(database_url) = std::env::var("SDKWORK_TEST_POSTGRES_URL").ok() else {
+        return;
+    };
+
+    let pool = run_migrations(&database_url).await.unwrap();
+    let store = PostgresAdminStore::new(pool);
+    let seed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    let now_ms = 1_717_181_000 + seed;
+    let account_id = 8_100_000 + seed;
+    let lot_id = 8_200_000 + seed;
+    let hold_id = 8_300_000 + seed;
+    let request_id = 8_400_000 + seed;
+    let settlement_id = 8_500_000 + seed;
+
+    let account = AccountRecord::new(account_id, 1001, 2002, 9001, AccountType::Primary)
+        .with_created_at_ms(now_ms)
+        .with_updated_at_ms(now_ms + 1);
+    store.insert_account_record(&account).await.unwrap();
+
+    let lot = AccountBenefitLotRecord::new(
+        lot_id,
+        1001,
+        2002,
+        account_id,
+        9001,
+        AccountBenefitType::CashCredit,
+    )
+    .with_source_type(AccountBenefitSourceType::Recharge)
+    .with_original_quantity(200.0)
+    .with_remaining_quantity(160.0)
+    .with_held_quantity(10.0)
+    .with_priority(10)
+    .with_issued_at_ms(now_ms)
+    .with_created_at_ms(now_ms + 2)
+    .with_updated_at_ms(now_ms + 3);
+    store.insert_account_benefit_lot(&lot).await.unwrap();
+
+    let hold = AccountHoldRecord::new(hold_id, 1001, 2002, account_id, 9001, request_id)
+        .with_estimated_quantity(10.0)
+        .with_captured_quantity(10.0)
+        .with_expires_at_ms(now_ms + 60_000)
+        .with_created_at_ms(now_ms + 4)
+        .with_updated_at_ms(now_ms + 5);
+    store.insert_account_hold(&hold).await.unwrap();
+
+    let settlement =
+        RequestSettlementRecord::new(settlement_id, 1001, 2002, request_id, account_id, 9001)
+            .with_hold_id(Some(hold_id))
+            .with_status(RequestSettlementStatus::Captured)
+            .with_estimated_credit_hold(10.0)
+            .with_captured_credit_amount(10.0)
+            .with_provider_cost_amount(5.0)
+            .with_retail_charge_amount(10.0)
+            .with_settled_at_ms(now_ms + 6)
+            .with_created_at_ms(now_ms + 6)
+            .with_updated_at_ms(now_ms + 7);
+    store
+        .insert_request_settlement_record(&settlement)
+        .await
+        .unwrap();
+
+    let stored_account = store
+        .find_account_record(account_id)
+        .await
+        .unwrap()
+        .expect("account");
+    assert_eq!(stored_account, account);
+
+    let owner_account = store
+        .find_account_record_by_owner(1001, 2002, 9001, AccountType::Primary)
+        .await
+        .unwrap()
+        .expect("owner account");
+    assert_eq!(owner_account, account);
+
+    assert!(store
+        .list_account_records()
+        .await
+        .unwrap()
+        .iter()
+        .any(|entry| entry == &account));
+    assert!(store
+        .list_account_benefit_lots()
+        .await
+        .unwrap()
+        .iter()
+        .any(|entry| entry == &lot));
+    assert!(store
+        .list_account_holds()
+        .await
+        .unwrap()
+        .iter()
+        .any(|entry| entry == &hold));
+    assert!(store
+        .list_request_settlement_records()
+        .await
+        .unwrap()
+        .iter()
+        .any(|entry| entry == &settlement));
+}
+
+#[tokio::test]
+async fn postgres_store_round_trips_remaining_account_kernel_records_when_url_is_provided() {
+    let Some(database_url) = std::env::var("SDKWORK_TEST_POSTGRES_URL").ok() else {
+        return;
+    };
+
+    let pool = run_migrations(&database_url).await.unwrap();
+    let store = PostgresAdminStore::new(pool);
+    let seed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    let request_id = 6_001_000 + seed;
+    let account = AccountRecord::new(7_001_000 + seed, 1001, 2002, 9001, AccountType::Primary)
+        .with_currency_code("USD")
+        .with_credit_unit_code("credit")
+        .with_created_at_ms(10)
+        .with_updated_at_ms(20);
+    let lot = AccountBenefitLotRecord::new(
+        8_001_000 + seed,
+        1001,
+        2002,
+        account.account_id,
+        9001,
+        AccountBenefitType::CashCredit,
+    )
+    .with_source_type(AccountBenefitSourceType::Recharge)
+    .with_original_quantity(1200.0)
+    .with_remaining_quantity(1200.0)
+    .with_issued_at_ms(30)
+    .with_created_at_ms(30)
+    .with_updated_at_ms(30);
+    let hold = AccountHoldRecord::new(
+        8_101_000 + seed,
+        1001,
+        2002,
+        account.account_id,
+        9001,
+        request_id,
+    )
+    .with_estimated_quantity(42.5)
+    .with_expires_at_ms(40)
+    .with_created_at_ms(35)
+    .with_updated_at_ms(35);
+    let ledger_entry = AccountLedgerEntryRecord::new(
+        8_201_000 + seed,
+        1001,
+        2002,
+        account.account_id,
+        9001,
+        AccountLedgerEntryType::HoldCreate,
+    )
+    .with_request_id(Some(request_id))
+    .with_hold_id(Some(hold.hold_id))
+    .with_benefit_type(Some("cash_credit".to_owned()))
+    .with_quantity(42.5)
+    .with_amount(42.5)
+    .with_created_at_ms(36);
+    let hold_allocation =
+        AccountHoldAllocationRecord::new(8_401_000 + seed, 1001, 2002, hold.hold_id, lot.lot_id)
+            .with_allocated_quantity(42.5)
+            .with_captured_quantity(40.0)
+            .with_released_quantity(2.5)
+            .with_created_at_ms(36)
+            .with_updated_at_ms(41);
+    let ledger_allocation = AccountLedgerAllocationRecord::new(
+        8_501_000 + seed,
+        1001,
+        2002,
+        ledger_entry.ledger_entry_id,
+        lot.lot_id,
+    )
+    .with_quantity_delta(-40.0)
+    .with_created_at_ms(41);
+    let fact = RequestMeterFactRecord::new(
+        request_id,
+        1001,
+        2002,
+        9001,
+        account.account_id,
+        "api_key",
+        "responses",
+        "openai",
+        "gpt-4.1",
+        "provider-openai-official",
+    )
+    .with_api_key_id(Some(778899))
+    .with_api_key_hash(Some("key_hash_live".to_owned()))
+    .with_protocol_family("openai")
+    .with_estimated_credit_hold(24.0)
+    .with_created_at_ms(35)
+    .with_updated_at_ms(36);
+    let metric = RequestMeterMetricRecord::new(
+        7_001_001 + seed,
+        1001,
+        2002,
+        request_id,
+        "token.input",
+        128.0,
+    )
+    .with_provider_field(Some("prompt_tokens".to_owned()))
+    .with_captured_at_ms(37);
+
+    store.insert_account_record(&account).await.unwrap();
+    store.insert_account_benefit_lot(&lot).await.unwrap();
+    store.insert_account_hold(&hold).await.unwrap();
+    store
+        .insert_account_ledger_entry_record(&ledger_entry)
+        .await
+        .unwrap();
+    store
+        .insert_account_hold_allocation(&hold_allocation)
+        .await
+        .unwrap();
+    store
+        .insert_account_ledger_allocation(&ledger_allocation)
+        .await
+        .unwrap();
+    store.insert_request_meter_fact(&fact).await.unwrap();
+    store.insert_request_meter_metric(&metric).await.unwrap();
+
+    assert!(store
+        .list_account_hold_allocations()
+        .await
+        .unwrap()
+        .iter()
+        .any(|entry| entry == &hold_allocation));
+    assert!(store
+        .list_account_ledger_entry_records()
+        .await
+        .unwrap()
+        .iter()
+        .any(|entry| entry == &ledger_entry));
+    assert!(store
+        .list_account_ledger_allocations()
+        .await
+        .unwrap()
+        .iter()
+        .any(|entry| entry == &ledger_allocation));
+    assert!(store
+        .list_request_meter_facts()
+        .await
+        .unwrap()
+        .iter()
+        .any(|entry| entry == &fact));
+    assert!(store
+        .list_request_meter_metrics()
+        .await
+        .unwrap()
+        .iter()
+        .any(|entry| entry == &metric));
+}
+
+#[tokio::test]
 async fn postgres_store_round_trips_slo_policy_fields_when_url_is_provided() {
     let Some(database_url) = std::env::var("SDKWORK_TEST_POSTGRES_URL").ok() else {
         return;
@@ -453,6 +787,47 @@ async fn postgres_store_persists_provider_health_snapshots_when_url_is_provided(
 
     let snapshots = store.list_provider_health_snapshots().await.unwrap();
     assert!(snapshots.iter().any(|entry| entry == &snapshot));
+}
+
+#[tokio::test]
+async fn postgres_store_replaces_provider_health_snapshot_for_same_provider_runtime_and_instance() {
+    let Some(database_url) = std::env::var("SDKWORK_TEST_POSTGRES_URL").ok() else {
+        return;
+    };
+
+    let pool = run_migrations(&database_url).await.unwrap();
+    let store = PostgresAdminStore::new(pool);
+
+    let original = ProviderHealthSnapshot::new(
+        "provider-openai-official",
+        "sdkwork.provider.openai.official",
+        "builtin",
+        1_000,
+    )
+    .with_running(true)
+    .with_healthy(false)
+    .with_message("first failure");
+    let replacement = ProviderHealthSnapshot::new(
+        "provider-openai-official",
+        "sdkwork.provider.openai.official",
+        "builtin",
+        2_000,
+    )
+    .with_running(true)
+    .with_healthy(true)
+    .with_message("recovered");
+
+    store
+        .insert_provider_health_snapshot(&original)
+        .await
+        .unwrap();
+    store
+        .insert_provider_health_snapshot(&replacement)
+        .await
+        .unwrap();
+
+    let snapshots = store.list_provider_health_snapshots().await.unwrap();
+    assert_eq!(snapshots, vec![replacement]);
 }
 
 async fn assert_pg_column(
@@ -755,4 +1130,195 @@ async fn postgres_store_lists_provider_bindings_for_model_without_drop_when_url_
     assert_eq!(providers.len(), 1);
     assert_eq!(providers[0].channel_bindings.len(), 2);
     assert_eq!(providers[0].channel_bindings[1].channel_id, "openai");
+}
+
+#[tokio::test]
+async fn postgres_account_kernel_transaction_round_trips_hold_and_settlement_when_url_is_provided()
+{
+    let Some(database_url) = std::env::var("SDKWORK_TEST_POSTGRES_URL").ok() else {
+        return;
+    };
+
+    let pool = run_migrations(&database_url).await.unwrap();
+    let store = PostgresAdminStore::new(pool.clone());
+    let seed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    let account_id = 8_000_000 + seed;
+    let lot_id = 8_100_000 + seed;
+    let hold_id = 8_200_000 + seed;
+    let hold_allocation_id = 8_300_000 + seed;
+    let settlement_id = 8_400_000 + seed;
+    let request_id = 8_500_000 + seed;
+
+    let account = AccountRecord::new(account_id, 1001, 2002, 9001, AccountType::Primary)
+        .with_created_at_ms(10)
+        .with_updated_at_ms(10);
+    sqlx::query(
+        "INSERT INTO ai_account (
+            account_id, tenant_id, organization_id, user_id, account_type,
+            currency_code, credit_unit_code, status, allow_overdraft, overdraft_limit,
+            created_at_ms, updated_at_ms
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+    )
+    .bind(i64::try_from(account.account_id).unwrap())
+    .bind(i64::try_from(account.tenant_id).unwrap())
+    .bind(i64::try_from(account.organization_id).unwrap())
+    .bind(i64::try_from(account.user_id).unwrap())
+    .bind("primary")
+    .bind(&account.currency_code)
+    .bind(&account.credit_unit_code)
+    .bind("active")
+    .bind(account.allow_overdraft)
+    .bind(account.overdraft_limit)
+    .bind(i64::try_from(account.created_at_ms).unwrap())
+    .bind(i64::try_from(account.updated_at_ms).unwrap())
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let lot = AccountBenefitLotRecord::new(
+        lot_id,
+        account.tenant_id,
+        account.organization_id,
+        account.account_id,
+        account.user_id,
+        AccountBenefitType::CashCredit,
+    )
+    .with_source_type(AccountBenefitSourceType::Recharge)
+    .with_original_quantity(100.0)
+    .with_remaining_quantity(100.0)
+    .with_created_at_ms(20)
+    .with_updated_at_ms(20);
+    sqlx::query(
+        "INSERT INTO ai_account_benefit_lot (
+            lot_id, tenant_id, organization_id, account_id, user_id, benefit_type,
+            source_type, source_id, scope_json, original_quantity, remaining_quantity,
+            held_quantity, priority, acquired_unit_cost, issued_at_ms, expires_at_ms, status,
+            created_at_ms, updated_at_ms
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, NULL, $8, $9, $10, $11, NULL, $12, NULL, $13, $14, $15)",
+    )
+    .bind(i64::try_from(lot.lot_id).unwrap())
+    .bind(i64::try_from(lot.tenant_id).unwrap())
+    .bind(i64::try_from(lot.organization_id).unwrap())
+    .bind(i64::try_from(lot.account_id).unwrap())
+    .bind(i64::try_from(lot.user_id).unwrap())
+    .bind("cash_credit")
+    .bind("recharge")
+    .bind(lot.original_quantity)
+    .bind(lot.remaining_quantity)
+    .bind(lot.held_quantity)
+    .bind(lot.priority)
+    .bind(i64::try_from(lot.issued_at_ms).unwrap())
+    .bind("active")
+    .bind(i64::try_from(lot.created_at_ms).unwrap())
+    .bind(i64::try_from(lot.updated_at_ms).unwrap())
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    store
+        .with_account_kernel_transaction(|tx| {
+            Box::pin(async move {
+                let seeded_account = tx.find_account_record(account_id).await?.unwrap();
+                let seeded_lot = tx.find_account_benefit_lot(lot_id).await?.unwrap();
+
+                tx.upsert_account_benefit_lot(
+                    &seeded_lot
+                        .clone()
+                        .with_held_quantity(40.0)
+                        .with_updated_at_ms(35),
+                )
+                .await?;
+
+                let hold = AccountHoldRecord::new(
+                    hold_id,
+                    seeded_account.tenant_id,
+                    seeded_account.organization_id,
+                    seeded_account.account_id,
+                    seeded_account.user_id,
+                    request_id,
+                )
+                .with_estimated_quantity(40.0)
+                .with_expires_at_ms(120)
+                .with_created_at_ms(35)
+                .with_updated_at_ms(35);
+                tx.upsert_account_hold(&hold).await?;
+
+                let allocation = AccountHoldAllocationRecord::new(
+                    hold_allocation_id,
+                    seeded_account.tenant_id,
+                    seeded_account.organization_id,
+                    hold_id,
+                    lot_id,
+                )
+                .with_allocated_quantity(40.0)
+                .with_created_at_ms(35)
+                .with_updated_at_ms(35);
+                tx.upsert_account_hold_allocation(&allocation).await?;
+
+                let settlement = RequestSettlementRecord::new(
+                    settlement_id,
+                    seeded_account.tenant_id,
+                    seeded_account.organization_id,
+                    request_id,
+                    seeded_account.account_id,
+                    seeded_account.user_id,
+                )
+                .with_hold_id(Some(hold_id))
+                .with_status(RequestSettlementStatus::Captured)
+                .with_estimated_credit_hold(40.0)
+                .with_captured_credit_amount(40.0)
+                .with_retail_charge_amount(40.0)
+                .with_settled_at_ms(36)
+                .with_created_at_ms(36)
+                .with_updated_at_ms(36);
+                tx.upsert_request_settlement_record(&settlement).await?;
+
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+
+    let verified = store
+        .with_account_kernel_transaction(|tx| {
+            Box::pin(async move {
+                let hold = tx
+                    .find_account_hold_by_request_id(request_id)
+                    .await?
+                    .unwrap();
+                let allocations = tx
+                    .list_account_hold_allocations_for_hold(hold.hold_id)
+                    .await?;
+                let lot = tx.find_account_benefit_lot(lot_id).await?.unwrap();
+                let settlement = tx
+                    .find_request_settlement_by_request_id(request_id)
+                    .await?
+                    .unwrap();
+                Ok((hold, allocations, lot, settlement))
+            })
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(verified.0.hold_id, hold_id);
+    assert_eq!(verified.1.len(), 1);
+    assert_eq!(verified.1[0].allocated_quantity, 40.0);
+    assert_eq!(verified.2.held_quantity, 40.0);
+    assert_eq!(verified.3.request_settlement_id, settlement_id);
+
+    let existing = store
+        .with_account_kernel_transaction(|tx| {
+            Box::pin(async move {
+                Ok(tx
+                    .find_request_settlement_by_request_id(request_id)
+                    .await?
+                    .unwrap())
+            })
+        })
+        .await
+        .unwrap();
+    assert_eq!(existing.request_settlement_id, settlement_id);
 }

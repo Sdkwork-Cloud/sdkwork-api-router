@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::SystemTime;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -55,8 +56,8 @@ use sdkwork_api_contract_openai::videos::{
 use sdkwork_api_contract_openai::webhooks::{CreateWebhookRequest, UpdateWebhookRequest};
 use sdkwork_api_domain_catalog::ModelCatalogEntry;
 use sdkwork_api_provider_core::{
-    ProviderAdapter, ProviderExecutionAdapter, ProviderOutput, ProviderRequest,
-    ProviderRequestOptions, ProviderStreamOutput,
+    ProviderAdapter, ProviderExecutionAdapter, ProviderHttpError, ProviderOutput, ProviderRequest,
+    ProviderRequestOptions, ProviderRetryAfterSource, ProviderStreamOutput,
 };
 use serde_json::Value;
 
@@ -292,8 +293,8 @@ impl OpenAiProviderAdapter {
             ))
             .bearer_auth(api_key)
             .send()
-            .await?
-            .error_for_status()?;
+            .await?;
+        let response = self.require_success(response).await?;
 
         Ok(response.json::<Value>().await?)
     }
@@ -790,8 +791,8 @@ impl OpenAiProviderAdapter {
             .post(format!("{}/v1/uploads/{upload_id}/cancel", self.base_url))
             .bearer_auth(api_key)
             .send()
-            .await?
-            .error_for_status()?;
+            .await?;
+        let response = self.require_success(response).await?;
 
         Ok(response.json::<Value>().await?)
     }
@@ -1050,8 +1051,8 @@ impl OpenAiProviderAdapter {
             .post(format!("{}/v1/batches/{batch_id}/cancel", self.base_url))
             .bearer_auth(api_key)
             .send()
-            .await?
-            .error_for_status()?;
+            .await?;
+        let response = self.require_success(response).await?;
 
         Ok(response.json::<Value>().await?)
     }
@@ -1203,8 +1204,8 @@ impl OpenAiProviderAdapter {
             ))
             .bearer_auth(api_key)
             .send()
-            .await?
-            .error_for_status()?;
+            .await?;
+        let response = self.require_success(response).await?;
 
         Ok(response.json::<Value>().await?)
     }
@@ -1406,8 +1407,8 @@ impl OpenAiProviderAdapter {
             .authorized_request(reqwest::Method::POST, path, api_key)
             .json(request)
             .send()
-            .await?
-            .error_for_status()?;
+            .await?;
+        let response = self.require_success(response).await?;
 
         Ok(response.json::<Value>().await?)
     }
@@ -1422,8 +1423,8 @@ impl OpenAiProviderAdapter {
             .authorized_request(reqwest::Method::POST, path, api_key)
             .json(request)
             .send()
-            .await?
-            .error_for_status()?;
+            .await?;
+        let response = self.require_success(response).await?;
 
         Ok(ProviderStreamOutput::from_reqwest_response(response))
     }
@@ -1432,8 +1433,8 @@ impl OpenAiProviderAdapter {
         let response = self
             .authorized_request(reqwest::Method::GET, path, api_key)
             .send()
-            .await?
-            .error_for_status()?;
+            .await?;
+        let response = self.require_success(response).await?;
 
         Ok(response.json::<Value>().await?)
     }
@@ -1442,8 +1443,8 @@ impl OpenAiProviderAdapter {
         let response = self
             .authorized_request(reqwest::Method::GET, path, api_key)
             .send()
-            .await?
-            .error_for_status()?;
+            .await?;
+        let response = self.require_success(response).await?;
 
         Ok(ProviderStreamOutput::from_reqwest_response(response))
     }
@@ -1452,8 +1453,8 @@ impl OpenAiProviderAdapter {
         let response = self
             .authorized_request(reqwest::Method::DELETE, path, api_key)
             .send()
-            .await?
-            .error_for_status()?;
+            .await?;
+        let response = self.require_success(response).await?;
 
         Ok(response.json::<Value>().await?)
     }
@@ -1468,8 +1469,8 @@ impl OpenAiProviderAdapter {
             .authorized_request(reqwest::Method::POST, path, api_key)
             .multipart(form)
             .send()
-            .await?
-            .error_for_status()?;
+            .await?;
+        let response = self.require_success(response).await?;
 
         Ok(response.json::<Value>().await?)
     }
@@ -1478,10 +1479,32 @@ impl OpenAiProviderAdapter {
         let response = self
             .authorized_request(reqwest::Method::POST, path, api_key)
             .send()
-            .await?
-            .error_for_status()?;
+            .await?;
+        let response = self.require_success(response).await?;
 
         Ok(response.json::<Value>().await?)
+    }
+
+    async fn require_success(&self, response: reqwest::Response) -> Result<reqwest::Response> {
+        if response.status().is_success() {
+            return Ok(response);
+        }
+
+        let status = response.status();
+        let retry_after = retry_after_from_headers(response.headers());
+        let body_excerpt = response
+            .text()
+            .await
+            .ok()
+            .map(|body| body.chars().take(512).collect::<String>())
+            .filter(|body| !body.trim().is_empty());
+        Err(ProviderHttpError::new(
+            Some(status),
+            retry_after.map(|retry_after| retry_after.secs),
+            retry_after.map(|retry_after| retry_after.source),
+            body_excerpt,
+        )
+        .into())
     }
 
     fn authorized_request(
@@ -1508,6 +1531,35 @@ impl OpenAiProviderAdapter {
             builder
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RetryAfterHint {
+    secs: u64,
+    source: ProviderRetryAfterSource,
+}
+
+fn retry_after_from_headers(headers: &reqwest::header::HeaderMap) -> Option<RetryAfterHint> {
+    headers
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| retry_after_from_value(value.trim()))
+}
+
+fn retry_after_from_value(value: &str) -> Option<RetryAfterHint> {
+    if let Ok(seconds) = value.parse::<u64>() {
+        return Some(RetryAfterHint {
+            secs: seconds,
+            source: ProviderRetryAfterSource::Seconds,
+        });
+    }
+
+    let retry_at = httpdate::parse_http_date(value).ok()?;
+    let delay = retry_at.duration_since(SystemTime::now()).ok()?;
+    Some(RetryAfterHint {
+        secs: delay.as_secs().max(1),
+        source: ProviderRetryAfterSource::HttpDate,
+    })
 }
 
 impl ProviderAdapter for OpenAiProviderAdapter {
@@ -1744,21 +1796,19 @@ impl ProviderExecutionAdapter for OpenAiProviderAdapter {
             ProviderRequest::Music(request) => {
                 Ok(ProviderOutput::Json(self.music(api_key, request).await?))
             }
-            ProviderRequest::MusicList => {
-                Ok(ProviderOutput::Json(self.list_music(api_key).await?))
-            }
-            ProviderRequest::MusicRetrieve(music_id) => {
-                Ok(ProviderOutput::Json(self.retrieve_music(api_key, music_id).await?))
-            }
-            ProviderRequest::MusicDelete(music_id) => {
-                Ok(ProviderOutput::Json(self.delete_music(api_key, music_id).await?))
-            }
-            ProviderRequest::MusicContent(music_id) => {
-                Ok(ProviderOutput::Stream(self.music_content(api_key, music_id).await?))
-            }
-            ProviderRequest::MusicLyrics(request) => {
-                Ok(ProviderOutput::Json(self.music_lyrics(api_key, request).await?))
-            }
+            ProviderRequest::MusicList => Ok(ProviderOutput::Json(self.list_music(api_key).await?)),
+            ProviderRequest::MusicRetrieve(music_id) => Ok(ProviderOutput::Json(
+                self.retrieve_music(api_key, music_id).await?,
+            )),
+            ProviderRequest::MusicDelete(music_id) => Ok(ProviderOutput::Json(
+                self.delete_music(api_key, music_id).await?,
+            )),
+            ProviderRequest::MusicContent(music_id) => Ok(ProviderOutput::Stream(
+                self.music_content(api_key, music_id).await?,
+            )),
+            ProviderRequest::MusicLyrics(request) => Ok(ProviderOutput::Json(
+                self.music_lyrics(api_key, request).await?,
+            )),
             ProviderRequest::ImagesGenerations(request) => Ok(ProviderOutput::Json(
                 self.images_generations(api_key, request).await?,
             )),
@@ -2081,7 +2131,8 @@ impl ProviderExecutionAdapter for OpenAiProviderAdapter {
         let adapter = if options.is_empty() {
             self.clone()
         } else {
-            self.clone().with_request_headers(options.headers())
+            let resolved_headers = options.resolved_headers();
+            self.clone().with_request_headers(&resolved_headers)
         };
         adapter.execute(api_key, request).await
     }

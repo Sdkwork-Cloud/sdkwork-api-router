@@ -111,6 +111,70 @@ async fn video_content_route_returns_ok() {
 
 #[serial(extension_env)]
 #[tokio::test]
+async fn video_content_route_returns_not_found_error_for_unknown_video() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/videos/video_missing/content")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(
+        json["error"]["message"],
+        "Requested video asset was not found."
+    );
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+}
+
+#[serial(extension_env)]
+#[tokio::test]
+async fn video_retrieve_route_returns_not_found_error_for_unknown_video() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/videos/video_missing")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_video_not_found(response, "Requested video was not found.").await;
+}
+
+#[serial(extension_env)]
+#[tokio::test]
+async fn video_delete_route_returns_not_found_error_for_unknown_video() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/v1/videos/video_missing")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_video_not_found(response, "Requested video was not found.").await;
+}
+
+#[serial(extension_env)]
+#[tokio::test]
 async fn video_remix_route_returns_ok() {
     let app = sdkwork_api_interface_http::gateway_router();
     let response = app
@@ -507,11 +571,100 @@ async fn stateless_videos_routes_relay_to_openai_compatible_provider() {
     );
 }
 
+#[serial(extension_env)]
+#[tokio::test]
+async fn stateful_video_retrieve_route_returns_not_found_without_usage() {
+    let ctx = local_video_test_context(
+        "tenant-video-retrieve-missing",
+        "project-video-retrieve-missing",
+    )
+    .await;
+
+    let response = ctx
+        .gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/videos/video_missing")
+                .header("authorization", format!("Bearer {}", ctx.api_key))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_video_not_found(response, "Requested video was not found.").await;
+    support::assert_no_usage_records(ctx.admin_app, &ctx.admin_token).await;
+}
+
+#[serial(extension_env)]
+#[tokio::test]
+async fn stateful_video_delete_route_returns_not_found_without_usage() {
+    let ctx = local_video_test_context(
+        "tenant-video-delete-missing",
+        "project-video-delete-missing",
+    )
+    .await;
+
+    let response = ctx
+        .gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/v1/videos/video_missing")
+                .header("authorization", format!("Bearer {}", ctx.api_key))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_video_not_found(response, "Requested video was not found.").await;
+    support::assert_no_usage_records(ctx.admin_app, &ctx.admin_token).await;
+}
+
+#[serial(extension_env)]
+#[tokio::test]
+async fn stateful_video_content_route_returns_not_found_without_usage() {
+    let ctx = local_video_test_context(
+        "tenant-video-content-missing",
+        "project-video-content-missing",
+    )
+    .await;
+
+    let response = ctx
+        .gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/videos/video_missing/content")
+                .header("authorization", format!("Bearer {}", ctx.api_key))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_video_not_found(response, "Requested video asset was not found.").await;
+    support::assert_no_usage_records(ctx.admin_app, &ctx.admin_token).await;
+}
+
 async fn read_json(response: axum::response::Response) -> Value {
     let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
         .unwrap();
     serde_json::from_slice(&bytes).unwrap()
+}
+
+async fn assert_video_not_found(response: axum::response::Response, message: &str) {
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["message"], message);
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
 }
 
 async fn read_bytes(response: axum::response::Response) -> Vec<u8> {
@@ -525,6 +678,28 @@ async fn memory_pool() -> SqlitePool {
     sdkwork_api_storage_sqlite::run_migrations("sqlite::memory:")
         .await
         .unwrap()
+}
+
+struct LocalVideoTestContext {
+    admin_app: Router,
+    admin_token: String,
+    api_key: String,
+    gateway_app: Router,
+}
+
+async fn local_video_test_context(tenant_id: &str, project_id: &str) -> LocalVideoTestContext {
+    let pool = memory_pool().await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let api_key = support::issue_gateway_api_key(&pool, tenant_id, project_id).await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+
+    LocalVideoTestContext {
+        admin_app,
+        admin_token,
+        api_key,
+        gateway_app,
+    }
 }
 
 #[derive(Clone, Default)]

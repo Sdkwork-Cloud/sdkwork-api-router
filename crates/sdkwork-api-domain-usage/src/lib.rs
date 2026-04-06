@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct UsageRecord {
     pub project_id: String,
     pub model: String,
@@ -84,7 +85,7 @@ impl UsageRecord {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct UsageProjectSummary {
     pub project_id: String,
     pub request_count: u64,
@@ -99,7 +100,7 @@ impl UsageProjectSummary {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct UsageProviderSummary {
     pub provider: String,
     pub request_count: u64,
@@ -116,7 +117,7 @@ impl UsageProviderSummary {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct UsageModelSummary {
     pub model: String,
     pub request_count: u64,
@@ -133,7 +134,7 @@ impl UsageModelSummary {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct UsageSummary {
     pub total_requests: u64,
     pub project_count: u64,

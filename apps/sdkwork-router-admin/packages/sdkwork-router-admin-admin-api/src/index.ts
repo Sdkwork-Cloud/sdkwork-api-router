@@ -5,13 +5,38 @@ import type {
   BillingEventRecord,
   BillingEventSummary,
   BillingSummary,
+  CampaignBudgetRecord,
   ChannelRecord,
   ChannelModelRecord,
+  CampaignBudgetStatus,
+  CommerceOrderRecord,
+  CommerceOrderAuditRecord,
+  CommercePaymentEventRecord,
+  CommercialAccountBalanceSnapshot,
+  CommercialAccountBenefitLotRecord,
+  CommercialAccountLedgerHistoryEntry,
+  CommercialAccountHoldRecord,
+  CommercialPricingLifecycleSynchronizationReport,
+  CommercialPricingPlanCreateInput,
+  CommercialAccountSummary,
+  CommercialPricingPlanRecord,
+  CommercialPricingRateCreateInput,
+  CommercialPricingRateRecord,
+  CommercialRequestSettlementRecord,
   CompiledRoutingSnapshotRecord,
+  CouponCodeRecord,
+  CouponCodeStatus,
   CouponRecord,
+  CouponRedemptionRecord,
+  CouponReservationRecord,
+  CouponRollbackRecord,
+  CouponTemplateRecord,
+  CouponTemplateStatus,
   CreatedGatewayApiKey,
   CredentialRecord,
   GatewayApiKeyRecord,
+  MarketingCampaignRecord,
+  MarketingCampaignStatus,
   ModelCatalogRecord,
   ModelPriceRecord,
   OperatorUserRecord,
@@ -193,6 +218,22 @@ async function patchJson<TRequest, TResponse>(
   return readJson<TResponse>(response);
 }
 
+async function putJson<TRequest, TResponse>(
+  path: string,
+  body: TRequest,
+  token?: string,
+): Promise<TResponse> {
+  const response = await fetch(`${await resolveAdminBaseUrl()}${path}`, {
+    method: 'PUT',
+    headers: {
+      'content-type': 'application/json',
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(body),
+  });
+  return readJson<TResponse>(response);
+}
+
 async function deleteEmpty(path: string, token?: string): Promise<void> {
   const response = await fetch(`${await resolveAdminBaseUrl()}${path}`, {
     method: 'DELETE',
@@ -271,6 +312,120 @@ export function saveCoupon(input: CouponRecord): Promise<CouponRecord> {
 
 export function deleteCoupon(couponId: string): Promise<void> {
   return deleteEmpty(`/coupons/${couponId}`, requiredToken());
+}
+
+export function listMarketingCouponTemplates(token?: string): Promise<CouponTemplateRecord[]> {
+  return getJson<CouponTemplateRecord[]>('/marketing/coupon-templates', requiredToken(token));
+}
+
+export function saveMarketingCouponTemplate(
+  input: CouponTemplateRecord,
+): Promise<CouponTemplateRecord> {
+  return postJson<CouponTemplateRecord, CouponTemplateRecord>(
+    '/marketing/coupon-templates',
+    input,
+    requiredToken(),
+  );
+}
+
+export function updateMarketingCouponTemplateStatus(
+  couponTemplateId: string,
+  status: CouponTemplateStatus,
+): Promise<CouponTemplateRecord> {
+  return postJson<{ status: CouponTemplateStatus }, CouponTemplateRecord>(
+    `/marketing/coupon-templates/${encodeURIComponent(couponTemplateId)}/status`,
+    { status },
+    requiredToken(),
+  );
+}
+
+export function listMarketingCampaigns(token?: string): Promise<MarketingCampaignRecord[]> {
+  return getJson<MarketingCampaignRecord[]>('/marketing/campaigns', requiredToken(token));
+}
+
+export function saveMarketingCampaign(
+  input: MarketingCampaignRecord,
+): Promise<MarketingCampaignRecord> {
+  return postJson<MarketingCampaignRecord, MarketingCampaignRecord>(
+    '/marketing/campaigns',
+    input,
+    requiredToken(),
+  );
+}
+
+export function updateMarketingCampaignStatus(
+  marketingCampaignId: string,
+  status: MarketingCampaignStatus,
+): Promise<MarketingCampaignRecord> {
+  return postJson<{ status: MarketingCampaignStatus }, MarketingCampaignRecord>(
+    `/marketing/campaigns/${encodeURIComponent(marketingCampaignId)}/status`,
+    { status },
+    requiredToken(),
+  );
+}
+
+export function listMarketingCampaignBudgets(token?: string): Promise<CampaignBudgetRecord[]> {
+  return getJson<CampaignBudgetRecord[]>('/marketing/budgets', requiredToken(token));
+}
+
+export function saveMarketingCampaignBudget(
+  input: CampaignBudgetRecord,
+): Promise<CampaignBudgetRecord> {
+  return postJson<CampaignBudgetRecord, CampaignBudgetRecord>(
+    '/marketing/budgets',
+    input,
+    requiredToken(),
+  );
+}
+
+export function updateMarketingCampaignBudgetStatus(
+  campaignBudgetId: string,
+  status: CampaignBudgetStatus,
+): Promise<CampaignBudgetRecord> {
+  return postJson<{ status: CampaignBudgetStatus }, CampaignBudgetRecord>(
+    `/marketing/budgets/${encodeURIComponent(campaignBudgetId)}/status`,
+    { status },
+    requiredToken(),
+  );
+}
+
+export function listMarketingCouponCodes(token?: string): Promise<CouponCodeRecord[]> {
+  return getJson<CouponCodeRecord[]>('/marketing/codes', requiredToken(token));
+}
+
+export function saveMarketingCouponCode(input: CouponCodeRecord): Promise<CouponCodeRecord> {
+  return postJson<CouponCodeRecord, CouponCodeRecord>(
+    '/marketing/codes',
+    input,
+    requiredToken(),
+  );
+}
+
+export function updateMarketingCouponCodeStatus(
+  couponCodeId: string,
+  status: CouponCodeStatus,
+): Promise<CouponCodeRecord> {
+  return postJson<{ status: CouponCodeStatus }, CouponCodeRecord>(
+    `/marketing/codes/${encodeURIComponent(couponCodeId)}/status`,
+    { status },
+    requiredToken(),
+  );
+}
+
+export function listMarketingCouponReservations(
+  token?: string,
+): Promise<CouponReservationRecord[]> {
+  return getJson<CouponReservationRecord[]>('/marketing/reservations', requiredToken(token));
+}
+
+export function listMarketingCouponRedemptions(
+  token?: string,
+): Promise<CouponRedemptionRecord[]> {
+  return getJson<CouponRedemptionRecord[]>('/marketing/redemptions', requiredToken(token));
+}
+
+export function listMarketingCouponRollbacks(token?: string): Promise<CouponRollbackRecord[]> {
+  return getJson<CouponRollbackRecord[]>('/marketing/rollbacks', requiredToken(token));
 }
 
 export function savePortalUser(input: {
@@ -643,6 +798,197 @@ export function getUsageSummary(token?: string): Promise<UsageSummary> {
 
 export function getBillingSummary(token?: string): Promise<BillingSummary> {
   return getJson<BillingSummary>('/billing/summary', token);
+}
+
+export function listRecentCommerceOrders(
+  limit = 24,
+  token?: string,
+): Promise<CommerceOrderRecord[]> {
+  return getJson<CommerceOrderRecord[]>(
+    `/commerce/orders?limit=${encodeURIComponent(String(limit))}`,
+    token,
+  );
+}
+
+export function listCommercePaymentEvents(
+  orderId: string,
+  token?: string,
+): Promise<CommercePaymentEventRecord[]> {
+  return getJson<CommercePaymentEventRecord[]>(
+    `/commerce/orders/${encodeURIComponent(orderId)}/payment-events`,
+    token,
+  );
+}
+
+export function getCommerceOrderAudit(
+  orderId: string,
+  token?: string,
+): Promise<CommerceOrderAuditRecord> {
+  return getJson<CommerceOrderAuditRecord>(
+    `/commerce/orders/${encodeURIComponent(orderId)}/audit`,
+    token,
+  );
+}
+
+export function listCommercialAccounts(
+  token?: string,
+): Promise<CommercialAccountSummary[]> {
+  return getJson<CommercialAccountSummary[]>('/billing/accounts', token);
+}
+
+export function getCommercialAccountBalance(
+  accountId: number,
+  token?: string,
+): Promise<CommercialAccountBalanceSnapshot> {
+  return getJson<CommercialAccountBalanceSnapshot>(
+    `/billing/accounts/${encodeURIComponent(String(accountId))}/balance`,
+    token,
+  );
+}
+
+export function listCommercialAccountBenefitLots(
+  accountId: number,
+  token?: string,
+): Promise<CommercialAccountBenefitLotRecord[]> {
+  return getJson<CommercialAccountBenefitLotRecord[]>(
+    `/billing/accounts/${encodeURIComponent(String(accountId))}/benefit-lots`,
+    token,
+  );
+}
+
+export function listCommercialAccountLedger(
+  accountId: number,
+  token?: string,
+): Promise<CommercialAccountLedgerHistoryEntry[]> {
+  return getJson<CommercialAccountLedgerHistoryEntry[]>(
+    `/billing/accounts/${encodeURIComponent(String(accountId))}/ledger`,
+    token,
+  );
+}
+
+export function listCommercialAccountHolds(
+  token?: string,
+): Promise<CommercialAccountHoldRecord[]> {
+  return getJson<CommercialAccountHoldRecord[]>('/billing/account-holds', token);
+}
+
+export function listCommercialRequestSettlements(
+  token?: string,
+): Promise<CommercialRequestSettlementRecord[]> {
+  return getJson<CommercialRequestSettlementRecord[]>(
+    '/billing/request-settlements',
+    token,
+  );
+}
+
+export function listCommercialPricingPlans(
+  token?: string,
+): Promise<CommercialPricingPlanRecord[]> {
+  return getJson<CommercialPricingPlanRecord[]>('/billing/pricing-plans', token);
+}
+
+export function createCommercialPricingPlan(
+  input: CommercialPricingPlanCreateInput,
+): Promise<CommercialPricingPlanRecord> {
+  return postJson<CommercialPricingPlanCreateInput, CommercialPricingPlanRecord>(
+    '/billing/pricing-plans',
+    input,
+    requiredToken(),
+  );
+}
+
+export function updateCommercialPricingPlan(
+  pricingPlanId: number,
+  input: CommercialPricingPlanCreateInput,
+): Promise<CommercialPricingPlanRecord> {
+  return putJson<CommercialPricingPlanCreateInput, CommercialPricingPlanRecord>(
+    `/billing/pricing-plans/${encodeURIComponent(String(pricingPlanId))}`,
+    input,
+    requiredToken(),
+  );
+}
+
+export function cloneCommercialPricingPlan(
+  pricingPlanId: number,
+  input?: {
+    plan_version?: number;
+    display_name?: string | null;
+    status?: string;
+  },
+): Promise<CommercialPricingPlanRecord> {
+  return postJson<
+    { plan_version?: number; display_name?: string | null; status?: string },
+    CommercialPricingPlanRecord
+  >(
+    `/billing/pricing-plans/${encodeURIComponent(String(pricingPlanId))}/clone`,
+    input ?? {},
+    requiredToken(),
+  );
+}
+
+export function publishCommercialPricingPlan(
+  pricingPlanId: number,
+): Promise<CommercialPricingPlanRecord> {
+  return postJson<Record<string, never>, CommercialPricingPlanRecord>(
+    `/billing/pricing-plans/${encodeURIComponent(String(pricingPlanId))}/publish`,
+    {},
+    requiredToken(),
+  );
+}
+
+export function scheduleCommercialPricingPlan(
+  pricingPlanId: number,
+): Promise<CommercialPricingPlanRecord> {
+  return postJson<Record<string, never>, CommercialPricingPlanRecord>(
+    `/billing/pricing-plans/${encodeURIComponent(String(pricingPlanId))}/schedule`,
+    {},
+    requiredToken(),
+  );
+}
+
+export function retireCommercialPricingPlan(
+  pricingPlanId: number,
+): Promise<CommercialPricingPlanRecord> {
+  return postJson<Record<string, never>, CommercialPricingPlanRecord>(
+    `/billing/pricing-plans/${encodeURIComponent(String(pricingPlanId))}/retire`,
+    {},
+    requiredToken(),
+  );
+}
+
+export function synchronizeCommercialPricingLifecycle(): Promise<CommercialPricingLifecycleSynchronizationReport> {
+  return postJson<Record<string, never>, CommercialPricingLifecycleSynchronizationReport>(
+    '/billing/pricing-lifecycle/synchronize',
+    {},
+    requiredToken(),
+  );
+}
+
+export function listCommercialPricingRates(
+  token?: string,
+): Promise<CommercialPricingRateRecord[]> {
+  return getJson<CommercialPricingRateRecord[]>('/billing/pricing-rates', token);
+}
+
+export function createCommercialPricingRate(
+  input: CommercialPricingRateCreateInput,
+): Promise<CommercialPricingRateRecord> {
+  return postJson<CommercialPricingRateCreateInput, CommercialPricingRateRecord>(
+    '/billing/pricing-rates',
+    input,
+    requiredToken(),
+  );
+}
+
+export function updateCommercialPricingRate(
+  pricingRateId: number,
+  input: CommercialPricingRateCreateInput,
+): Promise<CommercialPricingRateRecord> {
+  return putJson<CommercialPricingRateCreateInput, CommercialPricingRateRecord>(
+    `/billing/pricing-rates/${encodeURIComponent(String(pricingRateId))}`,
+    input,
+    requiredToken(),
+  );
 }
 
 export function listBillingEvents(token?: string): Promise<BillingEventRecord[]> {

@@ -29,7 +29,6 @@ import {
 } from 'sdkwork-router-portal-commons/framework/form';
 import { ManagementWorkbench } from 'sdkwork-router-portal-commons/framework/workbench';
 import {
-  SectionHeader,
   WorkspacePanel,
 } from 'sdkwork-router-portal-commons/framework/workspace';
 
@@ -645,27 +644,30 @@ export function PortalGatewayPage({ onNavigate }: PortalGatewayPageProps) {
 
   return (
     <div className="space-y-6">
-      <SectionHeader
-        actions={(
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge variant={readinessTone}>
-              {snapshot.launchReadiness.headline}
-            </Badge>
-            <Button
-              disabled={refreshing || restartingRuntime}
-              onClick={() => {
-                void refreshCommandCenter(t('Refreshing the full command center posture...'));
-              }}
-              variant="secondary"
-            >
-              {refreshing ? t('Refreshing command center...') : t('Refresh command center')}
-            </Button>
-          </div>
-        )}
-        description={status}
-        eyebrow={t('Gateway posture')}
-        title={t('Gateway posture')}
-      />
+      <div
+        data-slot="portal-gateway-toolbar"
+        className="flex flex-wrap items-start justify-between gap-3 rounded-[24px] border border-zinc-200/80 bg-zinc-50/85 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900/45"
+      >
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
+          <Badge variant={readinessTone}>
+            {snapshot.launchReadiness.headline}
+          </Badge>
+          <p className="min-w-[16rem] flex-1 leading-6 text-zinc-500 dark:text-zinc-400">
+            {status}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            disabled={refreshing || restartingRuntime}
+            onClick={() => {
+              void refreshCommandCenter(t('Refreshing the full command center posture...'));
+            }}
+            variant="secondary"
+          >
+            {refreshing ? t('Refreshing command center...') : t('Refresh command center')}
+          </Button>
+        </div>
+      </div>
 
       <div className="grid gap-6 xl:grid-cols-[0.96fr_1.04fr]">
         <WorkspacePanel

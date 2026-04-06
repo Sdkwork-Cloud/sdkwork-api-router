@@ -192,6 +192,26 @@ export const portalProductModules: PortalProductModuleManifest[] = [
     },
   },
   {
+    moduleId: 'sdkwork-router-portal-settlements',
+    pluginId: 'sdkwork-router-portal-settlements',
+    pluginKind: 'portal-module',
+    packageName: 'sdkwork-router-portal-settlements',
+    displayName: 'Settlements',
+    routeKeys: ['settlements'],
+    capabilityTags: ['settlement-explorer', 'credit-holds', 'pricing-evidence'],
+    requiredPermissions: ['portal.settlements.read'],
+    navigation: {
+      group: 'revenue',
+      order: 100,
+      sidebar: true,
+    },
+    loading: {
+      strategy: 'lazy',
+      prefetch: 'intent',
+      chunkGroup: 'settlements',
+    },
+  },
+  {
     moduleId: 'sdkwork-router-portal-account',
     pluginId: 'sdkwork-router-portal-account',
     pluginKind: 'portal-module',
@@ -202,7 +222,7 @@ export const portalProductModules: PortalProductModuleManifest[] = [
     requiredPermissions: ['portal.account.read'],
     navigation: {
       group: 'revenue',
-      order: 100,
+      order: 110,
       sidebar: true,
     },
     loading: {

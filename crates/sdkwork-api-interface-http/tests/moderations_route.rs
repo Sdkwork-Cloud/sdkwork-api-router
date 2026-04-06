@@ -31,6 +31,24 @@ async fn moderations_route_returns_ok() {
 }
 
 #[tokio::test]
+async fn moderations_route_returns_invalid_request_for_missing_model() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/moderations")
+                .header("content-type", "application/json")
+                .body(Body::from("{\"model\":\"\",\"input\":\"hi\"}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_invalid_moderation_request(response).await;
+}
+
+#[tokio::test]
 async fn stateless_moderations_route_relays_to_openai_compatible_provider() {
     let upstream_state = UpstreamCaptureState::default();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -265,6 +283,36 @@ async fn stateful_moderations_route_records_usage_and_billing_for_authenticated_
     assert_eq!(ledger_json[0]["project_id"], "project-live");
 }
 
+#[tokio::test]
+async fn stateful_moderations_route_returns_invalid_request_for_missing_model_without_usage() {
+    let pool = memory_pool().await;
+    let api_key = support::issue_gateway_api_key(
+        &pool,
+        "tenant-moderation-invalid",
+        "project-moderation-invalid",
+    )
+    .await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool.clone());
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool);
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+
+    let response = gateway_app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/moderations")
+                .header("authorization", format!("Bearer {api_key}"))
+                .header("content-type", "application/json")
+                .body(Body::from("{\"model\":\"\",\"input\":\"hi\"}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_invalid_moderation_request(response).await;
+    support::assert_no_usage_records(admin_app, &admin_token).await;
+}
+
 async fn upstream_moderations_handler(
     State(state): State<UpstreamCaptureState>,
     headers: axum::http::HeaderMap,
@@ -282,4 +330,12 @@ async fn upstream_moderations_handler(
             "results":[{"flagged":false,"category_scores":{"violence":0.0}}]
         })),
     )
+}
+
+async fn assert_invalid_moderation_request(response: axum::response::Response) {
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["message"], "Moderation model is required.");
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "invalid_model");
 }

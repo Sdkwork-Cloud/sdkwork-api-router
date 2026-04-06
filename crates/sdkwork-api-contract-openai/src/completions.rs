@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateCompletionRequest {
     pub model: String,
     pub prompt: String,
@@ -15,14 +16,14 @@ impl CreateCompletionRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct CompletionChoice {
     pub index: u32,
     pub text: String,
     pub finish_reason: &'static str,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct CompletionObject {
     pub id: String,
     pub object: &'static str,

@@ -2,27 +2,31 @@ mod compat_anthropic;
 mod compat_gemini;
 mod compat_streaming;
 
-use std::sync::{Arc, OnceLock};
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use axum::{
+    Json, Router,
     body::Body,
     extract::FromRequestParts,
     extract::Json as ExtractJson,
     extract::Multipart,
     extract::Path,
     extract::State,
-    http::header,
-    http::request::Parts,
     http::HeaderMap,
+    http::HeaderValue,
     http::Request,
     http::StatusCode,
+    http::header,
+    http::request::Parts,
     middleware::Next,
     response::{Html, IntoResponse, Response},
     routing::{get, post},
-    Json, Router,
 };
-use base64::{engine::general_purpose::STANDARD, Engine as _};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use compat_anthropic::{
     anthropic_bad_gateway_response, anthropic_count_tokens_request,
     anthropic_invalid_request_response, anthropic_request_to_chat_completion,
@@ -35,8 +39,10 @@ use compat_gemini::{
     openai_count_tokens_to_gemini,
 };
 use sdkwork_api_app_billing::{
-    check_quota, create_billing_event, persist_billing_event, persist_ledger_entry,
-    BillingAccountingMode, CreateBillingEventInput, QuotaCheckResult,
+    BillingAccountingMode, CaptureAccountHoldInput, CreateAccountHoldInput,
+    CreateBillingEventInput, GatewayCommercialBillingKernel, QuotaCheckResult,
+    ReleaseAccountHoldInput, check_quota, create_billing_event, persist_billing_event,
+    persist_ledger_entry,
 };
 use sdkwork_api_app_credential::CredentialSecretManager;
 use sdkwork_api_app_gateway::cancel_batch;
@@ -133,8 +139,8 @@ use sdkwork_api_app_gateway::list_files;
 use sdkwork_api_app_gateway::list_fine_tuning_job_checkpoints;
 use sdkwork_api_app_gateway::list_fine_tuning_job_events;
 use sdkwork_api_app_gateway::list_fine_tuning_jobs;
-use sdkwork_api_app_gateway::list_music;
 use sdkwork_api_app_gateway::list_models;
+use sdkwork_api_app_gateway::list_music;
 use sdkwork_api_app_gateway::list_response_input_items;
 use sdkwork_api_app_gateway::list_thread_messages;
 use sdkwork_api_app_gateway::list_thread_run_steps;
@@ -145,6 +151,7 @@ use sdkwork_api_app_gateway::list_vector_stores;
 use sdkwork_api_app_gateway::list_video_characters;
 use sdkwork_api_app_gateway::list_videos;
 use sdkwork_api_app_gateway::list_webhooks;
+use sdkwork_api_app_gateway::music_content;
 use sdkwork_api_app_gateway::remix_video;
 use sdkwork_api_app_gateway::search_vector_store;
 use sdkwork_api_app_gateway::submit_thread_run_tool_outputs;
@@ -159,9 +166,8 @@ use sdkwork_api_app_gateway::update_vector_store;
 use sdkwork_api_app_gateway::update_video_character;
 use sdkwork_api_app_gateway::update_webhook;
 use sdkwork_api_app_gateway::video_content;
-use sdkwork_api_app_gateway::music_content;
 use sdkwork_api_app_gateway::{
-    create_embedding, create_response, delete_model_from_store,
+    PlannedExecutionUsageContext, create_embedding, create_response, delete_model_from_store,
     execute_json_provider_request_with_runtime_and_options,
     execute_stream_provider_request_with_runtime_and_options, list_models_from_store,
     planned_execution_usage_context_for_route, relay_assistant_from_store,
@@ -169,8 +175,8 @@ use sdkwork_api_app_gateway::{
     relay_cancel_batch_from_store, relay_cancel_fine_tuning_job_from_store,
     relay_cancel_response_from_store, relay_cancel_thread_run_from_store,
     relay_cancel_upload_from_store, relay_cancel_vector_store_file_batch_from_store,
-    relay_chat_completion_from_store, relay_chat_completion_from_store_with_options,
-    relay_chat_completion_stream_from_store, relay_chat_completion_stream_from_store_with_options,
+    relay_chat_completion_from_store_with_execution_context,
+    relay_chat_completion_stream_from_store_with_execution_context,
     relay_compact_response_from_store, relay_complete_upload_from_store,
     relay_completion_from_store, relay_conversation_from_store,
     relay_conversation_items_from_store, relay_count_response_input_tokens_from_store,
@@ -178,16 +184,16 @@ use sdkwork_api_app_gateway::{
     relay_delete_conversation_from_store, relay_delete_conversation_item_from_store,
     relay_delete_eval_from_store, relay_delete_file_from_store, relay_delete_music_from_store,
     relay_delete_response_from_store, relay_delete_thread_from_store,
-    relay_delete_thread_message_from_store,
-    relay_delete_vector_store_file_from_store, relay_delete_vector_store_from_store,
-    relay_delete_video_from_store, relay_delete_webhook_from_store, relay_embedding_from_store,
-    relay_eval_from_store, relay_eval_run_from_store, relay_extend_video_from_store,
-    relay_file_content_from_store, relay_file_from_store, relay_fine_tuning_job_from_store,
-    relay_get_assistant_from_store, relay_get_batch_from_store,
-    relay_get_chat_completion_from_store, relay_get_conversation_from_store,
-    relay_get_conversation_item_from_store, relay_get_eval_from_store,
-    relay_get_eval_run_from_store, relay_get_file_from_store, relay_get_fine_tuning_job_from_store,
-    relay_get_music_from_store, relay_get_response_from_store, relay_get_thread_from_store,
+    relay_delete_thread_message_from_store, relay_delete_vector_store_file_from_store,
+    relay_delete_vector_store_from_store, relay_delete_video_from_store,
+    relay_delete_webhook_from_store, relay_embedding_from_store, relay_eval_from_store,
+    relay_eval_run_from_store, relay_extend_video_from_store, relay_file_content_from_store,
+    relay_file_from_store, relay_fine_tuning_job_from_store, relay_get_assistant_from_store,
+    relay_get_batch_from_store, relay_get_chat_completion_from_store,
+    relay_get_conversation_from_store, relay_get_conversation_item_from_store,
+    relay_get_eval_from_store, relay_get_eval_run_from_store, relay_get_file_from_store,
+    relay_get_fine_tuning_job_from_store, relay_get_music_from_store,
+    relay_get_response_from_store, relay_get_thread_from_store,
     relay_get_thread_message_from_store, relay_get_thread_run_from_store,
     relay_get_thread_run_step_from_store, relay_get_vector_store_file_batch_from_store,
     relay_get_vector_store_file_from_store, relay_get_vector_store_from_store,
@@ -197,17 +203,18 @@ use sdkwork_api_app_gateway::{
     relay_list_batches_from_store, relay_list_chat_completion_messages_from_store,
     relay_list_chat_completions_from_store, relay_list_conversation_items_from_store,
     relay_list_conversations_from_store, relay_list_eval_runs_from_store,
-    relay_list_evals_from_store, relay_list_files_from_store, relay_list_music_from_store,
+    relay_list_evals_from_store, relay_list_files_from_store,
     relay_list_fine_tuning_job_checkpoints_from_store,
     relay_list_fine_tuning_job_events_from_store, relay_list_fine_tuning_jobs_from_store,
-    relay_music_content_from_store, relay_music_from_store, relay_music_lyrics_from_store,
-    relay_list_response_input_items_from_store, relay_list_thread_messages_from_store,
-    relay_list_thread_run_steps_from_store, relay_list_thread_runs_from_store,
-    relay_list_vector_store_file_batch_files_from_store, relay_list_vector_store_files_from_store,
-    relay_list_vector_stores_from_store, relay_list_video_characters_from_store,
-    relay_list_videos_from_store, relay_list_webhooks_from_store, relay_moderation_from_store,
-    relay_realtime_session_from_store, relay_remix_video_from_store, relay_response_from_store,
-    relay_response_stream_from_store, relay_search_vector_store_from_store,
+    relay_list_music_from_store, relay_list_response_input_items_from_store,
+    relay_list_thread_messages_from_store, relay_list_thread_run_steps_from_store,
+    relay_list_thread_runs_from_store, relay_list_vector_store_file_batch_files_from_store,
+    relay_list_vector_store_files_from_store, relay_list_vector_stores_from_store,
+    relay_list_video_characters_from_store, relay_list_videos_from_store,
+    relay_list_webhooks_from_store, relay_moderation_from_store, relay_music_content_from_store,
+    relay_music_from_store, relay_music_lyrics_from_store, relay_realtime_session_from_store,
+    relay_remix_video_from_store, relay_response_from_store_with_execution_context,
+    relay_response_stream_from_store_with_execution_context, relay_search_vector_store_from_store,
     relay_speech_from_store, relay_submit_thread_run_tool_outputs_from_store,
     relay_thread_and_run_from_store, relay_thread_from_store, relay_thread_messages_from_store,
     relay_thread_run_from_store, relay_transcription_from_store, relay_translation_from_store,
@@ -222,71 +229,98 @@ use sdkwork_api_app_gateway::{
     relay_webhook_from_store, with_request_api_key_group_id, with_request_routing_region,
 };
 use sdkwork_api_app_identity::{
-    resolve_gateway_request_context, GatewayRequestContext as IdentityGatewayRequestContext,
+    GatewayRequestContext as IdentityGatewayRequestContext, resolve_gateway_request_context,
 };
 use sdkwork_api_app_rate_limit::check_rate_limit;
 use sdkwork_api_app_usage::persist_usage_record_with_tokens_and_facts;
+use sdkwork_api_config::HttpExposureConfig;
+use sdkwork_api_contract_openai::assistants::{
+    AssistantObject, DeleteAssistantResponse, ListAssistantsResponse,
+};
 use sdkwork_api_contract_openai::assistants::{CreateAssistantRequest, UpdateAssistantRequest};
 use sdkwork_api_contract_openai::audio::{
     CreateSpeechRequest, CreateTranscriptionRequest, CreateTranslationRequest,
-    CreateVoiceConsentRequest,
+    CreateVoiceConsentRequest, ListVoicesResponse, SpeechResponse, TranscriptionObject,
+    TranslationObject, VoiceConsentObject,
 };
-use sdkwork_api_contract_openai::batches::CreateBatchRequest;
+use sdkwork_api_contract_openai::batches::{BatchObject, CreateBatchRequest, ListBatchesResponse};
 use sdkwork_api_contract_openai::chat_completions::{
-    CreateChatCompletionRequest, UpdateChatCompletionRequest,
+    ChatCompletionResponse, CreateChatCompletionRequest, DeleteChatCompletionResponse,
+    ListChatCompletionMessagesResponse, UpdateChatCompletionRequest,
 };
-use sdkwork_api_contract_openai::completions::CreateCompletionRequest;
-use sdkwork_api_contract_openai::containers::{CreateContainerFileRequest, CreateContainerRequest};
+use sdkwork_api_contract_openai::completions::{CompletionObject, CreateCompletionRequest};
+use sdkwork_api_contract_openai::containers::{
+    ContainerFileObject, ContainerObject, CreateContainerFileRequest, CreateContainerRequest,
+    DeleteContainerFileResponse, DeleteContainerResponse, ListContainerFilesResponse,
+};
 use sdkwork_api_contract_openai::conversations::{
-    CreateConversationItemsRequest, CreateConversationRequest, UpdateConversationRequest,
+    ConversationItemObject, ConversationObject, CreateConversationItemsRequest,
+    CreateConversationRequest, DeleteConversationItemResponse, DeleteConversationResponse,
+    ListConversationItemsResponse, ListConversationsResponse, UpdateConversationRequest,
 };
-use sdkwork_api_contract_openai::embeddings::CreateEmbeddingRequest;
+use sdkwork_api_contract_openai::embeddings::{CreateEmbeddingRequest, CreateEmbeddingResponse};
 use sdkwork_api_contract_openai::errors::OpenAiErrorResponse;
 use sdkwork_api_contract_openai::evals::{
-    CreateEvalRequest, CreateEvalRunRequest, UpdateEvalRequest,
+    CreateEvalRequest, CreateEvalRunRequest, DeleteEvalResponse, DeleteEvalRunResponse, EvalObject,
+    EvalRunObject, EvalRunOutputItemObject, ListEvalRunOutputItemsResponse, ListEvalRunsResponse,
+    UpdateEvalRequest,
 };
-use sdkwork_api_contract_openai::files::CreateFileRequest;
+use sdkwork_api_contract_openai::files::{
+    CreateFileRequest, DeleteFileResponse, FileObject, ListFilesResponse,
+};
 use sdkwork_api_contract_openai::fine_tuning::{
     CreateFineTuningCheckpointPermissionsRequest, CreateFineTuningJobRequest,
+    DeleteFineTuningCheckpointPermissionResponse, FineTuningJobObject,
+    ListFineTuningCheckpointPermissionsResponse, ListFineTuningJobCheckpointsResponse,
+    ListFineTuningJobEventsResponse,
 };
 use sdkwork_api_contract_openai::images::{
     CreateImageEditRequest, CreateImageRequest, CreateImageVariationRequest, ImageUpload,
+    ImagesResponse,
 };
-use sdkwork_api_contract_openai::moderations::CreateModerationRequest;
-use sdkwork_api_contract_openai::music::{CreateMusicLyricsRequest, CreateMusicRequest};
-use sdkwork_api_contract_openai::realtime::CreateRealtimeSessionRequest;
+use sdkwork_api_contract_openai::models::ListModelsResponse;
+use sdkwork_api_contract_openai::moderations::{CreateModerationRequest, ModerationResponse};
+use sdkwork_api_contract_openai::music::{
+    CreateMusicLyricsRequest, CreateMusicRequest, DeleteMusicResponse, MusicObject,
+};
+use sdkwork_api_contract_openai::realtime::{CreateRealtimeSessionRequest, RealtimeSessionObject};
 use sdkwork_api_contract_openai::responses::{
     CompactResponseRequest, CountResponseInputTokensRequest, CreateResponseRequest,
+    DeleteResponseResponse, ListResponseInputItemsResponse, ResponseCompactionObject,
+    ResponseInputTokensObject, ResponseObject,
 };
 use sdkwork_api_contract_openai::runs::{
-    CreateRunRequest, CreateThreadAndRunRequest, SubmitToolOutputsRunRequest, UpdateRunRequest,
+    CreateRunRequest, CreateThreadAndRunRequest, ListRunStepsResponse, ListRunsResponse, RunObject,
+    RunStepObject, SubmitToolOutputsRunRequest, UpdateRunRequest,
 };
 use sdkwork_api_contract_openai::streaming::SseFrame;
 use sdkwork_api_contract_openai::threads::{
-    CreateThreadMessageRequest, CreateThreadRequest, UpdateThreadMessageRequest,
-    UpdateThreadRequest,
+    CreateThreadMessageRequest, CreateThreadRequest, DeleteThreadMessageResponse,
+    DeleteThreadResponse, ListThreadMessagesResponse, ThreadMessageObject, ThreadObject,
+    UpdateThreadMessageRequest, UpdateThreadRequest,
 };
 use sdkwork_api_contract_openai::uploads::{
-    AddUploadPartRequest, CompleteUploadRequest, CreateUploadRequest,
+    AddUploadPartRequest, CompleteUploadRequest, CreateUploadRequest, UploadObject,
+    UploadPartObject,
 };
 use sdkwork_api_contract_openai::vector_stores::{
     CreateVectorStoreFileBatchRequest, CreateVectorStoreFileRequest, CreateVectorStoreRequest,
-    SearchVectorStoreRequest, UpdateVectorStoreRequest,
+    DeleteVectorStoreFileResponse, DeleteVectorStoreResponse, ListVectorStoreFilesResponse,
+    ListVectorStoresResponse, SearchVectorStoreRequest, SearchVectorStoreResponse,
+    UpdateVectorStoreRequest, VectorStoreFileBatchObject, VectorStoreFileObject, VectorStoreObject,
 };
 use sdkwork_api_contract_openai::videos::{
-    CreateVideoCharacterRequest, CreateVideoRequest, EditVideoRequest, ExtendVideoRequest,
-    RemixVideoRequest, UpdateVideoCharacterRequest,
+    CreateVideoCharacterRequest, CreateVideoRequest, DeleteVideoResponse, EditVideoRequest,
+    ExtendVideoRequest, RemixVideoRequest, UpdateVideoCharacterRequest, VideoObject,
 };
-use sdkwork_api_contract_openai::webhooks::{CreateWebhookRequest, UpdateWebhookRequest};
+use sdkwork_api_contract_openai::webhooks::{
+    CreateWebhookRequest, DeleteWebhookResponse, UpdateWebhookRequest, WebhookObject,
+};
 use sdkwork_api_domain_rate_limit::RateLimitCheckResult;
-use sdkwork_api_observability::{observe_http_metrics, observe_http_tracing, HttpMetricsRegistry};
-use sdkwork_api_openapi::{
-    build_openapi_document, extract_routes_from_function, render_docs_html, HttpMethod,
-    OpenApiServiceSpec, RouteEntry,
-};
+use sdkwork_api_observability::{HttpMetricsRegistry, observe_http_metrics, observe_http_tracing};
 use sdkwork_api_policy_billing::{
-    builtin_billing_policy_registry, BillingPolicyExecutionInput,
-    BillingPolicyExecutionResult, GROUP_DEFAULT_BILLING_POLICY_ID,
+    BillingPolicyExecutionInput, BillingPolicyExecutionResult, GROUP_DEFAULT_BILLING_POLICY_ID,
+    builtin_billing_policy_registry,
 };
 use sdkwork_api_provider_core::{ProviderRequest, ProviderRequestOptions, ProviderStreamOutput};
 use sdkwork_api_storage_core::{AdminStore, Reloadable};
@@ -294,135 +328,1666 @@ use sdkwork_api_storage_sqlite::SqliteAdminStore;
 use serde_json::Value;
 use sqlx::SqlitePool;
 use tower_http::cors::{Any, CorsLayer};
+use utoipa::openapi::Server;
+use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
+use utoipa::{Modify, OpenApi};
+use utoipa_axum::{router::OpenApiRouter, routes};
+use utoipa_swagger_ui::{Config as SwaggerUiConfig, SwaggerUi, Url as SwaggerUiUrl};
 
 const DEFAULT_STATELESS_TENANT_ID: &str = "sdkwork-stateless";
 const DEFAULT_STATELESS_PROJECT_ID: &str = "sdkwork-stateless-default";
-const GATEWAY_OPENAPI_SPEC: OpenApiServiceSpec<'static> = OpenApiServiceSpec {
-    title: "SDKWORK Gateway API",
-    version: env!("CARGO_PKG_VERSION"),
-    description: "OpenAPI 3.1 inventory generated from the current gateway router implementation.",
-    openapi_path: "/openapi.json",
-    docs_path: "/docs",
-};
+#[derive(OpenApi)]
+#[openapi(
+    info(
+        title = "SDKWORK Gateway API",
+        version = env!("CARGO_PKG_VERSION"),
+        description = "OpenAPI 3.1 schema generated directly from the current gateway router implementation."
+    ),
+    modifiers(&GatewayApiDocModifier),
+    tags(
+        (name = "system", description = "Gateway health and system-facing routes."),
+        (name = "models", description = "Model listing and model metadata routes."),
+        (name = "chat", description = "OpenAI-compatible chat completion routes."),
+        (name = "completions", description = "OpenAI-compatible text completion routes."),
+        (name = "responses", description = "OpenAI-compatible response generation routes."),
+        (name = "conversations", description = "OpenAI-compatible conversation and conversation item routes."),
+        (name = "embeddings", description = "Embedding generation routes."),
+        (name = "moderations", description = "Moderation and safety evaluation routes."),
+        (name = "images", description = "Image generation, edit, and variation routes."),
+        (name = "audio", description = "Audio transcription, translation, speech, and voice routes."),
+        (name = "files", description = "File upload, listing, and retrieval routes."),
+        (name = "uploads", description = "Multi-part upload lifecycle routes."),
+        (name = "batches", description = "Batch execution submission and management routes."),
+        (name = "vector-stores", description = "Vector store search and file management routes."),
+        (name = "assistants", description = "Assistant creation and retrieval routes."),
+        (name = "threads", description = "Assistant thread and message management routes."),
+        (name = "runs", description = "Assistant run orchestration and run step routes."),
+        (name = "realtime", description = "Realtime session bootstrap routes."),
+        (name = "compatibility", description = "Anthropic and Gemini compatibility routes.")
+    )
+)]
+struct GatewayApiDoc;
 
-fn gateway_route_inventory() -> &'static [RouteEntry] {
-    static ROUTES: OnceLock<Vec<RouteEntry>> = OnceLock::new();
-    ROUTES
-        .get_or_init(|| {
-            extract_routes_from_function(include_str!("lib.rs"), "gateway_router_with_state")
-                .expect("gateway route inventory")
-        })
-        .as_slice()
+struct GatewayApiDocModifier;
+
+impl Modify for GatewayApiDocModifier {
+    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        openapi.servers = Some(vec![Server::new("/")]);
+        openapi
+            .components
+            .get_or_insert_with(utoipa::openapi::Components::new)
+            .add_security_scheme(
+                "bearerAuth",
+                SecurityScheme::Http(
+                    HttpBuilder::new()
+                        .scheme(HttpAuthScheme::Bearer)
+                        .bearer_format("API Key")
+                        .build(),
+                ),
+            );
+    }
 }
 
-fn gateway_openapi_document() -> &'static Value {
-    static DOCUMENT: OnceLock<Value> = OnceLock::new();
-    DOCUMENT.get_or_init(|| {
-        build_openapi_document(
-            &GATEWAY_OPENAPI_SPEC,
-            gateway_route_inventory(),
-            gateway_tag_for_path,
-            gateway_route_requires_bearer_auth,
-            gateway_operation_summary,
+mod openapi_paths {
+    use super::*;
+
+    #[utoipa::path(
+        get,
+        path = "/health",
+        tag = "system",
+        responses((status = 200, description = "Gateway health check response.", body = String))
+    )]
+    pub(super) async fn health() {}
+
+    #[utoipa::path(
+        get,
+        path = "/v1/models",
+        tag = "models",
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Visible model catalog.", body = ListModelsResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to load model catalog.", body = OpenAiErrorResponse)
         )
-    })
-}
+    )]
+    pub(super) async fn list_models() {}
 
-fn gateway_docs_html() -> &'static str {
-    static HTML: OnceLock<String> = OnceLock::new();
-    HTML.get_or_init(|| render_docs_html(&GATEWAY_OPENAPI_SPEC))
-        .as_str()
-}
+    #[utoipa::path(
+        get,
+        path = "/v1/models/{model_id}",
+        tag = "models",
+        params(("model_id" = String, Path, description = "Model identifier.")),
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Visible model metadata.", body = sdkwork_api_contract_openai::models::ModelObject),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested model was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to load model metadata.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn get_model() {}
 
-async fn gateway_openapi_handler() -> Json<Value> {
-    Json(gateway_openapi_document().clone())
-}
+    #[utoipa::path(
+        post,
+        path = "/v1/chat/completions",
+        tag = "chat",
+        request_body = CreateChatCompletionRequest,
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Chat completion response.", body = ChatCompletionResponse),
+            (status = 400, description = "Invalid completion payload.", body = OpenAiErrorResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to create the chat completion.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn chat_completions() {}
 
-async fn gateway_docs_handler() -> Html<String> {
-    Html(gateway_docs_html().to_owned())
-}
+    #[utoipa::path(
+        post,
+        path = "/v1/completions",
+        tag = "completions",
+        request_body = CreateCompletionRequest,
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Text completion response.", body = CompletionObject),
+            (status = 400, description = "Invalid completion payload.", body = OpenAiErrorResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to create the completion.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn completions() {}
 
-fn gateway_tag_for_path(path: &str) -> String {
-    match path {
-        "/metrics" | "/health" => "system".to_owned(),
-        "/docs" | "/openapi.json" => "docs".to_owned(),
-        _ if path.starts_with("/v1/") || path.starts_with("/v1beta/") => path
-            .trim_start_matches("/v1/")
-            .trim_start_matches("/v1beta/")
-            .split('/')
-            .find(|segment| !segment.is_empty() && !segment.starts_with('{'))
-            .unwrap_or("gateway")
-            .to_owned(),
-        _ => "gateway".to_owned(),
-    }
-}
+    #[utoipa::path(
+        post,
+        path = "/v1/responses",
+        tag = "responses",
+        request_body = CreateResponseRequest,
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Response generation result.", body = ResponseObject),
+            (status = 400, description = "Invalid response payload.", body = OpenAiErrorResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to create the response.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn responses() {}
 
-fn gateway_route_requires_bearer_auth(path: &str, _method: HttpMethod) -> bool {
-    path.starts_with("/v1/") || path.starts_with("/v1beta/")
-}
+    #[utoipa::path(
+        post,
+        path = "/v1/responses/input_tokens",
+        tag = "responses",
+        request_body = CountResponseInputTokensRequest,
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Response input token count result.", body = ResponseInputTokensObject),
+            (status = 400, description = "Invalid response token count payload.", body = OpenAiErrorResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to count response input tokens.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn responses_input_tokens() {}
 
-fn gateway_operation_summary(path: &str, method: HttpMethod) -> String {
-    match path {
-        "/metrics" => "Prometheus metrics".to_owned(),
-        "/health" => "Health check".to_owned(),
-        "/openapi.json" => "OpenAPI document".to_owned(),
-        "/docs" => "Interactive API inventory".to_owned(),
-        _ => format!(
-            "{} {}",
-            method.display_name(),
-            humanize_route_path(
-                path,
-                if path.starts_with("/v1beta/") {
-                    Some("v1beta")
-                } else if path.starts_with("/v1/") {
-                    Some("v1")
-                } else {
-                    None
-                },
-            )
+    #[utoipa::path(
+        post,
+        path = "/v1/responses/compact",
+        tag = "responses",
+        request_body = CompactResponseRequest,
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Response compaction result.", body = ResponseCompactionObject),
+            (status = 400, description = "Invalid response compaction payload.", body = OpenAiErrorResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to compact the response.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn responses_compact() {}
+
+    #[utoipa::path(
+        get,
+        path = "/v1/responses/{response_id}",
+        tag = "responses",
+        params(("response_id" = String, Path, description = "Response identifier.")),
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Visible response.", body = ResponseObject),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested response was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to load the response.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn response_get() {}
+
+    #[utoipa::path(
+        delete,
+        path = "/v1/responses/{response_id}",
+        tag = "responses",
+        params(("response_id" = String, Path, description = "Response identifier.")),
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Deleted response.", body = DeleteResponseResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested response was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to delete the response.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn response_delete() {}
+
+    #[utoipa::path(
+        get,
+        path = "/v1/responses/{response_id}/input_items",
+        tag = "responses",
+        params(("response_id" = String, Path, description = "Response identifier.")),
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Visible response input items.", body = ListResponseInputItemsResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested response was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to load response input items.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn response_input_items() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1/responses/{response_id}/cancel",
+        tag = "responses",
+        params(("response_id" = String, Path, description = "Response identifier.")),
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Cancelled response.", body = ResponseObject),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested response was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to cancel the response.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn response_cancel() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1/embeddings",
+        tag = "embeddings",
+        request_body = CreateEmbeddingRequest,
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Embedding generation result.", body = CreateEmbeddingResponse),
+            (status = 400, description = "Invalid embedding payload.", body = OpenAiErrorResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to create embeddings.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn embeddings() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1/moderations",
+        tag = "moderations",
+        request_body = CreateModerationRequest,
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Moderation result.", body = ModerationResponse),
+            (status = 400, description = "Invalid moderation payload.", body = OpenAiErrorResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to create the moderation.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn moderations() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1/images/generations",
+        tag = "images",
+        request_body = CreateImageRequest,
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Image generation result.", body = ImagesResponse),
+            (status = 400, description = "Invalid image generation payload.", body = OpenAiErrorResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to create images.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn image_generations() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1/images/edits",
+        tag = "images",
+        request_body(
+            content = CreateImageEditRequest,
+            content_type = "multipart/form-data",
+            description = "Multipart image edit payload."
         ),
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Image edit result.", body = ImagesResponse),
+            (status = 400, description = "Invalid image edit payload.", body = OpenAiErrorResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to edit the image.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn image_edits() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1/images/variations",
+        tag = "images",
+        request_body(
+            content = CreateImageVariationRequest,
+            content_type = "multipart/form-data",
+            description = "Multipart image variation payload."
+        ),
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Image variation result.", body = ImagesResponse),
+            (status = 400, description = "Invalid image variation payload.", body = OpenAiErrorResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to create the image variation.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn image_variations() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1/audio/transcriptions",
+        tag = "audio",
+        request_body = CreateTranscriptionRequest,
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Audio transcription result.", body = TranscriptionObject),
+            (status = 400, description = "Invalid transcription payload.", body = OpenAiErrorResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to create the transcription.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn transcriptions() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1/audio/translations",
+        tag = "audio",
+        request_body = CreateTranslationRequest,
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Audio translation result.", body = TranslationObject),
+            (status = 400, description = "Invalid translation payload.", body = OpenAiErrorResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to create the translation.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn translations() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1/audio/speech",
+        tag = "audio",
+        request_body = CreateSpeechRequest,
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Audio speech synthesis result.", body = SpeechResponse),
+            (status = 400, description = "Invalid speech synthesis payload.", body = OpenAiErrorResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to synthesize speech.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn audio_speech() {}
+
+    #[utoipa::path(
+        get,
+        path = "/v1/audio/voices",
+        tag = "audio",
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Available audio voices.", body = ListVoicesResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to load the voice catalog.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn audio_voices() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1/audio/voice_consents",
+        tag = "audio",
+        request_body = CreateVoiceConsentRequest,
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Audio voice consent approval result.", body = VoiceConsentObject),
+            (status = 400, description = "Invalid audio voice consent payload.", body = OpenAiErrorResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to create the audio voice consent.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn audio_voice_consents() {}
+
+    #[utoipa::path(
+        get,
+        path = "/v1/assistants",
+        tag = "assistants",
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Visible assistants.", body = ListAssistantsResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to load assistants.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn assistants_list() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1/assistants",
+        tag = "assistants",
+        request_body = CreateAssistantRequest,
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Created assistant.", body = AssistantObject),
+            (status = 400, description = "Invalid assistant payload.", body = OpenAiErrorResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to create the assistant.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn assistants_create() {}
+
+    #[utoipa::path(
+        get,
+        path = "/v1/assistants/{assistant_id}",
+        tag = "assistants",
+        params(("assistant_id" = String, Path, description = "Assistant identifier.")),
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Visible assistant metadata.", body = AssistantObject),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested assistant was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to load assistant metadata.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn assistants_get() {}
+
+    #[utoipa::path(
+        get,
+        path = "/v1/conversations",
+        tag = "conversations",
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Visible conversations.", body = ListConversationsResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to load conversations.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn conversations_list() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1/conversations",
+        tag = "conversations",
+        request_body = CreateConversationRequest,
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Created conversation.", body = ConversationObject),
+            (status = 400, description = "Invalid conversation payload.", body = OpenAiErrorResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to create the conversation.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn conversations_create() {}
+
+    #[utoipa::path(
+        get,
+        path = "/v1/conversations/{conversation_id}",
+        tag = "conversations",
+        params(("conversation_id" = String, Path, description = "Conversation identifier.")),
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Visible conversation.", body = ConversationObject),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested conversation was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to load the conversation.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn conversation_get() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1/conversations/{conversation_id}",
+        tag = "conversations",
+        params(("conversation_id" = String, Path, description = "Conversation identifier.")),
+        request_body = UpdateConversationRequest,
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Updated conversation.", body = ConversationObject),
+            (status = 400, description = "Invalid conversation update payload.", body = OpenAiErrorResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested conversation was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to update the conversation.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn conversation_update() {}
+
+    #[utoipa::path(
+        delete,
+        path = "/v1/conversations/{conversation_id}",
+        tag = "conversations",
+        params(("conversation_id" = String, Path, description = "Conversation identifier.")),
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Deleted conversation.", body = DeleteConversationResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested conversation was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to delete the conversation.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn conversation_delete() {}
+
+    #[utoipa::path(
+        get,
+        path = "/v1/conversations/{conversation_id}/items",
+        tag = "conversations",
+        params(("conversation_id" = String, Path, description = "Conversation identifier.")),
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Visible conversation items.", body = ListConversationItemsResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested conversation was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to load conversation items.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn conversation_items_list() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1/conversations/{conversation_id}/items",
+        tag = "conversations",
+        params(("conversation_id" = String, Path, description = "Conversation identifier.")),
+        request_body = CreateConversationItemsRequest,
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Created conversation items.", body = ListConversationItemsResponse),
+            (status = 400, description = "Invalid conversation item payload.", body = OpenAiErrorResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested conversation was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to create conversation items.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn conversation_items_create() {}
+
+    #[utoipa::path(
+        get,
+        path = "/v1/conversations/{conversation_id}/items/{item_id}",
+        tag = "conversations",
+        params(
+            ("conversation_id" = String, Path, description = "Conversation identifier."),
+            ("item_id" = String, Path, description = "Conversation item identifier.")
+        ),
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Visible conversation item.", body = ConversationItemObject),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested conversation item was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to load the conversation item.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn conversation_item_get() {}
+
+    #[utoipa::path(
+        delete,
+        path = "/v1/conversations/{conversation_id}/items/{item_id}",
+        tag = "conversations",
+        params(
+            ("conversation_id" = String, Path, description = "Conversation identifier."),
+            ("item_id" = String, Path, description = "Conversation item identifier.")
+        ),
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Deleted conversation item.", body = DeleteConversationItemResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested conversation item was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to delete the conversation item.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn conversation_item_delete() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1/threads",
+        tag = "threads",
+        request_body = CreateThreadRequest,
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Created thread.", body = ThreadObject),
+            (status = 400, description = "Invalid thread payload.", body = OpenAiErrorResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to create the thread.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn threads_create() {}
+
+    #[utoipa::path(
+        get,
+        path = "/v1/threads/{thread_id}",
+        tag = "threads",
+        params(("thread_id" = String, Path, description = "Thread identifier.")),
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Visible thread metadata.", body = ThreadObject),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested thread was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to load the thread.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn thread_get() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1/threads/{thread_id}",
+        tag = "threads",
+        params(("thread_id" = String, Path, description = "Thread identifier.")),
+        request_body = UpdateThreadRequest,
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Updated thread.", body = ThreadObject),
+            (status = 400, description = "Invalid thread update payload.", body = OpenAiErrorResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested thread was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to update the thread.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn thread_update() {}
+
+    #[utoipa::path(
+        delete,
+        path = "/v1/threads/{thread_id}",
+        tag = "threads",
+        params(("thread_id" = String, Path, description = "Thread identifier.")),
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Deleted thread.", body = DeleteThreadResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested thread was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to delete the thread.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn thread_delete() {}
+
+    #[utoipa::path(
+        get,
+        path = "/v1/threads/{thread_id}/messages",
+        tag = "threads",
+        params(("thread_id" = String, Path, description = "Thread identifier.")),
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Visible thread messages.", body = ListThreadMessagesResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested thread was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to load thread messages.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn thread_messages_list() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1/threads/{thread_id}/messages",
+        tag = "threads",
+        params(("thread_id" = String, Path, description = "Thread identifier.")),
+        request_body = CreateThreadMessageRequest,
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Created thread message.", body = ThreadMessageObject),
+            (status = 400, description = "Invalid thread message payload.", body = OpenAiErrorResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested thread was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to create the thread message.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn thread_messages_create() {}
+
+    #[utoipa::path(
+        get,
+        path = "/v1/threads/{thread_id}/messages/{message_id}",
+        tag = "threads",
+        params(
+            ("thread_id" = String, Path, description = "Thread identifier."),
+            ("message_id" = String, Path, description = "Thread message identifier.")
+        ),
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Visible thread message metadata.", body = ThreadMessageObject),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested thread message was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to load the thread message.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn thread_message_get() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1/threads/{thread_id}/messages/{message_id}",
+        tag = "threads",
+        params(
+            ("thread_id" = String, Path, description = "Thread identifier."),
+            ("message_id" = String, Path, description = "Thread message identifier.")
+        ),
+        request_body = UpdateThreadMessageRequest,
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Updated thread message.", body = ThreadMessageObject),
+            (status = 400, description = "Invalid thread message update payload.", body = OpenAiErrorResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested thread message was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to update the thread message.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn thread_message_update() {}
+
+    #[utoipa::path(
+        delete,
+        path = "/v1/threads/{thread_id}/messages/{message_id}",
+        tag = "threads",
+        params(
+            ("thread_id" = String, Path, description = "Thread identifier."),
+            ("message_id" = String, Path, description = "Thread message identifier.")
+        ),
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Deleted thread message.", body = DeleteThreadMessageResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested thread message was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to delete the thread message.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn thread_message_delete() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1/threads/runs",
+        tag = "runs",
+        request_body = CreateThreadAndRunRequest,
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Created thread and run.", body = RunObject),
+            (status = 400, description = "Invalid thread-and-run payload.", body = OpenAiErrorResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to create the thread and run.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn thread_and_run_create() {}
+
+    #[utoipa::path(
+        get,
+        path = "/v1/threads/{thread_id}/runs",
+        tag = "runs",
+        params(("thread_id" = String, Path, description = "Thread identifier.")),
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Visible thread runs.", body = ListRunsResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested thread was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to load thread runs.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn thread_runs_list() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1/threads/{thread_id}/runs",
+        tag = "runs",
+        params(("thread_id" = String, Path, description = "Thread identifier.")),
+        request_body = CreateRunRequest,
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Created thread run.", body = RunObject),
+            (status = 400, description = "Invalid thread run payload.", body = OpenAiErrorResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested thread was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to create the thread run.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn thread_runs_create() {}
+
+    #[utoipa::path(
+        get,
+        path = "/v1/threads/{thread_id}/runs/{run_id}",
+        tag = "runs",
+        params(
+            ("thread_id" = String, Path, description = "Thread identifier."),
+            ("run_id" = String, Path, description = "Run identifier.")
+        ),
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Visible run metadata.", body = RunObject),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested run was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to load the run.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn thread_run_get() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1/threads/{thread_id}/runs/{run_id}",
+        tag = "runs",
+        params(
+            ("thread_id" = String, Path, description = "Thread identifier."),
+            ("run_id" = String, Path, description = "Run identifier.")
+        ),
+        request_body = UpdateRunRequest,
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Updated run.", body = RunObject),
+            (status = 400, description = "Invalid run update payload.", body = OpenAiErrorResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested run was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to update the run.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn thread_run_update() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1/threads/{thread_id}/runs/{run_id}/cancel",
+        tag = "runs",
+        params(
+            ("thread_id" = String, Path, description = "Thread identifier."),
+            ("run_id" = String, Path, description = "Run identifier.")
+        ),
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Cancelled run.", body = RunObject),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested run was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to cancel the run.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn thread_run_cancel() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1/threads/{thread_id}/runs/{run_id}/submit_tool_outputs",
+        tag = "runs",
+        params(
+            ("thread_id" = String, Path, description = "Thread identifier."),
+            ("run_id" = String, Path, description = "Run identifier.")
+        ),
+        request_body = SubmitToolOutputsRunRequest,
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Run after tool outputs submission.", body = RunObject),
+            (status = 400, description = "Invalid tool outputs payload.", body = OpenAiErrorResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested run was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to submit tool outputs to the run.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn thread_run_submit_tool_outputs() {}
+
+    #[utoipa::path(
+        get,
+        path = "/v1/threads/{thread_id}/runs/{run_id}/steps",
+        tag = "runs",
+        params(
+            ("thread_id" = String, Path, description = "Thread identifier."),
+            ("run_id" = String, Path, description = "Run identifier.")
+        ),
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Visible run steps.", body = ListRunStepsResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested run was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to load run steps.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn thread_run_steps_list() {}
+
+    #[utoipa::path(
+        get,
+        path = "/v1/threads/{thread_id}/runs/{run_id}/steps/{step_id}",
+        tag = "runs",
+        params(
+            ("thread_id" = String, Path, description = "Thread identifier."),
+            ("run_id" = String, Path, description = "Run identifier."),
+            ("step_id" = String, Path, description = "Run step identifier.")
+        ),
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Visible run step metadata.", body = RunStepObject),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested run step was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to load the run step.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn thread_run_step_get() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1/realtime/sessions",
+        tag = "realtime",
+        request_body = CreateRealtimeSessionRequest,
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Realtime session bootstrap result.", body = RealtimeSessionObject),
+            (status = 400, description = "Invalid realtime session payload.", body = OpenAiErrorResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to create the realtime session.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn realtime_sessions() {}
+
+    #[utoipa::path(
+        get,
+        path = "/v1/files",
+        tag = "files",
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Visible files.", body = ListFilesResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to load files.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn files_list() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1/files",
+        tag = "files",
+        request_body(
+            content = CreateFileRequest,
+            content_type = "multipart/form-data",
+            description = "Multipart file upload payload."
+        ),
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Created file.", body = FileObject),
+            (status = 400, description = "Invalid file upload payload.", body = OpenAiErrorResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to create the file.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn files_create() {}
+
+    #[utoipa::path(
+        get,
+        path = "/v1/files/{file_id}",
+        tag = "files",
+        params(("file_id" = String, Path, description = "File identifier.")),
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Visible file metadata.", body = FileObject),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested file was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to load the file.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn file_get() {}
+
+    #[utoipa::path(
+        delete,
+        path = "/v1/files/{file_id}",
+        tag = "files",
+        params(("file_id" = String, Path, description = "File identifier.")),
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Deleted file.", body = DeleteFileResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested file was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to delete the file.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn file_delete() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1/uploads",
+        tag = "uploads",
+        request_body = CreateUploadRequest,
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Created upload session.", body = UploadObject),
+            (status = 400, description = "Invalid upload payload.", body = OpenAiErrorResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to create the upload session.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn uploads_create() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1/uploads/{upload_id}/parts",
+        tag = "uploads",
+        params(("upload_id" = String, Path, description = "Upload session identifier.")),
+        request_body(
+            content = AddUploadPartRequest,
+            content_type = "multipart/form-data",
+            description = "Multipart upload part payload."
+        ),
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Created upload part.", body = UploadPartObject),
+            (status = 400, description = "Invalid upload part payload.", body = OpenAiErrorResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to add the upload part.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn upload_parts_create() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1/uploads/{upload_id}/complete",
+        tag = "uploads",
+        params(("upload_id" = String, Path, description = "Upload session identifier.")),
+        request_body = CompleteUploadRequest,
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Completed upload session.", body = UploadObject),
+            (status = 400, description = "Invalid upload completion payload.", body = OpenAiErrorResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested upload session was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to complete the upload session.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn upload_complete() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1/uploads/{upload_id}/cancel",
+        tag = "uploads",
+        params(("upload_id" = String, Path, description = "Upload session identifier.")),
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Cancelled upload session.", body = UploadObject),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested upload session was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to cancel the upload session.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn upload_cancel() {}
+
+    #[utoipa::path(
+        get,
+        path = "/v1/batches",
+        tag = "batches",
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Visible batches.", body = ListBatchesResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to load batches.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn batches_list() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1/batches",
+        tag = "batches",
+        request_body = CreateBatchRequest,
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Created batch.", body = BatchObject),
+            (status = 400, description = "Invalid batch payload.", body = OpenAiErrorResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to create the batch.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn batches_create() {}
+
+    #[utoipa::path(
+        get,
+        path = "/v1/batches/{batch_id}",
+        tag = "batches",
+        params(("batch_id" = String, Path, description = "Batch identifier.")),
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Visible batch metadata.", body = BatchObject),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested batch was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to load the batch.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn batch_get() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1/batches/{batch_id}/cancel",
+        tag = "batches",
+        params(("batch_id" = String, Path, description = "Batch identifier.")),
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Cancelled batch.", body = BatchObject),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested batch was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to cancel the batch.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn batch_cancel() {}
+
+    #[utoipa::path(
+        get,
+        path = "/v1/vector_stores",
+        tag = "vector-stores",
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Visible vector stores.", body = ListVectorStoresResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to load vector stores.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn vector_stores_list() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1/vector_stores",
+        tag = "vector-stores",
+        request_body = CreateVectorStoreRequest,
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Created vector store.", body = VectorStoreObject),
+            (status = 400, description = "Invalid vector store payload.", body = OpenAiErrorResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to create the vector store.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn vector_stores_create() {}
+
+    #[utoipa::path(
+        get,
+        path = "/v1/vector_stores/{vector_store_id}",
+        tag = "vector-stores",
+        params(("vector_store_id" = String, Path, description = "Vector store identifier.")),
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Visible vector store metadata.", body = VectorStoreObject),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested vector store was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to load the vector store.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn vector_store_get() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1/vector_stores/{vector_store_id}",
+        tag = "vector-stores",
+        params(("vector_store_id" = String, Path, description = "Vector store identifier.")),
+        request_body = UpdateVectorStoreRequest,
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Updated vector store.", body = VectorStoreObject),
+            (status = 400, description = "Invalid vector store update payload.", body = OpenAiErrorResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested vector store was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to update the vector store.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn vector_store_update() {}
+
+    #[utoipa::path(
+        delete,
+        path = "/v1/vector_stores/{vector_store_id}",
+        tag = "vector-stores",
+        params(("vector_store_id" = String, Path, description = "Vector store identifier.")),
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Deleted vector store.", body = DeleteVectorStoreResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested vector store was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to delete the vector store.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn vector_store_delete() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1/vector_stores/{vector_store_id}/search",
+        tag = "vector-stores",
+        params(("vector_store_id" = String, Path, description = "Vector store identifier.")),
+        request_body = SearchVectorStoreRequest,
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Vector store search result.", body = SearchVectorStoreResponse),
+            (status = 400, description = "Invalid vector store search payload.", body = OpenAiErrorResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested vector store was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to search the vector store.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn vector_store_search() {}
+
+    #[utoipa::path(
+        get,
+        path = "/v1/vector_stores/{vector_store_id}/files",
+        tag = "vector-stores",
+        params(("vector_store_id" = String, Path, description = "Vector store identifier.")),
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Visible vector store files.", body = ListVectorStoreFilesResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested vector store was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to load vector store files.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn vector_store_files_list() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1/vector_stores/{vector_store_id}/files",
+        tag = "vector-stores",
+        params(("vector_store_id" = String, Path, description = "Vector store identifier.")),
+        request_body = CreateVectorStoreFileRequest,
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Created vector store file link.", body = VectorStoreFileObject),
+            (status = 400, description = "Invalid vector store file payload.", body = OpenAiErrorResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested vector store was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to create the vector store file link.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn vector_store_files_create() {}
+
+    #[utoipa::path(
+        get,
+        path = "/v1/vector_stores/{vector_store_id}/files/{file_id}",
+        tag = "vector-stores",
+        params(
+            ("vector_store_id" = String, Path, description = "Vector store identifier."),
+            ("file_id" = String, Path, description = "File identifier.")
+        ),
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Visible vector store file metadata.", body = VectorStoreFileObject),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested vector store file was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to load the vector store file.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn vector_store_file_get() {}
+
+    #[utoipa::path(
+        delete,
+        path = "/v1/vector_stores/{vector_store_id}/files/{file_id}",
+        tag = "vector-stores",
+        params(
+            ("vector_store_id" = String, Path, description = "Vector store identifier."),
+            ("file_id" = String, Path, description = "File identifier.")
+        ),
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Deleted vector store file link.", body = DeleteVectorStoreFileResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested vector store file was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to delete the vector store file link.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn vector_store_file_delete() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1/vector_stores/{vector_store_id}/file_batches",
+        tag = "vector-stores",
+        params(("vector_store_id" = String, Path, description = "Vector store identifier.")),
+        request_body = CreateVectorStoreFileBatchRequest,
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Created vector store file batch.", body = VectorStoreFileBatchObject),
+            (status = 400, description = "Invalid vector store file batch payload.", body = OpenAiErrorResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested vector store was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to create the vector store file batch.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn vector_store_file_batches_create() {}
+
+    #[utoipa::path(
+        get,
+        path = "/v1/vector_stores/{vector_store_id}/file_batches/{batch_id}",
+        tag = "vector-stores",
+        params(
+            ("vector_store_id" = String, Path, description = "Vector store identifier."),
+            ("batch_id" = String, Path, description = "Vector store file batch identifier.")
+        ),
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Visible vector store file batch metadata.", body = VectorStoreFileBatchObject),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested vector store file batch was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to load the vector store file batch.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn vector_store_file_batch_get() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1/vector_stores/{vector_store_id}/file_batches/{batch_id}/cancel",
+        tag = "vector-stores",
+        params(
+            ("vector_store_id" = String, Path, description = "Vector store identifier."),
+            ("batch_id" = String, Path, description = "Vector store file batch identifier.")
+        ),
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Cancelled vector store file batch.", body = VectorStoreFileBatchObject),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested vector store file batch was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to cancel the vector store file batch.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn vector_store_file_batch_cancel() {}
+
+    #[utoipa::path(
+        get,
+        path = "/v1/vector_stores/{vector_store_id}/file_batches/{batch_id}/files",
+        tag = "vector-stores",
+        params(
+            ("vector_store_id" = String, Path, description = "Vector store identifier."),
+            ("batch_id" = String, Path, description = "Vector store file batch identifier.")
+        ),
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Visible vector store file batch files.", body = ListVectorStoreFilesResponse),
+            (status = 401, description = "Missing or invalid gateway API key.", body = OpenAiErrorResponse),
+            (status = 404, description = "Requested vector store file batch was not found.", body = OpenAiErrorResponse),
+            (status = 500, description = "Gateway failed to load vector store file batch files.", body = OpenAiErrorResponse)
+        )
+    )]
+    pub(super) async fn vector_store_file_batch_files_list() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1/messages",
+        tag = "compatibility",
+        request_body = Value,
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Anthropic-compatible message result.", body = Value),
+            (status = 400, description = "Invalid Anthropic compatibility payload.", body = Value),
+            (status = 401, description = "Missing or invalid gateway API key.", body = Value),
+            (status = 500, description = "Gateway failed to serve the Anthropic compatibility route.", body = Value)
+        )
+    )]
+    pub(super) async fn anthropic_messages() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1/messages/count_tokens",
+        tag = "compatibility",
+        request_body = Value,
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Anthropic-compatible token count result.", body = Value),
+            (status = 400, description = "Invalid Anthropic token count payload.", body = Value),
+            (status = 401, description = "Missing or invalid gateway API key.", body = Value),
+            (status = 500, description = "Gateway failed to serve the Anthropic token count route.", body = Value)
+        )
+    )]
+    pub(super) async fn anthropic_count_tokens() {}
+
+    #[utoipa::path(
+        post,
+        path = "/v1beta/models/{tail}",
+        tag = "compatibility",
+        params(("tail" = String, Path, description = "Gemini compatibility route suffix.")),
+        request_body = Value,
+        security(("bearerAuth" = [])),
+        responses(
+            (status = 200, description = "Gemini-compatible route result.", body = Value),
+            (status = 400, description = "Invalid Gemini compatibility payload.", body = Value),
+            (status = 401, description = "Missing or invalid gateway API key.", body = Value),
+            (status = 500, description = "Gateway failed to serve the Gemini compatibility route.", body = Value)
+        )
+    )]
+    pub(super) async fn gemini_models_compat() {}
+}
+
+fn gateway_openapi() -> utoipa::openapi::OpenApi {
+    OpenApiRouter::<()>::with_openapi(GatewayApiDoc::openapi())
+        .routes(routes!(openapi_paths::health))
+        .routes(routes!(openapi_paths::list_models))
+        .routes(routes!(openapi_paths::get_model))
+        .routes(routes!(openapi_paths::chat_completions))
+        .routes(routes!(openapi_paths::completions))
+        .routes(routes!(openapi_paths::responses))
+        .routes(routes!(openapi_paths::responses_input_tokens))
+        .routes(routes!(openapi_paths::responses_compact))
+        .routes(routes!(openapi_paths::response_get))
+        .routes(routes!(openapi_paths::response_delete))
+        .routes(routes!(openapi_paths::response_input_items))
+        .routes(routes!(openapi_paths::response_cancel))
+        .routes(routes!(openapi_paths::embeddings))
+        .routes(routes!(openapi_paths::moderations))
+        .routes(routes!(openapi_paths::image_generations))
+        .routes(routes!(openapi_paths::image_edits))
+        .routes(routes!(openapi_paths::image_variations))
+        .routes(routes!(openapi_paths::transcriptions))
+        .routes(routes!(openapi_paths::translations))
+        .routes(routes!(openapi_paths::audio_speech))
+        .routes(routes!(openapi_paths::audio_voices))
+        .routes(routes!(openapi_paths::audio_voice_consents))
+        .routes(routes!(openapi_paths::assistants_list))
+        .routes(routes!(openapi_paths::assistants_create))
+        .routes(routes!(openapi_paths::assistants_get))
+        .routes(routes!(openapi_paths::conversations_list))
+        .routes(routes!(openapi_paths::conversations_create))
+        .routes(routes!(openapi_paths::conversation_get))
+        .routes(routes!(openapi_paths::conversation_update))
+        .routes(routes!(openapi_paths::conversation_delete))
+        .routes(routes!(openapi_paths::conversation_items_list))
+        .routes(routes!(openapi_paths::conversation_items_create))
+        .routes(routes!(openapi_paths::conversation_item_get))
+        .routes(routes!(openapi_paths::conversation_item_delete))
+        .routes(routes!(openapi_paths::threads_create))
+        .routes(routes!(openapi_paths::thread_get))
+        .routes(routes!(openapi_paths::thread_update))
+        .routes(routes!(openapi_paths::thread_delete))
+        .routes(routes!(openapi_paths::thread_messages_list))
+        .routes(routes!(openapi_paths::thread_messages_create))
+        .routes(routes!(openapi_paths::thread_message_get))
+        .routes(routes!(openapi_paths::thread_message_update))
+        .routes(routes!(openapi_paths::thread_message_delete))
+        .routes(routes!(openapi_paths::thread_and_run_create))
+        .routes(routes!(openapi_paths::thread_runs_list))
+        .routes(routes!(openapi_paths::thread_runs_create))
+        .routes(routes!(openapi_paths::thread_run_get))
+        .routes(routes!(openapi_paths::thread_run_update))
+        .routes(routes!(openapi_paths::thread_run_cancel))
+        .routes(routes!(openapi_paths::thread_run_submit_tool_outputs))
+        .routes(routes!(openapi_paths::thread_run_steps_list))
+        .routes(routes!(openapi_paths::thread_run_step_get))
+        .routes(routes!(openapi_paths::realtime_sessions))
+        .routes(routes!(openapi_paths::files_list))
+        .routes(routes!(openapi_paths::files_create))
+        .routes(routes!(openapi_paths::file_get))
+        .routes(routes!(openapi_paths::file_delete))
+        .routes(routes!(openapi_paths::uploads_create))
+        .routes(routes!(openapi_paths::upload_parts_create))
+        .routes(routes!(openapi_paths::upload_complete))
+        .routes(routes!(openapi_paths::upload_cancel))
+        .routes(routes!(openapi_paths::batches_list))
+        .routes(routes!(openapi_paths::batches_create))
+        .routes(routes!(openapi_paths::batch_get))
+        .routes(routes!(openapi_paths::batch_cancel))
+        .routes(routes!(openapi_paths::vector_stores_list))
+        .routes(routes!(openapi_paths::vector_stores_create))
+        .routes(routes!(openapi_paths::vector_store_get))
+        .routes(routes!(openapi_paths::vector_store_update))
+        .routes(routes!(openapi_paths::vector_store_delete))
+        .routes(routes!(openapi_paths::vector_store_search))
+        .routes(routes!(openapi_paths::vector_store_files_list))
+        .routes(routes!(openapi_paths::vector_store_files_create))
+        .routes(routes!(openapi_paths::vector_store_file_get))
+        .routes(routes!(openapi_paths::vector_store_file_delete))
+        .routes(routes!(openapi_paths::vector_store_file_batches_create))
+        .routes(routes!(openapi_paths::vector_store_file_batch_get))
+        .routes(routes!(openapi_paths::vector_store_file_batch_cancel))
+        .routes(routes!(openapi_paths::vector_store_file_batch_files_list))
+        .routes(routes!(openapi_paths::anthropic_messages))
+        .routes(routes!(openapi_paths::anthropic_count_tokens))
+        .routes(routes!(openapi_paths::gemini_models_compat))
+        .into_openapi()
+}
+
+async fn gateway_openapi_handler() -> Json<utoipa::openapi::OpenApi> {
+    Json(gateway_openapi())
+}
+
+async fn gateway_docs_index_handler() -> Html<String> {
+    Html(
+        r#"<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SDKWORK Gateway API</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      body {
+        margin: 0;
+        background: #f5f7fb;
+        color: #101828;
+      }
+
+      .shell {
+        display: grid;
+        min-height: 100vh;
+        grid-template-rows: auto 1fr;
+      }
+
+      .hero {
+        padding: 20px 24px 16px;
+        border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+        background: rgba(255, 255, 255, 0.96);
+      }
+
+      .eyebrow {
+        margin: 0 0 8px;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: #475467;
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: 28px;
+        line-height: 1.1;
+      }
+
+      p {
+        margin: 0;
+        font-size: 14px;
+        line-height: 1.6;
+        color: #475467;
+      }
+
+      code {
+        padding: 2px 6px;
+        border-radius: 999px;
+        background: rgba(15, 23, 42, 0.06);
+        font-size: 12px;
+      }
+
+      iframe {
+        width: 100%;
+        height: 100%;
+        border: 0;
+        background: white;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        body {
+          background: #09090b;
+          color: #fafafa;
+        }
+
+        .hero {
+          background: rgba(24, 24, 27, 0.96);
+          border-bottom-color: rgba(255, 255, 255, 0.08);
+        }
+
+        .eyebrow,
+        p {
+          color: #a1a1aa;
+        }
+
+        code {
+          background: rgba(255, 255, 255, 0.08);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <p class="eyebrow">OpenAPI 3.1</p>
+        <h1>SDKWORK Gateway API</h1>
+        <p>Interactive documentation is backed by the live schema endpoint <code>/openapi.json</code>.</p>
+      </section>
+      <iframe src="/docs/ui/" title="SDKWORK Gateway API"></iframe>
+    </main>
+  </body>
+</html>"#
+            .to_string(),
+    )
+}
+
+fn gateway_docs_router<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    Router::new()
+        .route("/openapi.json", get(gateway_openapi_handler))
+        .route("/docs", get(gateway_docs_index_handler))
+        .merge(SwaggerUi::new("/docs/ui/").config(SwaggerUiConfig::new([
+            SwaggerUiUrl::with_primary("SDKWORK Gateway API", "/openapi.json", true),
+        ])))
+}
+
+fn http_exposure_config() -> anyhow::Result<HttpExposureConfig> {
+    HttpExposureConfig::from_env()
+}
+
+fn browser_cors_layer(http_exposure: &HttpExposureConfig) -> CorsLayer {
+    let layer = CorsLayer::new().allow_methods(Any).allow_headers(Any);
+    if http_exposure.browser_allowed_origins.is_empty() {
+        return layer;
     }
-}
 
-fn browser_cors_layer() -> CorsLayer {
-    CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any)
-}
-
-fn humanize_route_path(path: &str, ignored_prefix: Option<&str>) -> String {
-    let parts = path
-        .trim_matches('/')
-        .split('/')
-        .filter(|segment| !segment.is_empty())
-        .filter(|segment| Some(*segment) != ignored_prefix)
-        .map(|segment| {
-            if segment.starts_with('{') && segment.ends_with('}') {
-                format!(
-                    "by {}",
-                    segment
-                        .trim_matches(|ch| ch == '{' || ch == '}')
-                        .replace(['_', '-'], " ")
-                )
-            } else {
-                segment.replace(['_', '-'], " ")
+    let origins = http_exposure
+        .browser_allowed_origins
+        .iter()
+        .filter_map(|origin| match HeaderValue::from_str(origin) {
+            Ok(value) => Some(value),
+            Err(error) => {
+                eprintln!(
+                    "ignoring invalid browser allowed origin while building gateway cors layer: {origin} ({error})"
+                );
+                None
             }
         })
         .collect::<Vec<_>>();
-
-    if parts.is_empty() {
-        "root".to_owned()
-    } else {
-        parts.join(" / ")
+    if origins.is_empty() {
+        return layer;
     }
+    layer.allow_origin(origins)
+}
+
+fn metrics_route<S>(
+    metrics: Arc<HttpMetricsRegistry>,
+    http_exposure: &HttpExposureConfig,
+) -> axum::routing::MethodRouter<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    let expected_token: Arc<str> = Arc::from(http_exposure.metrics_bearer_token.clone());
+    get(move |headers: HeaderMap| {
+        let metrics = metrics.clone();
+        let expected_token = expected_token.clone();
+        async move {
+            if !metrics_request_authorized(&headers, expected_token.as_ref()) {
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    [(header::WWW_AUTHENTICATE, "Bearer")],
+                    "metrics bearer token required",
+                )
+                    .into_response();
+            }
+
+            (
+                [(
+                    header::CONTENT_TYPE,
+                    "text/plain; version=0.0.4; charset=utf-8",
+                )],
+                metrics.render_prometheus(),
+            )
+                .into_response()
+        }
+    })
+}
+
+fn metrics_request_authorized(headers: &HeaderMap, expected_token: &str) -> bool {
+    if expected_token.is_empty() {
+        return false;
+    }
+
+    let Some(value) = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return false;
+    };
+    let Some((scheme, token)) = value.trim().split_once(' ') else {
+        return false;
+    };
+    scheme.eq_ignore_ascii_case("Bearer") && token.trim() == expected_token
 }
 
 pub struct GatewayApiState {
     live_store: Reloadable<Arc<dyn AdminStore>>,
     live_secret_manager: Reloadable<CredentialSecretManager>,
+    live_commercial_billing: Option<Reloadable<Arc<dyn GatewayCommercialBillingKernel>>>,
     store: Arc<dyn AdminStore>,
     secret_manager: CredentialSecretManager,
+    commercial_billing: Option<Arc<dyn GatewayCommercialBillingKernel>>,
 }
 
 impl Clone for GatewayApiState {
@@ -430,8 +1995,14 @@ impl Clone for GatewayApiState {
         Self {
             live_store: self.live_store.clone(),
             live_secret_manager: self.live_secret_manager.clone(),
+            live_commercial_billing: self.live_commercial_billing.clone(),
             store: self.live_store.snapshot(),
             secret_manager: self.live_secret_manager.snapshot(),
+            commercial_billing: self
+                .live_commercial_billing
+                .as_ref()
+                .map(Reloadable::snapshot)
+                .or_else(|| self.commercial_billing.clone()),
         }
     }
 }
@@ -442,23 +2013,31 @@ impl GatewayApiState {
     }
 
     pub fn with_master_key(pool: SqlitePool, credential_master_key: impl Into<String>) -> Self {
-        Self::with_store_and_secret_manager(
-            Arc::new(SqliteAdminStore::new(pool)),
+        let store = Arc::new(SqliteAdminStore::new(pool));
+        Self::with_store_secret_manager_and_commercial_billing(
+            store.clone(),
             CredentialSecretManager::database_encrypted(credential_master_key),
+            Some(store),
         )
     }
 
     pub fn with_secret_manager(pool: SqlitePool, secret_manager: CredentialSecretManager) -> Self {
-        Self::with_store_and_secret_manager(Arc::new(SqliteAdminStore::new(pool)), secret_manager)
+        let store = Arc::new(SqliteAdminStore::new(pool));
+        Self::with_store_secret_manager_and_commercial_billing(
+            store.clone(),
+            secret_manager,
+            Some(store),
+        )
     }
 
     pub fn with_store_and_secret_manager(
         store: Arc<dyn AdminStore>,
         secret_manager: CredentialSecretManager,
     ) -> Self {
-        Self::with_live_store_and_secret_manager_handle(
+        Self::with_live_store_secret_manager_and_commercial_billing_handle(
             Reloadable::new(store),
             Reloadable::new(secret_manager),
+            None,
         )
     }
 
@@ -466,18 +2045,48 @@ impl GatewayApiState {
         live_store: Reloadable<Arc<dyn AdminStore>>,
         secret_manager: CredentialSecretManager,
     ) -> Self {
-        Self::with_live_store_and_secret_manager_handle(live_store, Reloadable::new(secret_manager))
+        Self::with_live_store_secret_manager_and_commercial_billing_handle(
+            live_store,
+            Reloadable::new(secret_manager),
+            None,
+        )
     }
 
     pub fn with_live_store_and_secret_manager_handle(
         live_store: Reloadable<Arc<dyn AdminStore>>,
         live_secret_manager: Reloadable<CredentialSecretManager>,
     ) -> Self {
+        Self::with_live_store_secret_manager_and_commercial_billing_handle(
+            live_store,
+            live_secret_manager,
+            None,
+        )
+    }
+
+    fn with_store_secret_manager_and_commercial_billing(
+        store: Arc<dyn AdminStore>,
+        secret_manager: CredentialSecretManager,
+        commercial_billing: Option<Arc<dyn GatewayCommercialBillingKernel>>,
+    ) -> Self {
+        Self::with_live_store_secret_manager_and_commercial_billing_handle(
+            Reloadable::new(store),
+            Reloadable::new(secret_manager),
+            commercial_billing.map(Reloadable::new),
+        )
+    }
+
+    fn with_live_store_secret_manager_and_commercial_billing_handle(
+        live_store: Reloadable<Arc<dyn AdminStore>>,
+        live_secret_manager: Reloadable<CredentialSecretManager>,
+        live_commercial_billing: Option<Reloadable<Arc<dyn GatewayCommercialBillingKernel>>>,
+    ) -> Self {
         Self {
             store: live_store.snapshot(),
             secret_manager: live_secret_manager.snapshot(),
+            commercial_billing: live_commercial_billing.as_ref().map(Reloadable::snapshot),
             live_store,
             live_secret_manager,
+            live_commercial_billing,
         }
     }
 }
@@ -490,6 +2099,28 @@ tokio::task_local! {
     static CURRENT_GATEWAY_REQUEST_STARTED_AT: Instant;
 }
 
+const GATEWAY_COMMERCIAL_HOLD_TTL_MS: u64 = 5 * 60 * 1000;
+const GATEWAY_COMMERCIAL_ID_SEQUENCE_BITS: u32 = 15;
+const GATEWAY_COMMERCIAL_ID_SEQUENCE_MASK: u64 = (1_u64 << GATEWAY_COMMERCIAL_ID_SEQUENCE_BITS) - 1;
+
+static GATEWAY_COMMERCIAL_ID_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Debug, Clone)]
+struct GatewayCommercialAdmission {
+    request_id: u64,
+    billing_settlement: BillingPolicyExecutionResult,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct GatewayCommercialAdmissionSpec {
+    quoted_amount: f64,
+}
+
+enum GatewayCommercialAdmissionDecision {
+    Canonical(GatewayCommercialAdmission),
+    LegacyQuota,
+}
+
 #[derive(Clone, Debug)]
 struct AuthenticatedGatewayRequest(IdentityGatewayRequestContext);
 
@@ -500,6 +2131,10 @@ impl AuthenticatedGatewayRequest {
 
     fn project_id(&self) -> &str {
         self.0.project_id()
+    }
+
+    fn context(&self) -> &IdentityGatewayRequestContext {
+        &self.0
     }
 }
 
@@ -539,13 +2174,6 @@ impl FromRequestParts<GatewayApiState> for AuthenticatedGatewayRequest {
             context
         };
 
-        if let Err(response) =
-            enforce_gateway_request_rate_limit(state.store.as_ref(), &context, parts.uri.path())
-                .await
-        {
-            return Err(response);
-        }
-
         Ok(Self(context))
     }
 }
@@ -560,6 +2188,10 @@ impl CompatAuthenticatedGatewayRequest {
 
     fn project_id(&self) -> &str {
         self.0.project_id()
+    }
+
+    fn context(&self) -> &IdentityGatewayRequestContext {
+        &self.0
     }
 }
 
@@ -590,13 +2222,6 @@ impl FromRequestParts<GatewayApiState> for CompatAuthenticatedGatewayRequest {
             context
         };
 
-        if let Err(response) =
-            enforce_gateway_request_rate_limit(state.store.as_ref(), &context, parts.uri.path())
-                .await
-        {
-            return Err(response);
-        }
-
         Ok(Self(context))
     }
 }
@@ -608,12 +2233,12 @@ fn extract_compat_gateway_token(parts: &Parts) -> Option<String> {
         .or_else(|| query_parameter(parts.uri.query(), "key"))
 }
 
-async fn enforce_gateway_request_rate_limit(
+async fn evaluate_gateway_request_rate_limit(
     store: &dyn AdminStore,
     context: &IdentityGatewayRequestContext,
     route_key: &str,
-) -> Result<(), Response> {
-    match check_rate_limit(
+) -> anyhow::Result<RateLimitCheckResult> {
+    check_rate_limit(
         store,
         context.project_id(),
         Some(context.api_key_hash()),
@@ -622,19 +2247,6 @@ async fn enforce_gateway_request_rate_limit(
         1,
     )
     .await
-    {
-        Ok(result) if result.allowed => Ok(()),
-        Ok(result) => Err(rate_limit_exceeded_response(
-            context.project_id(),
-            route_key,
-            &result,
-        )),
-        Err(_) => Err((
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "failed to evaluate rate limit",
-        )
-            .into_response()),
-    }
 }
 
 fn rate_limit_exceeded_response(
@@ -648,6 +2260,68 @@ fn rate_limit_exceeded_response(
     );
     error.error.code = Some("rate_limit_exceeded".to_owned());
     (axum::http::StatusCode::TOO_MANY_REQUESTS, Json(error)).into_response()
+}
+
+fn apply_rate_limit_headers(
+    headers: &mut HeaderMap,
+    evaluation: &RateLimitCheckResult,
+    include_retry_after: bool,
+) {
+    insert_optional_rate_limit_header(
+        headers,
+        "x-ratelimit-policy",
+        evaluation.policy_id.as_deref(),
+    );
+    insert_optional_rate_limit_header(
+        headers,
+        "x-ratelimit-limit",
+        evaluation.limit_requests.map(|value| value.to_string()),
+    );
+    insert_optional_rate_limit_header(
+        headers,
+        "x-ratelimit-remaining",
+        evaluation.remaining_requests.map(|value| value.to_string()),
+    );
+
+    let reset_after_secs = rate_limit_reset_after_secs(evaluation);
+    insert_optional_rate_limit_header(
+        headers,
+        "x-ratelimit-reset",
+        reset_after_secs.map(|value| value.to_string()),
+    );
+
+    if include_retry_after {
+        if let Some(retry_after) = reset_after_secs {
+            if let Ok(value) = HeaderValue::from_str(&retry_after.to_string()) {
+                headers.insert(header::RETRY_AFTER, value);
+            }
+        }
+    }
+}
+
+fn insert_optional_rate_limit_header<T>(
+    headers: &mut HeaderMap,
+    name: &'static str,
+    value: Option<T>,
+) where
+    T: Into<String>,
+{
+    let Some(value) = value.map(Into::into) else {
+        return;
+    };
+    if let Ok(value) = HeaderValue::from_str(&value) {
+        headers.insert(name, value);
+    }
+}
+
+fn rate_limit_reset_after_secs(evaluation: &RateLimitCheckResult) -> Option<u64> {
+    let window_end_ms = evaluation.window_end_ms?;
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()?
+        .as_millis() as u64;
+    let remaining_ms = window_end_ms.saturating_sub(now_ms);
+    Some(remaining_ms.saturating_add(999).saturating_div(1000).max(1))
 }
 
 fn rate_limit_exceeded_message(
@@ -756,6 +2430,49 @@ async fn apply_gateway_request_context(
             ),
         )
         .await
+}
+
+async fn apply_gateway_rate_limit(
+    State(state): State<GatewayApiState>,
+    request: Request<Body>,
+    next: Next,
+) -> Response {
+    if !request.uri().path().starts_with("/v1") {
+        return next.run(request).await;
+    }
+
+    let Some(context) = request
+        .extensions()
+        .get::<IdentityGatewayRequestContext>()
+        .cloned()
+    else {
+        return next.run(request).await;
+    };
+
+    let route_key = request.uri().path().to_owned();
+    let evaluation =
+        match evaluate_gateway_request_rate_limit(state.store.as_ref(), &context, &route_key).await
+        {
+            Ok(result) => result,
+            Err(_) => {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to evaluate rate limit",
+                )
+                    .into_response();
+            }
+        };
+
+    if !evaluation.allowed {
+        let mut response =
+            rate_limit_exceeded_response(context.project_id(), &route_key, &evaluation);
+        apply_rate_limit_headers(response.headers_mut(), &evaluation, true);
+        return response;
+    }
+
+    let mut response = next.run(request).await;
+    apply_rate_limit_headers(response.headers_mut(), &evaluation, false);
+    response
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -901,34 +2618,37 @@ async fn apply_request_routing_region(request: Request<Body>, next: Next) -> Res
     with_request_routing_region(requested_region, next.run(request)).await
 }
 
+pub fn try_gateway_router() -> anyhow::Result<Router> {
+    try_gateway_router_with_stateless_config(StatelessGatewayConfig::default())
+}
+
 pub fn gateway_router() -> Router {
-    gateway_router_with_stateless_config(StatelessGatewayConfig::default())
+    try_gateway_router().expect("http exposure config should load from process env")
+}
+
+pub fn try_gateway_router_with_stateless_config(
+    config: StatelessGatewayConfig,
+) -> anyhow::Result<Router> {
+    Ok(gateway_router_with_stateless_config_and_http_exposure(
+        config,
+        http_exposure_config()?,
+    ))
 }
 
 pub fn gateway_router_with_stateless_config(config: StatelessGatewayConfig) -> Router {
+    try_gateway_router_with_stateless_config(config)
+        .expect("http exposure config should load from process env")
+}
+
+pub fn gateway_router_with_stateless_config_and_http_exposure(
+    config: StatelessGatewayConfig,
+    http_exposure: HttpExposureConfig,
+) -> Router {
     let service_name: Arc<str> = Arc::from("gateway");
     let metrics = Arc::new(HttpMetricsRegistry::new("gateway"));
     Router::new()
-        .route("/openapi.json", get(gateway_openapi_handler))
-        .route("/docs", get(gateway_docs_handler))
-        .route(
-            "/metrics",
-            get({
-                let metrics = metrics.clone();
-                move || {
-                    let metrics = metrics.clone();
-                    async move {
-                        (
-                            [(
-                                header::CONTENT_TYPE,
-                                "text/plain; version=0.0.4; charset=utf-8",
-                            )],
-                            metrics.render_prometheus(),
-                        )
-                    }
-                }
-            }),
-        )
+        .merge(gateway_docs_router())
+        .route("/metrics", metrics_route(metrics.clone(), &http_exposure))
         .route("/health", get(|| async { "ok" }))
         .route("/v1/messages", post(anthropic_messages_handler))
         .route(
@@ -1250,7 +2970,7 @@ pub fn gateway_router_with_stateless_config(config: StatelessGatewayConfig) -> R
             metrics,
             observe_http_metrics,
         ))
-        .layer(browser_cors_layer())
+        .layer(browser_cors_layer(&http_exposure))
         .layer(axum::middleware::from_fn_with_state(
             service_name,
             observe_http_tracing,
@@ -1273,20 +2993,17 @@ pub fn gateway_router_with_pool_and_master_key(
     pool: SqlitePool,
     credential_master_key: impl Into<String>,
 ) -> Router {
-    gateway_router_with_store_and_secret_manager(
-        Arc::new(SqliteAdminStore::new(pool)),
-        CredentialSecretManager::database_encrypted(credential_master_key),
-    )
+    gateway_router_with_state(GatewayApiState::with_master_key(
+        pool,
+        credential_master_key,
+    ))
 }
 
 pub fn gateway_router_with_pool_and_secret_manager(
     pool: SqlitePool,
     secret_manager: CredentialSecretManager,
 ) -> Router {
-    gateway_router_with_store_and_secret_manager(
-        Arc::new(SqliteAdminStore::new(pool)),
-        secret_manager,
-    )
+    gateway_router_with_state(GatewayApiState::with_secret_manager(pool, secret_manager))
 }
 
 pub fn gateway_router_with_store_and_secret_manager(
@@ -1299,30 +3016,26 @@ pub fn gateway_router_with_store_and_secret_manager(
     ))
 }
 
+pub fn try_gateway_router_with_state(state: GatewayApiState) -> anyhow::Result<Router> {
+    Ok(gateway_router_with_state_and_http_exposure(
+        state,
+        http_exposure_config()?,
+    ))
+}
+
 pub fn gateway_router_with_state(state: GatewayApiState) -> Router {
+    try_gateway_router_with_state(state).expect("http exposure config should load from process env")
+}
+
+pub fn gateway_router_with_state_and_http_exposure(
+    state: GatewayApiState,
+    http_exposure: HttpExposureConfig,
+) -> Router {
     let service_name: Arc<str> = Arc::from("gateway");
     let metrics = Arc::new(HttpMetricsRegistry::new("gateway"));
     Router::new()
-        .route("/openapi.json", get(gateway_openapi_handler))
-        .route("/docs", get(gateway_docs_handler))
-        .route(
-            "/metrics",
-            get({
-                let metrics = metrics.clone();
-                move || {
-                    let metrics = metrics.clone();
-                    async move {
-                        (
-                            [(
-                                header::CONTENT_TYPE,
-                                "text/plain; version=0.0.4; charset=utf-8",
-                            )],
-                            metrics.render_prometheus(),
-                        )
-                    }
-                }
-            }),
-        )
+        .merge(gateway_docs_router())
+        .route("/metrics", metrics_route(metrics.clone(), &http_exposure))
         .route("/health", get(|| async { "ok" }))
         .route("/v1/messages", post(anthropic_messages_with_state_handler))
         .route(
@@ -1536,12 +3249,18 @@ pub fn gateway_router_with_state(state: GatewayApiState) -> Router {
             "/v1/videos/{video_id}/extend",
             post(video_extend_with_state_handler),
         )
-        .route("/v1/music", get(music_list_with_state_handler).post(music_with_state_handler))
+        .route(
+            "/v1/music",
+            get(music_list_with_state_handler).post(music_with_state_handler),
+        )
         .route(
             "/v1/music/{music_id}",
             get(music_retrieve_with_state_handler).delete(music_delete_with_state_handler),
         )
-        .route("/v1/music/{music_id}/content", get(music_content_with_state_handler))
+        .route(
+            "/v1/music/{music_id}/content",
+            get(music_content_with_state_handler),
+        )
         .route("/v1/music/lyrics", post(music_lyrics_with_state_handler))
         .route("/v1/uploads", post(uploads_with_state_handler))
         .route(
@@ -1701,6 +3420,10 @@ pub fn gateway_router_with_state(state: GatewayApiState) -> Router {
         )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
+            apply_gateway_rate_limit,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
             apply_gateway_request_context,
         ))
         .layer(axum::middleware::from_fn(apply_request_routing_region))
@@ -1708,6 +3431,7 @@ pub fn gateway_router_with_state(state: GatewayApiState) -> Router {
             metrics,
             observe_http_metrics,
         ))
+        .layer(browser_cors_layer(&http_exposure))
         .layer(axum::middleware::from_fn_with_state(
             service_name,
             observe_http_tracing,
@@ -1731,6 +3455,24 @@ async fn list_models_handler(request_context: StatelessGatewayRequest) -> Respon
     .into_response()
 }
 
+fn local_model_not_found_response(error: anyhow::Error) -> Response {
+    local_gateway_error_response(error, "Requested model was not found.")
+}
+
+fn local_model_retrieve_response(tenant_id: &str, project_id: &str, model_id: &str) -> Response {
+    match get_model(tenant_id, project_id, model_id).map_err(local_model_not_found_response) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_model_delete_response(tenant_id: &str, project_id: &str, model_id: &str) -> Response {
+    match delete_model(tenant_id, project_id, model_id).map_err(local_model_not_found_response) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
 async fn model_retrieve_handler(
     request_context: StatelessGatewayRequest,
     Path(model_id): Path<String>,
@@ -1745,15 +3487,11 @@ async fn model_retrieve_handler(
         }
     }
 
-    Json(
-        get_model(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &model_id,
-        )
-        .expect("model response"),
+    local_model_retrieve_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &model_id,
     )
-    .into_response()
 }
 
 async fn model_delete_handler(
@@ -1770,15 +3508,11 @@ async fn model_delete_handler(
         }
     }
 
-    Json(
-        delete_model(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &model_id,
-        )
-        .expect("model delete response"),
+    local_model_delete_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &model_id,
     )
-    .into_response()
 }
 
 async fn list_models_from_store_handler(
@@ -1868,27 +3602,22 @@ async fn chat_completions_handler(
             }
         }
 
-        let body = format!(
-            "{}{}",
-            SseFrame::data("{\"id\":\"chatcmpl_1\",\"object\":\"chat.completion.chunk\"}"),
-            SseFrame::data("[DONE]")
+        return local_chat_completion_stream_response(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &request.model,
         );
-        return ([(header::CONTENT_TYPE, "text/event-stream")], body).into_response();
     }
 
     match relay_stateless_json_request(&request_context, ProviderRequest::ChatCompletions(&request))
         .await
     {
         Ok(Some(response)) => Json(response).into_response(),
-        Ok(None) => Json(
-            create_chat_completion(
-                request_context.tenant_id(),
-                request_context.project_id(),
-                &request.model,
-            )
-            .expect("chat completion"),
-        )
-        .into_response(),
+        Ok(None) => local_chat_completion_response(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &request.model,
+        ),
         Err(_) => bad_gateway_openai_response("failed to relay upstream chat completion"),
     }
 }
@@ -1925,15 +3654,11 @@ async fn chat_completion_retrieve_handler(
         }
     }
 
-    Json(
-        get_chat_completion(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &completion_id,
-        )
-        .expect("chat completion"),
+    local_chat_completion_retrieve_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &completion_id,
     )
-    .into_response()
 }
 
 async fn chat_completion_update_handler(
@@ -1954,16 +3679,12 @@ async fn chat_completion_update_handler(
         }
     }
 
-    Json(
-        update_chat_completion(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &completion_id,
-            request.metadata.unwrap_or(serde_json::json!({})),
-        )
-        .expect("chat completion update"),
+    local_chat_completion_update_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &completion_id,
+        request.metadata.unwrap_or(serde_json::json!({})),
     )
-    .into_response()
 }
 
 async fn chat_completion_delete_handler(
@@ -1983,15 +3704,11 @@ async fn chat_completion_delete_handler(
         }
     }
 
-    Json(
-        delete_chat_completion(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &completion_id,
-        )
-        .expect("chat completion delete"),
+    local_chat_completion_delete_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &completion_id,
     )
-    .into_response()
 }
 
 async fn chat_completion_messages_list_handler(
@@ -2013,15 +3730,11 @@ async fn chat_completion_messages_list_handler(
         }
     }
 
-    Json(
-        list_chat_completion_messages(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &completion_id,
-        )
-        .expect("chat completion messages"),
+    local_chat_completion_messages_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &completion_id,
     )
-    .into_response()
 }
 
 async fn conversations_handler(
@@ -2078,15 +3791,11 @@ async fn conversation_retrieve_handler(
         }
     }
 
-    Json(
-        get_conversation(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &conversation_id,
-        )
-        .expect("conversation"),
+    local_conversation_retrieve_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &conversation_id,
     )
-    .into_response()
 }
 
 async fn conversation_update_handler(
@@ -2107,16 +3816,12 @@ async fn conversation_update_handler(
         }
     }
 
-    Json(
-        update_conversation(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &conversation_id,
-            request.metadata.unwrap_or(serde_json::json!({})),
-        )
-        .expect("conversation update"),
+    local_conversation_update_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &conversation_id,
+        request.metadata.unwrap_or(serde_json::json!({})),
     )
-    .into_response()
 }
 
 async fn conversation_delete_handler(
@@ -2136,15 +3841,11 @@ async fn conversation_delete_handler(
         }
     }
 
-    Json(
-        delete_conversation(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &conversation_id,
-        )
-        .expect("conversation delete"),
+    local_conversation_delete_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &conversation_id,
     )
-    .into_response()
 }
 
 async fn conversation_items_handler(
@@ -2165,15 +3866,11 @@ async fn conversation_items_handler(
         }
     }
 
-    Json(
-        create_conversation_items(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &conversation_id,
-        )
-        .expect("conversation items create"),
+    local_conversation_items_create_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &conversation_id,
     )
-    .into_response()
 }
 
 async fn conversation_items_list_handler(
@@ -2193,15 +3890,11 @@ async fn conversation_items_list_handler(
         }
     }
 
-    Json(
-        list_conversation_items(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &conversation_id,
-        )
-        .expect("conversation items list"),
+    local_conversation_items_list_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &conversation_id,
     )
-    .into_response()
 }
 
 async fn conversation_item_retrieve_handler(
@@ -2223,16 +3916,12 @@ async fn conversation_item_retrieve_handler(
         }
     }
 
-    Json(
-        get_conversation_item(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &conversation_id,
-            &item_id,
-        )
-        .expect("conversation item"),
+    local_conversation_item_retrieve_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &conversation_id,
+        &item_id,
     )
-    .into_response()
 }
 
 async fn conversation_item_delete_handler(
@@ -2254,16 +3943,12 @@ async fn conversation_item_delete_handler(
         }
     }
 
-    Json(
-        delete_conversation_item(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &conversation_id,
-            &item_id,
-        )
-        .expect("conversation item delete"),
+    local_conversation_item_delete_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &conversation_id,
+        &item_id,
     )
-    .into_response()
 }
 
 async fn threads_handler(
@@ -2299,15 +3984,11 @@ async fn thread_retrieve_handler(
         }
     }
 
-    Json(
-        get_thread(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &thread_id,
-        )
-        .expect("thread retrieve"),
+    local_thread_retrieve_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &thread_id,
     )
-    .into_response()
 }
 
 async fn thread_update_handler(
@@ -2328,15 +4009,11 @@ async fn thread_update_handler(
         }
     }
 
-    Json(
-        update_thread(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &thread_id,
-        )
-        .expect("thread update"),
+    local_thread_update_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &thread_id,
     )
-    .into_response()
 }
 
 async fn thread_delete_handler(
@@ -2353,15 +4030,11 @@ async fn thread_delete_handler(
         }
     }
 
-    Json(
-        delete_thread(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &thread_id,
-        )
-        .expect("thread delete"),
+    local_thread_delete_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &thread_id,
     )
-    .into_response()
 }
 
 async fn thread_messages_handler(
@@ -2383,17 +4056,16 @@ async fn thread_messages_handler(
     }
 
     let text = request.content.as_str().unwrap_or("hello");
-    Json(
-        create_thread_message(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &thread_id,
-            &request.role,
-            text,
-        )
-        .expect("thread message create"),
-    )
-    .into_response()
+    match local_thread_messages_create_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &thread_id,
+        &request.role,
+        text,
+    ) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
 }
 
 async fn thread_messages_list_handler(
@@ -2413,15 +4085,11 @@ async fn thread_messages_list_handler(
         }
     }
 
-    Json(
-        list_thread_messages(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &thread_id,
-        )
-        .expect("thread messages list"),
+    local_thread_messages_list_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &thread_id,
     )
-    .into_response()
 }
 
 async fn thread_message_retrieve_handler(
@@ -2441,16 +4109,12 @@ async fn thread_message_retrieve_handler(
         }
     }
 
-    Json(
-        get_thread_message(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &thread_id,
-            &message_id,
-        )
-        .expect("thread message retrieve"),
+    local_thread_message_retrieve_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &thread_id,
+        &message_id,
     )
-    .into_response()
 }
 
 async fn thread_message_update_handler(
@@ -2471,16 +4135,12 @@ async fn thread_message_update_handler(
         }
     }
 
-    Json(
-        update_thread_message(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &thread_id,
-            &message_id,
-        )
-        .expect("thread message update"),
+    local_thread_message_update_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &thread_id,
+        &message_id,
     )
-    .into_response()
 }
 
 async fn thread_message_delete_handler(
@@ -2500,16 +4160,12 @@ async fn thread_message_delete_handler(
         }
     }
 
-    Json(
-        delete_thread_message(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &thread_id,
-            &message_id,
-        )
-        .expect("thread message delete"),
+    local_thread_message_delete_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &thread_id,
+        &message_id,
     )
-    .into_response()
 }
 
 async fn thread_and_run_handler(
@@ -2526,15 +4182,40 @@ async fn thread_and_run_handler(
         }
     }
 
-    Json(
-        create_thread_and_run(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &request.assistant_id,
-        )
-        .expect("thread and run create"),
+    local_thread_and_run_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &request.assistant_id,
     )
-    .into_response()
+}
+
+fn local_thread_and_run_error_response(error: anyhow::Error) -> Response {
+    let message = error.to_string();
+    if local_gateway_error_is_invalid_request(&message) {
+        return invalid_request_openai_response(message, "invalid_assistant_id");
+    }
+
+    bad_gateway_openai_response(message)
+}
+
+fn local_thread_and_run_result(
+    tenant_id: &str,
+    project_id: &str,
+    assistant_id: &str,
+) -> std::result::Result<RunObject, Response> {
+    create_thread_and_run(tenant_id, project_id, assistant_id)
+        .map_err(local_thread_and_run_error_response)
+}
+
+fn local_thread_and_run_response(
+    tenant_id: &str,
+    project_id: &str,
+    assistant_id: &str,
+) -> Response {
+    match local_thread_and_run_result(tenant_id, project_id, assistant_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
 }
 
 async fn thread_runs_handler(
@@ -2555,17 +4236,16 @@ async fn thread_runs_handler(
         }
     }
 
-    Json(
-        create_thread_run(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &thread_id,
-            &request.assistant_id,
-            request.model.as_deref(),
-        )
-        .expect("thread run create"),
-    )
-    .into_response()
+    match local_thread_runs_create_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &thread_id,
+        &request.assistant_id,
+        request.model.as_deref(),
+    ) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
 }
 
 async fn thread_runs_list_handler(
@@ -2585,15 +4265,11 @@ async fn thread_runs_list_handler(
         }
     }
 
-    Json(
-        list_thread_runs(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &thread_id,
-        )
-        .expect("thread runs list"),
+    local_thread_runs_list_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &thread_id,
     )
-    .into_response()
 }
 
 async fn thread_run_retrieve_handler(
@@ -2613,16 +4289,12 @@ async fn thread_run_retrieve_handler(
         }
     }
 
-    Json(
-        get_thread_run(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &thread_id,
-            &run_id,
-        )
-        .expect("thread run"),
+    local_thread_run_retrieve_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &thread_id,
+        &run_id,
     )
-    .into_response()
 }
 
 async fn thread_run_update_handler(
@@ -2643,16 +4315,12 @@ async fn thread_run_update_handler(
         }
     }
 
-    Json(
-        update_thread_run(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &thread_id,
-            &run_id,
-        )
-        .expect("thread run update"),
+    local_thread_run_update_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &thread_id,
+        &run_id,
     )
-    .into_response()
 }
 
 async fn thread_run_cancel_handler(
@@ -2672,16 +4340,12 @@ async fn thread_run_cancel_handler(
         }
     }
 
-    Json(
-        cancel_thread_run(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &thread_id,
-            &run_id,
-        )
-        .expect("thread run cancel"),
+    local_thread_run_cancel_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &thread_id,
+        &run_id,
     )
-    .into_response()
 }
 
 async fn thread_run_submit_tool_outputs_handler(
@@ -2709,17 +4373,16 @@ async fn thread_run_submit_tool_outputs_handler(
         .iter()
         .map(|output| (output.tool_call_id.as_str(), output.output.as_str()))
         .collect();
-    Json(
-        submit_thread_run_tool_outputs(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &thread_id,
-            &run_id,
-            tool_outputs,
-        )
-        .expect("thread run submit tool outputs"),
-    )
-    .into_response()
+    match local_thread_run_submit_tool_outputs_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &thread_id,
+        &run_id,
+        tool_outputs,
+    ) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
 }
 
 async fn thread_run_steps_list_handler(
@@ -2739,16 +4402,12 @@ async fn thread_run_steps_list_handler(
         }
     }
 
-    Json(
-        list_thread_run_steps(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &thread_id,
-            &run_id,
-        )
-        .expect("thread run steps"),
+    local_thread_run_steps_list_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &thread_id,
+        &run_id,
     )
-    .into_response()
 }
 
 async fn thread_run_step_retrieve_handler(
@@ -2770,17 +4429,13 @@ async fn thread_run_step_retrieve_handler(
         }
     }
 
-    Json(
-        get_thread_run_step(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &thread_id,
-            &run_id,
-            &step_id,
-        )
-        .expect("thread run step"),
+    local_thread_run_step_retrieve_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &thread_id,
+        &run_id,
+        &step_id,
     )
-    .into_response()
 }
 
 async fn responses_handler(
@@ -2801,19 +4456,20 @@ async fn responses_handler(
             }
         }
 
-        return local_response_stream_response("resp_1", &request.model);
+        return local_response_stream_response(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &request.model,
+        );
     }
 
     match relay_stateless_json_request(&request_context, ProviderRequest::Responses(&request)).await
     {
         Ok(Some(response)) => Json(response).into_response(),
-        Ok(None) => Json(
-            create_response(
-                request_context.tenant_id(),
-                request_context.project_id(),
-                &request.model,
-            )
-            .expect("response"),
+        Ok(None) => local_response_create_response(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &request.model,
         )
         .into_response(),
         Err(_) => bad_gateway_openai_response("failed to relay upstream response"),
@@ -2837,15 +4493,11 @@ async fn response_input_tokens_handler(
         }
     }
 
-    Json(
-        count_response_input_tokens(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &request.model,
-        )
-        .expect("response input tokens"),
+    local_response_input_tokens_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &request.model,
     )
-    .into_response()
 }
 
 async fn response_retrieve_handler(
@@ -2865,15 +4517,14 @@ async fn response_retrieve_handler(
         }
     }
 
-    Json(
-        get_response(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &response_id,
-        )
-        .expect("response retrieve"),
-    )
-    .into_response()
+    match get_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &response_id,
+    ) {
+        Ok(response) => Json(response).into_response(),
+        Err(error) => local_response_not_found_response(error),
+    }
 }
 
 async fn response_input_items_list_handler(
@@ -2893,15 +4544,14 @@ async fn response_input_items_list_handler(
         }
     }
 
-    Json(
-        list_response_input_items(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &response_id,
-        )
-        .expect("response input items"),
-    )
-    .into_response()
+    match list_response_input_items(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &response_id,
+    ) {
+        Ok(response) => Json(response).into_response(),
+        Err(error) => local_response_not_found_response(error),
+    }
 }
 
 async fn response_delete_handler(
@@ -2921,15 +4571,14 @@ async fn response_delete_handler(
         }
     }
 
-    Json(
-        delete_response(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &response_id,
-        )
-        .expect("response delete"),
-    )
-    .into_response()
+    match delete_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &response_id,
+    ) {
+        Ok(response) => Json(response).into_response(),
+        Err(error) => local_response_not_found_response(error),
+    }
 }
 
 async fn response_cancel_handler(
@@ -2949,15 +4598,14 @@ async fn response_cancel_handler(
         }
     }
 
-    Json(
-        cancel_response(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &response_id,
-        )
-        .expect("response cancel"),
-    )
-    .into_response()
+    match cancel_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &response_id,
+    ) {
+        Ok(response) => Json(response).into_response(),
+        Err(error) => local_response_not_found_response(error),
+    }
 }
 
 async fn response_compact_handler(
@@ -2977,15 +4625,895 @@ async fn response_compact_handler(
         }
     }
 
-    Json(
-        compact_response(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &request.model,
-        )
-        .expect("response compact"),
+    local_response_compact_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &request.model,
     )
-    .into_response()
+}
+
+fn local_response_compact_response(tenant_id: &str, project_id: &str, model: &str) -> Response {
+    match compact_response(tenant_id, project_id, model) {
+        Ok(response) => Json(response).into_response(),
+        Err(error) => local_response_invalid_model_response(error),
+    }
+}
+
+fn local_response_not_found_response(error: anyhow::Error) -> Response {
+    local_gateway_error_response(error, "Requested response was not found.")
+}
+
+fn local_response_create_result(
+    tenant_id: &str,
+    project_id: &str,
+    model: &str,
+) -> std::result::Result<ResponseObject, Response> {
+    create_response(tenant_id, project_id, model).map_err(local_response_invalid_model_response)
+}
+
+fn local_response_create_response(tenant_id: &str, project_id: &str, model: &str) -> Response {
+    match local_response_create_result(tenant_id, project_id, model) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_response_input_tokens_result(
+    tenant_id: &str,
+    project_id: &str,
+    model: &str,
+) -> std::result::Result<ResponseInputTokensObject, Response> {
+    count_response_input_tokens(tenant_id, project_id, model)
+        .map_err(local_response_invalid_model_response)
+}
+
+fn local_response_input_tokens_response(
+    tenant_id: &str,
+    project_id: &str,
+    model: &str,
+) -> Response {
+    match local_response_input_tokens_result(tenant_id, project_id, model) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_response_invalid_model_response(error: anyhow::Error) -> Response {
+    let message = error.to_string();
+    if local_gateway_error_is_invalid_request(&message) {
+        return invalid_request_openai_response(message, "invalid_model");
+    }
+
+    bad_gateway_openai_response(message)
+}
+
+fn local_gateway_error_is_invalid_request(message: &str) -> bool {
+    message.to_ascii_lowercase().contains("required")
+}
+
+fn local_chat_completion_gateway_result(
+    tenant_id: &str,
+    project_id: &str,
+    model: &str,
+) -> anyhow::Result<ChatCompletionResponse> {
+    if model.trim().is_empty() {
+        return Err(anyhow::anyhow!("Chat completion model is required."));
+    }
+
+    create_chat_completion(tenant_id, project_id, model)
+}
+
+fn local_chat_completion_result(
+    tenant_id: &str,
+    project_id: &str,
+    model: &str,
+) -> std::result::Result<ChatCompletionResponse, Response> {
+    local_chat_completion_gateway_result(tenant_id, project_id, model)
+        .map_err(local_response_invalid_model_response)
+}
+
+fn local_chat_completion_response(tenant_id: &str, project_id: &str, model: &str) -> Response {
+    match local_chat_completion_result(tenant_id, project_id, model) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_chat_completion_stream_response(
+    tenant_id: &str,
+    project_id: &str,
+    model: &str,
+) -> Response {
+    match local_chat_completion_result(tenant_id, project_id, model) {
+        Ok(_) => local_chat_completion_stream_body_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_chat_completion_not_found_response(error: anyhow::Error) -> Response {
+    local_gateway_error_response(error, "Requested chat completion was not found.")
+}
+
+fn local_completion_gateway_result(
+    tenant_id: &str,
+    project_id: &str,
+    model: &str,
+) -> anyhow::Result<CompletionObject> {
+    create_completion(tenant_id, project_id, model)
+}
+
+fn local_completion_result(
+    tenant_id: &str,
+    project_id: &str,
+    model: &str,
+) -> std::result::Result<CompletionObject, Response> {
+    local_completion_gateway_result(tenant_id, project_id, model)
+        .map_err(local_response_invalid_model_response)
+}
+
+fn local_completion_response(tenant_id: &str, project_id: &str, model: &str) -> Response {
+    match local_completion_result(tenant_id, project_id, model) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_embedding_gateway_result(
+    tenant_id: &str,
+    project_id: &str,
+    model: &str,
+) -> anyhow::Result<CreateEmbeddingResponse> {
+    create_embedding(tenant_id, project_id, model)
+}
+
+fn local_embedding_result(
+    tenant_id: &str,
+    project_id: &str,
+    model: &str,
+) -> std::result::Result<CreateEmbeddingResponse, Response> {
+    local_embedding_gateway_result(tenant_id, project_id, model)
+        .map_err(local_response_invalid_model_response)
+}
+
+fn local_embedding_response(tenant_id: &str, project_id: &str, model: &str) -> Response {
+    match local_embedding_result(tenant_id, project_id, model) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_moderation_gateway_result(
+    tenant_id: &str,
+    project_id: &str,
+    model: &str,
+) -> anyhow::Result<ModerationResponse> {
+    create_moderation(tenant_id, project_id, model)
+}
+
+fn local_moderation_result(
+    tenant_id: &str,
+    project_id: &str,
+    model: &str,
+) -> std::result::Result<ModerationResponse, Response> {
+    local_moderation_gateway_result(tenant_id, project_id, model)
+        .map_err(local_response_invalid_model_response)
+}
+
+fn local_moderation_response(tenant_id: &str, project_id: &str, model: &str) -> Response {
+    match local_moderation_result(tenant_id, project_id, model) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_image_generation_gateway_result(
+    tenant_id: &str,
+    project_id: &str,
+    model: &str,
+) -> anyhow::Result<ImagesResponse> {
+    create_image_generation(tenant_id, project_id, model)
+}
+
+fn local_image_generation_result(
+    tenant_id: &str,
+    project_id: &str,
+    model: &str,
+) -> std::result::Result<ImagesResponse, Response> {
+    local_image_generation_gateway_result(tenant_id, project_id, model)
+        .map_err(local_response_invalid_model_response)
+}
+
+fn local_image_generation_response(tenant_id: &str, project_id: &str, model: &str) -> Response {
+    match local_image_generation_result(tenant_id, project_id, model) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_chat_completion_retrieve_result(
+    tenant_id: &str,
+    project_id: &str,
+    completion_id: &str,
+) -> std::result::Result<ChatCompletionResponse, Response> {
+    get_chat_completion(tenant_id, project_id, completion_id)
+        .map_err(local_chat_completion_not_found_response)
+}
+
+fn local_chat_completion_retrieve_response(
+    tenant_id: &str,
+    project_id: &str,
+    completion_id: &str,
+) -> Response {
+    match local_chat_completion_retrieve_result(tenant_id, project_id, completion_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_chat_completion_update_result(
+    tenant_id: &str,
+    project_id: &str,
+    completion_id: &str,
+    metadata: Value,
+) -> std::result::Result<ChatCompletionResponse, Response> {
+    update_chat_completion(tenant_id, project_id, completion_id, metadata)
+        .map_err(local_chat_completion_not_found_response)
+}
+
+fn local_chat_completion_update_response(
+    tenant_id: &str,
+    project_id: &str,
+    completion_id: &str,
+    metadata: Value,
+) -> Response {
+    match local_chat_completion_update_result(tenant_id, project_id, completion_id, metadata) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_chat_completion_delete_result(
+    tenant_id: &str,
+    project_id: &str,
+    completion_id: &str,
+) -> std::result::Result<DeleteChatCompletionResponse, Response> {
+    delete_chat_completion(tenant_id, project_id, completion_id)
+        .map_err(local_chat_completion_not_found_response)
+}
+
+fn local_chat_completion_delete_response(
+    tenant_id: &str,
+    project_id: &str,
+    completion_id: &str,
+) -> Response {
+    match local_chat_completion_delete_result(tenant_id, project_id, completion_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_chat_completion_stream_body_response() -> Response {
+    let body = format!(
+        "{}{}",
+        SseFrame::data("{\"id\":\"chatcmpl_1\",\"object\":\"chat.completion.chunk\"}"),
+        SseFrame::data("[DONE]")
+    );
+    ([(header::CONTENT_TYPE, "text/event-stream")], body).into_response()
+}
+
+fn local_chat_completion_messages_result(
+    tenant_id: &str,
+    project_id: &str,
+    completion_id: &str,
+) -> std::result::Result<ListChatCompletionMessagesResponse, Response> {
+    list_chat_completion_messages(tenant_id, project_id, completion_id).map_err(|error| {
+        local_gateway_error_response(error, "Requested chat completion was not found.")
+    })
+}
+
+fn local_chat_completion_messages_response(
+    tenant_id: &str,
+    project_id: &str,
+    completion_id: &str,
+) -> Response {
+    match local_chat_completion_messages_result(tenant_id, project_id, completion_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_conversation_not_found_response(error: anyhow::Error) -> Response {
+    local_gateway_error_response(error, "Requested conversation was not found.")
+}
+
+fn local_conversation_retrieve_result(
+    tenant_id: &str,
+    project_id: &str,
+    conversation_id: &str,
+) -> std::result::Result<ConversationObject, Response> {
+    get_conversation(tenant_id, project_id, conversation_id)
+        .map_err(local_conversation_not_found_response)
+}
+
+fn local_conversation_retrieve_response(
+    tenant_id: &str,
+    project_id: &str,
+    conversation_id: &str,
+) -> Response {
+    match local_conversation_retrieve_result(tenant_id, project_id, conversation_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_conversation_update_result(
+    tenant_id: &str,
+    project_id: &str,
+    conversation_id: &str,
+    metadata: Value,
+) -> std::result::Result<ConversationObject, Response> {
+    update_conversation(tenant_id, project_id, conversation_id, metadata)
+        .map_err(local_conversation_not_found_response)
+}
+
+fn local_conversation_update_response(
+    tenant_id: &str,
+    project_id: &str,
+    conversation_id: &str,
+    metadata: Value,
+) -> Response {
+    match local_conversation_update_result(tenant_id, project_id, conversation_id, metadata) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_conversation_delete_result(
+    tenant_id: &str,
+    project_id: &str,
+    conversation_id: &str,
+) -> std::result::Result<DeleteConversationResponse, Response> {
+    delete_conversation(tenant_id, project_id, conversation_id)
+        .map_err(local_conversation_not_found_response)
+}
+
+fn local_conversation_delete_response(
+    tenant_id: &str,
+    project_id: &str,
+    conversation_id: &str,
+) -> Response {
+    match local_conversation_delete_result(tenant_id, project_id, conversation_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_conversation_items_create_result(
+    tenant_id: &str,
+    project_id: &str,
+    conversation_id: &str,
+) -> std::result::Result<ListConversationItemsResponse, Response> {
+    create_conversation_items(tenant_id, project_id, conversation_id)
+        .map_err(local_conversation_not_found_response)
+}
+
+fn local_conversation_items_create_response(
+    tenant_id: &str,
+    project_id: &str,
+    conversation_id: &str,
+) -> Response {
+    match local_conversation_items_create_result(tenant_id, project_id, conversation_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_conversation_items_list_result(
+    tenant_id: &str,
+    project_id: &str,
+    conversation_id: &str,
+) -> std::result::Result<ListConversationItemsResponse, Response> {
+    list_conversation_items(tenant_id, project_id, conversation_id)
+        .map_err(local_conversation_not_found_response)
+}
+
+fn local_conversation_items_list_response(
+    tenant_id: &str,
+    project_id: &str,
+    conversation_id: &str,
+) -> Response {
+    match local_conversation_items_list_result(tenant_id, project_id, conversation_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_conversation_item_not_found_response(error: anyhow::Error) -> Response {
+    local_gateway_error_response(error, "Requested conversation item was not found.")
+}
+
+fn local_conversation_item_retrieve_result(
+    tenant_id: &str,
+    project_id: &str,
+    conversation_id: &str,
+    item_id: &str,
+) -> std::result::Result<ConversationItemObject, Response> {
+    get_conversation_item(tenant_id, project_id, conversation_id, item_id)
+        .map_err(local_conversation_item_not_found_response)
+}
+
+fn local_conversation_item_retrieve_response(
+    tenant_id: &str,
+    project_id: &str,
+    conversation_id: &str,
+    item_id: &str,
+) -> Response {
+    match local_conversation_item_retrieve_result(tenant_id, project_id, conversation_id, item_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_conversation_item_delete_result(
+    tenant_id: &str,
+    project_id: &str,
+    conversation_id: &str,
+    item_id: &str,
+) -> std::result::Result<DeleteConversationItemResponse, Response> {
+    delete_conversation_item(tenant_id, project_id, conversation_id, item_id)
+        .map_err(local_conversation_item_not_found_response)
+}
+
+fn local_conversation_item_delete_response(
+    tenant_id: &str,
+    project_id: &str,
+    conversation_id: &str,
+    item_id: &str,
+) -> Response {
+    match local_conversation_item_delete_result(tenant_id, project_id, conversation_id, item_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_thread_not_found_response(error: anyhow::Error) -> Response {
+    local_gateway_error_response(error, "Requested thread was not found.")
+}
+
+fn local_thread_retrieve_result(
+    tenant_id: &str,
+    project_id: &str,
+    thread_id: &str,
+) -> std::result::Result<ThreadObject, Response> {
+    get_thread(tenant_id, project_id, thread_id).map_err(local_thread_not_found_response)
+}
+
+fn local_thread_retrieve_response(tenant_id: &str, project_id: &str, thread_id: &str) -> Response {
+    match local_thread_retrieve_result(tenant_id, project_id, thread_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_thread_update_result(
+    tenant_id: &str,
+    project_id: &str,
+    thread_id: &str,
+) -> std::result::Result<ThreadObject, Response> {
+    update_thread(tenant_id, project_id, thread_id).map_err(local_thread_not_found_response)
+}
+
+fn local_thread_update_response(tenant_id: &str, project_id: &str, thread_id: &str) -> Response {
+    match local_thread_update_result(tenant_id, project_id, thread_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_thread_delete_result(
+    tenant_id: &str,
+    project_id: &str,
+    thread_id: &str,
+) -> std::result::Result<DeleteThreadResponse, Response> {
+    delete_thread(tenant_id, project_id, thread_id).map_err(local_thread_not_found_response)
+}
+
+fn local_thread_delete_response(tenant_id: &str, project_id: &str, thread_id: &str) -> Response {
+    match local_thread_delete_result(tenant_id, project_id, thread_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_thread_message_not_found_response(error: anyhow::Error) -> Response {
+    if error
+        .to_string()
+        .to_ascii_lowercase()
+        .contains("thread message not found")
+    {
+        return not_found_openai_response("Requested thread message was not found.");
+    }
+
+    local_thread_not_found_response(error)
+}
+
+fn local_thread_messages_create_result(
+    tenant_id: &str,
+    project_id: &str,
+    thread_id: &str,
+    role: &str,
+    text: &str,
+) -> std::result::Result<ThreadMessageObject, Response> {
+    create_thread_message(tenant_id, project_id, thread_id, role, text)
+        .map_err(local_thread_not_found_response)
+}
+
+fn local_thread_messages_list_result(
+    tenant_id: &str,
+    project_id: &str,
+    thread_id: &str,
+) -> std::result::Result<ListThreadMessagesResponse, Response> {
+    list_thread_messages(tenant_id, project_id, thread_id).map_err(local_thread_not_found_response)
+}
+
+fn local_thread_messages_list_response(
+    tenant_id: &str,
+    project_id: &str,
+    thread_id: &str,
+) -> Response {
+    match local_thread_messages_list_result(tenant_id, project_id, thread_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_thread_message_retrieve_result(
+    tenant_id: &str,
+    project_id: &str,
+    thread_id: &str,
+    message_id: &str,
+) -> std::result::Result<ThreadMessageObject, Response> {
+    get_thread_message(tenant_id, project_id, thread_id, message_id)
+        .map_err(local_thread_message_not_found_response)
+}
+
+fn local_thread_message_retrieve_response(
+    tenant_id: &str,
+    project_id: &str,
+    thread_id: &str,
+    message_id: &str,
+) -> Response {
+    match local_thread_message_retrieve_result(tenant_id, project_id, thread_id, message_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_thread_message_update_result(
+    tenant_id: &str,
+    project_id: &str,
+    thread_id: &str,
+    message_id: &str,
+) -> std::result::Result<ThreadMessageObject, Response> {
+    update_thread_message(tenant_id, project_id, thread_id, message_id)
+        .map_err(local_thread_message_not_found_response)
+}
+
+fn local_thread_message_update_response(
+    tenant_id: &str,
+    project_id: &str,
+    thread_id: &str,
+    message_id: &str,
+) -> Response {
+    match local_thread_message_update_result(tenant_id, project_id, thread_id, message_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_thread_message_delete_result(
+    tenant_id: &str,
+    project_id: &str,
+    thread_id: &str,
+    message_id: &str,
+) -> std::result::Result<DeleteThreadMessageResponse, Response> {
+    delete_thread_message(tenant_id, project_id, thread_id, message_id)
+        .map_err(local_thread_message_not_found_response)
+}
+
+fn local_thread_message_delete_response(
+    tenant_id: &str,
+    project_id: &str,
+    thread_id: &str,
+    message_id: &str,
+) -> Response {
+    match local_thread_message_delete_result(tenant_id, project_id, thread_id, message_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_thread_run_not_found_response(error: anyhow::Error) -> Response {
+    if error
+        .to_string()
+        .to_ascii_lowercase()
+        .contains("run not found")
+    {
+        return not_found_openai_response("Requested run was not found.");
+    }
+
+    local_thread_not_found_response(error)
+}
+
+fn local_thread_run_step_not_found_response(error: anyhow::Error) -> Response {
+    if error
+        .to_string()
+        .to_ascii_lowercase()
+        .contains("run step not found")
+    {
+        return not_found_openai_response("Requested run step was not found.");
+    }
+
+    local_thread_run_not_found_response(error)
+}
+
+fn local_thread_runs_create_result(
+    tenant_id: &str,
+    project_id: &str,
+    thread_id: &str,
+    assistant_id: &str,
+    model: Option<&str>,
+) -> std::result::Result<RunObject, Response> {
+    create_thread_run(tenant_id, project_id, thread_id, assistant_id, model)
+        .map_err(local_thread_not_found_response)
+}
+
+fn local_thread_runs_list_result(
+    tenant_id: &str,
+    project_id: &str,
+    thread_id: &str,
+) -> std::result::Result<ListRunsResponse, Response> {
+    list_thread_runs(tenant_id, project_id, thread_id).map_err(local_thread_not_found_response)
+}
+
+fn local_thread_runs_list_response(tenant_id: &str, project_id: &str, thread_id: &str) -> Response {
+    match local_thread_runs_list_result(tenant_id, project_id, thread_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_thread_run_retrieve_result(
+    tenant_id: &str,
+    project_id: &str,
+    thread_id: &str,
+    run_id: &str,
+) -> std::result::Result<RunObject, Response> {
+    get_thread_run(tenant_id, project_id, thread_id, run_id)
+        .map_err(local_thread_run_not_found_response)
+}
+
+fn local_thread_run_retrieve_response(
+    tenant_id: &str,
+    project_id: &str,
+    thread_id: &str,
+    run_id: &str,
+) -> Response {
+    match local_thread_run_retrieve_result(tenant_id, project_id, thread_id, run_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_thread_run_update_result(
+    tenant_id: &str,
+    project_id: &str,
+    thread_id: &str,
+    run_id: &str,
+) -> std::result::Result<RunObject, Response> {
+    update_thread_run(tenant_id, project_id, thread_id, run_id)
+        .map_err(local_thread_run_not_found_response)
+}
+
+fn local_thread_run_update_response(
+    tenant_id: &str,
+    project_id: &str,
+    thread_id: &str,
+    run_id: &str,
+) -> Response {
+    match local_thread_run_update_result(tenant_id, project_id, thread_id, run_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_thread_run_cancel_result(
+    tenant_id: &str,
+    project_id: &str,
+    thread_id: &str,
+    run_id: &str,
+) -> std::result::Result<RunObject, Response> {
+    cancel_thread_run(tenant_id, project_id, thread_id, run_id)
+        .map_err(local_thread_run_not_found_response)
+}
+
+fn local_thread_run_cancel_response(
+    tenant_id: &str,
+    project_id: &str,
+    thread_id: &str,
+    run_id: &str,
+) -> Response {
+    match local_thread_run_cancel_result(tenant_id, project_id, thread_id, run_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_thread_run_submit_tool_outputs_result(
+    tenant_id: &str,
+    project_id: &str,
+    thread_id: &str,
+    run_id: &str,
+    tool_outputs: Vec<(&str, &str)>,
+) -> std::result::Result<RunObject, Response> {
+    submit_thread_run_tool_outputs(tenant_id, project_id, thread_id, run_id, tool_outputs)
+        .map_err(local_thread_run_not_found_response)
+}
+
+fn local_thread_run_steps_list_result(
+    tenant_id: &str,
+    project_id: &str,
+    thread_id: &str,
+    run_id: &str,
+) -> std::result::Result<ListRunStepsResponse, Response> {
+    list_thread_run_steps(tenant_id, project_id, thread_id, run_id)
+        .map_err(local_thread_run_not_found_response)
+}
+
+fn local_thread_run_steps_list_response(
+    tenant_id: &str,
+    project_id: &str,
+    thread_id: &str,
+    run_id: &str,
+) -> Response {
+    match local_thread_run_steps_list_result(tenant_id, project_id, thread_id, run_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_thread_run_step_retrieve_result(
+    tenant_id: &str,
+    project_id: &str,
+    thread_id: &str,
+    run_id: &str,
+    step_id: &str,
+) -> std::result::Result<RunStepObject, Response> {
+    get_thread_run_step(tenant_id, project_id, thread_id, run_id, step_id)
+        .map_err(local_thread_run_step_not_found_response)
+}
+
+fn local_thread_run_step_retrieve_response(
+    tenant_id: &str,
+    project_id: &str,
+    thread_id: &str,
+    run_id: &str,
+    step_id: &str,
+) -> Response {
+    match local_thread_run_step_retrieve_result(tenant_id, project_id, thread_id, run_id, step_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_anthropic_count_tokens_response(
+    tenant_id: &str,
+    project_id: &str,
+    model: &str,
+) -> Response {
+    match count_response_input_tokens(tenant_id, project_id, model) {
+        Ok(response) => match serde_json::to_value(response) {
+            Ok(value) => Json(openai_count_tokens_to_anthropic(&value)).into_response(),
+            Err(error) => anthropic_bad_gateway_response(error.to_string()),
+        },
+        Err(error) => {
+            let message = error.to_string();
+            if message.to_ascii_lowercase().contains("required") {
+                return anthropic_invalid_request_response(message);
+            }
+
+            anthropic_bad_gateway_response(message)
+        }
+    }
+}
+
+fn local_anthropic_invalid_model_response(error: anyhow::Error) -> Response {
+    let message = error.to_string();
+    if local_gateway_error_is_invalid_request(&message) {
+        return anthropic_invalid_request_response(message);
+    }
+
+    anthropic_bad_gateway_response(message)
+}
+
+fn local_anthropic_chat_completion_result(
+    tenant_id: &str,
+    project_id: &str,
+    model: &str,
+) -> std::result::Result<Value, Response> {
+    match local_chat_completion_gateway_result(tenant_id, project_id, model) {
+        Ok(response) => match serde_json::to_value(response) {
+            Ok(value) => Ok(openai_chat_response_to_anthropic(&value)),
+            Err(error) => Err(anthropic_bad_gateway_response(error.to_string())),
+        },
+        Err(error) => Err(local_anthropic_invalid_model_response(error)),
+    }
+}
+
+fn local_anthropic_stream_result(
+    tenant_id: &str,
+    project_id: &str,
+    model: &str,
+) -> std::result::Result<Response, Response> {
+    match local_chat_completion_gateway_result(tenant_id, project_id, model) {
+        Ok(_) => Ok(local_anthropic_stream_body_response(model)),
+        Err(error) => Err(local_anthropic_invalid_model_response(error)),
+    }
+}
+
+fn local_gemini_invalid_model_response(error: anyhow::Error) -> Response {
+    let message = error.to_string();
+    if local_gateway_error_is_invalid_request(&message) {
+        return gemini_invalid_request_response(message);
+    }
+
+    gemini_bad_gateway_response(message)
+}
+
+fn local_gemini_chat_completion_result(
+    tenant_id: &str,
+    project_id: &str,
+    model: &str,
+) -> std::result::Result<Value, Response> {
+    match local_chat_completion_gateway_result(tenant_id, project_id, model) {
+        Ok(response) => match serde_json::to_value(response) {
+            Ok(value) => Ok(openai_chat_response_to_gemini(&value)),
+            Err(error) => Err(gemini_bad_gateway_response(error.to_string())),
+        },
+        Err(error) => Err(local_gemini_invalid_model_response(error)),
+    }
+}
+
+fn local_gemini_stream_result(
+    tenant_id: &str,
+    project_id: &str,
+    model: &str,
+) -> std::result::Result<Response, Response> {
+    match local_chat_completion_gateway_result(tenant_id, project_id, model) {
+        Ok(_) => Ok(local_gemini_stream_body_response()),
+        Err(error) => Err(local_gemini_invalid_model_response(error)),
+    }
+}
+
+fn local_gemini_count_tokens_result(
+    tenant_id: &str,
+    project_id: &str,
+    model: &str,
+) -> std::result::Result<Value, Response> {
+    match count_response_input_tokens(tenant_id, project_id, model) {
+        Ok(response) => match serde_json::to_value(response) {
+            Ok(value) => Ok(openai_count_tokens_to_gemini(&value)),
+            Err(error) => Err(gemini_bad_gateway_response(error.to_string())),
+        },
+        Err(error) => {
+            let message = error.to_string();
+            if local_gateway_error_is_invalid_request(&message) {
+                return Err(gemini_invalid_request_response(message));
+            }
+
+            Err(gemini_bad_gateway_response(message))
+        }
+    }
 }
 
 async fn completions_handler(
@@ -2996,15 +5524,11 @@ async fn completions_handler(
         .await
     {
         Ok(Some(response)) => Json(response).into_response(),
-        Ok(None) => Json(
-            create_completion(
-                request_context.tenant_id(),
-                request_context.project_id(),
-                &request.model,
-            )
-            .expect("completion"),
-        )
-        .into_response(),
+        Ok(None) => local_completion_response(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &request.model,
+        ),
         Err(_) => bad_gateway_openai_response("failed to relay upstream completion"),
     }
 }
@@ -3017,15 +5541,11 @@ async fn embeddings_handler(
         .await
     {
         Ok(Some(response)) => Json(response).into_response(),
-        Ok(None) => Json(
-            create_embedding(
-                request_context.tenant_id(),
-                request_context.project_id(),
-                &request.model,
-            )
-            .expect("embedding"),
-        )
-        .into_response(),
+        Ok(None) => local_embedding_response(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &request.model,
+        ),
         Err(_) => bad_gateway_openai_response("failed to relay upstream embedding"),
     }
 }
@@ -3038,21 +5558,17 @@ async fn moderations_handler(
         .await
     {
         Ok(Some(response)) => return Json(response).into_response(),
-        Ok(None) => {}
+        Ok(None) => {
+            return local_moderation_response(
+                request_context.tenant_id(),
+                request_context.project_id(),
+                &request.model,
+            );
+        }
         Err(_) => {
             return bad_gateway_openai_response("failed to relay upstream moderation");
         }
     }
-
-    Json(
-        create_moderation(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &request.model,
-        )
-        .expect("moderation"),
-    )
-    .into_response()
 }
 
 async fn image_generations_handler(
@@ -3066,21 +5582,17 @@ async fn image_generations_handler(
     .await
     {
         Ok(Some(response)) => return Json(response).into_response(),
-        Ok(None) => {}
+        Ok(None) => {
+            return local_image_generation_response(
+                request_context.tenant_id(),
+                request_context.project_id(),
+                &request.model,
+            );
+        }
         Err(_) => {
             return bad_gateway_openai_response("failed to relay upstream image generation");
         }
     }
-
-    Json(
-        create_image_generation(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &request.model,
-        )
-        .expect("image generation"),
-    )
-    .into_response()
 }
 
 async fn image_edits_handler(
@@ -3283,15 +5795,11 @@ async fn files_handler(request_context: StatelessGatewayRequest, multipart: Mult
                 }
             }
 
-            Json(
-                create_file(
-                    request_context.tenant_id(),
-                    request_context.project_id(),
-                    &request,
-                )
-                .expect("file"),
+            local_file_create_response(
+                request_context.tenant_id(),
+                request_context.project_id(),
+                &request,
             )
-            .into_response()
         }
         Err(response) => response,
     }
@@ -3324,15 +5832,11 @@ async fn file_retrieve_handler(
         }
     }
 
-    Json(
-        get_file(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &file_id,
-        )
-        .expect("file retrieve"),
+    local_file_retrieve_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &file_id,
     )
-    .into_response()
 }
 
 async fn file_delete_handler(
@@ -3349,15 +5853,11 @@ async fn file_delete_handler(
         }
     }
 
-    Json(
-        delete_file(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &file_id,
-        )
-        .expect("file delete"),
+    local_file_delete_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &file_id,
     )
-    .into_response()
 }
 
 async fn file_content_handler(
@@ -3381,6 +5881,136 @@ async fn file_content_handler(
     )
 }
 
+fn local_container_not_found_response(error: anyhow::Error) -> Response {
+    local_gateway_error_response(error, "Requested container was not found.")
+}
+
+fn local_container_file_not_found_response(error: anyhow::Error) -> Response {
+    if error
+        .to_string()
+        .to_ascii_lowercase()
+        .contains("container file not found")
+    {
+        return not_found_openai_response("Requested container file was not found.");
+    }
+
+    local_container_not_found_response(error)
+}
+
+fn local_container_retrieve_result(
+    tenant_id: &str,
+    project_id: &str,
+    container_id: &str,
+) -> std::result::Result<ContainerObject, Response> {
+    sdkwork_api_app_gateway::get_container(tenant_id, project_id, container_id)
+        .map_err(local_container_not_found_response)
+}
+
+fn local_container_retrieve_response(
+    tenant_id: &str,
+    project_id: &str,
+    container_id: &str,
+) -> Response {
+    match local_container_retrieve_result(tenant_id, project_id, container_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_container_delete_result(
+    tenant_id: &str,
+    project_id: &str,
+    container_id: &str,
+) -> std::result::Result<DeleteContainerResponse, Response> {
+    sdkwork_api_app_gateway::delete_container(tenant_id, project_id, container_id)
+        .map_err(local_container_not_found_response)
+}
+
+fn local_container_delete_response(
+    tenant_id: &str,
+    project_id: &str,
+    container_id: &str,
+) -> Response {
+    match local_container_delete_result(tenant_id, project_id, container_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_container_file_create_result(
+    tenant_id: &str,
+    project_id: &str,
+    container_id: &str,
+    request: &CreateContainerFileRequest,
+) -> std::result::Result<ContainerFileObject, Response> {
+    sdkwork_api_app_gateway::create_container_file(tenant_id, project_id, container_id, request)
+        .map_err(local_container_not_found_response)
+}
+
+fn local_container_files_list_result(
+    tenant_id: &str,
+    project_id: &str,
+    container_id: &str,
+) -> std::result::Result<ListContainerFilesResponse, Response> {
+    sdkwork_api_app_gateway::list_container_files(tenant_id, project_id, container_id)
+        .map_err(local_container_not_found_response)
+}
+
+fn local_container_files_list_response(
+    tenant_id: &str,
+    project_id: &str,
+    container_id: &str,
+) -> Response {
+    match local_container_files_list_result(tenant_id, project_id, container_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_container_file_retrieve_result(
+    tenant_id: &str,
+    project_id: &str,
+    container_id: &str,
+    file_id: &str,
+) -> std::result::Result<ContainerFileObject, Response> {
+    sdkwork_api_app_gateway::get_container_file(tenant_id, project_id, container_id, file_id)
+        .map_err(local_container_file_not_found_response)
+}
+
+fn local_container_file_retrieve_response(
+    tenant_id: &str,
+    project_id: &str,
+    container_id: &str,
+    file_id: &str,
+) -> Response {
+    match local_container_file_retrieve_result(tenant_id, project_id, container_id, file_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_container_file_delete_result(
+    tenant_id: &str,
+    project_id: &str,
+    container_id: &str,
+    file_id: &str,
+) -> std::result::Result<DeleteContainerFileResponse, Response> {
+    sdkwork_api_app_gateway::delete_container_file(tenant_id, project_id, container_id, file_id)
+        .map_err(local_container_file_not_found_response)
+}
+
+fn local_container_file_delete_response(
+    tenant_id: &str,
+    project_id: &str,
+    container_id: &str,
+    file_id: &str,
+) -> Response {
+    match local_container_file_delete_result(tenant_id, project_id, container_id, file_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
 async fn containers_handler(
     request_context: StatelessGatewayRequest,
     ExtractJson(request): ExtractJson<CreateContainerRequest>,
@@ -3395,15 +6025,14 @@ async fn containers_handler(
         }
     }
 
-    Json(
-        sdkwork_api_app_gateway::create_container(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &request,
-        )
-        .expect("container"),
-    )
-    .into_response()
+    match sdkwork_api_app_gateway::create_container(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &request,
+    ) {
+        Ok(response) => Json(response).into_response(),
+        Err(error) => bad_gateway_openai_response(error.to_string()),
+    }
 }
 
 async fn containers_list_handler(request_context: StatelessGatewayRequest) -> Response {
@@ -3415,14 +6044,13 @@ async fn containers_list_handler(request_context: StatelessGatewayRequest) -> Re
         }
     }
 
-    Json(
-        sdkwork_api_app_gateway::list_containers(
-            request_context.tenant_id(),
-            request_context.project_id(),
-        )
-        .expect("containers list"),
-    )
-    .into_response()
+    match sdkwork_api_app_gateway::list_containers(
+        request_context.tenant_id(),
+        request_context.project_id(),
+    ) {
+        Ok(response) => Json(response).into_response(),
+        Err(error) => bad_gateway_openai_response(error.to_string()),
+    }
 }
 
 async fn container_retrieve_handler(
@@ -3442,15 +6070,11 @@ async fn container_retrieve_handler(
         }
     }
 
-    Json(
-        sdkwork_api_app_gateway::get_container(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &container_id,
-        )
-        .expect("container retrieve"),
+    local_container_retrieve_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &container_id,
     )
-    .into_response()
 }
 
 async fn container_delete_handler(
@@ -3470,15 +6094,11 @@ async fn container_delete_handler(
         }
     }
 
-    Json(
-        sdkwork_api_app_gateway::delete_container(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &container_id,
-        )
-        .expect("container delete"),
+    local_container_delete_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &container_id,
     )
-    .into_response()
 }
 
 async fn container_files_handler(
@@ -3499,16 +6119,15 @@ async fn container_files_handler(
         }
     }
 
-    Json(
-        sdkwork_api_app_gateway::create_container_file(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &container_id,
-            &request,
-        )
-        .expect("container file"),
-    )
-    .into_response()
+    match local_container_file_create_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &container_id,
+        &request,
+    ) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
 }
 
 async fn container_files_list_handler(
@@ -3528,15 +6147,11 @@ async fn container_files_list_handler(
         }
     }
 
-    Json(
-        sdkwork_api_app_gateway::list_container_files(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &container_id,
-        )
-        .expect("container files list"),
+    local_container_files_list_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &container_id,
     )
-    .into_response()
 }
 
 async fn container_file_retrieve_handler(
@@ -3556,16 +6171,12 @@ async fn container_file_retrieve_handler(
         }
     }
 
-    Json(
-        sdkwork_api_app_gateway::get_container_file(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &container_id,
-            &file_id,
-        )
-        .expect("container file retrieve"),
+    local_container_file_retrieve_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &container_id,
+        &file_id,
     )
-    .into_response()
 }
 
 async fn container_file_delete_handler(
@@ -3585,16 +6196,12 @@ async fn container_file_delete_handler(
         }
     }
 
-    Json(
-        sdkwork_api_app_gateway::delete_container_file(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &container_id,
-            &file_id,
-        )
-        .expect("container file delete"),
+    local_container_file_delete_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &container_id,
+        &file_id,
     )
-    .into_response()
 }
 
 async fn container_file_content_handler(
@@ -3634,12 +6241,14 @@ async fn music_handler(
         }
     }
 
-    Json(create_music(
-        request_context.tenant_id(),
-        request_context.project_id(),
-        &request,
+    Json(
+        create_music(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &request,
+        )
+        .expect("music create"),
     )
-    .expect("music create"))
     .into_response()
 }
 
@@ -3652,12 +6261,8 @@ async fn music_list_handler(request_context: StatelessGatewayRequest) -> Respons
         }
     }
 
-    Json(list_music(
-        request_context.tenant_id(),
-        request_context.project_id(),
-    )
-    .expect("music list"))
-    .into_response()
+    Json(list_music(request_context.tenant_id(), request_context.project_id()).expect("music list"))
+        .into_response()
 }
 
 async fn music_retrieve_handler(
@@ -3674,13 +6279,11 @@ async fn music_retrieve_handler(
         }
     }
 
-    Json(get_music(
+    local_music_retrieve_response(
         request_context.tenant_id(),
         request_context.project_id(),
         &music_id,
     )
-    .expect("music retrieve"))
-    .into_response()
 }
 
 async fn music_delete_handler(
@@ -3697,13 +6300,11 @@ async fn music_delete_handler(
         }
     }
 
-    Json(delete_music(
+    local_music_delete_response(
         request_context.tenant_id(),
         request_context.project_id(),
         &music_id,
     )
-    .expect("music delete"))
-    .into_response()
 }
 
 async fn music_content_handler(
@@ -3741,12 +6342,14 @@ async fn music_lyrics_handler(
         }
     }
 
-    Json(create_music_lyrics(
-        request_context.tenant_id(),
-        request_context.project_id(),
-        &request,
+    Json(
+        create_music_lyrics(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &request,
+        )
+        .expect("music lyrics"),
     )
-    .expect("music lyrics"))
     .into_response()
 }
 
@@ -3804,15 +6407,11 @@ async fn video_retrieve_handler(
         }
     }
 
-    Json(
-        get_video(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &video_id,
-        )
-        .expect("video retrieve"),
+    local_video_retrieve_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &video_id,
     )
-    .into_response()
 }
 
 async fn video_delete_handler(
@@ -3829,15 +6428,11 @@ async fn video_delete_handler(
         }
     }
 
-    Json(
-        delete_video(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &video_id,
-        )
-        .expect("video delete"),
+    local_video_delete_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &video_id,
     )
-    .into_response()
 }
 
 async fn video_content_handler(
@@ -4125,6 +6720,63 @@ async fn video_extensions_handler(
     .into_response()
 }
 
+fn local_upload_not_found_response(error: anyhow::Error) -> Response {
+    local_gateway_error_response(error, "Requested upload session was not found.")
+}
+
+fn local_upload_part_result(
+    tenant_id: &str,
+    project_id: &str,
+    request: &AddUploadPartRequest,
+) -> std::result::Result<UploadPartObject, Response> {
+    create_upload_part(tenant_id, project_id, request).map_err(local_upload_not_found_response)
+}
+
+fn local_upload_part_response(
+    tenant_id: &str,
+    project_id: &str,
+    request: &AddUploadPartRequest,
+) -> Response {
+    match local_upload_part_result(tenant_id, project_id, request) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_upload_complete_result(
+    tenant_id: &str,
+    project_id: &str,
+    request: &CompleteUploadRequest,
+) -> std::result::Result<UploadObject, Response> {
+    complete_upload(tenant_id, project_id, request).map_err(local_upload_not_found_response)
+}
+
+fn local_upload_complete_response(
+    tenant_id: &str,
+    project_id: &str,
+    request: &CompleteUploadRequest,
+) -> Response {
+    match local_upload_complete_result(tenant_id, project_id, request) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_upload_cancel_result(
+    tenant_id: &str,
+    project_id: &str,
+    upload_id: &str,
+) -> std::result::Result<UploadObject, Response> {
+    cancel_upload(tenant_id, project_id, upload_id).map_err(local_upload_not_found_response)
+}
+
+fn local_upload_cancel_response(tenant_id: &str, project_id: &str, upload_id: &str) -> Response {
+    match local_upload_cancel_result(tenant_id, project_id, upload_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
 async fn uploads_handler(
     request_context: StatelessGatewayRequest,
     ExtractJson(request): ExtractJson<CreateUploadRequest>,
@@ -4168,15 +6820,11 @@ async fn upload_parts_handler(
                 }
             }
 
-            Json(
-                create_upload_part(
-                    request_context.tenant_id(),
-                    request_context.project_id(),
-                    &request,
-                )
-                .expect("upload part"),
+            local_upload_part_response(
+                request_context.tenant_id(),
+                request_context.project_id(),
+                &request,
             )
-            .into_response()
         }
         Err(response) => response,
     }
@@ -4198,15 +6846,11 @@ async fn upload_complete_handler(
         }
     }
 
-    Json(
-        complete_upload(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &request,
-        )
-        .expect("upload complete"),
+    local_upload_complete_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &request,
     )
-    .into_response()
 }
 
 async fn upload_cancel_handler(
@@ -4223,15 +6867,245 @@ async fn upload_cancel_handler(
         }
     }
 
-    Json(
-        cancel_upload(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &upload_id,
-        )
-        .expect("upload cancel"),
+    local_upload_cancel_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &upload_id,
     )
-    .into_response()
+}
+
+fn local_fine_tuning_job_not_found_response(error: anyhow::Error) -> Response {
+    local_gateway_error_response(error, "Requested fine-tuning job was not found.")
+}
+
+fn local_fine_tuning_checkpoint_not_found_response(error: anyhow::Error) -> Response {
+    local_gateway_error_response(error, "Requested fine-tuning checkpoint was not found.")
+}
+
+fn local_fine_tuning_checkpoint_permission_not_found_response(error: anyhow::Error) -> Response {
+    if error
+        .to_string()
+        .to_ascii_lowercase()
+        .contains("fine tuning checkpoint permission not found")
+    {
+        return not_found_openai_response(
+            "Requested fine-tuning checkpoint permission was not found.",
+        );
+    }
+
+    local_fine_tuning_checkpoint_not_found_response(error)
+}
+
+fn local_fine_tuning_job_retrieve_result(
+    tenant_id: &str,
+    project_id: &str,
+    fine_tuning_job_id: &str,
+) -> std::result::Result<FineTuningJobObject, Response> {
+    get_fine_tuning_job(tenant_id, project_id, fine_tuning_job_id)
+        .map_err(local_fine_tuning_job_not_found_response)
+}
+
+fn local_fine_tuning_job_retrieve_response(
+    tenant_id: &str,
+    project_id: &str,
+    fine_tuning_job_id: &str,
+) -> Response {
+    match local_fine_tuning_job_retrieve_result(tenant_id, project_id, fine_tuning_job_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_fine_tuning_job_cancel_result(
+    tenant_id: &str,
+    project_id: &str,
+    fine_tuning_job_id: &str,
+) -> std::result::Result<FineTuningJobObject, Response> {
+    cancel_fine_tuning_job(tenant_id, project_id, fine_tuning_job_id)
+        .map_err(local_fine_tuning_job_not_found_response)
+}
+
+fn local_fine_tuning_job_cancel_response(
+    tenant_id: &str,
+    project_id: &str,
+    fine_tuning_job_id: &str,
+) -> Response {
+    match local_fine_tuning_job_cancel_result(tenant_id, project_id, fine_tuning_job_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_fine_tuning_job_events_result(
+    tenant_id: &str,
+    project_id: &str,
+    fine_tuning_job_id: &str,
+) -> std::result::Result<ListFineTuningJobEventsResponse, Response> {
+    list_fine_tuning_job_events(tenant_id, project_id, fine_tuning_job_id)
+        .map_err(local_fine_tuning_job_not_found_response)
+}
+
+fn local_fine_tuning_job_events_response(
+    tenant_id: &str,
+    project_id: &str,
+    fine_tuning_job_id: &str,
+) -> Response {
+    match local_fine_tuning_job_events_result(tenant_id, project_id, fine_tuning_job_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_fine_tuning_job_checkpoints_result(
+    tenant_id: &str,
+    project_id: &str,
+    fine_tuning_job_id: &str,
+) -> std::result::Result<ListFineTuningJobCheckpointsResponse, Response> {
+    list_fine_tuning_job_checkpoints(tenant_id, project_id, fine_tuning_job_id)
+        .map_err(local_fine_tuning_job_not_found_response)
+}
+
+fn local_fine_tuning_job_checkpoints_response(
+    tenant_id: &str,
+    project_id: &str,
+    fine_tuning_job_id: &str,
+) -> Response {
+    match local_fine_tuning_job_checkpoints_result(tenant_id, project_id, fine_tuning_job_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_fine_tuning_job_pause_result(
+    tenant_id: &str,
+    project_id: &str,
+    fine_tuning_job_id: &str,
+) -> std::result::Result<FineTuningJobObject, Response> {
+    sdkwork_api_app_gateway::pause_fine_tuning_job(tenant_id, project_id, fine_tuning_job_id)
+        .map_err(local_fine_tuning_job_not_found_response)
+}
+
+fn local_fine_tuning_job_pause_response(
+    tenant_id: &str,
+    project_id: &str,
+    fine_tuning_job_id: &str,
+) -> Response {
+    match local_fine_tuning_job_pause_result(tenant_id, project_id, fine_tuning_job_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_fine_tuning_job_resume_result(
+    tenant_id: &str,
+    project_id: &str,
+    fine_tuning_job_id: &str,
+) -> std::result::Result<FineTuningJobObject, Response> {
+    sdkwork_api_app_gateway::resume_fine_tuning_job(tenant_id, project_id, fine_tuning_job_id)
+        .map_err(local_fine_tuning_job_not_found_response)
+}
+
+fn local_fine_tuning_job_resume_response(
+    tenant_id: &str,
+    project_id: &str,
+    fine_tuning_job_id: &str,
+) -> Response {
+    match local_fine_tuning_job_resume_result(tenant_id, project_id, fine_tuning_job_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_fine_tuning_checkpoint_permissions_create_result(
+    tenant_id: &str,
+    project_id: &str,
+    fine_tuned_model_checkpoint: &str,
+    request: &CreateFineTuningCheckpointPermissionsRequest,
+) -> std::result::Result<ListFineTuningCheckpointPermissionsResponse, Response> {
+    sdkwork_api_app_gateway::create_fine_tuning_checkpoint_permissions(
+        tenant_id,
+        project_id,
+        fine_tuned_model_checkpoint,
+        request,
+    )
+    .map_err(local_fine_tuning_checkpoint_not_found_response)
+}
+
+fn local_fine_tuning_checkpoint_permissions_create_response(
+    tenant_id: &str,
+    project_id: &str,
+    fine_tuned_model_checkpoint: &str,
+    request: &CreateFineTuningCheckpointPermissionsRequest,
+) -> Response {
+    match local_fine_tuning_checkpoint_permissions_create_result(
+        tenant_id,
+        project_id,
+        fine_tuned_model_checkpoint,
+        request,
+    ) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_fine_tuning_checkpoint_permissions_list_result(
+    tenant_id: &str,
+    project_id: &str,
+    fine_tuned_model_checkpoint: &str,
+) -> std::result::Result<ListFineTuningCheckpointPermissionsResponse, Response> {
+    sdkwork_api_app_gateway::list_fine_tuning_checkpoint_permissions(
+        tenant_id,
+        project_id,
+        fine_tuned_model_checkpoint,
+    )
+    .map_err(local_fine_tuning_checkpoint_not_found_response)
+}
+
+fn local_fine_tuning_checkpoint_permissions_list_response(
+    tenant_id: &str,
+    project_id: &str,
+    fine_tuned_model_checkpoint: &str,
+) -> Response {
+    match local_fine_tuning_checkpoint_permissions_list_result(
+        tenant_id,
+        project_id,
+        fine_tuned_model_checkpoint,
+    ) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_fine_tuning_checkpoint_permission_delete_result(
+    tenant_id: &str,
+    project_id: &str,
+    fine_tuned_model_checkpoint: &str,
+    permission_id: &str,
+) -> std::result::Result<DeleteFineTuningCheckpointPermissionResponse, Response> {
+    sdkwork_api_app_gateway::delete_fine_tuning_checkpoint_permission(
+        tenant_id,
+        project_id,
+        fine_tuned_model_checkpoint,
+        permission_id,
+    )
+    .map_err(local_fine_tuning_checkpoint_permission_not_found_response)
+}
+
+fn local_fine_tuning_checkpoint_permission_delete_response(
+    tenant_id: &str,
+    project_id: &str,
+    fine_tuned_model_checkpoint: &str,
+    permission_id: &str,
+) -> Response {
+    match local_fine_tuning_checkpoint_permission_delete_result(
+        tenant_id,
+        project_id,
+        fine_tuned_model_checkpoint,
+        permission_id,
+    ) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
 }
 
 async fn fine_tuning_jobs_handler(
@@ -4295,15 +7169,11 @@ async fn fine_tuning_job_retrieve_handler(
         }
     }
 
-    Json(
-        get_fine_tuning_job(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &fine_tuning_job_id,
-        )
-        .expect("fine tuning retrieve"),
+    local_fine_tuning_job_retrieve_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &fine_tuning_job_id,
     )
-    .into_response()
 }
 
 async fn fine_tuning_job_cancel_handler(
@@ -4323,15 +7193,11 @@ async fn fine_tuning_job_cancel_handler(
         }
     }
 
-    Json(
-        cancel_fine_tuning_job(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &fine_tuning_job_id,
-        )
-        .expect("fine tuning cancel"),
+    local_fine_tuning_job_cancel_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &fine_tuning_job_id,
     )
-    .into_response()
 }
 
 async fn fine_tuning_job_events_handler(
@@ -4351,15 +7217,11 @@ async fn fine_tuning_job_events_handler(
         }
     }
 
-    Json(
-        list_fine_tuning_job_events(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &fine_tuning_job_id,
-        )
-        .expect("fine tuning job events"),
+    local_fine_tuning_job_events_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &fine_tuning_job_id,
     )
-    .into_response()
 }
 
 async fn fine_tuning_job_checkpoints_handler(
@@ -4381,15 +7243,11 @@ async fn fine_tuning_job_checkpoints_handler(
         }
     }
 
-    Json(
-        list_fine_tuning_job_checkpoints(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &fine_tuning_job_id,
-        )
-        .expect("fine tuning job checkpoints"),
+    local_fine_tuning_job_checkpoints_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &fine_tuning_job_id,
     )
-    .into_response()
 }
 
 async fn fine_tuning_job_pause_handler(
@@ -4409,15 +7267,11 @@ async fn fine_tuning_job_pause_handler(
         }
     }
 
-    Json(
-        sdkwork_api_app_gateway::pause_fine_tuning_job(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &fine_tuning_job_id,
-        )
-        .expect("fine tuning pause"),
+    local_fine_tuning_job_pause_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &fine_tuning_job_id,
     )
-    .into_response()
 }
 
 async fn fine_tuning_job_resume_handler(
@@ -4437,15 +7291,11 @@ async fn fine_tuning_job_resume_handler(
         }
     }
 
-    Json(
-        sdkwork_api_app_gateway::resume_fine_tuning_job(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &fine_tuning_job_id,
-        )
-        .expect("fine tuning resume"),
+    local_fine_tuning_job_resume_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &fine_tuning_job_id,
     )
-    .into_response()
 }
 
 async fn fine_tuning_checkpoint_permissions_handler(
@@ -4468,15 +7318,12 @@ async fn fine_tuning_checkpoint_permissions_handler(
         }
     }
 
-    Json(
-        sdkwork_api_app_gateway::create_fine_tuning_checkpoint_permissions(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &request,
-        )
-        .expect("fine tuning checkpoint permissions create"),
+    local_fine_tuning_checkpoint_permissions_create_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &fine_tuned_model_checkpoint,
+        &request,
     )
-    .into_response()
 }
 
 async fn fine_tuning_checkpoint_permissions_list_handler(
@@ -4498,15 +7345,11 @@ async fn fine_tuning_checkpoint_permissions_list_handler(
         }
     }
 
-    Json(
-        sdkwork_api_app_gateway::list_fine_tuning_checkpoint_permissions(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &fine_tuned_model_checkpoint,
-        )
-        .expect("fine tuning checkpoint permissions list"),
+    local_fine_tuning_checkpoint_permissions_list_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &fine_tuned_model_checkpoint,
     )
-    .into_response()
 }
 
 async fn fine_tuning_checkpoint_permission_delete_handler(
@@ -4531,15 +7374,12 @@ async fn fine_tuning_checkpoint_permission_delete_handler(
         }
     }
 
-    Json(
-        sdkwork_api_app_gateway::delete_fine_tuning_checkpoint_permission(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &permission_id,
-        )
-        .expect("fine tuning checkpoint permission delete"),
+    local_fine_tuning_checkpoint_permission_delete_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &fine_tuned_model_checkpoint,
+        &permission_id,
     )
-    .into_response()
 }
 
 async fn assistants_handler(
@@ -4584,6 +7424,71 @@ async fn assistants_list_handler(request_context: StatelessGatewayRequest) -> Re
     .into_response()
 }
 
+fn local_assistant_not_found_response(error: anyhow::Error) -> Response {
+    local_gateway_error_response(error, "Requested assistant was not found.")
+}
+
+fn local_assistant_retrieve_result(
+    tenant_id: &str,
+    project_id: &str,
+    assistant_id: &str,
+) -> std::result::Result<AssistantObject, Response> {
+    get_assistant(tenant_id, project_id, assistant_id).map_err(local_assistant_not_found_response)
+}
+
+fn local_assistant_retrieve_response(
+    tenant_id: &str,
+    project_id: &str,
+    assistant_id: &str,
+) -> Response {
+    match local_assistant_retrieve_result(tenant_id, project_id, assistant_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_assistant_update_result(
+    tenant_id: &str,
+    project_id: &str,
+    assistant_id: &str,
+    name: &str,
+) -> std::result::Result<AssistantObject, Response> {
+    update_assistant(tenant_id, project_id, assistant_id, name)
+        .map_err(local_assistant_not_found_response)
+}
+
+fn local_assistant_update_response(
+    tenant_id: &str,
+    project_id: &str,
+    assistant_id: &str,
+    name: &str,
+) -> Response {
+    match local_assistant_update_result(tenant_id, project_id, assistant_id, name) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_assistant_delete_result(
+    tenant_id: &str,
+    project_id: &str,
+    assistant_id: &str,
+) -> std::result::Result<DeleteAssistantResponse, Response> {
+    delete_assistant(tenant_id, project_id, assistant_id)
+        .map_err(local_assistant_not_found_response)
+}
+
+fn local_assistant_delete_response(
+    tenant_id: &str,
+    project_id: &str,
+    assistant_id: &str,
+) -> Response {
+    match local_assistant_delete_result(tenant_id, project_id, assistant_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
 async fn assistant_retrieve_handler(
     request_context: StatelessGatewayRequest,
     Path(assistant_id): Path<String>,
@@ -4601,15 +7506,11 @@ async fn assistant_retrieve_handler(
         }
     }
 
-    Json(
-        get_assistant(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &assistant_id,
-        )
-        .expect("assistant retrieve"),
+    local_assistant_retrieve_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &assistant_id,
     )
-    .into_response()
 }
 
 async fn assistant_update_handler(
@@ -4630,16 +7531,12 @@ async fn assistant_update_handler(
         }
     }
 
-    Json(
-        update_assistant(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &assistant_id,
-            request.name.as_deref().unwrap_or("assistant"),
-        )
-        .expect("assistant update"),
+    local_assistant_update_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &assistant_id,
+        request.name.as_deref().unwrap_or("assistant"),
     )
-    .into_response()
 }
 
 async fn assistant_delete_handler(
@@ -4659,15 +7556,11 @@ async fn assistant_delete_handler(
         }
     }
 
-    Json(
-        delete_assistant(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &assistant_id,
-        )
-        .expect("assistant delete"),
+    local_assistant_delete_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &assistant_id,
     )
-    .into_response()
 }
 
 async fn webhooks_handler(
@@ -4711,6 +7604,65 @@ async fn webhooks_list_handler(request_context: StatelessGatewayRequest) -> Resp
     .into_response()
 }
 
+fn local_webhook_not_found_response(error: anyhow::Error) -> Response {
+    local_gateway_error_response(error, "Requested webhook was not found.")
+}
+
+fn local_webhook_retrieve_result(
+    tenant_id: &str,
+    project_id: &str,
+    webhook_id: &str,
+) -> std::result::Result<WebhookObject, Response> {
+    get_webhook(tenant_id, project_id, webhook_id).map_err(local_webhook_not_found_response)
+}
+
+fn local_webhook_retrieve_response(
+    tenant_id: &str,
+    project_id: &str,
+    webhook_id: &str,
+) -> Response {
+    match local_webhook_retrieve_result(tenant_id, project_id, webhook_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_webhook_update_result(
+    tenant_id: &str,
+    project_id: &str,
+    webhook_id: &str,
+    url: &str,
+) -> std::result::Result<WebhookObject, Response> {
+    update_webhook(tenant_id, project_id, webhook_id, url).map_err(local_webhook_not_found_response)
+}
+
+fn local_webhook_update_response(
+    tenant_id: &str,
+    project_id: &str,
+    webhook_id: &str,
+    url: &str,
+) -> Response {
+    match local_webhook_update_result(tenant_id, project_id, webhook_id, url) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_webhook_delete_result(
+    tenant_id: &str,
+    project_id: &str,
+    webhook_id: &str,
+) -> std::result::Result<DeleteWebhookResponse, Response> {
+    delete_webhook(tenant_id, project_id, webhook_id).map_err(local_webhook_not_found_response)
+}
+
+fn local_webhook_delete_response(tenant_id: &str, project_id: &str, webhook_id: &str) -> Response {
+    match local_webhook_delete_result(tenant_id, project_id, webhook_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
 async fn webhook_retrieve_handler(
     request_context: StatelessGatewayRequest,
     Path(webhook_id): Path<String>,
@@ -4728,15 +7680,11 @@ async fn webhook_retrieve_handler(
         }
     }
 
-    Json(
-        get_webhook(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &webhook_id,
-        )
-        .expect("webhook retrieve"),
+    local_webhook_retrieve_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &webhook_id,
     )
-    .into_response()
 }
 
 async fn webhook_update_handler(
@@ -4757,19 +7705,15 @@ async fn webhook_update_handler(
         }
     }
 
-    Json(
-        update_webhook(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &webhook_id,
-            request
-                .url
-                .as_deref()
-                .unwrap_or("https://example.com/webhook"),
-        )
-        .expect("webhook update"),
+    local_webhook_update_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &webhook_id,
+        request
+            .url
+            .as_deref()
+            .unwrap_or("https://example.com/webhook"),
     )
-    .into_response()
 }
 
 async fn webhook_delete_handler(
@@ -4789,15 +7733,11 @@ async fn webhook_delete_handler(
         }
     }
 
-    Json(
-        delete_webhook(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &webhook_id,
-        )
-        .expect("webhook delete"),
+    local_webhook_delete_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &webhook_id,
     )
-    .into_response()
 }
 
 async fn realtime_sessions_handler(
@@ -4840,15 +7780,14 @@ async fn evals_handler(
         }
     }
 
-    Json(
-        create_eval(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &request.name,
-        )
-        .expect("eval"),
-    )
-    .into_response()
+    match create_eval(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &request.name,
+    ) {
+        Ok(response) => Json(response).into_response(),
+        Err(error) => bad_gateway_openai_response(error.to_string()),
+    }
 }
 
 async fn evals_list_handler(request_context: StatelessGatewayRequest) -> Response {
@@ -4860,8 +7799,236 @@ async fn evals_list_handler(request_context: StatelessGatewayRequest) -> Respons
         }
     }
 
-    Json(list_evals(request_context.tenant_id(), request_context.project_id()).expect("eval list"))
-        .into_response()
+    match list_evals(request_context.tenant_id(), request_context.project_id()) {
+        Ok(response) => Json(response).into_response(),
+        Err(error) => bad_gateway_openai_response(error.to_string()),
+    }
+}
+
+fn local_eval_not_found_response(error: anyhow::Error) -> Response {
+    local_gateway_error_response(error, "Requested eval was not found.")
+}
+
+fn local_eval_run_not_found_response(error: anyhow::Error) -> Response {
+    if error
+        .to_string()
+        .to_ascii_lowercase()
+        .contains("eval run not found")
+    {
+        return not_found_openai_response("Requested eval run was not found.");
+    }
+
+    local_eval_not_found_response(error)
+}
+
+fn local_eval_run_output_item_not_found_response(error: anyhow::Error) -> Response {
+    if error
+        .to_string()
+        .to_ascii_lowercase()
+        .contains("eval run output item not found")
+    {
+        return not_found_openai_response("Requested eval run output item was not found.");
+    }
+
+    local_eval_run_not_found_response(error)
+}
+
+fn local_eval_retrieve_result(
+    tenant_id: &str,
+    project_id: &str,
+    eval_id: &str,
+) -> std::result::Result<EvalObject, Response> {
+    get_eval(tenant_id, project_id, eval_id).map_err(local_eval_not_found_response)
+}
+
+fn local_eval_retrieve_response(tenant_id: &str, project_id: &str, eval_id: &str) -> Response {
+    match local_eval_retrieve_result(tenant_id, project_id, eval_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_eval_update_result(
+    tenant_id: &str,
+    project_id: &str,
+    eval_id: &str,
+    request: &UpdateEvalRequest,
+) -> std::result::Result<EvalObject, Response> {
+    update_eval(tenant_id, project_id, eval_id, request).map_err(local_eval_not_found_response)
+}
+
+fn local_eval_update_response(
+    tenant_id: &str,
+    project_id: &str,
+    eval_id: &str,
+    request: &UpdateEvalRequest,
+) -> Response {
+    match local_eval_update_result(tenant_id, project_id, eval_id, request) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_eval_delete_result(
+    tenant_id: &str,
+    project_id: &str,
+    eval_id: &str,
+) -> std::result::Result<DeleteEvalResponse, Response> {
+    delete_eval(tenant_id, project_id, eval_id).map_err(local_eval_not_found_response)
+}
+
+fn local_eval_delete_response(tenant_id: &str, project_id: &str, eval_id: &str) -> Response {
+    match local_eval_delete_result(tenant_id, project_id, eval_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_eval_runs_list_result(
+    tenant_id: &str,
+    project_id: &str,
+    eval_id: &str,
+) -> std::result::Result<ListEvalRunsResponse, Response> {
+    list_eval_runs(tenant_id, project_id, eval_id).map_err(local_eval_not_found_response)
+}
+
+fn local_eval_runs_list_response(tenant_id: &str, project_id: &str, eval_id: &str) -> Response {
+    match local_eval_runs_list_result(tenant_id, project_id, eval_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_eval_run_create_result(
+    tenant_id: &str,
+    project_id: &str,
+    eval_id: &str,
+    request: &CreateEvalRunRequest,
+) -> std::result::Result<EvalRunObject, Response> {
+    create_eval_run(tenant_id, project_id, eval_id, request).map_err(local_eval_not_found_response)
+}
+
+fn local_eval_run_retrieve_result(
+    tenant_id: &str,
+    project_id: &str,
+    eval_id: &str,
+    run_id: &str,
+) -> std::result::Result<EvalRunObject, Response> {
+    get_eval_run(tenant_id, project_id, eval_id, run_id).map_err(local_eval_run_not_found_response)
+}
+
+fn local_eval_run_retrieve_response(
+    tenant_id: &str,
+    project_id: &str,
+    eval_id: &str,
+    run_id: &str,
+) -> Response {
+    match local_eval_run_retrieve_result(tenant_id, project_id, eval_id, run_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_eval_run_delete_result(
+    tenant_id: &str,
+    project_id: &str,
+    eval_id: &str,
+    run_id: &str,
+) -> std::result::Result<DeleteEvalRunResponse, Response> {
+    sdkwork_api_app_gateway::delete_eval_run(tenant_id, project_id, eval_id, run_id)
+        .map_err(local_eval_run_not_found_response)
+}
+
+fn local_eval_run_delete_response(
+    tenant_id: &str,
+    project_id: &str,
+    eval_id: &str,
+    run_id: &str,
+) -> Response {
+    match local_eval_run_delete_result(tenant_id, project_id, eval_id, run_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_eval_run_cancel_result(
+    tenant_id: &str,
+    project_id: &str,
+    eval_id: &str,
+    run_id: &str,
+) -> std::result::Result<EvalRunObject, Response> {
+    sdkwork_api_app_gateway::cancel_eval_run(tenant_id, project_id, eval_id, run_id)
+        .map_err(local_eval_run_not_found_response)
+}
+
+fn local_eval_run_cancel_response(
+    tenant_id: &str,
+    project_id: &str,
+    eval_id: &str,
+    run_id: &str,
+) -> Response {
+    match local_eval_run_cancel_result(tenant_id, project_id, eval_id, run_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_eval_run_output_items_list_result(
+    tenant_id: &str,
+    project_id: &str,
+    eval_id: &str,
+    run_id: &str,
+) -> std::result::Result<ListEvalRunOutputItemsResponse, Response> {
+    sdkwork_api_app_gateway::list_eval_run_output_items(tenant_id, project_id, eval_id, run_id)
+        .map_err(local_eval_run_not_found_response)
+}
+
+fn local_eval_run_output_items_list_response(
+    tenant_id: &str,
+    project_id: &str,
+    eval_id: &str,
+    run_id: &str,
+) -> Response {
+    match local_eval_run_output_items_list_result(tenant_id, project_id, eval_id, run_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_eval_run_output_item_retrieve_result(
+    tenant_id: &str,
+    project_id: &str,
+    eval_id: &str,
+    run_id: &str,
+    output_item_id: &str,
+) -> std::result::Result<EvalRunOutputItemObject, Response> {
+    sdkwork_api_app_gateway::get_eval_run_output_item(
+        tenant_id,
+        project_id,
+        eval_id,
+        run_id,
+        output_item_id,
+    )
+    .map_err(local_eval_run_output_item_not_found_response)
+}
+
+fn local_eval_run_output_item_retrieve_response(
+    tenant_id: &str,
+    project_id: &str,
+    eval_id: &str,
+    run_id: &str,
+    output_item_id: &str,
+) -> Response {
+    match local_eval_run_output_item_retrieve_result(
+        tenant_id,
+        project_id,
+        eval_id,
+        run_id,
+        output_item_id,
+    ) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
 }
 
 async fn eval_retrieve_handler(
@@ -4878,15 +8045,11 @@ async fn eval_retrieve_handler(
         }
     }
 
-    Json(
-        get_eval(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &eval_id,
-        )
-        .expect("eval retrieve"),
+    local_eval_retrieve_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &eval_id,
     )
-    .into_response()
 }
 
 async fn eval_update_handler(
@@ -4907,16 +8070,12 @@ async fn eval_update_handler(
         }
     }
 
-    Json(
-        update_eval(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &eval_id,
-            &request,
-        )
-        .expect("eval update"),
+    local_eval_update_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &eval_id,
+        &request,
     )
-    .into_response()
 }
 
 async fn eval_delete_handler(
@@ -4933,15 +8092,11 @@ async fn eval_delete_handler(
         }
     }
 
-    Json(
-        delete_eval(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &eval_id,
-        )
-        .expect("eval delete"),
+    local_eval_delete_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &eval_id,
     )
-    .into_response()
 }
 
 async fn eval_runs_list_handler(
@@ -4958,15 +8113,11 @@ async fn eval_runs_list_handler(
         }
     }
 
-    Json(
-        list_eval_runs(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &eval_id,
-        )
-        .expect("eval runs list"),
+    local_eval_runs_list_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &eval_id,
     )
-    .into_response()
 }
 
 async fn eval_runs_handler(
@@ -4987,16 +8138,15 @@ async fn eval_runs_handler(
         }
     }
 
-    Json(
-        create_eval_run(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &eval_id,
-            &request,
-        )
-        .expect("eval run create"),
-    )
-    .into_response()
+    match local_eval_run_create_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &eval_id,
+        &request,
+    ) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
 }
 
 async fn eval_run_retrieve_handler(
@@ -5016,16 +8166,12 @@ async fn eval_run_retrieve_handler(
         }
     }
 
-    Json(
-        get_eval_run(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &eval_id,
-            &run_id,
-        )
-        .expect("eval run retrieve"),
+    local_eval_run_retrieve_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &eval_id,
+        &run_id,
     )
-    .into_response()
 }
 
 async fn eval_run_delete_handler(
@@ -5045,16 +8191,12 @@ async fn eval_run_delete_handler(
         }
     }
 
-    Json(
-        sdkwork_api_app_gateway::delete_eval_run(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &eval_id,
-            &run_id,
-        )
-        .expect("eval run delete"),
+    local_eval_run_delete_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &eval_id,
+        &run_id,
     )
-    .into_response()
 }
 
 async fn eval_run_cancel_handler(
@@ -5074,16 +8216,12 @@ async fn eval_run_cancel_handler(
         }
     }
 
-    Json(
-        sdkwork_api_app_gateway::cancel_eval_run(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &eval_id,
-            &run_id,
-        )
-        .expect("eval run cancel"),
+    local_eval_run_cancel_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &eval_id,
+        &run_id,
     )
-    .into_response()
 }
 
 async fn eval_run_output_items_list_handler(
@@ -5105,16 +8243,12 @@ async fn eval_run_output_items_list_handler(
         }
     }
 
-    Json(
-        sdkwork_api_app_gateway::list_eval_run_output_items(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &eval_id,
-            &run_id,
-        )
-        .expect("eval run output items list"),
+    local_eval_run_output_items_list_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &eval_id,
+        &run_id,
     )
-    .into_response()
 }
 
 async fn eval_run_output_item_retrieve_handler(
@@ -5136,17 +8270,13 @@ async fn eval_run_output_item_retrieve_handler(
         }
     }
 
-    Json(
-        sdkwork_api_app_gateway::get_eval_run_output_item(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &eval_id,
-            &run_id,
-            &output_item_id,
-        )
-        .expect("eval run output item retrieve"),
+    local_eval_run_output_item_retrieve_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &eval_id,
+        &run_id,
+        &output_item_id,
     )
-    .into_response()
 }
 
 async fn batches_handler(
@@ -5189,6 +8319,40 @@ async fn batches_list_handler(request_context: StatelessGatewayRequest) -> Respo
     .into_response()
 }
 
+fn local_batch_not_found_response(error: anyhow::Error) -> Response {
+    local_gateway_error_response(error, "Requested batch was not found.")
+}
+
+fn local_batch_retrieve_result(
+    tenant_id: &str,
+    project_id: &str,
+    batch_id: &str,
+) -> std::result::Result<BatchObject, Response> {
+    get_batch(tenant_id, project_id, batch_id).map_err(local_batch_not_found_response)
+}
+
+fn local_batch_retrieve_response(tenant_id: &str, project_id: &str, batch_id: &str) -> Response {
+    match local_batch_retrieve_result(tenant_id, project_id, batch_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_batch_cancel_result(
+    tenant_id: &str,
+    project_id: &str,
+    batch_id: &str,
+) -> std::result::Result<BatchObject, Response> {
+    cancel_batch(tenant_id, project_id, batch_id).map_err(local_batch_not_found_response)
+}
+
+fn local_batch_cancel_response(tenant_id: &str, project_id: &str, batch_id: &str) -> Response {
+    match local_batch_cancel_result(tenant_id, project_id, batch_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
 async fn batch_retrieve_handler(
     request_context: StatelessGatewayRequest,
     Path(batch_id): Path<String>,
@@ -5206,15 +8370,11 @@ async fn batch_retrieve_handler(
         }
     }
 
-    Json(
-        get_batch(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &batch_id,
-        )
-        .expect("batch retrieve"),
+    local_batch_retrieve_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &batch_id,
     )
-    .into_response()
 }
 
 async fn batch_cancel_handler(
@@ -5231,15 +8391,11 @@ async fn batch_cancel_handler(
         }
     }
 
-    Json(
-        cancel_batch(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &batch_id,
-        )
-        .expect("batch cancel"),
+    local_batch_cancel_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &batch_id,
     )
-    .into_response()
 }
 
 async fn vector_stores_list_handler(request_context: StatelessGatewayRequest) -> Response {
@@ -5283,6 +8439,72 @@ async fn vector_stores_handler(
     .into_response()
 }
 
+fn local_vector_store_not_found_response(error: anyhow::Error) -> Response {
+    local_gateway_error_response(error, "Requested vector store was not found.")
+}
+
+fn local_vector_store_retrieve_result(
+    tenant_id: &str,
+    project_id: &str,
+    vector_store_id: &str,
+) -> std::result::Result<VectorStoreObject, Response> {
+    get_vector_store(tenant_id, project_id, vector_store_id)
+        .map_err(local_vector_store_not_found_response)
+}
+
+fn local_vector_store_retrieve_response(
+    tenant_id: &str,
+    project_id: &str,
+    vector_store_id: &str,
+) -> Response {
+    match local_vector_store_retrieve_result(tenant_id, project_id, vector_store_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_vector_store_update_result(
+    tenant_id: &str,
+    project_id: &str,
+    vector_store_id: &str,
+    name: &str,
+) -> std::result::Result<VectorStoreObject, Response> {
+    update_vector_store(tenant_id, project_id, vector_store_id, name)
+        .map_err(local_vector_store_not_found_response)
+}
+
+fn local_vector_store_update_response(
+    tenant_id: &str,
+    project_id: &str,
+    vector_store_id: &str,
+    name: &str,
+) -> Response {
+    match local_vector_store_update_result(tenant_id, project_id, vector_store_id, name) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_vector_store_delete_result(
+    tenant_id: &str,
+    project_id: &str,
+    vector_store_id: &str,
+) -> std::result::Result<DeleteVectorStoreResponse, Response> {
+    delete_vector_store(tenant_id, project_id, vector_store_id)
+        .map_err(local_vector_store_not_found_response)
+}
+
+fn local_vector_store_delete_response(
+    tenant_id: &str,
+    project_id: &str,
+    vector_store_id: &str,
+) -> Response {
+    match local_vector_store_delete_result(tenant_id, project_id, vector_store_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
 async fn vector_store_retrieve_handler(
     request_context: StatelessGatewayRequest,
     Path(vector_store_id): Path<String>,
@@ -5300,15 +8522,11 @@ async fn vector_store_retrieve_handler(
         }
     }
 
-    Json(
-        get_vector_store(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &vector_store_id,
-        )
-        .expect("vector store retrieve"),
+    local_vector_store_retrieve_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &vector_store_id,
     )
-    .into_response()
 }
 
 async fn vector_store_update_handler(
@@ -5329,16 +8547,12 @@ async fn vector_store_update_handler(
         }
     }
 
-    Json(
-        update_vector_store(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &vector_store_id,
-            request.name.as_deref().unwrap_or("vector-store"),
-        )
-        .expect("vector store update"),
+    local_vector_store_update_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &vector_store_id,
+        request.name.as_deref().unwrap_or("vector-store"),
     )
-    .into_response()
 }
 
 async fn vector_store_delete_handler(
@@ -5358,15 +8572,11 @@ async fn vector_store_delete_handler(
         }
     }
 
-    Json(
-        delete_vector_store(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &vector_store_id,
-        )
-        .expect("vector store delete"),
+    local_vector_store_delete_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &vector_store_id,
     )
-    .into_response()
 }
 
 async fn vector_store_search_handler(
@@ -5476,16 +8686,12 @@ async fn vector_store_file_retrieve_handler(
         }
     }
 
-    Json(
-        get_vector_store_file(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &vector_store_id,
-            &file_id,
-        )
-        .expect("vector store file retrieve"),
+    local_vector_store_file_retrieve_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &vector_store_id,
+        &file_id,
     )
-    .into_response()
 }
 
 async fn vector_store_file_delete_handler(
@@ -5507,16 +8713,12 @@ async fn vector_store_file_delete_handler(
         }
     }
 
-    Json(
-        delete_vector_store_file(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &vector_store_id,
-            &file_id,
-        )
-        .expect("vector store file delete"),
+    local_vector_store_file_delete_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &vector_store_id,
+        &file_id,
     )
-    .into_response()
 }
 
 async fn vector_store_file_batches_handler(
@@ -5568,16 +8770,12 @@ async fn vector_store_file_batch_retrieve_handler(
         }
     }
 
-    Json(
-        get_vector_store_file_batch(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &vector_store_id,
-            &batch_id,
-        )
-        .expect("vector store file batch retrieve"),
+    local_vector_store_file_batch_retrieve_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &vector_store_id,
+        &batch_id,
     )
-    .into_response()
 }
 
 async fn vector_store_file_batch_cancel_handler(
@@ -5599,16 +8797,12 @@ async fn vector_store_file_batch_cancel_handler(
         }
     }
 
-    Json(
-        cancel_vector_store_file_batch(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &vector_store_id,
-            &batch_id,
-        )
-        .expect("vector store file batch cancel"),
+    local_vector_store_file_batch_cancel_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &vector_store_id,
+        &batch_id,
     )
-    .into_response()
 }
 
 async fn vector_store_file_batch_files_handler(
@@ -5630,16 +8824,12 @@ async fn vector_store_file_batch_files_handler(
         }
     }
 
-    Json(
-        list_vector_store_file_batch_files(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &vector_store_id,
-            &batch_id,
-        )
-        .expect("vector store file batch files"),
+    local_vector_store_file_batch_files_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &vector_store_id,
+        &batch_id,
     )
-    .into_response()
 }
 
 async fn chat_completions_with_state_handler(
@@ -5647,96 +8837,165 @@ async fn chat_completions_with_state_handler(
     State(state): State<GatewayApiState>,
     ExtractJson(request): ExtractJson<CreateChatCompletionRequest>,
 ) -> Response {
-    match enforce_project_quota(state.store.as_ref(), request_context.project_id(), 100).await {
-        Ok(Some(response)) => return response,
-        Ok(None) => {}
-        Err(_) => {
-            return (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "failed to evaluate quota",
-            )
-                .into_response();
+    let options = ProviderRequestOptions::default();
+    let commercial_admission = match begin_gateway_commercial_admission(
+        &state,
+        request_context.context(),
+        GatewayCommercialAdmissionSpec {
+            quoted_amount: 0.10,
+        },
+    )
+    .await
+    {
+        Ok(GatewayCommercialAdmissionDecision::Canonical(admission)) => Some(admission),
+        Ok(GatewayCommercialAdmissionDecision::LegacyQuota) => {
+            match enforce_project_quota(state.store.as_ref(), request_context.project_id(), 100)
+                .await
+            {
+                Ok(Some(response)) => return response,
+                Ok(None) => {}
+                Err(_) => {
+                    return (
+                        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        "failed to evaluate quota",
+                    )
+                        .into_response();
+                }
+            }
+            None
         }
-    }
+        Err(response) => return response,
+    };
 
     if request.stream.unwrap_or(false) {
-        match relay_chat_completion_stream_from_store(
+        match relay_chat_completion_stream_from_store_with_execution_context(
             state.store.as_ref(),
             &state.secret_manager,
             request_context.tenant_id(),
             request_context.project_id(),
             &request,
+            &options,
         )
         .await
         {
-            Ok(Some(response)) => {
-                let usage_result = record_gateway_usage_for_project(
-                    state.store.as_ref(),
-                    request_context.tenant_id(),
-                    request_context.project_id(),
-                    "chat_completion",
-                    &request.model,
-                    100,
-                    0.10,
-                )
-                .await;
-                if usage_result.is_err() {
-                    return (
-                        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                        "failed to record usage",
+            Ok(execution) => {
+                let usage_context = execution.usage_context;
+                if let Some(response) = execution.response {
+                    if let Some(admission) = commercial_admission.as_ref() {
+                        if let Err(response) =
+                            capture_gateway_commercial_admission(&state, admission).await
+                        {
+                            return response;
+                        }
+                    }
+                    let usage_result = record_gateway_usage_for_project_with_context(
+                        state.store.as_ref(),
+                        request_context.tenant_id(),
+                        request_context.project_id(),
+                        "chat_completion",
+                        &request.model,
+                        100,
+                        0.10,
+                        usage_context.as_ref(),
                     )
-                        .into_response();
-                }
+                    .await;
+                    if usage_result.is_err() {
+                        return (
+                            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                            "failed to record usage",
+                        )
+                            .into_response();
+                    }
 
-                return upstream_passthrough_response(response);
+                    return upstream_passthrough_response(response);
+                }
             }
-            Ok(None) => {}
             Err(_) => {
+                if let Some(admission) = commercial_admission.as_ref() {
+                    if let Err(response) =
+                        release_gateway_commercial_admission(&state, admission).await
+                    {
+                        return response;
+                    }
+                }
                 return bad_gateway_openai_response(
                     "failed to relay upstream chat completion stream",
                 );
             }
         }
     } else {
-        match relay_chat_completion_from_store(
+        match relay_chat_completion_from_store_with_execution_context(
             state.store.as_ref(),
             &state.secret_manager,
             request_context.tenant_id(),
             request_context.project_id(),
             &request,
+            &options,
         )
         .await
         {
-            Ok(Some(response)) => {
-                let token_usage = extract_token_usage_metrics(&response);
-                let usage_result =
-                    record_gateway_usage_for_project_with_route_key_and_tokens_and_reference(
-                    state.store.as_ref(),
-                    request_context.tenant_id(),
-                    request_context.project_id(),
-                    "chat_completion",
-                    &request.model,
-                    &request.model,
-                    100,
-                    0.10,
-                    token_usage,
-                    response_usage_id_or_single_data_item_id(&response),
-                )
-                .await;
-                if usage_result.is_err() {
-                    return (
-                        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                        "failed to record usage",
+            Ok(execution) => {
+                let usage_context = execution.usage_context;
+                if let Some(response) = execution.response {
+                    if let Some(admission) = commercial_admission.as_ref() {
+                        if let Err(response) =
+                            capture_gateway_commercial_admission(&state, admission).await
+                        {
+                            return response;
+                        }
+                    }
+                    let token_usage = extract_token_usage_metrics(&response);
+                    let usage_result =
+                        record_gateway_usage_for_project_with_route_key_and_tokens_and_reference_with_context(
+                        state.store.as_ref(),
+                        request_context.tenant_id(),
+                        request_context.project_id(),
+                        "chat_completion",
+                        &request.model,
+                        &request.model,
+                        100,
+                        0.10,
+                        token_usage,
+                        response_usage_id_or_single_data_item_id(&response),
+                        usage_context.as_ref(),
                     )
-                        .into_response();
-                }
+                    .await;
+                    if usage_result.is_err() {
+                        return (
+                            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                            "failed to record usage",
+                        )
+                            .into_response();
+                    }
 
-                return Json(response).into_response();
+                    return Json(response).into_response();
+                }
             }
-            Ok(None) => {}
             Err(_) => {
+                if let Some(admission) = commercial_admission.as_ref() {
+                    if let Err(response) =
+                        release_gateway_commercial_admission(&state, admission).await
+                    {
+                        return response;
+                    }
+                }
                 return bad_gateway_openai_response("failed to relay upstream chat completion");
             }
+        }
+    }
+
+    let local_chat_completion = match local_chat_completion_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &request.model,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
+    if let Some(admission) = commercial_admission.as_ref() {
+        if let Err(response) = capture_gateway_commercial_admission(&state, admission).await {
+            return response;
         }
     }
 
@@ -5759,22 +9018,9 @@ async fn chat_completions_with_state_handler(
     }
 
     if request.stream.unwrap_or(false) {
-        let body = format!(
-            "{}{}",
-            SseFrame::data("{\"id\":\"chatcmpl_1\",\"object\":\"chat.completion.chunk\"}"),
-            SseFrame::data("[DONE]")
-        );
-        ([(header::CONTENT_TYPE, "text/event-stream")], body).into_response()
+        local_chat_completion_stream_body_response()
     } else {
-        Json(
-            create_chat_completion(
-                request_context.tenant_id(),
-                request_context.project_id(),
-                &request.model,
-            )
-            .expect("chat completion"),
-        )
-        .into_response()
+        Json(local_chat_completion).into_response()
     }
 }
 
@@ -5800,7 +9046,15 @@ async fn anthropic_messages_handler(
             Ok(Some(response)) => {
                 return upstream_passthrough_response(anthropic_stream_from_openai(response));
             }
-            Ok(None) => return local_anthropic_stream_response(&request.model),
+            Ok(None) => {
+                return match local_anthropic_stream_result(
+                    request_context.tenant_id(),
+                    request_context.project_id(),
+                    &request.model,
+                ) {
+                    Ok(response) | Err(response) => response,
+                };
+            }
             Err(_) => {
                 return anthropic_bad_gateway_response(
                     "failed to relay upstream anthropic message stream",
@@ -5817,18 +9071,14 @@ async fn anthropic_messages_handler(
     .await
     {
         Ok(Some(response)) => Json(openai_chat_response_to_anthropic(&response)).into_response(),
-        Ok(None) => Json(openai_chat_response_to_anthropic(
-            &serde_json::to_value(
-                create_chat_completion(
-                    request_context.tenant_id(),
-                    request_context.project_id(),
-                    &request.model,
-                )
-                .expect("chat completion"),
-            )
-            .expect("chat completion value"),
-        ))
-        .into_response(),
+        Ok(None) => match local_anthropic_chat_completion_result(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &request.model,
+        ) {
+            Ok(response) => Json(response).into_response(),
+            Err(response) => response,
+        },
         Err(_) => anthropic_bad_gateway_response("failed to relay upstream anthropic message"),
     }
 }
@@ -5849,18 +9099,11 @@ async fn anthropic_count_tokens_handler(
     .await
     {
         Ok(Some(response)) => Json(openai_count_tokens_to_anthropic(&response)).into_response(),
-        Ok(None) => Json(openai_count_tokens_to_anthropic(
-            &serde_json::to_value(
-                count_response_input_tokens(
-                    request_context.tenant_id(),
-                    request_context.project_id(),
-                    &request.model,
-                )
-                .expect("response input tokens"),
-            )
-            .expect("response input token value"),
-        ))
-        .into_response(),
+        Ok(None) => local_anthropic_count_tokens_response(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &request.model,
+        ),
         Err(_) => anthropic_bad_gateway_response(
             "failed to relay upstream anthropic count tokens request",
         ),
@@ -5879,20 +9122,37 @@ async fn anthropic_messages_with_state_handler(
     };
     let options = anthropic_request_options(&headers);
 
-    match enforce_project_quota(state.store.as_ref(), request_context.project_id(), 100).await {
-        Ok(Some(response)) => return response,
-        Ok(None) => {}
-        Err(_) => {
-            return (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "failed to evaluate quota",
-            )
-                .into_response();
+    let commercial_admission = match begin_gateway_commercial_admission(
+        &state,
+        request_context.context(),
+        GatewayCommercialAdmissionSpec {
+            quoted_amount: 0.10,
+        },
+    )
+    .await
+    {
+        Ok(GatewayCommercialAdmissionDecision::Canonical(admission)) => Some(admission),
+        Ok(GatewayCommercialAdmissionDecision::LegacyQuota) => {
+            match enforce_project_quota(state.store.as_ref(), request_context.project_id(), 100)
+                .await
+            {
+                Ok(Some(response)) => return response,
+                Ok(None) => {}
+                Err(_) => {
+                    return (
+                        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        "failed to evaluate quota",
+                    )
+                        .into_response();
+                }
+            }
+            None
         }
-    }
+        Err(response) => return response,
+    };
 
     if request.stream.unwrap_or(false) {
-        match relay_chat_completion_stream_from_store_with_options(
+        match relay_chat_completion_stream_from_store_with_execution_context(
             state.store.as_ref(),
             &state.secret_manager,
             request_context.tenant_id(),
@@ -5902,33 +9162,65 @@ async fn anthropic_messages_with_state_handler(
         )
         .await
         {
-            Ok(Some(response)) => {
-                if record_gateway_usage_for_project(
-                    state.store.as_ref(),
-                    request_context.tenant_id(),
-                    request_context.project_id(),
-                    "chat_completion",
-                    &request.model,
-                    100,
-                    0.10,
-                )
-                .await
-                .is_err()
-                {
-                    return (
-                        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                        "failed to record usage",
+            Ok(execution) => {
+                let usage_context = execution.usage_context;
+                if let Some(response) = execution.response {
+                    if let Some(admission) = commercial_admission.as_ref() {
+                        if let Err(response) =
+                            capture_gateway_commercial_admission(&state, admission).await
+                        {
+                            return response;
+                        }
+                    }
+                    if record_gateway_usage_for_project_with_context(
+                        state.store.as_ref(),
+                        request_context.tenant_id(),
+                        request_context.project_id(),
+                        "chat_completion",
+                        &request.model,
+                        100,
+                        0.10,
+                        usage_context.as_ref(),
                     )
-                        .into_response();
-                }
+                    .await
+                    .is_err()
+                    {
+                        return (
+                            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                            "failed to record usage",
+                        )
+                            .into_response();
+                    }
 
-                return upstream_passthrough_response(anthropic_stream_from_openai(response));
+                    return upstream_passthrough_response(anthropic_stream_from_openai(response));
+                }
             }
-            Ok(None) => {}
             Err(_) => {
+                if let Some(admission) = commercial_admission.as_ref() {
+                    if let Err(response) =
+                        release_gateway_commercial_admission(&state, admission).await
+                    {
+                        return response;
+                    }
+                }
                 return anthropic_bad_gateway_response(
                     "failed to relay upstream anthropic message stream",
                 );
+            }
+        }
+
+        let local_response = match local_anthropic_stream_result(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &request.model,
+        ) {
+            Ok(response) => response,
+            Err(response) => return response,
+        };
+
+        if let Some(admission) = commercial_admission.as_ref() {
+            if let Err(response) = capture_gateway_commercial_admission(&state, admission).await {
+                return response;
             }
         }
 
@@ -5951,10 +9243,10 @@ async fn anthropic_messages_with_state_handler(
                 .into_response();
         }
 
-        return local_anthropic_stream_response(&request.model);
+        return local_response;
     }
 
-    match relay_chat_completion_from_store_with_options(
+    match relay_chat_completion_from_store_with_execution_context(
         state.store.as_ref(),
         &state.secret_manager,
         request_context.tenant_id(),
@@ -5964,35 +9256,66 @@ async fn anthropic_messages_with_state_handler(
     )
     .await
     {
-        Ok(Some(response)) => {
-            let token_usage = extract_token_usage_metrics(&response);
-            if record_gateway_usage_for_project_with_route_key_and_tokens_and_reference(
-                state.store.as_ref(),
-                request_context.tenant_id(),
-                request_context.project_id(),
-                "chat_completion",
-                &request.model,
-                &request.model,
-                100,
-                0.10,
-                token_usage,
-                response_usage_id_or_single_data_item_id(&response),
-            )
-            .await
-            .is_err()
-            {
-                return (
-                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                    "failed to record usage",
+        Ok(execution) => {
+            let usage_context = execution.usage_context;
+            if let Some(response) = execution.response {
+                if let Some(admission) = commercial_admission.as_ref() {
+                    if let Err(response) =
+                        capture_gateway_commercial_admission(&state, admission).await
+                    {
+                        return response;
+                    }
+                }
+                let token_usage = extract_token_usage_metrics(&response);
+                if record_gateway_usage_for_project_with_route_key_and_tokens_and_reference_with_context(
+                    state.store.as_ref(),
+                    request_context.tenant_id(),
+                    request_context.project_id(),
+                    "chat_completion",
+                    &request.model,
+                    &request.model,
+                    100,
+                    0.10,
+                    token_usage,
+                    response_usage_id_or_single_data_item_id(&response),
+                    usage_context.as_ref(),
                 )
-                    .into_response();
-            }
+                .await
+                .is_err()
+                {
+                    return (
+                        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        "failed to record usage",
+                    )
+                        .into_response();
+                }
 
-            return Json(openai_chat_response_to_anthropic(&response)).into_response();
+                return Json(openai_chat_response_to_anthropic(&response)).into_response();
+            }
         }
-        Ok(None) => {}
         Err(_) => {
+            if let Some(admission) = commercial_admission.as_ref() {
+                if let Err(response) = release_gateway_commercial_admission(&state, admission).await
+                {
+                    return response;
+                }
+            }
             return anthropic_bad_gateway_response("failed to relay upstream anthropic message");
+        }
+    }
+
+    let local_response = match local_anthropic_chat_completion_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &request.model,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
+    if let Some(admission) = commercial_admission.as_ref() {
+        if let Err(response) = capture_gateway_commercial_admission(&state, admission).await {
+            return response;
         }
     }
 
@@ -6015,18 +9338,7 @@ async fn anthropic_messages_with_state_handler(
             .into_response();
     }
 
-    Json(openai_chat_response_to_anthropic(
-        &serde_json::to_value(
-            create_chat_completion(
-                request_context.tenant_id(),
-                request_context.project_id(),
-                &request.model,
-            )
-            .expect("chat completion"),
-        )
-        .expect("chat completion value"),
-    ))
-    .into_response()
+    Json(local_response).into_response()
 }
 
 async fn anthropic_count_tokens_with_state_handler(
@@ -6049,18 +9361,11 @@ async fn anthropic_count_tokens_with_state_handler(
     .await
     {
         Ok(Some(response)) => Json(openai_count_tokens_to_anthropic(&response)).into_response(),
-        Ok(None) => Json(openai_count_tokens_to_anthropic(
-            &serde_json::to_value(
-                count_response_input_tokens(
-                    request_context.tenant_id(),
-                    request_context.project_id(),
-                    &request.model,
-                )
-                .expect("response input tokens"),
-            )
-            .expect("response input token value"),
-        ))
-        .into_response(),
+        Ok(None) => local_anthropic_count_tokens_response(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &request.model,
+        ),
         Err(_) => anthropic_bad_gateway_response(
             "failed to relay upstream anthropic count tokens request",
         ),
@@ -6092,18 +9397,14 @@ async fn gemini_models_compat_handler(
                 Ok(Some(response)) => {
                     Json(openai_chat_response_to_gemini(&response)).into_response()
                 }
-                Ok(None) => Json(openai_chat_response_to_gemini(
-                    &serde_json::to_value(
-                        create_chat_completion(
-                            request_context.tenant_id(),
-                            request_context.project_id(),
-                            &request.model,
-                        )
-                        .expect("chat completion"),
-                    )
-                    .expect("chat completion value"),
-                ))
-                .into_response(),
+                Ok(None) => match local_gemini_chat_completion_result(
+                    request_context.tenant_id(),
+                    request_context.project_id(),
+                    &request.model,
+                ) {
+                    Ok(response) => Json(response).into_response(),
+                    Err(response) => response,
+                },
                 Err(_) => gemini_bad_gateway_response(
                     "failed to relay upstream gemini generateContent request",
                 ),
@@ -6125,7 +9426,13 @@ async fn gemini_models_compat_handler(
                 Ok(Some(response)) => {
                     upstream_passthrough_response(gemini_stream_from_openai(response))
                 }
-                Ok(None) => local_gemini_stream_response(),
+                Ok(None) => match local_gemini_stream_result(
+                    request_context.tenant_id(),
+                    request_context.project_id(),
+                    &request.model,
+                ) {
+                    Ok(response) | Err(response) => response,
+                },
                 Err(_) => gemini_bad_gateway_response(
                     "failed to relay upstream gemini streamGenerateContent request",
                 ),
@@ -6142,18 +9449,14 @@ async fn gemini_models_compat_handler(
                 Ok(Some(response)) => {
                     Json(openai_count_tokens_to_gemini(&response)).into_response()
                 }
-                Ok(None) => Json(openai_count_tokens_to_gemini(
-                    &serde_json::to_value(
-                        count_response_input_tokens(
-                            request_context.tenant_id(),
-                            request_context.project_id(),
-                            &request.model,
-                        )
-                        .expect("response input tokens"),
-                    )
-                    .expect("response input token value"),
-                ))
-                .into_response(),
+                Ok(None) => match local_gemini_count_tokens_result(
+                    request_context.tenant_id(),
+                    request_context.project_id(),
+                    &request.model,
+                ) {
+                    Ok(response) => Json(response).into_response(),
+                    Err(response) => response,
+                },
                 Err(_) => gemini_bad_gateway_response(
                     "failed to relay upstream gemini countTokens request",
                 ),
@@ -6179,91 +9482,136 @@ async fn gemini_models_compat_with_state_handler(
                 Err(error) => return gemini_invalid_request_response(error.to_string()),
             };
 
-            match enforce_project_quota(state.store.as_ref(), request_context.project_id(), 100)
-                .await
+            let commercial_admission = match begin_gateway_commercial_admission(
+                &state,
+                request_context.context(),
+                GatewayCommercialAdmissionSpec {
+                    quoted_amount: 0.10,
+                },
+            )
+            .await
             {
-                Ok(Some(response)) => return response,
-                Ok(None) => {}
-                Err(_) => {
-                    return (
-                        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                        "failed to evaluate quota",
+                Ok(GatewayCommercialAdmissionDecision::Canonical(admission)) => Some(admission),
+                Ok(GatewayCommercialAdmissionDecision::LegacyQuota) => {
+                    match enforce_project_quota(
+                        state.store.as_ref(),
+                        request_context.project_id(),
+                        100,
                     )
-                        .into_response();
+                    .await
+                    {
+                        Ok(Some(response)) => return response,
+                        Ok(None) => {}
+                        Err(_) => {
+                            return (
+                                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                                "failed to evaluate quota",
+                            )
+                                .into_response();
+                        }
+                    }
+                    None
                 }
-            }
+                Err(response) => return response,
+            };
 
-            match relay_chat_completion_from_store(
+            let options = ProviderRequestOptions::default();
+            match relay_chat_completion_from_store_with_execution_context(
                 state.store.as_ref(),
                 &state.secret_manager,
                 request_context.tenant_id(),
                 request_context.project_id(),
                 &request,
+                &options,
             )
             .await
             {
-                Ok(Some(response)) => {
-                    let token_usage = extract_token_usage_metrics(&response);
-                    if record_gateway_usage_for_project_with_route_key_and_tokens_and_reference(
-                        state.store.as_ref(),
-                        request_context.tenant_id(),
-                        request_context.project_id(),
-                        "chat_completion",
-                        &request.model,
-                        &request.model,
-                        100,
-                        0.10,
-                        token_usage,
-                        response_usage_id_or_single_data_item_id(&response),
-                    )
-                    .await
-                    .is_err()
-                    {
-                        return (
-                            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                            "failed to record usage",
+                Ok(execution) => {
+                    let usage_context = execution.usage_context;
+                    if let Some(response) = execution.response {
+                        if let Some(admission) = commercial_admission.as_ref() {
+                            if let Err(response) =
+                                capture_gateway_commercial_admission(&state, admission).await
+                            {
+                                return response;
+                            }
+                        }
+                        let token_usage = extract_token_usage_metrics(&response);
+                        if record_gateway_usage_for_project_with_route_key_and_tokens_and_reference_with_context(
+                            state.store.as_ref(),
+                            request_context.tenant_id(),
+                            request_context.project_id(),
+                            "chat_completion",
+                            &request.model,
+                            &request.model,
+                            100,
+                            0.10,
+                            token_usage,
+                            response_usage_id_or_single_data_item_id(&response),
+                            usage_context.as_ref(),
                         )
-                            .into_response();
-                    }
-
-                    Json(openai_chat_response_to_gemini(&response)).into_response()
-                }
-                Ok(None) => {
-                    if record_gateway_usage_for_project(
-                        state.store.as_ref(),
-                        request_context.tenant_id(),
-                        request_context.project_id(),
-                        "chat_completion",
-                        &request.model,
-                        100,
-                        0.10,
-                    )
-                    .await
-                    .is_err()
-                    {
-                        return (
-                            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                            "failed to record usage",
-                        )
-                            .into_response();
-                    }
-
-                    Json(openai_chat_response_to_gemini(
-                        &serde_json::to_value(
-                            create_chat_completion(
-                                request_context.tenant_id(),
-                                request_context.project_id(),
-                                &request.model,
+                        .await
+                        .is_err()
+                        {
+                            return (
+                                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                                "failed to record usage",
                             )
-                            .expect("chat completion"),
+                                .into_response();
+                        }
+
+                        Json(openai_chat_response_to_gemini(&response)).into_response()
+                    } else {
+                        let local_response = match local_gemini_chat_completion_result(
+                            request_context.tenant_id(),
+                            request_context.project_id(),
+                            &request.model,
+                        ) {
+                            Ok(response) => response,
+                            Err(response) => return response,
+                        };
+
+                        if let Some(admission) = commercial_admission.as_ref() {
+                            if let Err(response) =
+                                capture_gateway_commercial_admission(&state, admission).await
+                            {
+                                return response;
+                            }
+                        }
+                        if record_gateway_usage_for_project(
+                            state.store.as_ref(),
+                            request_context.tenant_id(),
+                            request_context.project_id(),
+                            "chat_completion",
+                            &request.model,
+                            100,
+                            0.10,
                         )
-                        .expect("chat completion value"),
-                    ))
-                    .into_response()
+                        .await
+                        .is_err()
+                        {
+                            return (
+                                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                                "failed to record usage",
+                            )
+                                .into_response();
+                        }
+
+                        Json(local_response).into_response()
+                    }
                 }
-                Err(_) => gemini_bad_gateway_response(
-                    "failed to relay upstream gemini generateContent request",
-                ),
+                Err(_) => {
+                    if let Some(admission) = commercial_admission.as_ref() {
+                        if let Err(response) =
+                            release_gateway_commercial_admission(&state, admission).await
+                        {
+                            return response;
+                        }
+                    }
+                    gemini_bad_gateway_response(
+                        "failed to relay upstream gemini generateContent request",
+                    )
+                }
             }
         }
         GeminiCompatAction::StreamGenerateContent => {
@@ -6273,76 +9621,132 @@ async fn gemini_models_compat_with_state_handler(
             };
             request.stream = Some(true);
 
-            match enforce_project_quota(state.store.as_ref(), request_context.project_id(), 100)
-                .await
+            let commercial_admission = match begin_gateway_commercial_admission(
+                &state,
+                request_context.context(),
+                GatewayCommercialAdmissionSpec {
+                    quoted_amount: 0.10,
+                },
+            )
+            .await
             {
-                Ok(Some(response)) => return response,
-                Ok(None) => {}
-                Err(_) => {
-                    return (
-                        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                        "failed to evaluate quota",
+                Ok(GatewayCommercialAdmissionDecision::Canonical(admission)) => Some(admission),
+                Ok(GatewayCommercialAdmissionDecision::LegacyQuota) => {
+                    match enforce_project_quota(
+                        state.store.as_ref(),
+                        request_context.project_id(),
+                        100,
                     )
-                        .into_response();
+                    .await
+                    {
+                        Ok(Some(response)) => return response,
+                        Ok(None) => {}
+                        Err(_) => {
+                            return (
+                                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                                "failed to evaluate quota",
+                            )
+                                .into_response();
+                        }
+                    }
+                    None
                 }
-            }
+                Err(response) => return response,
+            };
 
-            match relay_chat_completion_stream_from_store(
+            let options = ProviderRequestOptions::default();
+            match relay_chat_completion_stream_from_store_with_execution_context(
                 state.store.as_ref(),
                 &state.secret_manager,
                 request_context.tenant_id(),
                 request_context.project_id(),
                 &request,
+                &options,
             )
             .await
             {
-                Ok(Some(response)) => {
-                    if record_gateway_usage_for_project(
-                        state.store.as_ref(),
-                        request_context.tenant_id(),
-                        request_context.project_id(),
-                        "chat_completion",
-                        &request.model,
-                        100,
-                        0.10,
-                    )
-                    .await
-                    .is_err()
-                    {
-                        return (
-                            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                            "failed to record usage",
+                Ok(execution) => {
+                    let usage_context = execution.usage_context;
+                    if let Some(response) = execution.response {
+                        if let Some(admission) = commercial_admission.as_ref() {
+                            if let Err(response) =
+                                capture_gateway_commercial_admission(&state, admission).await
+                            {
+                                return response;
+                            }
+                        }
+                        if record_gateway_usage_for_project_with_context(
+                            state.store.as_ref(),
+                            request_context.tenant_id(),
+                            request_context.project_id(),
+                            "chat_completion",
+                            &request.model,
+                            100,
+                            0.10,
+                            usage_context.as_ref(),
                         )
-                            .into_response();
-                    }
+                        .await
+                        .is_err()
+                        {
+                            return (
+                                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                                "failed to record usage",
+                            )
+                                .into_response();
+                        }
 
-                    upstream_passthrough_response(gemini_stream_from_openai(response))
-                }
-                Ok(None) => {
-                    if record_gateway_usage_for_project(
-                        state.store.as_ref(),
-                        request_context.tenant_id(),
-                        request_context.project_id(),
-                        "chat_completion",
-                        &request.model,
-                        100,
-                        0.10,
-                    )
-                    .await
-                    .is_err()
-                    {
-                        return (
-                            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                            "failed to record usage",
+                        upstream_passthrough_response(gemini_stream_from_openai(response))
+                    } else {
+                        let local_response = match local_gemini_stream_result(
+                            request_context.tenant_id(),
+                            request_context.project_id(),
+                            &request.model,
+                        ) {
+                            Ok(response) => response,
+                            Err(response) => return response,
+                        };
+
+                        if let Some(admission) = commercial_admission.as_ref() {
+                            if let Err(response) =
+                                capture_gateway_commercial_admission(&state, admission).await
+                            {
+                                return response;
+                            }
+                        }
+                        if record_gateway_usage_for_project(
+                            state.store.as_ref(),
+                            request_context.tenant_id(),
+                            request_context.project_id(),
+                            "chat_completion",
+                            &request.model,
+                            100,
+                            0.10,
                         )
-                            .into_response();
-                    }
+                        .await
+                        .is_err()
+                        {
+                            return (
+                                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                                "failed to record usage",
+                            )
+                                .into_response();
+                        }
 
-                    local_gemini_stream_response()
+                        local_response
+                    }
                 }
-                Err(_) => gemini_bad_gateway_response(
-                    "failed to relay upstream gemini streamGenerateContent request",
-                ),
+                Err(_) => {
+                    if let Some(admission) = commercial_admission.as_ref() {
+                        if let Err(response) =
+                            release_gateway_commercial_admission(&state, admission).await
+                        {
+                            return response;
+                        }
+                    }
+                    gemini_bad_gateway_response(
+                        "failed to relay upstream gemini streamGenerateContent request",
+                    )
+                }
             }
         }
         GeminiCompatAction::CountTokens => {
@@ -6359,18 +9763,14 @@ async fn gemini_models_compat_with_state_handler(
                 Ok(Some(response)) => {
                     Json(openai_count_tokens_to_gemini(&response)).into_response()
                 }
-                Ok(None) => Json(openai_count_tokens_to_gemini(
-                    &serde_json::to_value(
-                        count_response_input_tokens(
-                            request_context.tenant_id(),
-                            request_context.project_id(),
-                            &request.model,
-                        )
-                        .expect("response input tokens"),
-                    )
-                    .expect("response input token value"),
-                ))
-                .into_response(),
+                Ok(None) => match local_gemini_count_tokens_result(
+                    request_context.tenant_id(),
+                    request_context.project_id(),
+                    &request.model,
+                ) {
+                    Ok(response) => Json(response).into_response(),
+                    Err(response) => response,
+                },
                 Err(_) => gemini_bad_gateway_response(
                     "failed to relay upstream gemini countTokens request",
                 ),
@@ -6398,7 +9798,7 @@ fn parse_gemini_compat_tail(tail: &str) -> Option<(String, GeminiCompatAction)> 
     Some((model.to_owned(), action))
 }
 
-fn local_anthropic_stream_response(model: &str) -> Response {
+fn local_anthropic_stream_body_response(model: &str) -> Response {
     let body = format!(
         "event: message_start\ndata: {}\n\n\
 event: message_delta\ndata: {}\n\n\
@@ -6436,7 +9836,7 @@ event: message_stop\ndata: {}\n\n",
     ([(header::CONTENT_TYPE, "text/event-stream")], body).into_response()
 }
 
-fn local_gemini_stream_response() -> Response {
+fn local_gemini_stream_body_response() -> Response {
     let body = format!(
         "data: {}\n\n",
         serde_json::json!({
@@ -6564,6 +9964,15 @@ async fn chat_completion_retrieve_with_state_handler(
         }
     }
 
+    let local_response = match local_chat_completion_retrieve_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &completion_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -6583,15 +9992,7 @@ async fn chat_completion_retrieve_with_state_handler(
             .into_response();
     }
 
-    Json(
-        get_chat_completion(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &completion_id,
-        )
-        .expect("chat completion"),
-    )
-    .into_response()
+    Json(local_response).into_response()
 }
 
 async fn chat_completion_update_with_state_handler(
@@ -6638,6 +10039,16 @@ async fn chat_completion_update_with_state_handler(
         }
     }
 
+    let local_response = match local_chat_completion_update_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &completion_id,
+        request.metadata.unwrap_or(serde_json::json!({})),
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -6657,16 +10068,7 @@ async fn chat_completion_update_with_state_handler(
             .into_response();
     }
 
-    Json(
-        update_chat_completion(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &completion_id,
-            request.metadata.unwrap_or(serde_json::json!({})),
-        )
-        .expect("chat completion update"),
-    )
-    .into_response()
+    Json(local_response).into_response()
 }
 
 async fn chat_completion_delete_with_state_handler(
@@ -6711,6 +10113,15 @@ async fn chat_completion_delete_with_state_handler(
         }
     }
 
+    let local_response = match local_chat_completion_delete_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &completion_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -6730,15 +10141,7 @@ async fn chat_completion_delete_with_state_handler(
             .into_response();
     }
 
-    Json(
-        delete_chat_completion(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &completion_id,
-        )
-        .expect("chat completion delete"),
-    )
-    .into_response()
+    Json(local_response).into_response()
 }
 
 async fn chat_completion_messages_list_with_state_handler(
@@ -6785,6 +10188,15 @@ async fn chat_completion_messages_list_with_state_handler(
         }
     }
 
+    let local_response = match local_chat_completion_messages_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &completion_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -6804,15 +10216,7 @@ async fn chat_completion_messages_list_with_state_handler(
             .into_response();
     }
 
-    Json(
-        list_chat_completion_messages(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &completion_id,
-        )
-        .expect("chat completion messages"),
-    )
-    .into_response()
+    Json(local_response).into_response()
 }
 
 async fn conversations_with_state_handler(
@@ -6999,6 +10403,15 @@ async fn conversation_retrieve_with_state_handler(
         }
     }
 
+    let local_response = match local_conversation_retrieve_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &conversation_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -7018,15 +10431,7 @@ async fn conversation_retrieve_with_state_handler(
             .into_response();
     }
 
-    Json(
-        get_conversation(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &conversation_id,
-        )
-        .expect("conversation"),
-    )
-    .into_response()
+    Json(local_response).into_response()
 }
 
 async fn conversation_update_with_state_handler(
@@ -7076,6 +10481,16 @@ async fn conversation_update_with_state_handler(
         }
     }
 
+    let local_response = match local_conversation_update_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &conversation_id,
+        request.metadata.unwrap_or(serde_json::json!({})),
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -7095,16 +10510,7 @@ async fn conversation_update_with_state_handler(
             .into_response();
     }
 
-    Json(
-        update_conversation(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &conversation_id,
-            request.metadata.unwrap_or(serde_json::json!({})),
-        )
-        .expect("conversation update"),
-    )
-    .into_response()
+    Json(local_response).into_response()
 }
 
 async fn conversation_delete_with_state_handler(
@@ -7152,6 +10558,15 @@ async fn conversation_delete_with_state_handler(
         }
     }
 
+    let local_response = match local_conversation_delete_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &conversation_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -7171,15 +10586,7 @@ async fn conversation_delete_with_state_handler(
             .into_response();
     }
 
-    Json(
-        delete_conversation(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &conversation_id,
-        )
-        .expect("conversation delete"),
-    )
-    .into_response()
+    Json(local_response).into_response()
 }
 
 async fn conversation_items_with_state_handler(
@@ -7229,12 +10636,14 @@ async fn conversation_items_with_state_handler(
         }
     }
 
-    let response = create_conversation_items(
+    let response = match local_conversation_items_create_result(
         request_context.tenant_id(),
         request_context.project_id(),
         &conversation_id,
-    )
-    .expect("conversation items");
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
     let usage_model = match response.data.as_slice() {
         [item] => item.id.as_str(),
         _ => conversation_id.as_str(),
@@ -7305,6 +10714,15 @@ async fn conversation_items_list_with_state_handler(
         }
     }
 
+    let local_response = match local_conversation_items_list_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &conversation_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -7324,15 +10742,7 @@ async fn conversation_items_list_with_state_handler(
             .into_response();
     }
 
-    Json(
-        list_conversation_items(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &conversation_id,
-        )
-        .expect("conversation items list"),
-    )
-    .into_response()
+    Json(local_response).into_response()
 }
 
 async fn conversation_item_retrieve_with_state_handler(
@@ -7381,6 +10791,16 @@ async fn conversation_item_retrieve_with_state_handler(
         }
     }
 
+    let local_response = match local_conversation_item_retrieve_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &conversation_id,
+        &item_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -7401,16 +10821,7 @@ async fn conversation_item_retrieve_with_state_handler(
             .into_response();
     }
 
-    Json(
-        get_conversation_item(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &conversation_id,
-            &item_id,
-        )
-        .expect("conversation item"),
-    )
-    .into_response()
+    Json(local_response).into_response()
 }
 
 async fn conversation_item_delete_with_state_handler(
@@ -7459,6 +10870,16 @@ async fn conversation_item_delete_with_state_handler(
         }
     }
 
+    let local_response = match local_conversation_item_delete_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &conversation_id,
+        &item_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -7479,16 +10900,7 @@ async fn conversation_item_delete_with_state_handler(
             .into_response();
     }
 
-    Json(
-        delete_conversation_item(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &conversation_id,
-            &item_id,
-        )
-        .expect("conversation item delete"),
-    )
-    .into_response()
+    Json(local_response).into_response()
 }
 
 async fn threads_with_state_handler(
@@ -7606,6 +11018,15 @@ async fn thread_retrieve_with_state_handler(
         }
     }
 
+    let local_response = match local_thread_retrieve_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &thread_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -7625,15 +11046,7 @@ async fn thread_retrieve_with_state_handler(
             .into_response();
     }
 
-    Json(
-        get_thread(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &thread_id,
-        )
-        .expect("thread retrieve"),
-    )
-    .into_response()
+    Json(local_response).into_response()
 }
 
 async fn thread_update_with_state_handler(
@@ -7680,6 +11093,15 @@ async fn thread_update_with_state_handler(
         }
     }
 
+    let local_response = match local_thread_update_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &thread_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -7699,15 +11121,7 @@ async fn thread_update_with_state_handler(
             .into_response();
     }
 
-    Json(
-        update_thread(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &thread_id,
-        )
-        .expect("thread update"),
-    )
-    .into_response()
+    Json(local_response).into_response()
 }
 
 async fn thread_delete_with_state_handler(
@@ -7752,6 +11166,15 @@ async fn thread_delete_with_state_handler(
         }
     }
 
+    let local_response = match local_thread_delete_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &thread_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -7771,15 +11194,7 @@ async fn thread_delete_with_state_handler(
             .into_response();
     }
 
-    Json(
-        delete_thread(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &thread_id,
-        )
-        .expect("thread delete"),
-    )
-    .into_response()
+    Json(local_response).into_response()
 }
 
 async fn thread_messages_with_state_handler(
@@ -7832,14 +11247,16 @@ async fn thread_messages_with_state_handler(
     }
 
     let text = request.content.as_str().unwrap_or("hello");
-    let response = create_thread_message(
+    let response = match local_thread_messages_create_result(
         request_context.tenant_id(),
         request_context.project_id(),
         &thread_id,
         &request.role,
         text,
-    )
-    .expect("thread message create");
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
 
     if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
@@ -7906,6 +11323,15 @@ async fn thread_messages_list_with_state_handler(
         }
     }
 
+    let response = match local_thread_messages_list_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &thread_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -7925,15 +11351,7 @@ async fn thread_messages_list_with_state_handler(
             .into_response();
     }
 
-    Json(
-        list_thread_messages(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &thread_id,
-        )
-        .expect("thread messages list"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn thread_message_retrieve_with_state_handler(
@@ -7980,6 +11398,16 @@ async fn thread_message_retrieve_with_state_handler(
         }
     }
 
+    let response = match local_thread_message_retrieve_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &thread_id,
+        &message_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -8000,16 +11428,7 @@ async fn thread_message_retrieve_with_state_handler(
             .into_response();
     }
 
-    Json(
-        get_thread_message(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &thread_id,
-            &message_id,
-        )
-        .expect("thread message retrieve"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn thread_message_update_with_state_handler(
@@ -8058,6 +11477,16 @@ async fn thread_message_update_with_state_handler(
         }
     }
 
+    let response = match local_thread_message_update_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &thread_id,
+        &message_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -8078,16 +11507,7 @@ async fn thread_message_update_with_state_handler(
             .into_response();
     }
 
-    Json(
-        update_thread_message(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &thread_id,
-            &message_id,
-        )
-        .expect("thread message update"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn thread_message_delete_with_state_handler(
@@ -8134,6 +11554,16 @@ async fn thread_message_delete_with_state_handler(
         }
     }
 
+    let response = match local_thread_message_delete_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &thread_id,
+        &message_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -8154,16 +11584,7 @@ async fn thread_message_delete_with_state_handler(
             .into_response();
     }
 
-    Json(
-        delete_thread_message(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &thread_id,
-            &message_id,
-        )
-        .expect("thread message delete"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn thread_and_run_with_state_handler(
@@ -8211,12 +11632,14 @@ async fn thread_and_run_with_state_handler(
         }
     }
 
-    let response = create_thread_and_run(
+    let response = match local_thread_and_run_result(
         request_context.tenant_id(),
         request_context.project_id(),
         &request.assistant_id,
-    )
-    .expect("thread and run create");
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
 
     if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
@@ -8296,8 +11719,12 @@ async fn thread_runs_with_state_handler(
         &thread_id,
         &request.assistant_id,
         request.model.as_deref(),
-    )
-    .expect("thread run create");
+    );
+
+    let response = match response {
+        Ok(response) => response,
+        Err(error) => return local_thread_not_found_response(error),
+    };
 
     if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
@@ -8364,6 +11791,15 @@ async fn thread_runs_list_with_state_handler(
         }
     }
 
+    let response = match local_thread_runs_list_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &thread_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -8383,15 +11819,7 @@ async fn thread_runs_list_with_state_handler(
             .into_response();
     }
 
-    Json(
-        list_thread_runs(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &thread_id,
-        )
-        .expect("thread runs list"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn thread_run_retrieve_with_state_handler(
@@ -8438,6 +11866,16 @@ async fn thread_run_retrieve_with_state_handler(
         }
     }
 
+    let response = match local_thread_run_retrieve_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &thread_id,
+        &run_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -8458,16 +11896,7 @@ async fn thread_run_retrieve_with_state_handler(
             .into_response();
     }
 
-    Json(
-        get_thread_run(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &thread_id,
-            &run_id,
-        )
-        .expect("thread run"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn thread_run_update_with_state_handler(
@@ -8516,6 +11945,16 @@ async fn thread_run_update_with_state_handler(
         }
     }
 
+    let response = match local_thread_run_update_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &thread_id,
+        &run_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -8536,16 +11975,7 @@ async fn thread_run_update_with_state_handler(
             .into_response();
     }
 
-    Json(
-        update_thread_run(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &thread_id,
-            &run_id,
-        )
-        .expect("thread run update"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn thread_run_cancel_with_state_handler(
@@ -8592,6 +12022,16 @@ async fn thread_run_cancel_with_state_handler(
         }
     }
 
+    let response = match local_thread_run_cancel_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &thread_id,
+        &run_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -8612,16 +12052,7 @@ async fn thread_run_cancel_with_state_handler(
             .into_response();
     }
 
-    Json(
-        cancel_thread_run(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &thread_id,
-            &run_id,
-        )
-        .expect("thread run cancel"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn thread_run_submit_tool_outputs_with_state_handler(
@@ -8670,6 +12101,22 @@ async fn thread_run_submit_tool_outputs_with_state_handler(
         }
     }
 
+    let tool_outputs = request
+        .tool_outputs
+        .iter()
+        .map(|output| (output.tool_call_id.as_str(), output.output.as_str()))
+        .collect();
+    let response = match local_thread_run_submit_tool_outputs_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &thread_id,
+        &run_id,
+        tool_outputs,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -8690,22 +12137,7 @@ async fn thread_run_submit_tool_outputs_with_state_handler(
             .into_response();
     }
 
-    let tool_outputs = request
-        .tool_outputs
-        .iter()
-        .map(|output| (output.tool_call_id.as_str(), output.output.as_str()))
-        .collect();
-    Json(
-        submit_thread_run_tool_outputs(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &thread_id,
-            &run_id,
-            tool_outputs,
-        )
-        .expect("thread run tool outputs"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn thread_run_steps_list_with_state_handler(
@@ -8752,6 +12184,16 @@ async fn thread_run_steps_list_with_state_handler(
         }
     }
 
+    let response = match local_thread_run_steps_list_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &thread_id,
+        &run_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -8772,16 +12214,7 @@ async fn thread_run_steps_list_with_state_handler(
             .into_response();
     }
 
-    Json(
-        list_thread_run_steps(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &thread_id,
-            &run_id,
-        )
-        .expect("thread run steps"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn thread_run_step_retrieve_with_state_handler(
@@ -8831,6 +12264,17 @@ async fn thread_run_step_retrieve_with_state_handler(
         }
     }
 
+    let response = match local_thread_run_step_retrieve_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &thread_id,
+        &run_id,
+        &step_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -8851,17 +12295,7 @@ async fn thread_run_step_retrieve_with_state_handler(
             .into_response();
     }
 
-    Json(
-        get_thread_run_step(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &thread_id,
-            &run_id,
-            &step_id,
-        )
-        .expect("thread run step"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 fn upstream_passthrough_response(response: ProviderStreamOutput) -> Response {
@@ -8874,12 +12308,219 @@ fn upstream_passthrough_response(response: ProviderStreamOutput) -> Response {
 }
 
 fn local_file_content_response(tenant_id: &str, project_id: &str, file_id: &str) -> Response {
-    let bytes = file_content(tenant_id, project_id, file_id).expect("file content");
-    Response::builder()
-        .status(axum::http::StatusCode::OK)
-        .header(header::CONTENT_TYPE, "application/jsonl")
-        .body(Body::from(bytes))
-        .expect("valid local file content response")
+    match file_content(tenant_id, project_id, file_id) {
+        Ok(bytes) => Response::builder()
+            .status(axum::http::StatusCode::OK)
+            .header(header::CONTENT_TYPE, "application/jsonl")
+            .body(Body::from(bytes))
+            .expect("valid local file content response"),
+        Err(error) => local_gateway_error_response(error, "Requested file was not found."),
+    }
+}
+
+fn local_file_not_found_response(error: anyhow::Error) -> Response {
+    local_gateway_error_response(error, "Requested file was not found.")
+}
+
+fn local_file_create_error_response(error: anyhow::Error) -> Response {
+    let message = error.to_string();
+    if local_gateway_error_is_invalid_request(&message) {
+        return invalid_request_openai_response(message, "invalid_file");
+    }
+
+    bad_gateway_openai_response(message)
+}
+
+fn local_file_create_result(
+    tenant_id: &str,
+    project_id: &str,
+    request: &CreateFileRequest,
+) -> std::result::Result<FileObject, Response> {
+    create_file(tenant_id, project_id, request).map_err(local_file_create_error_response)
+}
+
+fn local_file_create_response(
+    tenant_id: &str,
+    project_id: &str,
+    request: &CreateFileRequest,
+) -> Response {
+    match local_file_create_result(tenant_id, project_id, request) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_file_retrieve_result(
+    tenant_id: &str,
+    project_id: &str,
+    file_id: &str,
+) -> std::result::Result<FileObject, Response> {
+    get_file(tenant_id, project_id, file_id).map_err(local_file_not_found_response)
+}
+
+fn local_file_retrieve_response(tenant_id: &str, project_id: &str, file_id: &str) -> Response {
+    match local_file_retrieve_result(tenant_id, project_id, file_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_file_delete_result(
+    tenant_id: &str,
+    project_id: &str,
+    file_id: &str,
+) -> std::result::Result<DeleteFileResponse, Response> {
+    delete_file(tenant_id, project_id, file_id).map_err(local_file_not_found_response)
+}
+
+fn local_file_delete_response(tenant_id: &str, project_id: &str, file_id: &str) -> Response {
+    match local_file_delete_result(tenant_id, project_id, file_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_vector_store_file_not_found_response(error: anyhow::Error) -> Response {
+    local_gateway_error_response(error, "Requested vector store file was not found.")
+}
+
+fn local_vector_store_file_retrieve_result(
+    tenant_id: &str,
+    project_id: &str,
+    vector_store_id: &str,
+    file_id: &str,
+) -> std::result::Result<VectorStoreFileObject, Response> {
+    get_vector_store_file(tenant_id, project_id, vector_store_id, file_id)
+        .map_err(local_vector_store_file_not_found_response)
+}
+
+fn local_vector_store_file_retrieve_response(
+    tenant_id: &str,
+    project_id: &str,
+    vector_store_id: &str,
+    file_id: &str,
+) -> Response {
+    match local_vector_store_file_retrieve_result(tenant_id, project_id, vector_store_id, file_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_vector_store_file_delete_result(
+    tenant_id: &str,
+    project_id: &str,
+    vector_store_id: &str,
+    file_id: &str,
+) -> std::result::Result<DeleteVectorStoreFileResponse, Response> {
+    delete_vector_store_file(tenant_id, project_id, vector_store_id, file_id)
+        .map_err(local_vector_store_file_not_found_response)
+}
+
+fn local_vector_store_file_delete_response(
+    tenant_id: &str,
+    project_id: &str,
+    vector_store_id: &str,
+    file_id: &str,
+) -> Response {
+    match local_vector_store_file_delete_result(tenant_id, project_id, vector_store_id, file_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_vector_store_file_batch_not_found_response(error: anyhow::Error) -> Response {
+    local_gateway_error_response(error, "Requested vector store file batch was not found.")
+}
+
+fn local_vector_store_file_batch_retrieve_result(
+    tenant_id: &str,
+    project_id: &str,
+    vector_store_id: &str,
+    batch_id: &str,
+) -> std::result::Result<VectorStoreFileBatchObject, Response> {
+    get_vector_store_file_batch(tenant_id, project_id, vector_store_id, batch_id)
+        .map_err(local_vector_store_file_batch_not_found_response)
+}
+
+fn local_vector_store_file_batch_retrieve_response(
+    tenant_id: &str,
+    project_id: &str,
+    vector_store_id: &str,
+    batch_id: &str,
+) -> Response {
+    match local_vector_store_file_batch_retrieve_result(
+        tenant_id,
+        project_id,
+        vector_store_id,
+        batch_id,
+    ) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_vector_store_file_batch_cancel_result(
+    tenant_id: &str,
+    project_id: &str,
+    vector_store_id: &str,
+    batch_id: &str,
+) -> std::result::Result<VectorStoreFileBatchObject, Response> {
+    cancel_vector_store_file_batch(tenant_id, project_id, vector_store_id, batch_id)
+        .map_err(local_vector_store_file_batch_not_found_response)
+}
+
+fn local_vector_store_file_batch_cancel_response(
+    tenant_id: &str,
+    project_id: &str,
+    vector_store_id: &str,
+    batch_id: &str,
+) -> Response {
+    match local_vector_store_file_batch_cancel_result(
+        tenant_id,
+        project_id,
+        vector_store_id,
+        batch_id,
+    ) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_vector_store_file_batch_files_result(
+    tenant_id: &str,
+    project_id: &str,
+    vector_store_id: &str,
+    batch_id: &str,
+) -> std::result::Result<ListVectorStoreFilesResponse, Response> {
+    list_vector_store_file_batch_files(tenant_id, project_id, vector_store_id, batch_id)
+        .map_err(local_vector_store_file_batch_not_found_response)
+}
+
+fn local_vector_store_file_batch_files_response(
+    tenant_id: &str,
+    project_id: &str,
+    vector_store_id: &str,
+    batch_id: &str,
+) -> Response {
+    match local_vector_store_file_batch_files_result(
+        tenant_id,
+        project_id,
+        vector_store_id,
+        batch_id,
+    ) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_container_file_content_result(
+    tenant_id: &str,
+    project_id: &str,
+    container_id: &str,
+    file_id: &str,
+) -> std::result::Result<Vec<u8>, Response> {
+    sdkwork_api_app_gateway::container_file_content(tenant_id, project_id, container_id, file_id)
+        .map_err(local_container_file_not_found_response)
 }
 
 fn local_container_file_content_response(
@@ -8888,13 +12529,11 @@ fn local_container_file_content_response(
     container_id: &str,
     file_id: &str,
 ) -> Response {
-    let bytes = sdkwork_api_app_gateway::container_file_content(
-        tenant_id,
-        project_id,
-        container_id,
-        file_id,
-    )
-    .expect("container file content");
+    let bytes =
+        match local_container_file_content_result(tenant_id, project_id, container_id, file_id) {
+            Ok(bytes) => bytes,
+            Err(response) => return response,
+        };
     Response::builder()
         .status(axum::http::StatusCode::OK)
         .header(header::CONTENT_TYPE, "application/octet-stream")
@@ -8902,8 +12541,55 @@ fn local_container_file_content_response(
         .expect("valid local container file content response")
 }
 
+fn local_video_not_found_response(error: anyhow::Error) -> Response {
+    local_gateway_error_response(error, "Requested video was not found.")
+}
+
+fn local_video_retrieve_result(
+    tenant_id: &str,
+    project_id: &str,
+    video_id: &str,
+) -> std::result::Result<VideoObject, Response> {
+    get_video(tenant_id, project_id, video_id).map_err(local_video_not_found_response)
+}
+
+fn local_video_retrieve_response(tenant_id: &str, project_id: &str, video_id: &str) -> Response {
+    match local_video_retrieve_result(tenant_id, project_id, video_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_video_delete_result(
+    tenant_id: &str,
+    project_id: &str,
+    video_id: &str,
+) -> std::result::Result<DeleteVideoResponse, Response> {
+    delete_video(tenant_id, project_id, video_id).map_err(local_video_not_found_response)
+}
+
+fn local_video_delete_response(tenant_id: &str, project_id: &str, video_id: &str) -> Response {
+    match local_video_delete_result(tenant_id, project_id, video_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_video_content_result(
+    tenant_id: &str,
+    project_id: &str,
+    video_id: &str,
+) -> std::result::Result<Vec<u8>, Response> {
+    video_content(tenant_id, project_id, video_id).map_err(|error| {
+        local_gateway_error_response(error, "Requested video asset was not found.")
+    })
+}
+
 fn local_video_content_response(tenant_id: &str, project_id: &str, video_id: &str) -> Response {
-    let bytes = video_content(tenant_id, project_id, video_id).expect("video content");
+    let bytes = match local_video_content_result(tenant_id, project_id, video_id) {
+        Ok(bytes) => bytes,
+        Err(response) => return response,
+    };
     Response::builder()
         .status(axum::http::StatusCode::OK)
         .header(header::CONTENT_TYPE, "video/mp4")
@@ -8911,8 +12597,55 @@ fn local_video_content_response(tenant_id: &str, project_id: &str, video_id: &st
         .expect("valid local video content response")
 }
 
+fn local_music_not_found_response(error: anyhow::Error) -> Response {
+    local_gateway_error_response(error, "Requested music was not found.")
+}
+
+fn local_music_retrieve_result(
+    tenant_id: &str,
+    project_id: &str,
+    music_id: &str,
+) -> std::result::Result<MusicObject, Response> {
+    get_music(tenant_id, project_id, music_id).map_err(local_music_not_found_response)
+}
+
+fn local_music_retrieve_response(tenant_id: &str, project_id: &str, music_id: &str) -> Response {
+    match local_music_retrieve_result(tenant_id, project_id, music_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_music_delete_result(
+    tenant_id: &str,
+    project_id: &str,
+    music_id: &str,
+) -> std::result::Result<DeleteMusicResponse, Response> {
+    delete_music(tenant_id, project_id, music_id).map_err(local_music_not_found_response)
+}
+
+fn local_music_delete_response(tenant_id: &str, project_id: &str, music_id: &str) -> Response {
+    match local_music_delete_result(tenant_id, project_id, music_id) {
+        Ok(response) => Json(response).into_response(),
+        Err(response) => response,
+    }
+}
+
+fn local_music_content_result(
+    tenant_id: &str,
+    project_id: &str,
+    music_id: &str,
+) -> std::result::Result<Vec<u8>, Response> {
+    music_content(tenant_id, project_id, music_id).map_err(|error| {
+        local_gateway_error_response(error, "Requested music asset was not found.")
+    })
+}
+
 fn local_music_content_response(tenant_id: &str, project_id: &str, music_id: &str) -> Response {
-    let bytes = music_content(tenant_id, project_id, music_id).expect("music content");
+    let bytes = match local_music_content_result(tenant_id, project_id, music_id) {
+        Ok(bytes) => bytes,
+        Err(response) => return response,
+    };
     Response::builder()
         .status(axum::http::StatusCode::OK)
         .header(header::CONTENT_TYPE, "audio/mpeg")
@@ -8925,20 +12658,37 @@ async fn responses_with_state_handler(
     State(state): State<GatewayApiState>,
     ExtractJson(request): ExtractJson<CreateResponseRequest>,
 ) -> Response {
-    match enforce_project_quota(state.store.as_ref(), request_context.project_id(), 120).await {
-        Ok(Some(response)) => return response,
-        Ok(None) => {}
-        Err(_) => {
-            return (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "failed to evaluate quota",
-            )
-                .into_response();
+    let commercial_admission = match begin_gateway_commercial_admission(
+        &state,
+        request_context.context(),
+        GatewayCommercialAdmissionSpec {
+            quoted_amount: 0.12,
+        },
+    )
+    .await
+    {
+        Ok(GatewayCommercialAdmissionDecision::Canonical(admission)) => Some(admission),
+        Ok(GatewayCommercialAdmissionDecision::LegacyQuota) => {
+            match enforce_project_quota(state.store.as_ref(), request_context.project_id(), 120)
+                .await
+            {
+                Ok(Some(response)) => return response,
+                Ok(None) => {}
+                Err(_) => {
+                    return (
+                        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        "failed to evaluate quota",
+                    )
+                        .into_response();
+                }
+            }
+            None
         }
-    }
+        Err(response) => return response,
+    };
 
     if request.stream.unwrap_or(false) {
-        match relay_response_stream_from_store(
+        match relay_response_stream_from_store_with_execution_context(
             state.store.as_ref(),
             &state.secret_manager,
             request_context.tenant_id(),
@@ -8947,31 +12697,63 @@ async fn responses_with_state_handler(
         )
         .await
         {
-            Ok(Some(response)) => {
-                if record_gateway_usage_for_project(
-                    state.store.as_ref(),
-                    request_context.tenant_id(),
-                    request_context.project_id(),
-                    "responses",
-                    &request.model,
-                    120,
-                    0.12,
-                )
-                .await
-                .is_err()
-                {
-                    return (
-                        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                        "failed to record usage",
+            Ok(execution) => {
+                let usage_context = execution.usage_context;
+                if let Some(response) = execution.response {
+                    if let Some(admission) = commercial_admission.as_ref() {
+                        if let Err(response) =
+                            capture_gateway_commercial_admission(&state, admission).await
+                        {
+                            return response;
+                        }
+                    }
+                    if record_gateway_usage_for_project_with_context(
+                        state.store.as_ref(),
+                        request_context.tenant_id(),
+                        request_context.project_id(),
+                        "responses",
+                        &request.model,
+                        120,
+                        0.12,
+                        usage_context.as_ref(),
                     )
-                        .into_response();
-                }
+                    .await
+                    .is_err()
+                    {
+                        return (
+                            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                            "failed to record usage",
+                        )
+                            .into_response();
+                    }
 
-                return upstream_passthrough_response(response);
+                    return upstream_passthrough_response(response);
+                }
             }
-            Ok(None) => {}
             Err(_) => {
+                if let Some(admission) = commercial_admission.as_ref() {
+                    if let Err(response) =
+                        release_gateway_commercial_admission(&state, admission).await
+                    {
+                        return response;
+                    }
+                }
                 return bad_gateway_openai_response("failed to relay upstream response stream");
+            }
+        }
+
+        let _local_response = match local_response_create_result(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &request.model,
+        ) {
+            Ok(response) => response,
+            Err(response) => return response,
+        };
+
+        if let Some(admission) = commercial_admission.as_ref() {
+            if let Err(response) = capture_gateway_commercial_admission(&state, admission).await {
+                return response;
             }
         }
 
@@ -8994,10 +12776,10 @@ async fn responses_with_state_handler(
                 .into_response();
         }
 
-        return local_response_stream_response("resp_1", &request.model);
+        return local_response_stream_body_response("resp_1", &request.model);
     }
 
-    match relay_response_from_store(
+    match relay_response_from_store_with_execution_context(
         state.store.as_ref(),
         &state.secret_manager,
         request_context.tenant_id(),
@@ -9006,35 +12788,66 @@ async fn responses_with_state_handler(
     )
     .await
     {
-        Ok(Some(response)) => {
-            let token_usage = extract_token_usage_metrics(&response);
-            if record_gateway_usage_for_project_with_route_key_and_tokens_and_reference(
-                state.store.as_ref(),
-                request_context.tenant_id(),
-                request_context.project_id(),
-                "responses",
-                &request.model,
-                &request.model,
-                120,
-                0.12,
-                token_usage,
-                response_usage_id_or_single_data_item_id(&response),
-            )
-            .await
-            .is_err()
-            {
-                return (
-                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                    "failed to record usage",
+        Ok(execution) => {
+            let usage_context = execution.usage_context;
+            if let Some(response) = execution.response {
+                if let Some(admission) = commercial_admission.as_ref() {
+                    if let Err(response) =
+                        capture_gateway_commercial_admission(&state, admission).await
+                    {
+                        return response;
+                    }
+                }
+                let token_usage = extract_token_usage_metrics(&response);
+                if record_gateway_usage_for_project_with_route_key_and_tokens_and_reference_with_context(
+                    state.store.as_ref(),
+                    request_context.tenant_id(),
+                    request_context.project_id(),
+                    "responses",
+                    &request.model,
+                    &request.model,
+                    120,
+                    0.12,
+                    token_usage,
+                    response_usage_id_or_single_data_item_id(&response),
+                    usage_context.as_ref(),
                 )
-                    .into_response();
-            }
+                .await
+                .is_err()
+                {
+                    return (
+                        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        "failed to record usage",
+                    )
+                        .into_response();
+                }
 
-            return Json(response).into_response();
+                return Json(response).into_response();
+            }
         }
-        Ok(None) => {}
         Err(_) => {
+            if let Some(admission) = commercial_admission.as_ref() {
+                if let Err(response) = release_gateway_commercial_admission(&state, admission).await
+                {
+                    return response;
+                }
+            }
             return bad_gateway_openai_response("failed to relay upstream response");
+        }
+    }
+
+    let local_response = match local_response_create_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &request.model,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
+    if let Some(admission) = commercial_admission.as_ref() {
+        if let Err(response) = capture_gateway_commercial_admission(&state, admission).await {
+            return response;
         }
     }
 
@@ -9057,15 +12870,7 @@ async fn responses_with_state_handler(
             .into_response();
     }
 
-    Json(
-        create_response(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &request.model,
-        )
-        .expect("response"),
-    )
-    .into_response()
+    Json(local_response).into_response()
 }
 
 async fn response_input_tokens_with_state_handler(
@@ -9110,6 +12915,15 @@ async fn response_input_tokens_with_state_handler(
         }
     }
 
+    let local_response = match local_response_input_tokens_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &request.model,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -9129,15 +12943,7 @@ async fn response_input_tokens_with_state_handler(
             .into_response();
     }
 
-    Json(
-        count_response_input_tokens(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &request.model,
-        )
-        .expect("response input tokens"),
-    )
-    .into_response()
+    Json(local_response).into_response()
 }
 
 async fn response_retrieve_with_state_handler(
@@ -9182,6 +12988,15 @@ async fn response_retrieve_with_state_handler(
         }
     }
 
+    let response = match get_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &response_id,
+    ) {
+        Ok(response) => response,
+        Err(error) => return local_response_not_found_response(error),
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -9201,15 +13016,7 @@ async fn response_retrieve_with_state_handler(
             .into_response();
     }
 
-    Json(
-        get_response(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &response_id,
-        )
-        .expect("response retrieve"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn response_input_items_list_with_state_handler(
@@ -9254,6 +13061,15 @@ async fn response_input_items_list_with_state_handler(
         }
     }
 
+    let response = match list_response_input_items(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &response_id,
+    ) {
+        Ok(response) => response,
+        Err(error) => return local_response_not_found_response(error),
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -9273,15 +13089,7 @@ async fn response_input_items_list_with_state_handler(
             .into_response();
     }
 
-    Json(
-        list_response_input_items(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &response_id,
-        )
-        .expect("response input items"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn response_delete_with_state_handler(
@@ -9326,6 +13134,15 @@ async fn response_delete_with_state_handler(
         }
     }
 
+    let response = match delete_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &response_id,
+    ) {
+        Ok(response) => response,
+        Err(error) => return local_response_not_found_response(error),
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -9345,15 +13162,7 @@ async fn response_delete_with_state_handler(
             .into_response();
     }
 
-    Json(
-        delete_response(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &response_id,
-        )
-        .expect("response delete"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn response_cancel_with_state_handler(
@@ -9398,6 +13207,15 @@ async fn response_cancel_with_state_handler(
         }
     }
 
+    let response = match cancel_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &response_id,
+    ) {
+        Ok(response) => response,
+        Err(error) => return local_response_not_found_response(error),
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -9417,15 +13235,7 @@ async fn response_cancel_with_state_handler(
             .into_response();
     }
 
-    Json(
-        cancel_response(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &response_id,
-        )
-        .expect("response cancel"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn response_compact_with_state_handler(
@@ -9470,6 +13280,22 @@ async fn response_compact_with_state_handler(
         }
     }
 
+    let compacted_response = match compact_response(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &request.model,
+    ) {
+        Ok(response) => response,
+        Err(error) => {
+            let message = error.to_string();
+            if message.to_ascii_lowercase().contains("required") {
+                return invalid_request_openai_response(message, "invalid_model");
+            }
+
+            return bad_gateway_openai_response(message);
+        }
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -9489,15 +13315,7 @@ async fn response_compact_with_state_handler(
             .into_response();
     }
 
-    Json(
-        compact_response(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &request.model,
-        )
-        .expect("response compact"),
-    )
-    .into_response()
+    Json(compacted_response).into_response()
 }
 
 async fn completions_with_state_handler(
@@ -9505,17 +13323,34 @@ async fn completions_with_state_handler(
     State(state): State<GatewayApiState>,
     ExtractJson(request): ExtractJson<CreateCompletionRequest>,
 ) -> Response {
-    match enforce_project_quota(state.store.as_ref(), request_context.project_id(), 80).await {
-        Ok(Some(response)) => return response,
-        Ok(None) => {}
-        Err(_) => {
-            return (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "failed to evaluate quota",
-            )
-                .into_response();
+    let commercial_admission = match begin_gateway_commercial_admission(
+        &state,
+        request_context.context(),
+        GatewayCommercialAdmissionSpec {
+            quoted_amount: 0.08,
+        },
+    )
+    .await
+    {
+        Ok(GatewayCommercialAdmissionDecision::Canonical(admission)) => Some(admission),
+        Ok(GatewayCommercialAdmissionDecision::LegacyQuota) => {
+            match enforce_project_quota(state.store.as_ref(), request_context.project_id(), 80)
+                .await
+            {
+                Ok(Some(response)) => return response,
+                Ok(None) => {}
+                Err(_) => {
+                    return (
+                        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        "failed to evaluate quota",
+                    )
+                        .into_response();
+                }
+            }
+            None
         }
-    }
+        Err(response) => return response,
+    };
 
     match relay_completion_from_store(
         state.store.as_ref(),
@@ -9527,6 +13362,12 @@ async fn completions_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
+            if let Some(admission) = commercial_admission.as_ref() {
+                if let Err(response) = capture_gateway_commercial_admission(&state, admission).await
+                {
+                    return response;
+                }
+            }
             if record_gateway_usage_for_project_with_route_key_and_reference_id(
                 state.store.as_ref(),
                 request_context.tenant_id(),
@@ -9552,9 +13393,30 @@ async fn completions_with_state_handler(
         }
         Ok(None) => {}
         Err(_) => {
+            if let Some(admission) = commercial_admission.as_ref() {
+                if let Err(response) = release_gateway_commercial_admission(&state, admission).await
+                {
+                    return response;
+                }
+            }
             return bad_gateway_openai_response("failed to relay upstream completion");
         }
     }
+
+    if let Some(admission) = commercial_admission.as_ref() {
+        if let Err(response) = capture_gateway_commercial_admission(&state, admission).await {
+            return response;
+        }
+    }
+
+    let local_completion = match local_completion_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &request.model,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
 
     if record_gateway_usage_for_project(
         state.store.as_ref(),
@@ -9575,15 +13437,7 @@ async fn completions_with_state_handler(
             .into_response();
     }
 
-    Json(
-        create_completion(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &request.model,
-        )
-        .expect("completion"),
-    )
-    .into_response()
+    Json(local_completion).into_response()
 }
 
 async fn embeddings_with_state_handler(
@@ -9591,17 +13445,34 @@ async fn embeddings_with_state_handler(
     State(state): State<GatewayApiState>,
     ExtractJson(request): ExtractJson<CreateEmbeddingRequest>,
 ) -> Response {
-    match enforce_project_quota(state.store.as_ref(), request_context.project_id(), 10).await {
-        Ok(Some(response)) => return response,
-        Ok(None) => {}
-        Err(_) => {
-            return (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "failed to evaluate quota",
-            )
-                .into_response();
+    let commercial_admission = match begin_gateway_commercial_admission(
+        &state,
+        request_context.context(),
+        GatewayCommercialAdmissionSpec {
+            quoted_amount: 0.01,
+        },
+    )
+    .await
+    {
+        Ok(GatewayCommercialAdmissionDecision::Canonical(admission)) => Some(admission),
+        Ok(GatewayCommercialAdmissionDecision::LegacyQuota) => {
+            match enforce_project_quota(state.store.as_ref(), request_context.project_id(), 10)
+                .await
+            {
+                Ok(Some(response)) => return response,
+                Ok(None) => {}
+                Err(_) => {
+                    return (
+                        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        "failed to evaluate quota",
+                    )
+                        .into_response();
+                }
+            }
+            None
         }
-    }
+        Err(response) => return response,
+    };
 
     match relay_embedding_from_store(
         state.store.as_ref(),
@@ -9613,6 +13484,12 @@ async fn embeddings_with_state_handler(
     .await
     {
         Ok(Some(response)) => {
+            if let Some(admission) = commercial_admission.as_ref() {
+                if let Err(response) = capture_gateway_commercial_admission(&state, admission).await
+                {
+                    return response;
+                }
+            }
             let token_usage = extract_token_usage_metrics(&response);
             if record_gateway_usage_for_project_with_route_key_and_tokens_and_reference(
                 state.store.as_ref(),
@@ -9640,7 +13517,37 @@ async fn embeddings_with_state_handler(
         }
         Ok(None) => {}
         Err(_) => {
+            if let Some(admission) = commercial_admission.as_ref() {
+                if let Err(response) = release_gateway_commercial_admission(&state, admission).await
+                {
+                    return response;
+                }
+            }
             return bad_gateway_openai_response("failed to relay upstream embedding");
+        }
+    }
+
+    let local_embedding = match local_embedding_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &request.model,
+    ) {
+        Ok(response) => response,
+        Err(response) => {
+            if let Some(admission) = commercial_admission.as_ref() {
+                if let Err(release_response) =
+                    release_gateway_commercial_admission(&state, admission).await
+                {
+                    return release_response;
+                }
+            }
+            return response;
+        }
+    };
+
+    if let Some(admission) = commercial_admission.as_ref() {
+        if let Err(response) = capture_gateway_commercial_admission(&state, admission).await {
+            return response;
         }
     }
 
@@ -9663,15 +13570,7 @@ async fn embeddings_with_state_handler(
             .into_response();
     }
 
-    Json(
-        create_embedding(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &request.model,
-        )
-        .expect("embedding"),
-    )
-    .into_response()
+    Json(local_embedding).into_response()
 }
 
 async fn moderations_with_state_handler(
@@ -9718,6 +13617,15 @@ async fn moderations_with_state_handler(
         }
     }
 
+    let local_moderation = match local_moderation_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &request.model,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -9737,15 +13645,7 @@ async fn moderations_with_state_handler(
             .into_response();
     }
 
-    Json(
-        create_moderation(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &request.model,
-        )
-        .expect("moderation"),
-    )
-    .into_response()
+    Json(local_moderation).into_response()
 }
 
 async fn image_generations_with_state_handler(
@@ -9795,12 +13695,14 @@ async fn image_generations_with_state_handler(
         }
     }
 
-    let response = create_image_generation(
+    let response = match local_image_generation_result(
         request_context.tenant_id(),
         request_context.project_id(),
         &request.model,
-    )
-    .expect("image");
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
 
     if record_gateway_usage_for_project_with_media_and_reference_id(
         state.store.as_ref(),
@@ -10410,12 +14312,14 @@ async fn files_with_state_handler(
         }
     }
 
-    let response = create_file(
+    let response = match local_file_create_result(
         request_context.tenant_id(),
         request_context.project_id(),
         &request,
-    )
-    .expect("file");
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
 
     if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
@@ -10545,6 +14449,15 @@ async fn file_retrieve_with_state_handler(
         }
     }
 
+    let response = match local_file_retrieve_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &file_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -10564,15 +14477,7 @@ async fn file_retrieve_with_state_handler(
             .into_response();
     }
 
-    Json(
-        get_file(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &file_id,
-        )
-        .expect("file retrieve"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn file_delete_with_state_handler(
@@ -10617,6 +14522,15 @@ async fn file_delete_with_state_handler(
         }
     }
 
+    let response = match local_file_delete_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &file_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -10636,15 +14550,7 @@ async fn file_delete_with_state_handler(
             .into_response();
     }
 
-    Json(
-        delete_file(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &file_id,
-        )
-        .expect("file delete"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn file_content_with_state_handler(
@@ -10762,12 +14668,14 @@ async fn containers_with_state_handler(
         }
     }
 
-    let response = sdkwork_api_app_gateway::create_container(
+    let response = match sdkwork_api_app_gateway::create_container(
         request_context.tenant_id(),
         request_context.project_id(),
         &request,
-    )
-    .expect("container");
+    ) {
+        Ok(response) => response,
+        Err(error) => return bad_gateway_openai_response(error.to_string()),
+    };
 
     if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
@@ -10832,6 +14740,14 @@ async fn containers_list_with_state_handler(
         }
     }
 
+    let response = match sdkwork_api_app_gateway::list_containers(
+        request_context.tenant_id(),
+        request_context.project_id(),
+    ) {
+        Ok(response) => response,
+        Err(error) => return bad_gateway_openai_response(error.to_string()),
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -10851,14 +14767,7 @@ async fn containers_list_with_state_handler(
             .into_response();
     }
 
-    Json(
-        sdkwork_api_app_gateway::list_containers(
-            request_context.tenant_id(),
-            request_context.project_id(),
-        )
-        .expect("containers list"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn container_retrieve_with_state_handler(
@@ -10903,6 +14812,15 @@ async fn container_retrieve_with_state_handler(
         }
     }
 
+    let response = match local_container_retrieve_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &container_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -10922,15 +14840,7 @@ async fn container_retrieve_with_state_handler(
             .into_response();
     }
 
-    Json(
-        sdkwork_api_app_gateway::get_container(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &container_id,
-        )
-        .expect("container retrieve"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn container_delete_with_state_handler(
@@ -10975,6 +14885,15 @@ async fn container_delete_with_state_handler(
         }
     }
 
+    let response = match local_container_delete_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &container_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -10994,15 +14913,7 @@ async fn container_delete_with_state_handler(
             .into_response();
     }
 
-    Json(
-        sdkwork_api_app_gateway::delete_container(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &container_id,
-        )
-        .expect("container delete"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn container_files_with_state_handler(
@@ -11052,13 +14963,15 @@ async fn container_files_with_state_handler(
         }
     }
 
-    let response = sdkwork_api_app_gateway::create_container_file(
+    let response = match local_container_file_create_result(
         request_context.tenant_id(),
         request_context.project_id(),
         &container_id,
         &request,
-    )
-    .expect("container file");
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
 
     if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
@@ -11125,6 +15038,15 @@ async fn container_files_list_with_state_handler(
         }
     }
 
+    let response = match local_container_files_list_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &container_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -11144,15 +15066,7 @@ async fn container_files_list_with_state_handler(
             .into_response();
     }
 
-    Json(
-        sdkwork_api_app_gateway::list_container_files(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &container_id,
-        )
-        .expect("container files list"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn container_file_retrieve_with_state_handler(
@@ -11199,6 +15113,16 @@ async fn container_file_retrieve_with_state_handler(
         }
     }
 
+    let response = match local_container_file_retrieve_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &container_id,
+        &file_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -11219,16 +15143,7 @@ async fn container_file_retrieve_with_state_handler(
             .into_response();
     }
 
-    Json(
-        sdkwork_api_app_gateway::get_container_file(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &container_id,
-            &file_id,
-        )
-        .expect("container file retrieve"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn container_file_delete_with_state_handler(
@@ -11275,6 +15190,16 @@ async fn container_file_delete_with_state_handler(
         }
     }
 
+    let response = match local_container_file_delete_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &container_id,
+        &file_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -11295,16 +15220,7 @@ async fn container_file_delete_with_state_handler(
             .into_response();
     }
 
-    Json(
-        sdkwork_api_app_gateway::delete_container_file(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &container_id,
-            &file_id,
-        )
-        .expect("container file delete"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn container_file_content_with_state_handler(
@@ -11351,6 +15267,16 @@ async fn container_file_content_with_state_handler(
         }
     }
 
+    let bytes = match local_container_file_content_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &container_id,
+        &file_id,
+    ) {
+        Ok(bytes) => bytes,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -11371,12 +15297,11 @@ async fn container_file_content_with_state_handler(
             .into_response();
     }
 
-    local_container_file_content_response(
-        request_context.tenant_id(),
-        request_context.project_id(),
-        &container_id,
-        &file_id,
-    )
+    Response::builder()
+        .status(axum::http::StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/octet-stream")
+        .body(Body::from(bytes))
+        .expect("valid local container file content response")
 }
 
 async fn music_with_state_handler(
@@ -11396,8 +15321,9 @@ async fn music_with_state_handler(
         Ok(Some(response)) => {
             let usage_model = response_usage_id_or_single_data_item_id(&response)
                 .unwrap_or(request.model.as_str());
-            let music_seconds =
-                request.duration_seconds.unwrap_or_else(|| music_seconds_from_response(&response));
+            let music_seconds = request
+                .duration_seconds
+                .unwrap_or_else(|| music_seconds_from_response(&response));
             if record_gateway_usage_for_project_with_media_and_reference_id(
                 state.store.as_ref(),
                 request_context.tenant_id(),
@@ -11441,7 +15367,9 @@ async fn music_with_state_handler(
         _ => request.model.as_str(),
     };
     let music_seconds = match response.data.as_slice() {
-        [track] => track.duration_seconds.unwrap_or(request.duration_seconds.unwrap_or(0.0)),
+        [track] => track
+            .duration_seconds
+            .unwrap_or(request.duration_seconds.unwrap_or(0.0)),
         _ => request.duration_seconds.unwrap_or(0.0),
     };
 
@@ -11531,12 +15459,8 @@ async fn music_list_with_state_handler(
             .into_response();
     }
 
-    Json(list_music(
-        request_context.tenant_id(),
-        request_context.project_id(),
-    )
-    .expect("music list"))
-    .into_response()
+    Json(list_music(request_context.tenant_id(), request_context.project_id()).expect("music list"))
+        .into_response()
 }
 
 async fn music_retrieve_with_state_handler(
@@ -11581,6 +15505,15 @@ async fn music_retrieve_with_state_handler(
         }
     }
 
+    let response = match local_music_retrieve_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &music_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -11600,13 +15533,7 @@ async fn music_retrieve_with_state_handler(
             .into_response();
     }
 
-    Json(get_music(
-        request_context.tenant_id(),
-        request_context.project_id(),
-        &music_id,
-    )
-    .expect("music retrieve"))
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn music_delete_with_state_handler(
@@ -11651,6 +15578,15 @@ async fn music_delete_with_state_handler(
         }
     }
 
+    let response = match local_music_delete_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &music_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -11670,13 +15606,7 @@ async fn music_delete_with_state_handler(
             .into_response();
     }
 
-    Json(delete_music(
-        request_context.tenant_id(),
-        request_context.project_id(),
-        &music_id,
-    )
-    .expect("music delete"))
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn music_content_with_state_handler(
@@ -11721,6 +15651,15 @@ async fn music_content_with_state_handler(
         }
     }
 
+    let bytes = match local_music_content_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &music_id,
+    ) {
+        Ok(bytes) => bytes,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -11740,11 +15679,11 @@ async fn music_content_with_state_handler(
             .into_response();
     }
 
-    local_music_content_response(
-        request_context.tenant_id(),
-        request_context.project_id(),
-        &music_id,
-    )
+    Response::builder()
+        .status(axum::http::StatusCode::OK)
+        .header(header::CONTENT_TYPE, "audio/mpeg")
+        .body(Body::from(bytes))
+        .expect("valid local music content response")
 }
 
 async fn music_lyrics_with_state_handler(
@@ -12012,6 +15951,15 @@ async fn video_retrieve_with_state_handler(
         }
     }
 
+    let response = match local_video_retrieve_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &video_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -12031,15 +15979,7 @@ async fn video_retrieve_with_state_handler(
             .into_response();
     }
 
-    Json(
-        get_video(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &video_id,
-        )
-        .expect("video retrieve"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn video_delete_with_state_handler(
@@ -12084,6 +16024,15 @@ async fn video_delete_with_state_handler(
         }
     }
 
+    let response = match local_video_delete_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &video_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -12103,15 +16052,7 @@ async fn video_delete_with_state_handler(
             .into_response();
     }
 
-    Json(
-        delete_video(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &video_id,
-        )
-        .expect("video delete"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn video_content_with_state_handler(
@@ -12156,6 +16097,15 @@ async fn video_content_with_state_handler(
         }
     }
 
+    let bytes = match local_video_content_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &video_id,
+    ) {
+        Ok(bytes) => bytes,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -12175,11 +16125,11 @@ async fn video_content_with_state_handler(
             .into_response();
     }
 
-    local_video_content_response(
-        request_context.tenant_id(),
-        request_context.project_id(),
-        &video_id,
-    )
+    Response::builder()
+        .status(axum::http::StatusCode::OK)
+        .header(header::CONTENT_TYPE, "video/mp4")
+        .body(Body::from(bytes))
+        .expect("valid local video content response")
 }
 
 async fn video_remix_with_state_handler(
@@ -13016,12 +16966,14 @@ async fn upload_parts_with_state_handler(
         }
     }
 
-    let response = create_upload_part(
+    let response = match local_upload_part_result(
         request_context.tenant_id(),
         request_context.project_id(),
         &request,
-    )
-    .expect("upload part");
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
 
     if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
@@ -13091,6 +17043,15 @@ async fn upload_complete_with_state_handler(
         }
     }
 
+    let response = match local_upload_complete_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &request,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -13110,15 +17071,7 @@ async fn upload_complete_with_state_handler(
             .into_response();
     }
 
-    Json(
-        complete_upload(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &request,
-        )
-        .expect("upload complete"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn upload_cancel_with_state_handler(
@@ -13163,6 +17116,15 @@ async fn upload_cancel_with_state_handler(
         }
     }
 
+    let response = match local_upload_cancel_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &upload_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -13182,15 +17144,7 @@ async fn upload_cancel_with_state_handler(
             .into_response();
     }
 
-    Json(
-        cancel_upload(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &upload_id,
-        )
-        .expect("upload cancel"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn fine_tuning_jobs_with_state_handler(
@@ -13380,6 +17334,15 @@ async fn fine_tuning_job_retrieve_with_state_handler(
         }
     }
 
+    let response = match local_fine_tuning_job_retrieve_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &fine_tuning_job_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -13399,15 +17362,7 @@ async fn fine_tuning_job_retrieve_with_state_handler(
             .into_response();
     }
 
-    Json(
-        get_fine_tuning_job(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &fine_tuning_job_id,
-        )
-        .expect("fine tuning retrieve"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn fine_tuning_job_cancel_with_state_handler(
@@ -13452,6 +17407,15 @@ async fn fine_tuning_job_cancel_with_state_handler(
         }
     }
 
+    let response = match local_fine_tuning_job_cancel_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &fine_tuning_job_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -13471,15 +17435,7 @@ async fn fine_tuning_job_cancel_with_state_handler(
             .into_response();
     }
 
-    Json(
-        cancel_fine_tuning_job(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &fine_tuning_job_id,
-        )
-        .expect("fine tuning cancel"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn fine_tuning_job_events_with_state_handler(
@@ -13524,6 +17480,15 @@ async fn fine_tuning_job_events_with_state_handler(
         }
     }
 
+    let response = match local_fine_tuning_job_events_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &fine_tuning_job_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -13543,15 +17508,7 @@ async fn fine_tuning_job_events_with_state_handler(
             .into_response();
     }
 
-    Json(
-        list_fine_tuning_job_events(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &fine_tuning_job_id,
-        )
-        .expect("fine tuning job events"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn fine_tuning_job_checkpoints_with_state_handler(
@@ -13598,6 +17555,15 @@ async fn fine_tuning_job_checkpoints_with_state_handler(
         }
     }
 
+    let response = match local_fine_tuning_job_checkpoints_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &fine_tuning_job_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -13617,15 +17583,7 @@ async fn fine_tuning_job_checkpoints_with_state_handler(
             .into_response();
     }
 
-    Json(
-        list_fine_tuning_job_checkpoints(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &fine_tuning_job_id,
-        )
-        .expect("fine tuning job checkpoints"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn fine_tuning_job_pause_with_state_handler(
@@ -13670,6 +17628,15 @@ async fn fine_tuning_job_pause_with_state_handler(
         }
     }
 
+    let response = match local_fine_tuning_job_pause_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &fine_tuning_job_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -13689,15 +17656,7 @@ async fn fine_tuning_job_pause_with_state_handler(
             .into_response();
     }
 
-    Json(
-        sdkwork_api_app_gateway::pause_fine_tuning_job(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &fine_tuning_job_id,
-        )
-        .expect("fine tuning pause"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn fine_tuning_job_resume_with_state_handler(
@@ -13742,6 +17701,15 @@ async fn fine_tuning_job_resume_with_state_handler(
         }
     }
 
+    let response = match local_fine_tuning_job_resume_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &fine_tuning_job_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -13761,15 +17729,7 @@ async fn fine_tuning_job_resume_with_state_handler(
             .into_response();
     }
 
-    Json(
-        sdkwork_api_app_gateway::resume_fine_tuning_job(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &fine_tuning_job_id,
-        )
-        .expect("fine tuning resume"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn fine_tuning_checkpoint_permissions_with_state_handler(
@@ -13821,12 +17781,15 @@ async fn fine_tuning_checkpoint_permissions_with_state_handler(
         }
     }
 
-    let response = sdkwork_api_app_gateway::create_fine_tuning_checkpoint_permissions(
+    let response = match local_fine_tuning_checkpoint_permissions_create_result(
         request_context.tenant_id(),
         request_context.project_id(),
+        &fine_tuned_model_checkpoint,
         &request,
-    )
-    .expect("fine tuning checkpoint permissions create");
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
     let usage_model = match response.data.as_slice() {
         [permission] => permission.id.as_str(),
         _ => fine_tuned_model_checkpoint.as_str(),
@@ -13899,6 +17862,15 @@ async fn fine_tuning_checkpoint_permissions_list_with_state_handler(
         }
     }
 
+    let response = match local_fine_tuning_checkpoint_permissions_list_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &fine_tuned_model_checkpoint,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -13918,15 +17890,7 @@ async fn fine_tuning_checkpoint_permissions_list_with_state_handler(
             .into_response();
     }
 
-    Json(
-        sdkwork_api_app_gateway::list_fine_tuning_checkpoint_permissions(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &fine_tuned_model_checkpoint,
-        )
-        .expect("fine tuning checkpoint permissions list"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn fine_tuning_checkpoint_permission_delete_with_state_handler(
@@ -13975,6 +17939,16 @@ async fn fine_tuning_checkpoint_permission_delete_with_state_handler(
         }
     }
 
+    let response = match local_fine_tuning_checkpoint_permission_delete_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &fine_tuned_model_checkpoint,
+        &permission_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -13995,15 +17969,7 @@ async fn fine_tuning_checkpoint_permission_delete_with_state_handler(
             .into_response();
     }
 
-    Json(
-        sdkwork_api_app_gateway::delete_fine_tuning_checkpoint_permission(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &permission_id,
-        )
-        .expect("fine tuning checkpoint permission delete"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn assistants_with_state_handler(
@@ -14192,6 +18158,15 @@ async fn assistant_retrieve_with_state_handler(
         }
     }
 
+    let response = match local_assistant_retrieve_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &assistant_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -14211,15 +18186,7 @@ async fn assistant_retrieve_with_state_handler(
             .into_response();
     }
 
-    Json(
-        get_assistant(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &assistant_id,
-        )
-        .expect("assistant retrieve"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn assistant_update_with_state_handler(
@@ -14268,6 +18235,16 @@ async fn assistant_update_with_state_handler(
     }
 
     let usage_target = request.model.as_deref().unwrap_or(assistant_id.as_str());
+    let response = match local_assistant_update_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &assistant_id,
+        request.name.as_deref().unwrap_or("assistant"),
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -14287,16 +18264,7 @@ async fn assistant_update_with_state_handler(
             .into_response();
     }
 
-    Json(
-        update_assistant(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &assistant_id,
-            request.name.as_deref().unwrap_or("assistant"),
-        )
-        .expect("assistant update"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn assistant_delete_with_state_handler(
@@ -14341,6 +18309,15 @@ async fn assistant_delete_with_state_handler(
         }
     }
 
+    let response = match local_assistant_delete_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &assistant_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -14360,15 +18337,7 @@ async fn assistant_delete_with_state_handler(
             .into_response();
     }
 
-    Json(
-        delete_assistant(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &assistant_id,
-        )
-        .expect("assistant delete"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn webhooks_with_state_handler(
@@ -14557,6 +18526,15 @@ async fn webhook_retrieve_with_state_handler(
         }
     }
 
+    let response = match local_webhook_retrieve_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &webhook_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -14576,15 +18554,7 @@ async fn webhook_retrieve_with_state_handler(
             .into_response();
     }
 
-    Json(
-        get_webhook(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &webhook_id,
-        )
-        .expect("webhook retrieve"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn webhook_update_with_state_handler(
@@ -14633,6 +18603,19 @@ async fn webhook_update_with_state_handler(
     }
 
     let usage_target = request.url.as_deref().unwrap_or(webhook_id.as_str());
+    let response = match local_webhook_update_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &webhook_id,
+        request
+            .url
+            .as_deref()
+            .unwrap_or("https://example.com/webhook"),
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -14652,19 +18635,7 @@ async fn webhook_update_with_state_handler(
             .into_response();
     }
 
-    Json(
-        update_webhook(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &webhook_id,
-            request
-                .url
-                .as_deref()
-                .unwrap_or("https://example.com/webhook"),
-        )
-        .expect("webhook update"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn webhook_delete_with_state_handler(
@@ -14709,6 +18680,15 @@ async fn webhook_delete_with_state_handler(
         }
     }
 
+    let response = match local_webhook_delete_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &webhook_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -14728,15 +18708,7 @@ async fn webhook_delete_with_state_handler(
             .into_response();
     }
 
-    Json(
-        delete_webhook(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &webhook_id,
-        )
-        .expect("webhook delete"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn realtime_sessions_with_state_handler(
@@ -14863,12 +18835,14 @@ async fn evals_with_state_handler(
         }
     }
 
-    let response = create_eval(
+    let response = match create_eval(
         request_context.tenant_id(),
         request_context.project_id(),
         &request.name,
-    )
-    .expect("eval");
+    ) {
+        Ok(response) => response,
+        Err(error) => return bad_gateway_openai_response(error.to_string()),
+    };
 
     if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
@@ -14933,6 +18907,11 @@ async fn evals_list_with_state_handler(
         }
     }
 
+    let response = match list_evals(request_context.tenant_id(), request_context.project_id()) {
+        Ok(response) => response,
+        Err(error) => return bad_gateway_openai_response(error.to_string()),
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -14952,8 +18931,7 @@ async fn evals_list_with_state_handler(
             .into_response();
     }
 
-    Json(list_evals(request_context.tenant_id(), request_context.project_id()).expect("eval list"))
-        .into_response()
+    Json(response).into_response()
 }
 
 async fn eval_retrieve_with_state_handler(
@@ -14998,6 +18976,15 @@ async fn eval_retrieve_with_state_handler(
         }
     }
 
+    let response = match local_eval_retrieve_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &eval_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -15017,15 +19004,7 @@ async fn eval_retrieve_with_state_handler(
             .into_response();
     }
 
-    Json(
-        get_eval(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &eval_id,
-        )
-        .expect("eval retrieve"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn eval_update_with_state_handler(
@@ -15072,6 +19051,16 @@ async fn eval_update_with_state_handler(
         }
     }
 
+    let response = match local_eval_update_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &eval_id,
+        &request,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -15091,16 +19080,7 @@ async fn eval_update_with_state_handler(
             .into_response();
     }
 
-    Json(
-        update_eval(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &eval_id,
-            &request,
-        )
-        .expect("eval update"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn eval_delete_with_state_handler(
@@ -15145,6 +19125,15 @@ async fn eval_delete_with_state_handler(
         }
     }
 
+    let response = match local_eval_delete_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &eval_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -15164,15 +19153,7 @@ async fn eval_delete_with_state_handler(
             .into_response();
     }
 
-    Json(
-        delete_eval(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &eval_id,
-        )
-        .expect("eval delete"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn eval_runs_list_with_state_handler(
@@ -15217,6 +19198,15 @@ async fn eval_runs_list_with_state_handler(
         }
     }
 
+    let response = match local_eval_runs_list_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &eval_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -15236,15 +19226,7 @@ async fn eval_runs_list_with_state_handler(
             .into_response();
     }
 
-    Json(
-        list_eval_runs(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &eval_id,
-        )
-        .expect("eval runs list"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn eval_runs_with_state_handler(
@@ -15296,13 +19278,15 @@ async fn eval_runs_with_state_handler(
         }
     }
 
-    let response = create_eval_run(
+    let response = match local_eval_run_create_result(
         request_context.tenant_id(),
         request_context.project_id(),
         &eval_id,
         &request,
-    )
-    .expect("eval run create");
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
 
     if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
@@ -15371,6 +19355,16 @@ async fn eval_run_retrieve_with_state_handler(
         }
     }
 
+    let response = match local_eval_run_retrieve_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &eval_id,
+        &run_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -15391,16 +19385,7 @@ async fn eval_run_retrieve_with_state_handler(
             .into_response();
     }
 
-    Json(
-        get_eval_run(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &eval_id,
-            &run_id,
-        )
-        .expect("eval run retrieve"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn eval_run_delete_with_state_handler(
@@ -15447,6 +19432,16 @@ async fn eval_run_delete_with_state_handler(
         }
     }
 
+    let response = match local_eval_run_delete_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &eval_id,
+        &run_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -15467,16 +19462,7 @@ async fn eval_run_delete_with_state_handler(
             .into_response();
     }
 
-    Json(
-        sdkwork_api_app_gateway::delete_eval_run(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &eval_id,
-            &run_id,
-        )
-        .expect("eval run delete"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn eval_run_cancel_with_state_handler(
@@ -15523,6 +19509,16 @@ async fn eval_run_cancel_with_state_handler(
         }
     }
 
+    let response = match local_eval_run_cancel_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &eval_id,
+        &run_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -15543,16 +19539,7 @@ async fn eval_run_cancel_with_state_handler(
             .into_response();
     }
 
-    Json(
-        sdkwork_api_app_gateway::cancel_eval_run(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &eval_id,
-            &run_id,
-        )
-        .expect("eval run cancel"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn eval_run_output_items_list_with_state_handler(
@@ -15601,6 +19588,16 @@ async fn eval_run_output_items_list_with_state_handler(
         }
     }
 
+    let response = match local_eval_run_output_items_list_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &eval_id,
+        &run_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -15621,16 +19618,7 @@ async fn eval_run_output_items_list_with_state_handler(
             .into_response();
     }
 
-    Json(
-        sdkwork_api_app_gateway::list_eval_run_output_items(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &eval_id,
-            &run_id,
-        )
-        .expect("eval run output items list"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn eval_run_output_item_retrieve_with_state_handler(
@@ -15680,6 +19668,17 @@ async fn eval_run_output_item_retrieve_with_state_handler(
         }
     }
 
+    let response = match local_eval_run_output_item_retrieve_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &eval_id,
+        &run_id,
+        &output_item_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -15700,17 +19699,7 @@ async fn eval_run_output_item_retrieve_with_state_handler(
             .into_response();
     }
 
-    Json(
-        sdkwork_api_app_gateway::get_eval_run_output_item(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &eval_id,
-            &run_id,
-            &output_item_id,
-        )
-        .expect("eval run output item retrieve"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn batches_with_state_handler(
@@ -15899,6 +19888,15 @@ async fn batch_retrieve_with_state_handler(
         }
     }
 
+    let response = match local_batch_retrieve_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &batch_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -15918,15 +19916,7 @@ async fn batch_retrieve_with_state_handler(
             .into_response();
     }
 
-    Json(
-        get_batch(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &batch_id,
-        )
-        .expect("batch retrieve"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn batch_cancel_with_state_handler(
@@ -15971,6 +19961,15 @@ async fn batch_cancel_with_state_handler(
         }
     }
 
+    let response = match local_batch_cancel_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &batch_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -15990,15 +19989,7 @@ async fn batch_cancel_with_state_handler(
             .into_response();
     }
 
-    Json(
-        cancel_batch(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &batch_id,
-        )
-        .expect("batch cancel"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn vector_stores_with_state_handler(
@@ -16186,6 +20177,15 @@ async fn vector_store_retrieve_with_state_handler(
         }
     }
 
+    let response = match local_vector_store_retrieve_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &vector_store_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -16205,15 +20205,7 @@ async fn vector_store_retrieve_with_state_handler(
             .into_response();
     }
 
-    Json(
-        get_vector_store(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &vector_store_id,
-        )
-        .expect("vector store retrieve"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn vector_store_update_with_state_handler(
@@ -16260,6 +20252,16 @@ async fn vector_store_update_with_state_handler(
         }
     }
 
+    let response = match local_vector_store_update_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &vector_store_id,
+        request.name.as_deref().unwrap_or("vector-store"),
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -16279,16 +20281,7 @@ async fn vector_store_update_with_state_handler(
             .into_response();
     }
 
-    Json(
-        update_vector_store(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &vector_store_id,
-            request.name.as_deref().unwrap_or("vector-store"),
-        )
-        .expect("vector store update"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn vector_store_delete_with_state_handler(
@@ -16333,6 +20326,15 @@ async fn vector_store_delete_with_state_handler(
         }
     }
 
+    let response = match local_vector_store_delete_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &vector_store_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -16352,15 +20354,7 @@ async fn vector_store_delete_with_state_handler(
             .into_response();
     }
 
-    Json(
-        delete_vector_store(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &vector_store_id,
-        )
-        .expect("vector store delete"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn vector_store_search_with_state_handler(
@@ -16634,6 +20628,16 @@ async fn vector_store_file_retrieve_with_state_handler(
         }
     }
 
+    let response = match local_vector_store_file_retrieve_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &vector_store_id,
+        &file_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -16654,16 +20658,7 @@ async fn vector_store_file_retrieve_with_state_handler(
             .into_response();
     }
 
-    Json(
-        get_vector_store_file(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &vector_store_id,
-            &file_id,
-        )
-        .expect("vector store file retrieve"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn vector_store_file_delete_with_state_handler(
@@ -16712,6 +20707,16 @@ async fn vector_store_file_delete_with_state_handler(
         }
     }
 
+    let response = match local_vector_store_file_delete_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &vector_store_id,
+        &file_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -16732,16 +20737,7 @@ async fn vector_store_file_delete_with_state_handler(
             .into_response();
     }
 
-    Json(
-        delete_vector_store_file(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &vector_store_id,
-            &file_id,
-        )
-        .expect("vector store file delete"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn vector_store_file_batches_with_state_handler(
@@ -16870,6 +20866,16 @@ async fn vector_store_file_batch_retrieve_with_state_handler(
         }
     }
 
+    let response = match local_vector_store_file_batch_retrieve_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &vector_store_id,
+        &batch_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -16890,16 +20896,7 @@ async fn vector_store_file_batch_retrieve_with_state_handler(
             .into_response();
     }
 
-    Json(
-        get_vector_store_file_batch(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &vector_store_id,
-            &batch_id,
-        )
-        .expect("vector store file batch retrieve"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn vector_store_file_batch_cancel_with_state_handler(
@@ -16948,6 +20945,16 @@ async fn vector_store_file_batch_cancel_with_state_handler(
         }
     }
 
+    let response = match local_vector_store_file_batch_cancel_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &vector_store_id,
+        &batch_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -16968,16 +20975,7 @@ async fn vector_store_file_batch_cancel_with_state_handler(
             .into_response();
     }
 
-    Json(
-        cancel_vector_store_file_batch(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &vector_store_id,
-            &batch_id,
-        )
-        .expect("vector store file batch cancel"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn vector_store_file_batch_files_with_state_handler(
@@ -17026,6 +21024,16 @@ async fn vector_store_file_batch_files_with_state_handler(
         }
     }
 
+    let response = match local_vector_store_file_batch_files_result(
+        request_context.tenant_id(),
+        request_context.project_id(),
+        &vector_store_id,
+        &batch_id,
+    ) {
+        Ok(response) => response,
+        Err(response) => return response,
+    };
+
     if record_gateway_usage_for_project_with_route_key(
         state.store.as_ref(),
         request_context.tenant_id(),
@@ -17046,16 +21054,7 @@ async fn vector_store_file_batch_files_with_state_handler(
             .into_response();
     }
 
-    Json(
-        list_vector_store_file_batch_files(
-            request_context.tenant_id(),
-            request_context.project_id(),
-            &vector_store_id,
-            &batch_id,
-        )
-        .expect("vector store file batch files"),
-    )
-    .into_response()
+    Json(response).into_response()
 }
 
 async fn enforce_project_quota<S>(
@@ -17089,6 +21088,12 @@ fn bad_gateway_openai_response(message: impl Into<String>) -> Response {
     (StatusCode::BAD_GATEWAY, Json(error)).into_response()
 }
 
+fn not_found_openai_response(message: impl Into<String>) -> Response {
+    let mut error = OpenAiErrorResponse::new(message, "invalid_request_error");
+    error.error.code = Some("not_found".to_owned());
+    (StatusCode::NOT_FOUND, Json(error)).into_response()
+}
+
 fn invalid_request_openai_response(
     message: impl Into<String>,
     code: impl Into<String>,
@@ -17096,6 +21101,14 @@ fn invalid_request_openai_response(
     let mut error = OpenAiErrorResponse::new(message, "invalid_request_error");
     error.error.code = Some(code.into());
     (StatusCode::BAD_REQUEST, Json(error)).into_response()
+}
+
+fn local_gateway_error_response(error: anyhow::Error, not_found_message: &'static str) -> Response {
+    if error.to_string().to_ascii_lowercase().contains("not found") {
+        return not_found_openai_response(not_found_message);
+    }
+
+    bad_gateway_openai_response(error.to_string())
 }
 
 fn quota_exceeded_message(project_id: &str, evaluation: &QuotaCheckResult) -> String {
@@ -17115,6 +21128,240 @@ fn quota_exceeded_message(project_id: &str, evaluation: &QuotaCheckResult) -> St
     }
 }
 
+fn next_gateway_commercial_record_id(now_ms: u64) -> u64 {
+    let sequence = GATEWAY_COMMERCIAL_ID_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        & GATEWAY_COMMERCIAL_ID_SEQUENCE_MASK;
+    compose_gateway_commercial_record_id(now_ms, sequence)
+}
+
+fn compose_gateway_commercial_record_id(now_ms: u64, sequence: u64) -> u64 {
+    (now_ms << GATEWAY_COMMERCIAL_ID_SEQUENCE_BITS)
+        | (sequence & GATEWAY_COMMERCIAL_ID_SEQUENCE_MASK)
+}
+
+async fn begin_gateway_commercial_admission(
+    state: &GatewayApiState,
+    request_context: &IdentityGatewayRequestContext,
+    spec: GatewayCommercialAdmissionSpec,
+) -> Result<GatewayCommercialAdmissionDecision, Response> {
+    let Some(commercial_billing) = state.commercial_billing.as_ref() else {
+        return Ok(GatewayCommercialAdmissionDecision::LegacyQuota);
+    };
+
+    let billing_settlement = resolve_gateway_billing_settlement(
+        state.store.as_ref(),
+        request_context.api_key_group_id(),
+        None,
+        spec.quoted_amount,
+    )
+    .await
+    .map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to evaluate commercial billing admission",
+        )
+            .into_response()
+    })?;
+
+    if billing_settlement.accounting_mode != BillingAccountingMode::PlatformCredit
+        || billing_settlement.customer_charge <= f64::EPSILON
+    {
+        return Ok(GatewayCommercialAdmissionDecision::LegacyQuota);
+    }
+
+    let Some(account) = commercial_billing
+        .resolve_payable_account_for_gateway_request_context(request_context)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to resolve payable account",
+            )
+                .into_response()
+        })?
+    else {
+        return Ok(GatewayCommercialAdmissionDecision::LegacyQuota);
+    };
+
+    let now_ms = current_billing_timestamp_ms().map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to allocate commercial billing hold",
+        )
+            .into_response()
+    })?;
+    let hold_plan = commercial_billing
+        .plan_account_hold(
+            account.account_id,
+            billing_settlement.customer_charge,
+            now_ms,
+        )
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to plan commercial billing hold",
+            )
+                .into_response()
+        })?;
+    if !hold_plan.sufficient_balance {
+        return Err(commercial_balance_exceeded_response(
+            request_context.project_id(),
+            account.account_id,
+            hold_plan.requested_quantity,
+            hold_plan.covered_quantity,
+            hold_plan.shortfall_quantity,
+        ));
+    }
+
+    let request_id = next_gateway_commercial_record_id(now_ms);
+    let hold_id = next_gateway_commercial_record_id(now_ms);
+    let hold_allocation_start_id = next_gateway_commercial_record_id(now_ms);
+    commercial_billing
+        .create_account_hold(CreateAccountHoldInput {
+            hold_id,
+            hold_allocation_start_id,
+            request_id,
+            account_id: account.account_id,
+            requested_quantity: billing_settlement.customer_charge,
+            expires_at_ms: now_ms + GATEWAY_COMMERCIAL_HOLD_TTL_MS,
+            now_ms,
+        })
+        .await
+        .map_err(|error| {
+            if looks_like_insufficient_account_balance(&error) {
+                commercial_balance_exceeded_response(
+                    request_context.project_id(),
+                    account.account_id,
+                    billing_settlement.customer_charge,
+                    0.0,
+                    billing_settlement.customer_charge,
+                )
+            } else {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed to create commercial billing hold",
+                )
+                    .into_response()
+            }
+        })?;
+
+    Ok(GatewayCommercialAdmissionDecision::Canonical(
+        GatewayCommercialAdmission {
+            request_id,
+            billing_settlement,
+        },
+    ))
+}
+
+async fn capture_gateway_commercial_admission(
+    state: &GatewayApiState,
+    admission: &GatewayCommercialAdmission,
+) -> Result<(), Response> {
+    let Some(commercial_billing) = state.commercial_billing.as_ref() else {
+        return Ok(());
+    };
+
+    let settled_at_ms = current_billing_timestamp_ms().map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to finalize commercial billing settlement",
+        )
+            .into_response()
+    })?;
+    commercial_billing
+        .capture_account_hold(CaptureAccountHoldInput {
+            request_settlement_id: next_gateway_commercial_record_id(settled_at_ms),
+            request_id: admission.request_id,
+            captured_quantity: admission.billing_settlement.customer_charge,
+            provider_cost_amount: admission.billing_settlement.upstream_cost,
+            retail_charge_amount: admission.billing_settlement.customer_charge,
+            settled_at_ms,
+        })
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to finalize commercial billing settlement",
+            )
+                .into_response()
+        })?;
+    Ok(())
+}
+
+async fn release_gateway_commercial_admission(
+    state: &GatewayApiState,
+    admission: &GatewayCommercialAdmission,
+) -> Result<(), Response> {
+    let Some(commercial_billing) = state.commercial_billing.as_ref() else {
+        return Ok(());
+    };
+
+    let released_at_ms = current_billing_timestamp_ms().map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to release commercial billing hold",
+        )
+            .into_response()
+    })?;
+    commercial_billing
+        .release_account_hold(ReleaseAccountHoldInput {
+            request_id: admission.request_id,
+            released_at_ms,
+        })
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to release commercial billing hold",
+            )
+                .into_response()
+        })?;
+    Ok(())
+}
+
+fn commercial_balance_exceeded_response(
+    project_id: &str,
+    account_id: u64,
+    requested_quantity: f64,
+    covered_quantity: f64,
+    shortfall_quantity: f64,
+) -> Response {
+    let mut error = OpenAiErrorResponse::new(
+        format!(
+            "Insufficient balance for project {project_id} on primary account {account_id}: requested {requested_quantity:.4} credits, available {covered_quantity:.4}, shortfall {shortfall_quantity:.4}."
+        ),
+        "payment_required",
+    );
+    error.error.code = Some("insufficient_balance".to_owned());
+    (StatusCode::PAYMENT_REQUIRED, Json(error)).into_response()
+}
+
+#[cfg(test)]
+mod gateway_commercial_id_tests {
+    use super::compose_gateway_commercial_record_id;
+
+    #[test]
+    fn gateway_commercial_record_ids_leave_headroom_for_ledger_suffixes() {
+        let future_now_ms = 4_102_444_800_000_u64;
+        let max_sequence = 0x0000_7fff_u64;
+        let record_id = compose_gateway_commercial_record_id(future_now_ms, max_sequence);
+        let derived_ledger_id = record_id.saturating_mul(10).saturating_add(4);
+
+        assert!(
+            i64::try_from(derived_ledger_id).is_ok(),
+            "commercial record id {record_id} must stay representable after ledger suffix expansion"
+        );
+    }
+}
+
+fn looks_like_insufficient_account_balance(error: &anyhow::Error) -> bool {
+    error
+        .to_string()
+        .to_ascii_lowercase()
+        .contains("insufficient available balance")
+}
+
 async fn record_gateway_usage_for_project(
     store: &dyn AdminStore,
     tenant_id: &str,
@@ -17124,7 +21371,23 @@ async fn record_gateway_usage_for_project(
     units: u64,
     amount: f64,
 ) -> anyhow::Result<()> {
-    record_gateway_usage_for_project_with_route_key_and_reference_id(
+    record_gateway_usage_for_project_with_context(
+        store, tenant_id, project_id, capability, model, units, amount, None,
+    )
+    .await
+}
+
+async fn record_gateway_usage_for_project_with_context(
+    store: &dyn AdminStore,
+    tenant_id: &str,
+    project_id: &str,
+    capability: &str,
+    model: &str,
+    units: u64,
+    amount: f64,
+    usage_context_override: Option<&PlannedExecutionUsageContext>,
+) -> anyhow::Result<()> {
+    record_gateway_usage_for_project_with_route_key_and_reference_id_with_context(
         store,
         tenant_id,
         project_id,
@@ -17134,6 +21397,7 @@ async fn record_gateway_usage_for_project(
         units,
         amount,
         None,
+        usage_context_override,
     )
     .await
 }
@@ -17278,7 +21542,34 @@ async fn record_gateway_usage_for_project_with_route_key_and_reference_id(
     amount: f64,
     reference_id: Option<&str>,
 ) -> anyhow::Result<()> {
-    record_gateway_usage_for_project_with_route_key_and_tokens_and_reference(
+    record_gateway_usage_for_project_with_route_key_and_reference_id_with_context(
+        store,
+        tenant_id,
+        project_id,
+        capability,
+        route_key,
+        usage_model,
+        units,
+        amount,
+        reference_id,
+        None,
+    )
+    .await
+}
+
+async fn record_gateway_usage_for_project_with_route_key_and_reference_id_with_context(
+    store: &dyn AdminStore,
+    tenant_id: &str,
+    project_id: &str,
+    capability: &str,
+    route_key: &str,
+    usage_model: &str,
+    units: u64,
+    amount: f64,
+    reference_id: Option<&str>,
+    usage_context_override: Option<&PlannedExecutionUsageContext>,
+) -> anyhow::Result<()> {
+    record_gateway_usage_for_project_with_route_key_and_tokens_and_reference_with_context(
         store,
         tenant_id,
         project_id,
@@ -17289,6 +21580,7 @@ async fn record_gateway_usage_for_project_with_route_key_and_reference_id(
         amount,
         None,
         reference_id,
+        usage_context_override,
     )
     .await
 }
@@ -17304,7 +21596,7 @@ async fn record_gateway_usage_for_project_with_media_and_reference_id(
     media_metrics: BillingMediaMetrics,
     reference_id: Option<&str>,
 ) -> anyhow::Result<()> {
-    record_gateway_usage_for_project_with_route_key_and_tokens_reference_and_media(
+    record_gateway_usage_for_project_with_route_key_and_tokens_reference_and_media_with_context(
         store,
         tenant_id,
         project_id,
@@ -17316,6 +21608,7 @@ async fn record_gateway_usage_for_project_with_media_and_reference_id(
         None,
         reference_id,
         media_metrics,
+        None,
     )
     .await
 }
@@ -17330,7 +21623,7 @@ async fn record_gateway_usage_for_project_with_route_key(
     units: u64,
     amount: f64,
 ) -> anyhow::Result<()> {
-    record_gateway_usage_for_project_with_route_key_and_tokens_and_reference(
+    record_gateway_usage_for_project_with_route_key_and_tokens_and_reference_with_context(
         store,
         tenant_id,
         project_id,
@@ -17339,6 +21632,7 @@ async fn record_gateway_usage_for_project_with_route_key(
         usage_model,
         units,
         amount,
+        None,
         None,
         None,
     )
@@ -17357,7 +21651,36 @@ async fn record_gateway_usage_for_project_with_route_key_and_tokens_and_referenc
     token_usage: Option<TokenUsageMetrics>,
     reference_id: Option<&str>,
 ) -> anyhow::Result<()> {
-    record_gateway_usage_for_project_with_route_key_and_tokens_reference_and_media(
+    record_gateway_usage_for_project_with_route_key_and_tokens_and_reference_with_context(
+        store,
+        tenant_id,
+        project_id,
+        capability,
+        route_key,
+        usage_model,
+        units,
+        amount,
+        token_usage,
+        reference_id,
+        None,
+    )
+    .await
+}
+
+async fn record_gateway_usage_for_project_with_route_key_and_tokens_and_reference_with_context(
+    store: &dyn AdminStore,
+    tenant_id: &str,
+    project_id: &str,
+    capability: &str,
+    route_key: &str,
+    usage_model: &str,
+    units: u64,
+    amount: f64,
+    token_usage: Option<TokenUsageMetrics>,
+    reference_id: Option<&str>,
+    usage_context_override: Option<&PlannedExecutionUsageContext>,
+) -> anyhow::Result<()> {
+    record_gateway_usage_for_project_with_route_key_and_tokens_reference_and_media_with_context(
         store,
         tenant_id,
         project_id,
@@ -17369,11 +21692,12 @@ async fn record_gateway_usage_for_project_with_route_key_and_tokens_and_referenc
         token_usage,
         reference_id,
         BillingMediaMetrics::default(),
+        usage_context_override,
     )
     .await
 }
 
-async fn record_gateway_usage_for_project_with_route_key_and_tokens_reference_and_media(
+async fn record_gateway_usage_for_project_with_route_key_and_tokens_reference_and_media_with_context(
     store: &dyn AdminStore,
     tenant_id: &str,
     project_id: &str,
@@ -17385,11 +21709,17 @@ async fn record_gateway_usage_for_project_with_route_key_and_tokens_reference_an
     token_usage: Option<TokenUsageMetrics>,
     reference_id: Option<&str>,
     media_metrics: BillingMediaMetrics,
+    usage_context_override: Option<&PlannedExecutionUsageContext>,
 ) -> anyhow::Result<()> {
-    let usage_context = planned_execution_usage_context_for_route(
-        store, tenant_id, project_id, capability, route_key,
-    )
-    .await?;
+    let usage_context = match usage_context_override {
+        Some(context) => (*context).clone(),
+        None => {
+            planned_execution_usage_context_for_route(
+                store, tenant_id, project_id, capability, route_key,
+            )
+            .await?
+        }
+    };
     let token_usage = token_usage.unwrap_or_default();
     let request_context = current_gateway_request_context();
     let api_key_hash = request_context
@@ -17493,7 +21823,9 @@ async fn load_api_key_group_default_accounting_mode(
     store: &dyn AdminStore,
     api_key_group_id: Option<&str>,
 ) -> anyhow::Result<Option<String>> {
-    let Some(api_key_group_id) = api_key_group_id.map(str::trim).filter(|value| !value.is_empty())
+    let Some(api_key_group_id) = api_key_group_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
     else {
         return Ok(None);
     };
@@ -17595,7 +21927,14 @@ fn local_speech_response(
         .expect("valid speech response")
 }
 
-fn local_response_stream_response(response_id: &str, model: &str) -> Response {
+fn local_response_stream_response(tenant_id: &str, project_id: &str, model: &str) -> Response {
+    match local_response_create_result(tenant_id, project_id, model) {
+        Ok(_) => local_response_stream_body_response("resp_1", model),
+        Err(response) => response,
+    }
+}
+
+fn local_response_stream_body_response(response_id: &str, model: &str) -> Response {
     let created = serde_json::json!({
         "type":"response.created",
         "response": {

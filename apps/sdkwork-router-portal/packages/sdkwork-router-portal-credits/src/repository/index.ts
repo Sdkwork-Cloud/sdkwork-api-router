@@ -1,50 +1,78 @@
 import {
-  createPortalCommerceOrder,
+  confirmPortalCouponRedemption,
   getPortalBillingEventSummary,
-  getPortalCommerceCatalog,
   getPortalBillingSummary,
   listPortalCommerceOrders,
-  previewPortalCommerceQuote,
+  listPortalMarketingMyCoupons,
+  listPortalMarketingRedemptions,
+  listPortalMarketingRewardHistory,
+  reservePortalCouponRedemption,
+  validatePortalCoupon,
 } from 'sdkwork-router-portal-portal-api';
 import type {
-  PortalCommerceOrder,
-  PortalCommerceQuote,
+  MarketingSubjectScope,
+  PortalCouponRedemptionConfirmResponse,
+  PortalCouponValidationResponse,
 } from 'sdkwork-router-portal-types';
 
 import type { CreditsPageData } from '../types';
 
 export async function loadCreditsPageData(): Promise<CreditsPageData> {
-  const [summary, catalog, orders, billing_event_summary] = await Promise.all([
+  const [
+    summary,
+    orders,
+    billing_event_summary,
+    marketing_codes,
+    marketing_reward_history,
+    marketing_redemptions,
+  ] = await Promise.all([
     getPortalBillingSummary(),
-    getPortalCommerceCatalog(),
     listPortalCommerceOrders(),
     getPortalBillingEventSummary(),
+    listPortalMarketingMyCoupons(),
+    listPortalMarketingRewardHistory(),
+    listPortalMarketingRedemptions(),
   ]);
 
   return {
     summary,
-    coupons: catalog.coupons.filter((coupon) => coupon.bonus_units > 0),
     orders,
     billing_event_summary,
+    marketing_codes,
+    marketing_reward_history,
+    marketing_redemptions,
   };
 }
 
-export function previewCreditsCouponRedemption(input: {
-  target_id: string;
-  current_remaining_units?: number | null;
-}): Promise<PortalCommerceQuote> {
-  return previewPortalCommerceQuote({
+export function validateCreditsCouponCode(input: {
+  coupon_code: string;
+  subject_scope?: MarketingSubjectScope;
+}): Promise<PortalCouponValidationResponse> {
+  return validatePortalCoupon({
+    coupon_code: input.coupon_code.trim().toUpperCase(),
+    subject_scope: input.subject_scope ?? 'project',
     target_kind: 'coupon_redemption',
-    target_id: input.target_id,
-    current_remaining_units: input.current_remaining_units,
+    order_amount_minor: 0,
+    reserve_amount_minor: 0,
   });
 }
 
-export function createCreditsCouponRedemption(input: {
-  target_id: string;
-}): Promise<PortalCommerceOrder> {
-  return createPortalCommerceOrder({
+export async function redeemCreditsCouponCode(input: {
+  coupon_code: string;
+  subject_scope?: MarketingSubjectScope;
+  ttl_ms?: number;
+}): Promise<PortalCouponRedemptionConfirmResponse> {
+  const couponCode = input.coupon_code.trim().toUpperCase();
+  const reservation = await reservePortalCouponRedemption({
+    coupon_code: couponCode,
+    subject_scope: input.subject_scope ?? 'project',
     target_kind: 'coupon_redemption',
-    target_id: input.target_id,
+    reserve_amount_minor: 0,
+    ttl_ms: input.ttl_ms ?? 300_000,
+  });
+
+  return confirmPortalCouponRedemption({
+    coupon_reservation_id: reservation.reservation.coupon_reservation_id,
+    subsidy_amount_minor: 0,
   });
 }

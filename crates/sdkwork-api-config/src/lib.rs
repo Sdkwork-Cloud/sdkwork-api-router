@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -34,13 +35,33 @@ const SDKWORK_NATIVE_DYNAMIC_SHUTDOWN_DRAIN_TIMEOUT_MS: &str =
 const SDKWORK_ADMIN_JWT_SIGNING_SECRET: &str = "SDKWORK_ADMIN_JWT_SIGNING_SECRET";
 const SDKWORK_PORTAL_JWT_SIGNING_SECRET: &str = "SDKWORK_PORTAL_JWT_SIGNING_SECRET";
 const SDKWORK_RUNTIME_SNAPSHOT_INTERVAL_SECS: &str = "SDKWORK_RUNTIME_SNAPSHOT_INTERVAL_SECS";
+const SDKWORK_PRICING_LIFECYCLE_SYNC_INTERVAL_SECS: &str =
+    "SDKWORK_PRICING_LIFECYCLE_SYNC_INTERVAL_SECS";
 const SDKWORK_SECRET_BACKEND: &str = "SDKWORK_SECRET_BACKEND";
 const SDKWORK_CREDENTIAL_MASTER_KEY: &str = "SDKWORK_CREDENTIAL_MASTER_KEY";
 const SDKWORK_CREDENTIAL_LEGACY_MASTER_KEYS: &str = "SDKWORK_CREDENTIAL_LEGACY_MASTER_KEYS";
 const SDKWORK_SECRET_LOCAL_FILE: &str = "SDKWORK_SECRET_LOCAL_FILE";
 const SDKWORK_SECRET_KEYRING_SERVICE: &str = "SDKWORK_SECRET_KEYRING_SERVICE";
+const SDKWORK_ALLOW_INSECURE_DEV_DEFAULTS: &str = "SDKWORK_ALLOW_INSECURE_DEV_DEFAULTS";
+const SDKWORK_METRICS_BEARER_TOKEN: &str = "SDKWORK_METRICS_BEARER_TOKEN";
+const SDKWORK_BROWSER_ALLOWED_ORIGINS: &str = "SDKWORK_BROWSER_ALLOWED_ORIGINS";
 
-const MANAGED_ENV_KEYS: [&str; 19] = [
+const DEFAULT_ADMIN_JWT_SIGNING_SECRET: &str = "local-dev-admin-jwt-secret";
+const DEFAULT_PORTAL_JWT_SIGNING_SECRET: &str = "local-dev-portal-jwt-secret";
+const DEFAULT_CREDENTIAL_MASTER_KEY: &str = "local-dev-master-key";
+const DEFAULT_METRICS_BEARER_TOKEN: &str = "local-dev-metrics-token";
+const DEFAULT_BROWSER_ALLOWED_ORIGINS: [&str; 8] = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3001",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:5174",
+    "http://127.0.0.1:5174",
+];
+
+const MANAGED_ENV_KEYS: [&str; 23] = [
     SDKWORK_GATEWAY_BIND,
     SDKWORK_ADMIN_BIND,
     SDKWORK_PORTAL_BIND,
@@ -58,8 +79,12 @@ const MANAGED_ENV_KEYS: [&str; 19] = [
     SDKWORK_ADMIN_JWT_SIGNING_SECRET,
     SDKWORK_PORTAL_JWT_SIGNING_SECRET,
     SDKWORK_RUNTIME_SNAPSHOT_INTERVAL_SECS,
+    SDKWORK_PRICING_LIFECYCLE_SYNC_INTERVAL_SECS,
     SDKWORK_SECRET_BACKEND,
     SDKWORK_CREDENTIAL_MASTER_KEY,
+    SDKWORK_ALLOW_INSECURE_DEV_DEFAULTS,
+    SDKWORK_METRICS_BEARER_TOKEN,
+    SDKWORK_BROWSER_ALLOWED_ORIGINS,
 ];
 
 const MANAGED_SECRET_ENV_KEYS: [&str; 3] = [
@@ -131,8 +156,12 @@ pub struct StandaloneConfig {
     pub admin_jwt_signing_secret: String,
     pub portal_jwt_signing_secret: String,
     pub runtime_snapshot_interval_secs: u64,
+    pub pricing_lifecycle_sync_interval_secs: u64,
     pub secret_backend: SecretBackendKind,
     pub credential_master_key: String,
+    pub allow_insecure_dev_defaults: bool,
+    pub metrics_bearer_token: String,
+    pub browser_allowed_origins: Vec<String>,
     pub credential_legacy_master_keys: Vec<String>,
     pub secret_local_file: String,
     pub secret_keyring_service: String,
@@ -149,6 +178,13 @@ pub struct StandaloneRuntimeDynamicConfig {
     pub require_signed_native_dynamic_extensions: bool,
     pub native_dynamic_shutdown_drain_timeout_ms: u64,
     pub runtime_snapshot_interval_secs: u64,
+    pub pricing_lifecycle_sync_interval_secs: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HttpExposureConfig {
+    pub metrics_bearer_token: String,
+    pub browser_allowed_origins: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -190,11 +226,48 @@ struct StandaloneConfigFile {
     admin_jwt_signing_secret: Option<String>,
     portal_jwt_signing_secret: Option<String>,
     runtime_snapshot_interval_secs: Option<u64>,
+    pricing_lifecycle_sync_interval_secs: Option<u64>,
     secret_backend: Option<String>,
     credential_master_key: Option<String>,
+    allow_insecure_dev_defaults: Option<bool>,
+    metrics_bearer_token: Option<String>,
+    browser_allowed_origins: Option<Vec<String>>,
     credential_legacy_master_keys: Option<Vec<String>>,
     secret_local_file: Option<String>,
     secret_keyring_service: Option<String>,
+}
+
+impl Default for HttpExposureConfig {
+    fn default() -> Self {
+        Self {
+            metrics_bearer_token: DEFAULT_METRICS_BEARER_TOKEN.to_owned(),
+            browser_allowed_origins: default_browser_allowed_origins(),
+        }
+    }
+}
+
+impl HttpExposureConfig {
+    pub fn from_env() -> Result<Self> {
+        Self::from_pairs(std::env::vars())
+    }
+
+    pub fn from_pairs<I, K, V>(pairs: I) -> Result<Self>
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<String>,
+        V: Into<String>,
+    {
+        let values = collect_pairs(pairs);
+        let mut config = Self::default();
+        if let Some(value) = values.get(SDKWORK_METRICS_BEARER_TOKEN) {
+            config.metrics_bearer_token = value.clone();
+        }
+        if let Some(value) = values.get(SDKWORK_BROWSER_ALLOWED_ORIGINS) {
+            config.browser_allowed_origins =
+                parse_string_list_env(value, SDKWORK_BROWSER_ALLOWED_ORIGINS)?;
+        }
+        Ok(config)
+    }
 }
 
 impl Default for StandaloneConfig {
@@ -217,8 +290,12 @@ impl Default for StandaloneConfig {
             admin_jwt_signing_secret: "local-dev-admin-jwt-secret".to_owned(),
             portal_jwt_signing_secret: "local-dev-portal-jwt-secret".to_owned(),
             runtime_snapshot_interval_secs: 0,
+            pricing_lifecycle_sync_interval_secs: 0,
             secret_backend: SecretBackendKind::DatabaseEncrypted,
-            credential_master_key: "local-dev-master-key".to_owned(),
+            credential_master_key: DEFAULT_CREDENTIAL_MASTER_KEY.to_owned(),
+            allow_insecure_dev_defaults: false,
+            metrics_bearer_token: DEFAULT_METRICS_BEARER_TOKEN.to_owned(),
+            browser_allowed_origins: default_browser_allowed_origins(),
             credential_legacy_master_keys: Vec::new(),
             secret_local_file: "sdkwork-api-secrets.json".to_owned(),
             secret_keyring_service: "sdkwork-api-server".to_owned(),
@@ -295,6 +372,10 @@ impl StandaloneConfig {
                 self.runtime_snapshot_interval_secs.to_string(),
             ),
             (
+                SDKWORK_PRICING_LIFECYCLE_SYNC_INTERVAL_SECS.to_owned(),
+                self.pricing_lifecycle_sync_interval_secs.to_string(),
+            ),
+            (
                 SDKWORK_NATIVE_DYNAMIC_SHUTDOWN_DRAIN_TIMEOUT_MS.to_owned(),
                 self.native_dynamic_shutdown_drain_timeout_ms.to_string(),
             ),
@@ -309,6 +390,14 @@ impl StandaloneConfig {
             (
                 SDKWORK_CREDENTIAL_MASTER_KEY.to_owned(),
                 self.credential_master_key.clone(),
+            ),
+            (
+                SDKWORK_ALLOW_INSECURE_DEV_DEFAULTS.to_owned(),
+                self.allow_insecure_dev_defaults.to_string(),
+            ),
+            (
+                SDKWORK_METRICS_BEARER_TOKEN.to_owned(),
+                self.metrics_bearer_token.clone(),
             ),
             (
                 SDKWORK_SECRET_LOCAL_FILE.to_owned(),
@@ -345,6 +434,11 @@ impl StandaloneConfig {
             ));
         }
 
+        pairs.push((
+            SDKWORK_BROWSER_ALLOWED_ORIGINS.to_owned(),
+            join_env_list(&self.browser_allowed_origins),
+        ));
+
         pairs
     }
 
@@ -369,7 +463,71 @@ impl StandaloneConfig {
             require_signed_native_dynamic_extensions: self.require_signed_native_dynamic_extensions,
             native_dynamic_shutdown_drain_timeout_ms: self.native_dynamic_shutdown_drain_timeout_ms,
             runtime_snapshot_interval_secs: self.runtime_snapshot_interval_secs,
+            pricing_lifecycle_sync_interval_secs: self.pricing_lifecycle_sync_interval_secs,
         }
+    }
+
+    pub fn http_exposure_config(&self) -> HttpExposureConfig {
+        HttpExposureConfig {
+            metrics_bearer_token: self.metrics_bearer_token.clone(),
+            browser_allowed_origins: self.browser_allowed_origins.clone(),
+        }
+    }
+
+    pub fn validate_security_posture(&self) -> Result<()> {
+        if self.allow_insecure_dev_defaults {
+            return Ok(());
+        }
+
+        let externally_bound_services = [
+            ("gateway_bind", self.gateway_bind.as_str()),
+            ("admin_bind", self.admin_bind.as_str()),
+            ("portal_bind", self.portal_bind.as_str()),
+        ]
+        .into_iter()
+        .filter_map(|(field, bind)| (!bind_is_loopback(bind)).then_some(field))
+        .collect::<Vec<_>>();
+
+        if externally_bound_services.is_empty() {
+            return Ok(());
+        }
+
+        let insecure_fields = [
+            (
+                "admin_jwt_signing_secret",
+                self.admin_jwt_signing_secret.as_str(),
+                DEFAULT_ADMIN_JWT_SIGNING_SECRET,
+            ),
+            (
+                "portal_jwt_signing_secret",
+                self.portal_jwt_signing_secret.as_str(),
+                DEFAULT_PORTAL_JWT_SIGNING_SECRET,
+            ),
+            (
+                "credential_master_key",
+                self.credential_master_key.as_str(),
+                DEFAULT_CREDENTIAL_MASTER_KEY,
+            ),
+            (
+                "metrics_bearer_token",
+                self.metrics_bearer_token.as_str(),
+                DEFAULT_METRICS_BEARER_TOKEN,
+            ),
+        ]
+        .into_iter()
+        .filter_map(|(field, value, default_value)| (value == default_value).then_some(field))
+        .collect::<Vec<_>>();
+
+        if insecure_fields.is_empty() {
+            return Ok(());
+        }
+
+        anyhow::bail!(
+            "refusing non-loopback service bindings for {} while built-in development defaults remain configured for {}; rotate these secrets or set {}=true for explicit development-only override",
+            externally_bound_services.join(", "),
+            insecure_fields.join(", "),
+            SDKWORK_ALLOW_INSECURE_DEV_DEFAULTS,
+        );
     }
 
     pub fn non_reloadable_changed_fields(&self, next: &Self) -> Vec<&'static str> {
@@ -398,11 +556,23 @@ impl StandaloneConfig {
         if self.portal_jwt_signing_secret != next.portal_jwt_signing_secret {
             fields.push("portal_jwt_signing_secret");
         }
+        if self.pricing_lifecycle_sync_interval_secs != next.pricing_lifecycle_sync_interval_secs {
+            fields.push("pricing_lifecycle_sync_interval_secs");
+        }
         if self.secret_backend != next.secret_backend {
             fields.push("secret_backend");
         }
         if self.credential_master_key != next.credential_master_key {
             fields.push("credential_master_key");
+        }
+        if self.allow_insecure_dev_defaults != next.allow_insecure_dev_defaults {
+            fields.push("allow_insecure_dev_defaults");
+        }
+        if self.metrics_bearer_token != next.metrics_bearer_token {
+            fields.push("metrics_bearer_token");
+        }
+        if self.browser_allowed_origins != next.browser_allowed_origins {
+            fields.push("browser_allowed_origins");
         }
         if self.credential_legacy_master_keys != next.credential_legacy_master_keys {
             fields.push("credential_legacy_master_keys");
@@ -467,11 +637,15 @@ impl StandaloneConfig {
             require_signed_connector_extensions: false,
             require_signed_native_dynamic_extensions: true,
             native_dynamic_shutdown_drain_timeout_ms: 0,
-            admin_jwt_signing_secret: "local-dev-admin-jwt-secret".to_owned(),
-            portal_jwt_signing_secret: "local-dev-portal-jwt-secret".to_owned(),
+            admin_jwt_signing_secret: DEFAULT_ADMIN_JWT_SIGNING_SECRET.to_owned(),
+            portal_jwt_signing_secret: DEFAULT_PORTAL_JWT_SIGNING_SECRET.to_owned(),
             runtime_snapshot_interval_secs: 0,
+            pricing_lifecycle_sync_interval_secs: 0,
             secret_backend: SecretBackendKind::DatabaseEncrypted,
-            credential_master_key: "local-dev-master-key".to_owned(),
+            credential_master_key: DEFAULT_CREDENTIAL_MASTER_KEY.to_owned(),
+            allow_insecure_dev_defaults: false,
+            metrics_bearer_token: DEFAULT_METRICS_BEARER_TOKEN.to_owned(),
+            browser_allowed_origins: default_browser_allowed_origins(),
             credential_legacy_master_keys: Vec::new(),
             secret_local_file: paths.secret_local_file.to_string_lossy().into_owned(),
             secret_keyring_service: "sdkwork-api-server".to_owned(),
@@ -543,6 +717,9 @@ impl StandaloneConfig {
         if let Some(value) = file.runtime_snapshot_interval_secs {
             self.runtime_snapshot_interval_secs = value;
         }
+        if let Some(value) = file.pricing_lifecycle_sync_interval_secs {
+            self.pricing_lifecycle_sync_interval_secs = value;
+        }
         if let Some(value) = file.secret_backend {
             self.secret_backend = SecretBackendKind::parse(&value).with_context(|| {
                 format!(
@@ -553,6 +730,15 @@ impl StandaloneConfig {
         }
         if let Some(value) = file.credential_master_key {
             self.credential_master_key = value;
+        }
+        if let Some(value) = file.allow_insecure_dev_defaults {
+            self.allow_insecure_dev_defaults = value;
+        }
+        if let Some(value) = file.metrics_bearer_token {
+            self.metrics_bearer_token = value;
+        }
+        if let Some(value) = file.browser_allowed_origins {
+            self.browser_allowed_origins = value;
         }
         if let Some(value) = file.credential_legacy_master_keys {
             self.credential_legacy_master_keys = value;
@@ -636,11 +822,28 @@ impl StandaloneConfig {
             SDKWORK_RUNTIME_SNAPSHOT_INTERVAL_SECS,
             self.runtime_snapshot_interval_secs,
         )?;
+        self.pricing_lifecycle_sync_interval_secs = parse_u64_env(
+            values,
+            SDKWORK_PRICING_LIFECYCLE_SYNC_INTERVAL_SECS,
+            self.pricing_lifecycle_sync_interval_secs,
+        )?;
         if let Some(value) = values.get(SDKWORK_SECRET_BACKEND) {
             self.secret_backend = SecretBackendKind::parse(value)?;
         }
         if let Some(value) = values.get(SDKWORK_CREDENTIAL_MASTER_KEY) {
             self.credential_master_key = value.clone();
+        }
+        self.allow_insecure_dev_defaults = parse_bool_env(
+            values,
+            SDKWORK_ALLOW_INSECURE_DEV_DEFAULTS,
+            self.allow_insecure_dev_defaults,
+        )?;
+        if let Some(value) = values.get(SDKWORK_METRICS_BEARER_TOKEN) {
+            self.metrics_bearer_token = value.clone();
+        }
+        if let Some(value) = values.get(SDKWORK_BROWSER_ALLOWED_ORIGINS) {
+            self.browser_allowed_origins =
+                parse_string_list_env(value, SDKWORK_BROWSER_ALLOWED_ORIGINS)?;
         }
         if let Some(value) = values.get(SDKWORK_CREDENTIAL_LEGACY_MASTER_KEYS) {
             self.credential_legacy_master_keys =
@@ -668,6 +871,7 @@ impl StandaloneRuntimeDynamicConfig {
             SDKWORK_EXTENSION_REQUIRE_SIGNATURE_FOR_CONNECTOR_EXTENSIONS,
             SDKWORK_EXTENSION_REQUIRE_SIGNATURE_FOR_NATIVE_DYNAMIC_EXTENSIONS,
             SDKWORK_RUNTIME_SNAPSHOT_INTERVAL_SECS,
+            SDKWORK_PRICING_LIFECYCLE_SYNC_INTERVAL_SECS,
         ] {
             std::env::remove_var(key);
         }
@@ -711,6 +915,10 @@ impl StandaloneRuntimeDynamicConfig {
         std::env::set_var(
             SDKWORK_RUNTIME_SNAPSHOT_INTERVAL_SECS,
             self.runtime_snapshot_interval_secs.to_string(),
+        );
+        std::env::set_var(
+            SDKWORK_PRICING_LIFECYCLE_SYNC_INTERVAL_SECS,
+            self.pricing_lifecycle_sync_interval_secs.to_string(),
         );
     }
 }
@@ -798,6 +1006,40 @@ where
         .into_iter()
         .map(|(key, value)| (key.into(), value.into()))
         .collect()
+}
+
+fn default_browser_allowed_origins() -> Vec<String> {
+    DEFAULT_BROWSER_ALLOWED_ORIGINS
+        .into_iter()
+        .map(str::to_owned)
+        .collect()
+}
+
+fn bind_is_loopback(bind: &str) -> bool {
+    let trimmed = bind.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    if let Ok(address) = trimmed.parse::<SocketAddr>() {
+        return address.ip().is_loopback();
+    }
+
+    normalized_bind_host(trimmed)
+        .map(|host| {
+            host.eq_ignore_ascii_case("localhost") || host == "127.0.0.1" || host == "::1"
+        })
+        .unwrap_or(false)
+}
+
+fn normalized_bind_host(bind: &str) -> Option<&str> {
+    let host = bind
+        .rsplit_once(':')
+        .map(|(host, _)| host)
+        .unwrap_or(bind)
+        .trim();
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    (!host.is_empty()).then_some(host)
 }
 
 fn resolve_local_root_dir(values: &HashMap<String, String>) -> Result<PathBuf> {
@@ -1153,6 +1395,17 @@ mod tests {
                 .unwrap();
 
         assert_eq!(config.runtime_snapshot_interval_secs, 30);
+    }
+
+    #[test]
+    fn parses_pricing_lifecycle_sync_interval_from_env_pairs() {
+        let config = StandaloneConfig::from_pairs([(
+            "SDKWORK_PRICING_LIFECYCLE_SYNC_INTERVAL_SECS",
+            "15",
+        )])
+        .unwrap();
+
+        assert_eq!(config.pricing_lifecycle_sync_interval_secs, 15);
     }
 
     #[test]

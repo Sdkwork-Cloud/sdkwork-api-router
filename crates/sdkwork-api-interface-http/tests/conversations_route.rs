@@ -93,6 +93,82 @@ async fn conversation_retrieve_update_delete_routes_return_ok() {
 }
 
 #[tokio::test]
+async fn conversation_retrieve_route_returns_not_found_for_unknown_conversation() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/conversations/conv_missing")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(
+        json["error"]["message"],
+        "Requested conversation was not found."
+    );
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+}
+
+#[tokio::test]
+async fn conversation_update_route_returns_not_found_for_unknown_conversation() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/conversations/conv_missing")
+                .header("content-type", "application/json")
+                .body(Body::from("{\"metadata\":{\"workspace\":\"next\"}}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(
+        json["error"]["message"],
+        "Requested conversation was not found."
+    );
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+}
+
+#[tokio::test]
+async fn conversation_delete_route_returns_not_found_for_unknown_conversation() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/v1/conversations/conv_missing")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(
+        json["error"]["message"],
+        "Requested conversation was not found."
+    );
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+}
+
+#[tokio::test]
 async fn conversation_item_routes_return_ok() {
     let app = sdkwork_api_interface_http::gateway_router();
 
@@ -149,6 +225,109 @@ async fn conversation_item_routes_return_ok() {
         .await
         .unwrap();
     assert_eq!(delete.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn conversation_items_create_route_returns_not_found_for_unknown_conversation() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/conversations/conv_missing/items")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"items\":[{\"id\":\"item_1\",\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"hello\"}]}]}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(
+        json["error"]["message"],
+        "Requested conversation was not found."
+    );
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+}
+
+#[tokio::test]
+async fn conversation_items_list_route_returns_not_found_for_unknown_conversation() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/conversations/conv_missing/items")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(
+        json["error"]["message"],
+        "Requested conversation was not found."
+    );
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+}
+
+#[tokio::test]
+async fn conversation_item_retrieve_route_returns_not_found_for_unknown_item() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/conversations/conv_1/items/item_missing")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(
+        json["error"]["message"],
+        "Requested conversation item was not found."
+    );
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+}
+
+#[tokio::test]
+async fn conversation_item_delete_route_returns_not_found_for_unknown_item() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/v1/conversations/conv_1/items/item_missing")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(
+        json["error"]["message"],
+        "Requested conversation item was not found."
+    );
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
 }
 
 #[tokio::test]
@@ -598,6 +777,269 @@ async fn stateful_conversations_route_relays_to_openai_compatible_provider() {
     assert_eq!(delete_item_response.status(), StatusCode::OK);
     let delete_item_json = read_json(delete_item_response).await;
     assert_eq!(delete_item_json["deleted"], true);
+}
+
+#[tokio::test]
+async fn stateful_conversation_retrieve_route_returns_not_found_without_usage() {
+    let pool = memory_pool().await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let api_key = support::issue_gateway_api_key(
+        &pool,
+        "tenant-conversation-retrieve-missing",
+        "project-conversation-retrieve-missing",
+    )
+    .await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+
+    let response = gateway_app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/conversations/conv_missing")
+                .header("authorization", format!("Bearer {api_key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(
+        json["error"]["message"],
+        "Requested conversation was not found."
+    );
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+
+    support::assert_no_usage_records(admin_app, &admin_token).await;
+}
+
+#[tokio::test]
+async fn stateful_conversation_update_route_returns_not_found_without_usage() {
+    let pool = memory_pool().await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let api_key = support::issue_gateway_api_key(
+        &pool,
+        "tenant-conversation-update-missing",
+        "project-conversation-update-missing",
+    )
+    .await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+
+    let response = gateway_app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/conversations/conv_missing")
+                .header("authorization", format!("Bearer {api_key}"))
+                .header("content-type", "application/json")
+                .body(Body::from("{\"metadata\":{\"workspace\":\"next\"}}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(
+        json["error"]["message"],
+        "Requested conversation was not found."
+    );
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+
+    support::assert_no_usage_records(admin_app, &admin_token).await;
+}
+
+#[tokio::test]
+async fn stateful_conversation_delete_route_returns_not_found_without_usage() {
+    let pool = memory_pool().await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let api_key = support::issue_gateway_api_key(
+        &pool,
+        "tenant-conversation-delete-missing",
+        "project-conversation-delete-missing",
+    )
+    .await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+
+    let response = gateway_app
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/v1/conversations/conv_missing")
+                .header("authorization", format!("Bearer {api_key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(
+        json["error"]["message"],
+        "Requested conversation was not found."
+    );
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+
+    support::assert_no_usage_records(admin_app, &admin_token).await;
+}
+
+#[tokio::test]
+async fn stateful_conversation_items_create_route_returns_not_found_without_usage() {
+    let pool = memory_pool().await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let api_key = support::issue_gateway_api_key(
+        &pool,
+        "tenant-conversation-items-create-missing",
+        "project-conversation-items-create-missing",
+    )
+    .await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+
+    let response = gateway_app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/conversations/conv_missing/items")
+                .header("authorization", format!("Bearer {api_key}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"items\":[{\"id\":\"item_1\",\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"hello\"}]}]}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(
+        json["error"]["message"],
+        "Requested conversation was not found."
+    );
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+
+    support::assert_no_usage_records(admin_app, &admin_token).await;
+}
+
+#[tokio::test]
+async fn stateful_conversation_items_list_route_returns_not_found_without_usage() {
+    let pool = memory_pool().await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let api_key = support::issue_gateway_api_key(
+        &pool,
+        "tenant-conversation-items-list-missing",
+        "project-conversation-items-list-missing",
+    )
+    .await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+
+    let response = gateway_app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/conversations/conv_missing/items")
+                .header("authorization", format!("Bearer {api_key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(
+        json["error"]["message"],
+        "Requested conversation was not found."
+    );
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+
+    support::assert_no_usage_records(admin_app, &admin_token).await;
+}
+
+#[tokio::test]
+async fn stateful_conversation_item_retrieve_route_returns_not_found_without_usage() {
+    let pool = memory_pool().await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let api_key = support::issue_gateway_api_key(
+        &pool,
+        "tenant-conversation-item-retrieve-missing",
+        "project-conversation-item-retrieve-missing",
+    )
+    .await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+
+    let response = gateway_app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/conversations/conv_1/items/item_missing")
+                .header("authorization", format!("Bearer {api_key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(
+        json["error"]["message"],
+        "Requested conversation item was not found."
+    );
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+
+    support::assert_no_usage_records(admin_app, &admin_token).await;
+}
+
+#[tokio::test]
+async fn stateful_conversation_item_delete_route_returns_not_found_without_usage() {
+    let pool = memory_pool().await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let api_key = support::issue_gateway_api_key(
+        &pool,
+        "tenant-conversation-item-delete-missing",
+        "project-conversation-item-delete-missing",
+    )
+    .await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+
+    let response = gateway_app
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/v1/conversations/conv_1/items/item_missing")
+                .header("authorization", format!("Bearer {api_key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(
+        json["error"]["message"],
+        "Requested conversation item was not found."
+    );
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+
+    support::assert_no_usage_records(admin_app, &admin_token).await;
 }
 
 #[tokio::test]

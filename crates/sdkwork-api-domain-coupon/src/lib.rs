@@ -1,5 +1,11 @@
 use serde::{Deserialize, Serialize};
 
+/// Compatibility-era coupon record.
+///
+/// This model exists to preserve current admin and portal behavior while the
+/// canonical marketing kernel is introduced. New business semantics such as
+/// reservation, redemption, rollback, budget, and stackability must not be
+/// added here.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CouponCampaign {
     pub id: String,
@@ -42,5 +48,10 @@ impl CouponCampaign {
     pub fn with_created_at_ms(mut self, created_at_ms: u64) -> Self {
         self.created_at_ms = created_at_ms;
         self
+    }
+
+    /// Compatibility-layer availability used by legacy coupon reads.
+    pub fn is_compatibility_live(&self) -> bool {
+        self.active && self.remaining > 0
     }
 }

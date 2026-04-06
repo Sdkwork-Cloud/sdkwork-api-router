@@ -23,7 +23,10 @@ test('public site navigation and modules use shared i18n labels plus route-aware
   assert.match(topNavigation, /labelKey:\s*'Home'/);
   assert.match(topNavigation, /labelKey:\s*'Console'/);
   assert.match(topNavigation, /labelKey:\s*'Models'/);
+  assert.match(topNavigation, /labelKey:\s*'API Reference'/);
   assert.match(topNavigation, /labelKey:\s*'Docs'/);
+  assert.match(topNavigation, /key:\s*'models'[\s\S]*key:\s*'api-reference'[\s\S]*key:\s*'docs'/);
+  assert.match(topNavigation, /href:\s*'\/api-reference'/);
   assert.match(topNavigation, /key:\s*'downloads'/);
   assert.match(topNavigation, /labelKey:\s*'Download Center'/);
   assert.match(topNavigation, /href:\s*'\/downloads'/);

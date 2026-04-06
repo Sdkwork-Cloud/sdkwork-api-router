@@ -6,7 +6,7 @@ use sdkwork_api_app_runtime::{
     StandaloneListenerHost, StandaloneServiceKind, StandaloneServiceReloadHandles,
 };
 use sdkwork_api_config::StandaloneConfigLoader;
-use sdkwork_api_interface_admin::{admin_router_with_state, AdminApiState};
+use sdkwork_api_interface_admin::{admin_router_with_state_and_http_exposure, AdminApiState};
 use sdkwork_api_observability::init_tracing;
 use sdkwork_api_storage_core::Reloadable;
 
@@ -14,6 +14,7 @@ use sdkwork_api_storage_core::Reloadable;
 async fn main() -> anyhow::Result<()> {
     init_tracing("admin-api-service");
     let (config_loader, config) = StandaloneConfigLoader::from_env()?;
+    config.validate_security_posture()?;
     config.apply_to_process_env();
     let cache_runtime = build_cache_runtime_from_config(&config).await?;
     if config.cache_backend.supports_shared_cache_coherence() {
@@ -35,8 +36,11 @@ async fn main() -> anyhow::Result<()> {
         live_admin_jwt.clone(),
     );
     let listener_host =
-        StandaloneListenerHost::bind(config.admin_bind.clone(), admin_router_with_state(state))
-            .await?;
+        StandaloneListenerHost::bind(
+            config.admin_bind.clone(),
+            admin_router_with_state_and_http_exposure(state, config.http_exposure_config()),
+        )
+        .await?;
     let node_id = resolve_service_runtime_node_id(StandaloneServiceKind::Admin);
     let _rollout_supervision = start_extension_runtime_rollout_supervision(
         StandaloneServiceKind::Admin,

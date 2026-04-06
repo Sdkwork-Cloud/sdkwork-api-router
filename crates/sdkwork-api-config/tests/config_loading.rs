@@ -102,6 +102,80 @@ fn builds_config_from_pairs() {
 }
 
 #[test]
+fn parses_insecure_dev_override_from_pairs_and_reexports_it() {
+    let config = StandaloneConfig::from_pairs([(
+        "SDKWORK_ALLOW_INSECURE_DEV_DEFAULTS",
+        "true",
+    )])
+    .unwrap();
+    let values = config
+        .resolved_env_pairs()
+        .into_iter()
+        .collect::<std::collections::HashMap<_, _>>();
+
+    assert!(config.allow_insecure_dev_defaults);
+    assert_eq!(values["SDKWORK_ALLOW_INSECURE_DEV_DEFAULTS"], "true");
+}
+
+#[test]
+fn parses_http_exposure_controls_from_pairs_and_reexports_them() {
+    let config = StandaloneConfig::from_pairs([
+        ("SDKWORK_METRICS_BEARER_TOKEN", "prod-metrics-token"),
+        (
+            "SDKWORK_BROWSER_ALLOWED_ORIGINS",
+            "https://console.example.com;https://portal.example.com",
+        ),
+    ])
+    .unwrap();
+    let values = config
+        .resolved_env_pairs()
+        .into_iter()
+        .collect::<std::collections::HashMap<_, _>>();
+
+    assert_eq!(config.metrics_bearer_token, "prod-metrics-token");
+    assert_eq!(
+        config.browser_allowed_origins,
+        vec![
+            "https://console.example.com".to_owned(),
+            "https://portal.example.com".to_owned()
+        ]
+    );
+    assert_eq!(values["SDKWORK_METRICS_BEARER_TOKEN"], "prod-metrics-token");
+    assert_eq!(
+        values["SDKWORK_BROWSER_ALLOWED_ORIGINS"],
+        "https://console.example.com;https://portal.example.com"
+    );
+}
+
+#[test]
+fn non_reloadable_changed_fields_include_insecure_dev_override() {
+    let current = StandaloneConfig::default();
+    let next = StandaloneConfig {
+        allow_insecure_dev_defaults: true,
+        ..current.clone()
+    };
+
+    let changed = current.non_reloadable_changed_fields(&next);
+
+    assert!(changed.contains(&"allow_insecure_dev_defaults"));
+}
+
+#[test]
+fn non_reloadable_changed_fields_include_http_exposure_controls() {
+    let current = StandaloneConfig::default();
+    let next = StandaloneConfig {
+        metrics_bearer_token: "rotated-metrics-token".to_owned(),
+        browser_allowed_origins: vec!["https://console.example.com".to_owned()],
+        ..current.clone()
+    };
+
+    let changed = current.non_reloadable_changed_fields(&next);
+
+    assert!(changed.contains(&"metrics_bearer_token"));
+    assert!(changed.contains(&"browser_allowed_origins"));
+}
+
+#[test]
 fn builds_secret_runtime_locations_from_pairs() {
     let config = StandaloneConfig::from_pairs([
         ("SDKWORK_SECRET_LOCAL_FILE", "D:/sdkwork/secrets.json"),
@@ -341,6 +415,50 @@ fn falls_back_to_json_when_yaml_is_absent() {
 
     assert_eq!(config.portal_bind, "127.0.0.1:19082");
     assert!(config.enable_native_dynamic_extensions);
+}
+
+#[test]
+fn loads_insecure_dev_override_from_config_file() {
+    let root = temp_config_root("insecure-dev-override");
+    fs::write(
+        root.join("config.yaml"),
+        "allow_insecure_dev_defaults: true\n",
+    )
+    .unwrap();
+
+    let config =
+        StandaloneConfig::from_local_root_and_pairs(&root, std::iter::empty::<(&str, &str)>())
+            .unwrap();
+
+    assert!(config.allow_insecure_dev_defaults);
+}
+
+#[test]
+fn loads_http_exposure_controls_from_config_file() {
+    let root = temp_config_root("http-exposure-controls");
+    fs::write(
+        root.join("config.yaml"),
+        r#"
+metrics_bearer_token: "config-metrics-token"
+browser_allowed_origins:
+  - "https://console.example.com"
+  - "https://portal.example.com"
+"#,
+    )
+    .unwrap();
+
+    let config =
+        StandaloneConfig::from_local_root_and_pairs(&root, std::iter::empty::<(&str, &str)>())
+            .unwrap();
+
+    assert_eq!(config.metrics_bearer_token, "config-metrics-token");
+    assert_eq!(
+        config.browser_allowed_origins,
+        vec![
+            "https://console.example.com".to_owned(),
+            "https://portal.example.com".to_owned()
+        ]
+    );
 }
 
 #[test]

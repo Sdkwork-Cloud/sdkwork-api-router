@@ -116,7 +116,7 @@ export function GatewayRateLimitPolicyDialog({
                       route_key: event.target.value,
                     }))
                   }
-                  placeholder="/v1/chat/completions"
+                  placeholder={t('Example: /v1/chat/completions')}
                   value={draft.route_key}
                 />
               </DialogField>
@@ -133,7 +133,7 @@ export function GatewayRateLimitPolicyDialog({
                       model_name: event.target.value,
                     }))
                   }
-                  placeholder="gpt-4.1"
+                  placeholder={t('Example: gpt-4.1')}
                   value={draft.model_name}
                 />
               </DialogField>

@@ -353,84 +353,110 @@ export function PortalUserPage({ workspace, onNavigate }: PortalUserPageProps) {
       </Dialog>
 
       <div className="space-y-4" data-slot="portal-user-page">
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(0,0.8fr)_minmax(0,0.8fr)]">
-          <UserSectionCard
-            actions={(
-              <>
-                <Button onClick={() => onNavigate('gateway')} variant="secondary">
-                  {t('Return to command center')}
-                </Button>
-                <Button onClick={() => onNavigate('account')} variant="secondary">
-                  {t('Open account')}
-                </Button>
-                <Button onClick={() => setPasswordDialogOpen(true)} variant="primary">
-                  {t('Change password')}
-                </Button>
-              </>
-            )}
-            description={status}
-            title={t('User details')}
+        <div
+          data-slot="portal-user-toolbar"
+          className="flex flex-wrap items-start justify-between gap-3 rounded-[24px] border border-zinc-200/80 bg-zinc-50/85 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900/45"
+        >
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
+            <Badge variant={workspace?.user.active ? 'success' : 'warning'}>
+              {userStatusLabel}
+            </Badge>
+            <span className="inline-flex items-center rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-zinc-600 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300">
+              {workspace?.project.name ?? t('Current workspace')}
+            </span>
+            <p className="min-w-[16rem] flex-1 leading-6 text-zinc-500 dark:text-zinc-400">
+              {status}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button onClick={() => onNavigate('gateway')} variant="secondary">
+              {t('Return to command center')}
+            </Button>
+            <Button onClick={() => onNavigate('account')} variant="secondary">
+              {t('Open account')}
+            </Button>
+            <Button onClick={() => setPasswordDialogOpen(true)} variant="primary">
+              {t('Change password')}
+            </Button>
+          </div>
+        </div>
+
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
+          <Card
+            className="border-zinc-200 bg-white shadow-none dark:border-zinc-800 dark:bg-zinc-950"
+            data-slot="portal-user-identity-card"
           >
-            <div className="grid gap-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
-              <div className="rounded-[20px] border border-zinc-200 bg-zinc-50/80 p-5 dark:border-zinc-800 dark:bg-zinc-900/60">
-                <div className="flex flex-wrap items-start justify-between gap-4">
-                  <div className="flex min-w-0 items-start gap-4">
-                    <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-zinc-200 bg-white text-lg font-semibold text-zinc-950 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-50">
-                      {(workspace?.user.display_name ?? workspace?.user.email ?? t('Portal workspace'))
-                        .slice(0, 2)
-                        .toUpperCase()}
-                    </div>
-                    <div className="min-w-0 space-y-2">
-                      <div className="text-xl font-semibold tracking-tight text-zinc-950 dark:text-zinc-50">
-                        {workspace?.user.display_name ?? t('Portal workspace')}
+            <CardContent className="p-5">
+              <div className="space-y-4">
+                <div className="space-y-1">
+                  <h2 className="text-base font-semibold text-zinc-950 dark:text-zinc-50">
+                    {t('User details')}
+                  </h2>
+                  <p className="text-sm leading-6 text-zinc-500 dark:text-zinc-400">
+                    {t('Core identity, workspace ownership, and recovery posture stay visible before you change settings.')}
+                  </p>
+                </div>
+
+                <div className="rounded-[20px] border border-zinc-200 bg-zinc-50/80 p-5 dark:border-zinc-800 dark:bg-zinc-900/60">
+                  <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div className="flex min-w-0 items-start gap-4">
+                      <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-zinc-200 bg-white text-lg font-semibold text-zinc-950 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-50">
+                        {(workspace?.user.display_name ?? workspace?.user.email ?? t('Portal workspace'))
+                          .slice(0, 2)
+                          .toUpperCase()}
                       </div>
-                      <div className="text-sm text-zinc-500 dark:text-zinc-400">
-                        {workspace?.user.email ?? t('Awaiting workspace session')}
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Badge variant={workspace?.user.active ? 'success' : 'warning'}>
-                          {userStatusLabel}
-                        </Badge>
-                        <span className="inline-flex items-center rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-zinc-600 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300">
-                          {workspace?.project.name ?? t('Current workspace')}
-                        </span>
+                      <div className="min-w-0 space-y-2">
+                        <div className="text-xl font-semibold tracking-tight text-zinc-950 dark:text-zinc-50">
+                          {workspace?.user.display_name ?? t('Portal workspace')}
+                        </div>
+                        <div className="text-sm text-zinc-500 dark:text-zinc-400">
+                          {workspace?.user.email ?? t('Awaiting workspace session')}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge variant={workspace?.user.active ? 'success' : 'warning'}>
+                            {userStatusLabel}
+                          </Badge>
+                          <span className="inline-flex items-center rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-zinc-600 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300">
+                            {workspace?.project.name ?? t('Current workspace')}
+                          </span>
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
 
-                <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                  {workspaceSummary.map((item) => (
-                    <div
-                      className="rounded-2xl border border-zinc-200 bg-white px-4 py-4 dark:border-zinc-800 dark:bg-zinc-950"
-                      key={item.id}
-                    >
-                      <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400">
-                        {item.title}
-                      </span>
-                      <strong className="mt-2 block text-base font-semibold text-zinc-950 dark:text-zinc-50">
-                        {item.value}
-                      </strong>
-                      <p className="mt-2 text-sm leading-6 text-zinc-500 dark:text-zinc-400">
-                        {item.detail}
-                      </p>
-                    </div>
-                  ))}
+                  <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                    {workspaceSummary.map((item) => (
+                      <div
+                        className="rounded-2xl border border-zinc-200 bg-white px-4 py-4 dark:border-zinc-800 dark:bg-zinc-950"
+                        key={item.id}
+                      >
+                        <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400">
+                          {item.title}
+                        </span>
+                        <strong className="mt-2 block text-base font-semibold text-zinc-950 dark:text-zinc-50">
+                          {item.value}
+                        </strong>
+                        <p className="mt-2 text-sm leading-6 text-zinc-500 dark:text-zinc-400">
+                          {item.detail}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
+            </CardContent>
+          </Card>
 
-              <div className="grid gap-3">
-                {viewModel.summary_cards.map((item) => (
-                  <UserSummaryCard
-                    detail={item.detail}
-                    key={item.id}
-                    title={item.title}
-                    value={item.value}
-                  />
-                ))}
-              </div>
-            </div>
-          </UserSectionCard>
+          <div className="grid gap-3">
+            {viewModel.summary_cards.map((item) => (
+              <UserSummaryCard
+                detail={item.detail}
+                key={item.id}
+                title={item.title}
+                value={item.value}
+              />
+            ))}
+          </div>
         </div>
 
         <Card

@@ -44,13 +44,23 @@ import type {
   BillingEventCapabilitySummary,
   BillingEventRecord,
   BillingEventSummary,
+  CommercialAccountBalanceSnapshot,
+  CommercialAccountBenefitLotRecord,
+  CommercialAccountHoldRecord,
+  CommercialAccountSummary,
+  CommercialPricingPlanRecord,
+  CommercialPricingRateRecord,
+  CommercialRequestSettlementRecord,
   PortalCommerceCheckoutSession,
+  PortalCommerceCheckoutMethodChannel,
   PortalCommerceCheckoutSessionMethod,
   PortalCommerceCheckoutSessionStatus,
   PortalCommerceMembership,
+  PortalCommerceReconciliationSummary,
   PortalCommerceOrder,
   PortalCommerceOrderStatus,
   PortalCommercePaymentEventType,
+  PortalCommercePaymentProvider,
   PortalCommerceQuoteKind,
   ProjectBillingSummary,
   RechargePack,
@@ -79,6 +89,7 @@ import type {
   BillingEventAnalyticsViewModel,
   BillingCheckoutPreview,
   BillingPageData,
+  BillingPaymentHistoryRow,
   PortalBillingPageProps,
 } from '../types';
 
@@ -215,6 +226,8 @@ function orderStatusLabel(status: PortalCommerceOrderStatus, t: TranslateFn): st
       return t('Canceled');
     case 'failed':
       return t('Failed');
+    case 'refunded':
+      return t('Refunded');
     default:
       return t('Status');
   }
@@ -233,6 +246,8 @@ function checkoutSessionStatusLabel(
       return t('Canceled');
     case 'failed':
       return t('Failed');
+    case 'refunded':
+      return t('Refunded');
     case 'not_required':
       return t('Not required');
     case 'closed':
@@ -255,6 +270,58 @@ function checkoutMethodActionLabel(
       return t('Provider handoff');
     default:
       return t('Actions');
+  }
+}
+
+function checkoutMethodProviderLabel(
+  provider: PortalCommercePaymentProvider | string,
+  t: TranslateFn,
+): string {
+  switch (provider) {
+    case 'manual_lab':
+      return t('Manual lab');
+    case 'stripe':
+      return t('Stripe');
+    case 'alipay':
+      return t('Alipay');
+    case 'wechat_pay':
+      return t('WeChat Pay');
+    case 'no_payment_required':
+      return t('No payment required');
+    default:
+      return t('Payment rail');
+  }
+}
+
+function checkoutMethodChannelLabel(
+  channel: PortalCommerceCheckoutMethodChannel,
+  t: TranslateFn,
+): string {
+  switch (channel) {
+    case 'operator_settlement':
+      return t('Operator settlement');
+    case 'hosted_checkout':
+      return t('Hosted checkout');
+    case 'scan_qr':
+      return t('Scan QR');
+    default:
+      return t('Payment channel');
+  }
+}
+
+function checkoutMethodSessionKindLabel(
+  sessionKind: PortalCommerceCheckoutSessionMethod['session_kind'],
+  t: TranslateFn,
+): string {
+  switch (sessionKind) {
+    case 'operator_action':
+      return t('Operator action');
+    case 'hosted_checkout':
+      return t('Hosted checkout session');
+    case 'qr_code':
+      return t('QR code session');
+    default:
+      return t('Session');
   }
 }
 
@@ -287,6 +354,15 @@ function checkoutMethodAvailabilityTone(
     default:
       return 'secondary';
   }
+}
+
+function buildProviderEventReplayId(
+  orderId: string,
+  eventType: PortalCommercePaymentEventType,
+  method: PortalCommerceCheckoutSessionMethod,
+): string {
+  const normalizedOrderId = orderId.trim().replaceAll(/[^a-zA-Z0-9]+/g, '_');
+  return `portal_replay_${method.provider}_${method.id}_${eventType}_${normalizedOrderId}`;
 }
 
 function membershipDescription(
@@ -392,7 +468,14 @@ function checkoutModeLabel(
 }
 
 function hasProviderHandoff(session: PortalCommerceCheckoutSession | null): boolean {
-  return Boolean(session?.methods.some((method) => method.action === 'provider_handoff'));
+  return Boolean(session?.methods.some((method) => method.supports_webhook));
+}
+
+function preferredProviderCallbackMethod(
+  session: PortalCommerceCheckoutSession | null,
+): PortalCommerceCheckoutSessionMethod | null {
+  const callbackMethods = session?.methods.filter((method) => method.supports_webhook) ?? [];
+  return callbackMethods.find((method) => method.recommended) ?? callbackMethods[0] ?? null;
 }
 
 function orderStatusTone(
@@ -404,6 +487,74 @@ function orderStatusTone(
     case 'failed':
       return 'warning';
     case 'pending_payment':
+      return 'default';
+    default:
+      return 'secondary';
+  }
+}
+
+function paymentEventTypeLabel(
+  eventType: PortalCommercePaymentEventType,
+  t: TranslateFn,
+): string {
+  switch (eventType) {
+    case 'settled':
+      return t('Settled');
+    case 'failed':
+      return t('Failed');
+    case 'canceled':
+      return t('Canceled');
+    case 'refunded':
+      return t('Refunded');
+    default:
+      return t('Status');
+  }
+}
+
+function paymentHistoryRowKindLabel(
+  rowKind: BillingPaymentHistoryRow['row_kind'],
+  t: TranslateFn,
+): string {
+  switch (rowKind) {
+    case 'payment_event':
+      return t('Payment event');
+    case 'refunded_order_state':
+      return t('Order refund state');
+    default:
+      return t('Timeline');
+  }
+}
+
+function paymentProcessingStatusLabel(
+  status: BillingPaymentHistoryRow['processing_status'],
+  t: TranslateFn,
+): string {
+  switch (status) {
+    case 'received':
+      return t('Received');
+    case 'processed':
+      return t('Processed');
+    case 'ignored':
+      return t('Ignored');
+    case 'rejected':
+      return t('Rejected');
+    case 'failed':
+      return t('Failed');
+    default:
+      return t('Not recorded');
+  }
+}
+
+function paymentProcessingStatusTone(
+  status: BillingPaymentHistoryRow['processing_status'],
+): 'default' | 'secondary' | 'success' | 'warning' {
+  switch (status) {
+    case 'processed':
+      return 'success';
+    case 'failed':
+    case 'rejected':
+      return 'warning';
+    case 'received':
       return 'default';
     default:
       return 'secondary';
@@ -436,6 +587,219 @@ function accountingModeTone(
     default:
       return 'secondary';
   }
+}
+
+function commercialPricingChargeUnitLabel(
+  chargeUnit: CommercialPricingRateRecord['charge_unit'],
+  t: TranslateFn,
+): string {
+  switch (chargeUnit) {
+    case 'input_token':
+      return t('Input token');
+    case 'output_token':
+      return t('Output token');
+    case 'cache_read_token':
+      return t('Cache read token');
+    case 'cache_write_token':
+      return t('Cache write token');
+    case 'request':
+      return t('Request');
+    case 'image':
+      return t('Image');
+    case 'audio_second':
+      return t('Audio second');
+    case 'audio_minute':
+      return t('Audio minute');
+    case 'video_second':
+      return t('Video second');
+    case 'video_minute':
+      return t('Video minute');
+    case 'music_track':
+      return t('Music track');
+    case 'character':
+      return t('Character');
+    case 'storage_mb_day':
+      return t('Storage MB day');
+    case 'tool_call':
+      return t('Tool call');
+    case 'unit':
+    default:
+      return t('Unit');
+  }
+}
+
+function commercialPricingMethodLabel(
+  pricingMethod: CommercialPricingRateRecord['pricing_method'],
+  t: TranslateFn,
+): string {
+  switch (pricingMethod) {
+    case 'per_unit':
+      return t('Per unit');
+    case 'flat':
+      return t('Flat');
+    case 'step':
+      return t('Step');
+    case 'included_then_per_unit':
+      return t('Included then per unit');
+    default:
+      return t('Billing method');
+  }
+}
+
+function commercialPricingStatusTone(
+  status: string | null | undefined,
+): 'success' | 'warning' | 'secondary' {
+  switch (status?.trim().toLowerCase()) {
+    case 'active':
+      return 'success';
+    case 'draft':
+    case 'planned':
+      return 'warning';
+    default:
+      return 'secondary';
+  }
+}
+
+function isCommercialPricingPlanEffectiveAt(
+  plan: Pick<CommercialPricingPlanRecord, 'effective_from_ms' | 'effective_to_ms'>,
+  nowMs: number,
+): boolean {
+  return plan.effective_from_ms <= nowMs
+    && (plan.effective_to_ms == null || plan.effective_to_ms >= nowMs);
+}
+
+function selectPrimaryCommercialPricingPlan(
+  pricingPlans: CommercialPricingPlanRecord[],
+  nowMs: number,
+): CommercialPricingPlanRecord | null {
+  const comparePlans = (
+    left: CommercialPricingPlanRecord,
+    right: CommercialPricingPlanRecord,
+  ): number => {
+    const leftRank = left.status.trim().toLowerCase() === 'active'
+      ? (isCommercialPricingPlanEffectiveAt(left, nowMs) ? 0 : 1)
+      : 2;
+    const rightRank = right.status.trim().toLowerCase() === 'active'
+      ? (isCommercialPricingPlanEffectiveAt(right, nowMs) ? 0 : 1)
+      : 2;
+
+    return leftRank - rightRank
+      || right.plan_version - left.plan_version
+      || right.updated_at_ms - left.updated_at_ms
+      || right.created_at_ms - left.created_at_ms
+      || right.pricing_plan_id - left.pricing_plan_id;
+  };
+
+  return [...pricingPlans].sort(comparePlans)[0] ?? null;
+}
+
+function compareCommercialPricingRates(
+  left: CommercialPricingRateRecord,
+  right: CommercialPricingRateRecord,
+): number {
+  const leftStatusRank = left.status.trim().toLowerCase() === 'active' ? 0 : 1;
+  const rightStatusRank = right.status.trim().toLowerCase() === 'active' ? 0 : 1;
+
+  return leftStatusRank - rightStatusRank
+    || right.priority - left.priority
+    || right.updated_at_ms - left.updated_at_ms
+    || right.created_at_ms - left.created_at_ms
+    || right.pricing_rate_id - left.pricing_rate_id;
+}
+
+function isTokenPricingRate(rate: CommercialPricingRateRecord): boolean {
+  switch (rate.charge_unit) {
+    case 'input_token':
+    case 'output_token':
+    case 'cache_read_token':
+    case 'cache_write_token':
+      return true;
+    default:
+      return false;
+  }
+}
+
+function isMediaPricingRate(rate: CommercialPricingRateRecord): boolean {
+  switch (rate.charge_unit) {
+    case 'image':
+    case 'audio_second':
+    case 'audio_minute':
+    case 'video_second':
+    case 'video_minute':
+    case 'music_track':
+      return true;
+    default:
+      return false;
+  }
+}
+
+function commercialPricingDisplayUnit(
+  rate: CommercialPricingRateRecord,
+  t: TranslateFn,
+): string {
+  if (rate.display_price_unit.trim()) {
+    return rate.display_price_unit;
+  }
+
+  switch (rate.charge_unit) {
+    case 'input_token':
+      return rate.quantity_step === 1_000_000
+        ? t('USD / 1M input tokens')
+        : t('USD / input token');
+    case 'image':
+      return t('USD / image');
+    case 'music_track':
+      return t('USD / music track');
+    default:
+      return t('{count} x {unit}', {
+        count: formatUnits(rate.quantity_step),
+        unit: commercialPricingChargeUnitLabel(rate.charge_unit, t).toLowerCase(),
+      });
+  }
+}
+
+function commercialPricingRuleSummary(
+  rate: CommercialPricingRateRecord,
+  t: TranslateFn,
+): string {
+  const details: string[] = [];
+
+  if (rate.included_quantity > 0) {
+    details.push(
+      t('{count} included', {
+        count: formatUnits(rate.included_quantity),
+      }),
+    );
+  }
+
+  if (rate.minimum_billable_quantity > 0) {
+    details.push(
+      t('Minimum quantity {count}', {
+        count: formatUnits(rate.minimum_billable_quantity),
+      }),
+    );
+  }
+
+  if (rate.minimum_charge > 0) {
+    details.push(
+      t('Minimum charge {amount}', {
+        amount: formatCurrency(rate.minimum_charge),
+      }),
+    );
+  }
+
+  if (rate.rounding_increment > 1) {
+    details.push(
+      t('Rounds by {count} ({mode})', {
+        count: formatUnits(rate.rounding_increment),
+        mode: titleCaseToken(rate.rounding_mode),
+      }),
+    );
+  }
+
+  return details.length
+    ? details.join(' / ')
+    : t('Settles directly from the configured billing method and charge unit.');
 }
 
 function groupChargebackLabel(groupId: string | null | undefined, t: TranslateFn): string {
@@ -560,7 +924,18 @@ export function PortalBillingPage({ onNavigate }: PortalBillingPageProps) {
   const [plans, setPlans] = useState<SubscriptionPlan[]>([]);
   const [packs, setPacks] = useState<RechargePack[]>([]);
   const [orders, setOrders] = useState<PortalCommerceOrder[]>([]);
+  const [paymentHistory, setPaymentHistory] = useState<BillingPaymentHistoryRow[]>([]);
+  const [refundHistory, setRefundHistory] = useState<BillingPaymentHistoryRow[]>([]);
   const [membership, setMembership] = useState<PortalCommerceMembership | null>(null);
+  const [commercialReconciliation, setCommercialReconciliation] =
+    useState<PortalCommerceReconciliationSummary | null>(null);
+  const [commercialAccount, setCommercialAccount] = useState<CommercialAccountSummary | null>(null);
+  const [commercialBalance, setCommercialBalance] = useState<CommercialAccountBalanceSnapshot | null>(null);
+  const [commercialBenefitLots, setCommercialBenefitLots] = useState<CommercialAccountBenefitLotRecord[]>([]);
+  const [commercialHolds, setCommercialHolds] = useState<CommercialAccountHoldRecord[]>([]);
+  const [commercialRequestSettlements, setCommercialRequestSettlements] = useState<CommercialRequestSettlementRecord[]>([]);
+  const [commercialPricingPlans, setCommercialPricingPlans] = useState<CommercialPricingPlanRecord[]>([]);
+  const [commercialPricingRates, setCommercialPricingRates] = useState<CommercialPricingRateRecord[]>([]);
   const [status, setStatus] = useState(t('Loading billing posture...'));
   const [searchQuery, setSearchQuery] = useState('');
   const [orderLane, setOrderLane] = useState<OrderWorkbenchLane>('all');
@@ -577,6 +952,7 @@ export function PortalBillingPage({ onNavigate }: PortalBillingPageProps) {
   const [queueActionType, setQueueActionType] = useState<'settle' | 'cancel' | null>(null);
   const [checkoutSession, setCheckoutSession] = useState<PortalCommerceCheckoutSession | null>(null);
   const [checkoutSessionOrderId, setCheckoutSessionOrderId] = useState<string | null>(null);
+  const [providerCallbackMethodId, setProviderCallbackMethodId] = useState<string | null>(null);
   const [providerEventOrderId, setProviderEventOrderId] = useState<string | null>(null);
   const [providerEventType, setProviderEventType] = useState<PortalCommercePaymentEventType | null>(
     null,
@@ -628,7 +1004,17 @@ export function PortalBillingPage({ onNavigate }: PortalBillingPageProps) {
     setPlans(data.plans);
     setPacks(data.packs);
     setOrders(data.orders);
+    setPaymentHistory(data.payment_history);
+    setRefundHistory(data.refund_history);
     setMembership(data.membership);
+    setCommercialReconciliation(data.commercial_reconciliation);
+    setCommercialAccount(data.commercial_account);
+    setCommercialBalance(data.commercial_balance);
+    setCommercialBenefitLots(data.commercial_benefit_lots);
+    setCommercialHolds(data.commercial_holds);
+    setCommercialRequestSettlements(data.commercial_request_settlements);
+    setCommercialPricingPlans(data.commercial_pricing_plans);
+    setCommercialPricingRates(data.commercial_pricing_rates);
   }
 
   useEffect(() => {
@@ -640,6 +1026,7 @@ export function PortalBillingPage({ onNavigate }: PortalBillingPageProps) {
     if (!nextPendingOrder) {
       setCheckoutSessionOrderId(null);
       setCheckoutSession(null);
+      setProviderCallbackMethodId(null);
       setCheckoutSessionStatus(t('Open session from Pending payment queue to inspect the payment rail.'));
       return;
     }
@@ -674,7 +1061,9 @@ export function PortalBillingPage({ onNavigate }: PortalBillingPageProps) {
 
     try {
       const session = await getBillingCheckoutSession(orderId);
+      const callbackMethod = preferredProviderCallbackMethod(session);
       setCheckoutSession(session);
+      setProviderCallbackMethodId(callbackMethod?.id ?? null);
       setCheckoutSessionStatus(
         t(
           '{reference} maps this order into the current payment rail in {mode} mode.',
@@ -686,6 +1075,7 @@ export function PortalBillingPage({ onNavigate }: PortalBillingPageProps) {
       );
     } catch (error) {
       setCheckoutSession(null);
+      setProviderCallbackMethodId(null);
       setCheckoutSessionStatus(portalErrorMessage(error));
     } finally {
       setCheckoutSessionLoading(false);
@@ -821,23 +1211,30 @@ export function PortalBillingPage({ onNavigate }: PortalBillingPageProps) {
     }
   }
 
-  async function handleProviderEvent(eventType: PortalCommercePaymentEventType): Promise<void> {
-    if (!checkoutSessionOrderId) {
+  async function handleProviderEvent(
+    eventType: PortalCommercePaymentEventType,
+    method: PortalCommerceCheckoutSessionMethod | null,
+  ): Promise<void> {
+    if (!checkoutSessionOrderId || !method) {
       return;
     }
 
+    const providerLabel = checkoutMethodProviderLabel(method.provider, t);
     setProviderEventOrderId(checkoutSessionOrderId);
     setProviderEventType(eventType);
     setStatus(
       eventType === 'settled'
-        ? t('Replaying provider settlement for {orderId}...', {
+        ? t('Replaying {provider} settlement for {orderId}...', {
+            provider: providerLabel,
             orderId: checkoutSessionOrderId,
           })
         : eventType === 'failed'
-          ? t('Replaying provider failure for {orderId}...', {
+          ? t('Replaying {provider} failure for {orderId}...', {
+              provider: providerLabel,
               orderId: checkoutSessionOrderId,
             })
-          : t('Replaying provider cancellation for {orderId}...', {
+          : t('Replaying {provider} cancellation for {orderId}...', {
+              provider: providerLabel,
               orderId: checkoutSessionOrderId,
             }),
     );
@@ -845,18 +1242,28 @@ export function PortalBillingPage({ onNavigate }: PortalBillingPageProps) {
     try {
       const nextOrder = await sendBillingPaymentEvent(checkoutSessionOrderId, {
         event_type: eventType,
+        provider: method.provider,
+        provider_event_id: buildProviderEventReplayId(
+          checkoutSessionOrderId,
+          eventType,
+          method,
+        ),
+        checkout_method_id: method.id,
       });
       await refreshBillingPage(
         eventType === 'settled'
-          ? t('{targetName} was settled through the provider callback flow.', {
+          ? t('{targetName} was settled through the {provider} callback flow.', {
               targetName: nextOrder.target_name,
+              provider: providerLabel,
             })
           : eventType === 'failed'
-            ? t('{targetName} was marked failed and left out of fulfillment.', {
+            ? t('{targetName} was marked failed after the {provider} callback.', {
                 targetName: nextOrder.target_name,
+                provider: providerLabel,
               })
-            : t('{targetName} was canceled through the provider callback flow.', {
+            : t('{targetName} was canceled through the {provider} callback flow.', {
                 targetName: nextOrder.target_name,
+                provider: providerLabel,
               }),
       );
       await loadCheckoutSession(nextOrder.order_id);
@@ -883,6 +1290,16 @@ export function PortalBillingPage({ onNavigate }: PortalBillingPageProps) {
   const selectedTargetLabel = selectionLabel(checkoutSelection);
   const selectedTargetKindLabel = checkoutSelection
     ? targetKindLabel(checkoutSelection.kind, t)
+    : null;
+  const providerCallbackMethods = checkoutSession?.methods.filter((method) => method.supports_webhook) ?? [];
+  const activeProviderCallbackMethod = providerCallbackMethods.find(
+    (method) => method.id === providerCallbackMethodId,
+  ) ?? preferredProviderCallbackMethod(checkoutSession);
+  const activeProviderLabel = activeProviderCallbackMethod
+    ? checkoutMethodProviderLabel(activeProviderCallbackMethod.provider, t)
+    : null;
+  const activeProviderChannelLabel = activeProviderCallbackMethod
+    ? checkoutMethodChannelLabel(activeProviderCallbackMethod.channel, t)
     : null;
   const orderWorkbenchCopy = orderWorkbenchDetail(orderLane, t);
   const membershipPanelDescription = membershipDescription(membership, t);
@@ -1014,6 +1431,187 @@ export function PortalBillingPage({ onNavigate }: PortalBillingPageProps) {
       value: formatUnits(billingEventAnalytics.totals.total_music_seconds),
     },
   ];
+  const activeCommercialPlan = selectPrimaryCommercialPricingPlan(
+    commercialPricingPlans,
+    Date.now(),
+  );
+  const prioritizedCommercialRates = commercialPricingRates
+    .slice()
+    .sort(compareCommercialPricingRates);
+  const primaryCommercialRate = activeCommercialPlan
+    ? prioritizedCommercialRates.find(
+      (rate) => rate.pricing_plan_id === activeCommercialPlan.pricing_plan_id,
+    ) ?? prioritizedCommercialRates[0] ?? null
+    : prioritizedCommercialRates[0] ?? null;
+  const tokenPricingRates = prioritizedCommercialRates.filter(isTokenPricingRate).slice(0, 3);
+  const mediaPricingRates = prioritizedCommercialRates.filter(isMediaPricingRate).slice(0, 4);
+  const commercialAccountFacts = [
+    {
+      label: t('Account'),
+      value: commercialAccount ? String(commercialAccount.account.account_id) : t('n/a'),
+    },
+    {
+      label: t('Status'),
+      value: commercialAccount ? titleCaseToken(commercialAccount.account.status) : t('n/a'),
+    },
+    {
+      label: t('Available balance'),
+      value: formatUnits(commercialBalance?.available_balance ?? commercialAccount?.available_balance ?? 0),
+    },
+    {
+      label: t('Held balance'),
+      value: formatUnits(commercialBalance?.held_balance ?? commercialAccount?.held_balance ?? 0),
+    },
+    {
+      label: t('Consumed balance'),
+      value: formatUnits(commercialBalance?.consumed_balance ?? commercialAccount?.consumed_balance ?? 0),
+    },
+    {
+      label: t('Active lots'),
+      value: formatUnits(commercialBalance?.active_lot_count ?? commercialAccount?.active_lot_count ?? 0),
+    },
+  ];
+  const commercialReconciliationFacts = [
+    {
+      label: t('Health'),
+      value: commercialReconciliation
+        ? (commercialReconciliation.healthy ? t('Healthy') : t('Lagging'))
+        : t('n/a'),
+    },
+    {
+      label: t('Backlog orders'),
+      value: formatUnits(commercialReconciliation?.backlog_order_count ?? 0),
+    },
+    {
+      label: t('Checkpoint lag'),
+      value: commercialReconciliation
+        ? (
+          commercialReconciliation.checkpoint_lag_ms >= 1000
+            ? `${formatUnits(Math.round(commercialReconciliation.checkpoint_lag_ms / 1000))} s`
+            : `${commercialReconciliation.checkpoint_lag_ms} ms`
+        )
+        : t('n/a'),
+    },
+    {
+      label: t('Last reconciled order'),
+      value: commercialReconciliation?.last_reconciled_order_id || t('n/a'),
+    },
+    {
+      label: t('Last checkpoint'),
+      value: commercialReconciliation?.last_reconciled_at_ms
+        ? formatDateTime(commercialReconciliation.last_reconciled_at_ms)
+        : t('n/a'),
+    },
+    {
+      label: t('Checkpoint watermark'),
+      value: commercialReconciliation?.last_reconciled_order_updated_at_ms
+        ? formatDateTime(commercialReconciliation.last_reconciled_order_updated_at_ms)
+        : t('n/a'),
+    },
+  ];
+  const commercialSettlementFacts = [
+    {
+      label: t('Benefit lots'),
+      value: formatUnits(commercialBenefitLots.length),
+    },
+    {
+      label: t('Open holds'),
+      value: formatUnits(
+        commercialHolds.filter((hold) =>
+          hold.status === 'held'
+          || hold.status === 'captured'
+          || hold.status === 'partially_released').length,
+      ),
+    },
+    {
+      label: t('Request settlements'),
+      value: formatUnits(commercialRequestSettlements.length),
+    },
+    {
+      label: t('Captured credits'),
+      value: formatUnits(
+        commercialRequestSettlements.reduce(
+          (sum, settlement) => sum + settlement.captured_credit_amount,
+          0,
+        ),
+      ),
+    },
+    {
+      label: t('Grant balance'),
+      value: formatUnits(commercialBalance?.grant_balance ?? commercialAccount?.grant_balance ?? 0),
+    },
+    {
+      label: t('Latest settlement'),
+      value: commercialRequestSettlements.length
+        ? formatDateTime(
+          commercialRequestSettlements
+            .slice()
+            .sort((left, right) => right.settled_at_ms - left.settled_at_ms)[0]
+            .settled_at_ms,
+        )
+        : t('n/a'),
+    },
+  ];
+  const pricingPostureFacts = [
+    {
+      label: t('Pricing plans'),
+      value: formatUnits(commercialPricingPlans.length),
+    },
+    {
+      label: t('Pricing rates'),
+      value: formatUnits(commercialPricingRates.length),
+    },
+    {
+      label: t('Primary plan'),
+      value: activeCommercialPlan?.display_name ?? t('n/a'),
+    },
+    {
+      label: t('Plan code'),
+      value: activeCommercialPlan?.plan_code ?? t('n/a'),
+    },
+    {
+      label: t('Primary metric'),
+      value: primaryCommercialRate?.metric_code ?? t('n/a'),
+    },
+    {
+      label: t('Effective from'),
+      value: activeCommercialPlan
+        ? (
+          activeCommercialPlan.effective_from_ms > 0
+            ? formatDateTime(activeCommercialPlan.effective_from_ms)
+            : t('Immediate')
+        )
+        : t('n/a'),
+    },
+    {
+      label: t('Effective to'),
+      value: activeCommercialPlan
+        ? (
+          activeCommercialPlan.effective_to_ms != null
+            ? formatDateTime(activeCommercialPlan.effective_to_ms)
+            : t('Open ended')
+        )
+        : t('n/a'),
+    },
+    {
+      label: t('Charge unit'),
+      value: primaryCommercialRate
+        ? commercialPricingChargeUnitLabel(primaryCommercialRate.charge_unit, t)
+        : t('n/a'),
+    },
+    {
+      label: t('Billing method'),
+      value: primaryCommercialRate
+        ? commercialPricingMethodLabel(primaryCommercialRate.pricing_method, t)
+        : t('n/a'),
+    },
+    {
+      label: t('Price unit'),
+      value: primaryCommercialRate
+        ? commercialPricingDisplayUnit(primaryCommercialRate, t)
+        : t('n/a'),
+    },
+  ];
 
   return (
     <>
@@ -1141,7 +1739,7 @@ export function PortalBillingPage({ onNavigate }: PortalBillingPageProps) {
               <FilterField className="w-full" label={t('Order lane')}>
                 <Select
                   value={orderLane}
-                  onValueChange={(value) => setOrderLane(value as OrderWorkbenchLane)}
+                  onValueChange={(value: string) => setOrderLane(value as OrderWorkbenchLane)}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder={t('Order lane')} />
@@ -1232,6 +1830,210 @@ export function PortalBillingPage({ onNavigate }: PortalBillingPageProps) {
               </div>
             </WorkspacePanel>
           </div>
+        </section>
+
+        <section className="grid gap-4 xl:grid-cols-4">
+          <WorkspacePanel
+            description={t(
+              'Commercial account exposes canonical balance, hold, and account identity state beside the workspace billing posture.',
+            )}
+            title={t('Commercial account')}
+          >
+            <div className="grid gap-3 text-sm text-zinc-600 dark:text-zinc-300">
+              {commercialAccountFacts.map((item) => (
+                <div className="flex items-center justify-between gap-3" key={item.label}>
+                  <span>{item.label}</span>
+                  <strong className="text-zinc-950 dark:text-zinc-50">{item.value}</strong>
+                </div>
+              ))}
+            </div>
+          </WorkspacePanel>
+
+          <WorkspacePanel
+            description={t(
+              'Commerce reconciliation shows whether account history processing has caught up with the latest order mutations and refund activity.',
+            )}
+            title={t('Commerce reconciliation')}
+          >
+            <div className="grid gap-3 text-sm text-zinc-600 dark:text-zinc-300">
+              {commercialReconciliationFacts.map((item) => (
+                <div className="flex items-center justify-between gap-3" key={item.label}>
+                  <span>{item.label}</span>
+                  <strong className="text-zinc-950 dark:text-zinc-50">{item.value}</strong>
+                </div>
+              ))}
+            </div>
+          </WorkspacePanel>
+
+          <WorkspacePanel
+            description={t(
+              'Commercial settlement rail keeps benefit lots, credit holds, and request settlement capture visible in one operator-facing posture.',
+            )}
+            title={t('Commercial settlement rail')}
+          >
+            <div className="grid gap-3 text-sm text-zinc-600 dark:text-zinc-300">
+              {commercialSettlementFacts.map((item) => (
+                <div className="flex items-center justify-between gap-3" key={item.label}>
+                  <span>{item.label}</span>
+                  <strong className="text-zinc-950 dark:text-zinc-50">{item.value}</strong>
+                </div>
+              ))}
+            </div>
+          </WorkspacePanel>
+
+          <WorkspacePanel
+            description={t(
+              'Pricing posture shows which commercial plans and rates currently define the workspace charging envelope.',
+            )}
+            title={t('Pricing posture')}
+          >
+            <div className="grid gap-4">
+              <div className="grid gap-3 text-sm text-zinc-600 dark:text-zinc-300">
+                {pricingPostureFacts.map((item) => (
+                  <div className="flex items-center justify-between gap-3" key={item.label}>
+                    <span>{item.label}</span>
+                    <strong className="text-zinc-950 dark:text-zinc-50">{item.value}</strong>
+                  </div>
+                ))}
+              </div>
+
+              {primaryCommercialRate ? (
+                <div className="grid gap-3">
+                  <article className={detailCardClassName}>
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="grid gap-2">
+                        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-zinc-500 dark:text-zinc-400">
+                          {t('Primary pricing rule')}
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          <Badge variant="default">
+                            {commercialPricingChargeUnitLabel(primaryCommercialRate.charge_unit, t)}
+                          </Badge>
+                          <Badge variant="secondary">
+                            {commercialPricingMethodLabel(primaryCommercialRate.pricing_method, t)}
+                          </Badge>
+                          <Badge variant={commercialPricingStatusTone(primaryCommercialRate.status)}>
+                            {titleCaseToken(primaryCommercialRate.status)}
+                          </Badge>
+                        </div>
+                      </div>
+                      <strong className="text-sm text-zinc-950 dark:text-zinc-50">
+                        {commercialPricingDisplayUnit(primaryCommercialRate, t)}
+                      </strong>
+                    </div>
+                    <div className="mt-4 grid gap-3 text-sm text-zinc-600 dark:text-zinc-300">
+                      <div className="flex items-center justify-between gap-3">
+                        <span>{t('Model')}</span>
+                        <strong className="text-zinc-950 dark:text-zinc-50">
+                          {primaryCommercialRate.model_code ?? t('n/a')}
+                        </strong>
+                      </div>
+                      <div className="flex items-center justify-between gap-3">
+                        <span>{t('Provider')}</span>
+                        <strong className="text-zinc-950 dark:text-zinc-50">
+                          {primaryCommercialRate.provider_code ?? t('n/a')}
+                        </strong>
+                      </div>
+                      <div className="flex items-center justify-between gap-3">
+                        <span>{t('Billing method')}</span>
+                        <strong className="text-zinc-950 dark:text-zinc-50">
+                          {commercialPricingMethodLabel(primaryCommercialRate.pricing_method, t)}
+                        </strong>
+                      </div>
+                      <div className="flex items-center justify-between gap-3">
+                        <span>{t('Price unit')}</span>
+                        <strong className="text-zinc-950 dark:text-zinc-50">
+                          {commercialPricingDisplayUnit(primaryCommercialRate, t)}
+                        </strong>
+                      </div>
+                    </div>
+                    <p className="mt-4 text-sm text-zinc-600 dark:text-zinc-300">
+                      {commercialPricingRuleSummary(primaryCommercialRate, t)}
+                    </p>
+                  </article>
+
+                  <div className="grid gap-3 lg:grid-cols-2">
+                    <article className={catalogCardClassName}>
+                      <div className="grid gap-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <strong className="text-sm text-zinc-950 dark:text-zinc-50">
+                            {t('Token pricing')}
+                          </strong>
+                          <Badge variant="secondary">
+                            {t('{count} rules', { count: formatUnits(tokenPricingRates.length) })}
+                          </Badge>
+                        </div>
+                        {tokenPricingRates.length ? (
+                          tokenPricingRates.map((rate) => (
+                            <div className="grid gap-1" key={rate.pricing_rate_id}>
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <span className="text-sm text-zinc-950 dark:text-zinc-50">
+                                  {commercialPricingChargeUnitLabel(rate.charge_unit, t)}
+                                </span>
+                                <strong className="text-sm text-zinc-950 dark:text-zinc-50">
+                                  {commercialPricingDisplayUnit(rate, t)}
+                                </strong>
+                              </div>
+                              <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                                {commercialPricingRuleSummary(rate, t)}
+                              </p>
+                            </div>
+                          ))
+                        ) : (
+                          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                            {t('No token pricing rules are active yet.')}
+                          </p>
+                        )}
+                      </div>
+                    </article>
+
+                    <article className={catalogCardClassName}>
+                      <div className="grid gap-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <strong className="text-sm text-zinc-950 dark:text-zinc-50">
+                            {t('Media pricing')}
+                          </strong>
+                          <Badge variant="secondary">
+                            {t('{count} rules', { count: formatUnits(mediaPricingRates.length) })}
+                          </Badge>
+                        </div>
+                        {mediaPricingRates.length ? (
+                          mediaPricingRates.map((rate) => (
+                            <div className="grid gap-1" key={rate.pricing_rate_id}>
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <span className="text-sm text-zinc-950 dark:text-zinc-50">
+                                  {commercialPricingChargeUnitLabel(rate.charge_unit, t)}
+                                </span>
+                                <strong className="text-sm text-zinc-950 dark:text-zinc-50">
+                                  {commercialPricingDisplayUnit(rate, t)}
+                                </strong>
+                              </div>
+                              <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                                {commercialPricingRuleSummary(rate, t)}
+                              </p>
+                            </div>
+                          ))
+                        ) : (
+                          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                            {t(
+                              'Standard price units include USD / 1M input tokens, USD / image, and USD / music track once live pricing is configured.',
+                            )}
+                          </p>
+                        )}
+                      </div>
+                    </article>
+                  </div>
+                </div>
+              ) : (
+                <EmptyState
+                  description={t(
+                    'Standard price units include USD / 1M input tokens, USD / image, and USD / music track once live pricing is configured.',
+                  )}
+                  title={t('No commercial pricing rules yet')}
+                />
+              )}
+            </div>
+          </WorkspacePanel>
         </section>
 
         <section className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
@@ -1523,27 +2325,27 @@ export function PortalBillingPage({ onNavigate }: PortalBillingPageProps) {
                 {
                   id: 'event',
                   header: t('Event'),
-                  cell: (row) => row.event_id,
+                  cell: (row: BillingEventRecord) => row.event_id,
                 },
                 {
                   id: 'capability',
                   header: t('Capability'),
-                  cell: (row) => titleCaseToken(row.capability),
+                  cell: (row: BillingEventRecord) => titleCaseToken(row.capability),
                 },
                 {
                   id: 'group',
                   header: t('Group'),
-                  cell: (row) => groupChargebackLabel(row.api_key_group_id, t),
+                  cell: (row: BillingEventRecord) => groupChargebackLabel(row.api_key_group_id, t),
                 },
                 {
                   id: 'signals',
                   header: t('Signals'),
-                  cell: (row) => eventSignalText(row, t),
+                  cell: (row: BillingEventRecord) => eventSignalText(row, t),
                 },
                 {
                   id: 'accounting',
                   header: t('Accounting'),
-                  cell: (row) => (
+                  cell: (row: BillingEventRecord) => (
                     <Badge variant={accountingModeTone(row.accounting_mode)}>
                       {accountingModeLabel(row.accounting_mode, t)}
                     </Badge>
@@ -1552,7 +2354,7 @@ export function PortalBillingPage({ onNavigate }: PortalBillingPageProps) {
                 {
                   id: 'applied_routing_profile_id',
                   header: t('Applied routing profile'),
-                  cell: (row) => (
+                  cell: (row: BillingEventRecord) => (
                     <div className="max-w-[12rem] truncate">
                       {row.applied_routing_profile_id ?? t('Not recorded')}
                     </div>
@@ -1561,7 +2363,7 @@ export function PortalBillingPage({ onNavigate }: PortalBillingPageProps) {
                 {
                   id: 'compiled_routing_snapshot_id',
                   header: t('Compiled snapshot'),
-                  cell: (row) => (
+                  cell: (row: BillingEventRecord) => (
                     <div className="max-w-[12rem] truncate">
                       {row.compiled_routing_snapshot_id ?? t('Not recorded')}
                     </div>
@@ -1570,7 +2372,7 @@ export function PortalBillingPage({ onNavigate }: PortalBillingPageProps) {
                 {
                   id: 'fallback_reason',
                   header: t('Fallback reason'),
-                  cell: (row) => (
+                  cell: (row: BillingEventRecord) => (
                     <div className="max-w-[14rem] truncate">
                       {row.fallback_reason ?? t('None')}
                     </div>
@@ -1579,17 +2381,17 @@ export function PortalBillingPage({ onNavigate }: PortalBillingPageProps) {
                 {
                   id: 'customer_charge',
                   header: t('Customer charge'),
-                  cell: (row) => formatCurrency(row.customer_charge),
+                  cell: (row: BillingEventRecord) => formatCurrency(row.customer_charge),
                 },
                 {
                   id: 'upstream_cost',
                   header: t('Upstream cost'),
-                  cell: (row) => formatCurrency(row.upstream_cost),
+                  cell: (row: BillingEventRecord) => formatCurrency(row.upstream_cost),
                 },
                 {
                   id: 'time',
                   header: t('Created'),
-                  cell: (row) => formatDateTime(row.created_at_ms),
+                  cell: (row: BillingEventRecord) => formatDateTime(row.created_at_ms),
                 },
               ]}
               emptyState={(
@@ -1604,7 +2406,7 @@ export function PortalBillingPage({ onNavigate }: PortalBillingPageProps) {
                   </p>
                 </div>
               )}
-              getRowId={(row) => row.event_id}
+              getRowId={(row: BillingEventRecord) => row.event_id}
               rows={billingEventAnalytics.recent_events}
             />
           </WorkspacePanel>
@@ -1723,32 +2525,32 @@ export function PortalBillingPage({ onNavigate }: PortalBillingPageProps) {
                   {
                     id: 'offer',
                     header: t('Offer'),
-                    cell: (row) => row.target_name,
+                    cell: (row: PortalCommerceOrder) => row.target_name,
                   },
                   {
                     id: 'kind',
                     header: t('Kind'),
-                    cell: (row) => targetKindLabel(row.target_kind, t),
+                    cell: (row: PortalCommerceOrder) => targetKindLabel(row.target_kind, t),
                   },
                   {
                     id: 'coupon',
                     header: t('Coupon'),
-                    cell: (row) => row.applied_coupon_code ?? t('None'),
+                    cell: (row: PortalCommerceOrder) => row.applied_coupon_code ?? t('None'),
                   },
                   {
                     id: 'payable',
                     header: t('Payable'),
-                    cell: (row) => row.payable_price_label,
+                    cell: (row: PortalCommerceOrder) => row.payable_price_label,
                   },
                   {
                     id: 'units',
                     header: t('Granted units'),
-                    cell: (row) => formatUnits(row.granted_units + row.bonus_units),
+                    cell: (row: PortalCommerceOrder) => formatUnits(row.granted_units + row.bonus_units),
                   },
                   {
                     id: 'status',
                     header: t('Status'),
-                    cell: (row) => (
+                    cell: (row: PortalCommerceOrder) => (
                       <Badge variant={orderStatusTone(row.status)}>
                         {orderStatusLabel(row.status, t)}
                       </Badge>
@@ -1757,12 +2559,12 @@ export function PortalBillingPage({ onNavigate }: PortalBillingPageProps) {
                   {
                     id: 'time',
                     header: t('Created'),
-                    cell: (row) => formatDateTime(row.created_at_ms),
+                    cell: (row: PortalCommerceOrder) => formatDateTime(row.created_at_ms),
                   },
                   {
                     id: 'actions',
                     header: t('Actions'),
-                    cell: (row) => (
+                    cell: (row: PortalCommerceOrder) => (
                       <div className="flex flex-wrap gap-2">
                         <Button
                           disabled={checkoutSessionLoading}
@@ -1809,10 +2611,162 @@ export function PortalBillingPage({ onNavigate }: PortalBillingPageProps) {
                     </p>
                   </div>
                 )}
-                getRowId={(row) => row.order_id}
+                getRowId={(row: PortalCommerceOrder) => row.order_id}
                 rows={visibleOrders}
               />
             </div>
+          </WorkspacePanel>
+        </section>
+
+        <section className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+          <WorkspacePanel
+            actions={(
+              <div className="flex flex-wrap gap-2">
+                <Badge variant="secondary">
+                  {t('{count} payment timeline rows', { count: formatUnits(paymentHistory.length) })}
+                </Badge>
+              </div>
+            )}
+            description={t(
+              'Payment history keeps provider callbacks, manual settlement evidence, and refund closure in one operator-facing audit timeline.',
+            )}
+            title={t('Payment history')}
+          >
+            <DataTable
+              columns={[
+                {
+                  id: 'order',
+                  header: t('Order'),
+                  cell: (row: BillingPaymentHistoryRow) => (
+                    <div className="grid gap-1">
+                      <strong className="text-zinc-950 dark:text-zinc-50">{row.target_name}</strong>
+                      <span className="text-xs text-zinc-500 dark:text-zinc-400">{row.order_id}</span>
+                    </div>
+                  ),
+                },
+                {
+                  id: 'event',
+                  header: t('Event'),
+                  cell: (row: BillingPaymentHistoryRow) => (
+                    <div className="flex flex-wrap gap-2">
+                      <Badge variant="secondary">
+                        {paymentHistoryRowKindLabel(row.row_kind, t)}
+                      </Badge>
+                      <Badge variant={row.event_type === 'refunded' ? 'warning' : 'default'}>
+                        {paymentEventTypeLabel(row.event_type, t)}
+                      </Badge>
+                    </div>
+                  ),
+                },
+                {
+                  id: 'rail',
+                  header: t('Payment rail'),
+                  cell: (row: BillingPaymentHistoryRow) => checkoutMethodProviderLabel(row.provider, t),
+                },
+                {
+                  id: 'provider_event',
+                  header: t('Provider event'),
+                  cell: (row: BillingPaymentHistoryRow) => row.provider_event_id ?? t('Not recorded'),
+                },
+                {
+                  id: 'processing',
+                  header: t('Processing'),
+                  cell: (row: BillingPaymentHistoryRow) => (
+                    <Badge variant={paymentProcessingStatusTone(row.processing_status)}>
+                      {paymentProcessingStatusLabel(row.processing_status, t)}
+                    </Badge>
+                  ),
+                },
+                {
+                  id: 'status_after',
+                  header: t('Status'),
+                  cell: (row: BillingPaymentHistoryRow) => (
+                    <Badge variant={orderStatusTone(row.order_status_after ?? row.order_status)}>
+                      {orderStatusLabel(row.order_status_after ?? row.order_status, t)}
+                    </Badge>
+                  ),
+                },
+                {
+                  id: 'observed',
+                  header: t('Observed'),
+                  cell: (row: BillingPaymentHistoryRow) => formatDateTime(row.received_at_ms),
+                },
+              ]}
+              emptyState={(
+                <EmptyState
+                  description={t('No payment lifecycle evidence has been recorded for this workspace yet.')}
+                  title={t('No payment history yet')}
+                />
+              )}
+              getRowId={(row: BillingPaymentHistoryRow) => row.id}
+              rows={paymentHistory}
+            />
+          </WorkspacePanel>
+
+          <WorkspacePanel
+            actions={(
+              <div className="flex flex-wrap gap-2">
+                <Badge variant="secondary">
+                  {t('{count} refund rows', { count: formatUnits(refundHistory.length) })}
+                </Badge>
+              </div>
+            )}
+            description={t(
+              'Refund history isolates closed-loop refund outcomes so finance and support can verify provider, checkout reference, and final order state without reopening each order.',
+            )}
+            title={t('Refund history')}
+          >
+            <DataTable
+              columns={[
+                {
+                  id: 'order',
+                  header: t('Order'),
+                  cell: (row: BillingPaymentHistoryRow) => (
+                    <div className="grid gap-1">
+                      <strong className="text-zinc-950 dark:text-zinc-50">{row.target_name}</strong>
+                      <span className="text-xs text-zinc-500 dark:text-zinc-400">{row.order_id}</span>
+                    </div>
+                  ),
+                },
+                {
+                  id: 'source',
+                  header: t('Source'),
+                  cell: (row: BillingPaymentHistoryRow) => paymentHistoryRowKindLabel(row.row_kind, t),
+                },
+                {
+                  id: 'rail',
+                  header: t('Payment rail'),
+                  cell: (row: BillingPaymentHistoryRow) => checkoutMethodProviderLabel(row.provider, t),
+                },
+                {
+                  id: 'reference',
+                  header: t('Reference'),
+                  cell: (row: BillingPaymentHistoryRow) => row.checkout_reference ?? t('Not recorded'),
+                },
+                {
+                  id: 'status',
+                  header: t('Status'),
+                  cell: (row: BillingPaymentHistoryRow) => (
+                    <Badge variant={orderStatusTone(row.order_status_after ?? row.order_status)}>
+                      {orderStatusLabel(row.order_status_after ?? row.order_status, t)}
+                    </Badge>
+                  ),
+                },
+                {
+                  id: 'observed',
+                  header: t('Observed'),
+                  cell: (row: BillingPaymentHistoryRow) => formatDateTime(row.received_at_ms),
+                },
+              ]}
+              emptyState={(
+                <EmptyState
+                  description={t('No refund outcomes have been recorded for this workspace yet.')}
+                  title={t('No refund history yet')}
+                />
+              )}
+              getRowId={(row: BillingPaymentHistoryRow) => row.id}
+              rows={refundHistory}
+            />
           </WorkspacePanel>
         </section>
 
@@ -1833,7 +2787,7 @@ export function PortalBillingPage({ onNavigate }: PortalBillingPageProps) {
                   <div className="flex items-center justify-between gap-3">
                     <span>{t('Payment rail')}</span>
                     <strong className="text-zinc-950 dark:text-zinc-50">
-                      {checkoutSession.provider}
+                      {checkoutMethodProviderLabel(checkoutSession.provider, t)}
                     </strong>
                   </div>
                   <div className="flex items-center justify-between gap-3">
@@ -1870,11 +2824,64 @@ export function PortalBillingPage({ onNavigate }: PortalBillingPageProps) {
                           <div className="grid gap-2">
                             <div className="flex flex-wrap gap-2">
                               <Badge variant="default">{method.label}</Badge>
+                              <Badge variant="secondary">
+                                {checkoutMethodProviderLabel(method.provider, t)}
+                              </Badge>
+                              <Badge variant="secondary">
+                                {checkoutMethodChannelLabel(method.channel, t)}
+                              </Badge>
+                              <Badge variant="secondary">
+                                {checkoutMethodSessionKindLabel(method.session_kind, t)}
+                              </Badge>
+                              {method.recommended ? (
+                                <Badge variant="success">{t('Recommended')}</Badge>
+                              ) : null}
+                              {method.supports_webhook ? (
+                                <Badge variant="warning">{t('Webhook')}</Badge>
+                              ) : null}
                               <Badge variant={checkoutMethodAvailabilityTone(method.availability)}>
                                 {checkoutMethodAvailabilityLabel(method.availability, t)}
                               </Badge>
                             </div>
                             <p className="text-sm text-zinc-600 dark:text-zinc-300">{method.detail}</p>
+                            <div className="grid gap-2 rounded-[20px] border border-dashed border-zinc-300/80 bg-white/70 p-3 text-xs text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950/40 dark:text-zinc-300">
+                              <div className="grid gap-1">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <span>{t('Session reference')}</span>
+                                  <code className="rounded bg-zinc-950/5 px-2 py-1 text-[11px] text-zinc-700 dark:bg-zinc-100/10 dark:text-zinc-200">
+                                    {method.session_reference}
+                                  </code>
+                                </div>
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <span>{t('Webhook verification')}</span>
+                                  <code className="rounded bg-zinc-950/5 px-2 py-1 text-[11px] text-zinc-700 dark:bg-zinc-100/10 dark:text-zinc-200">
+                                    {method.webhook_verification}
+                                  </code>
+                                </div>
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <span>{t('Refund support')}</span>
+                                  <strong className="text-zinc-950 dark:text-zinc-50">
+                                    {method.supports_refund ? t('Available') : t('Unavailable')}
+                                  </strong>
+                                </div>
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <span>{t('Partial refund')}</span>
+                                  <strong className="text-zinc-950 dark:text-zinc-50">
+                                    {method.supports_partial_refund
+                                      ? t('Available')
+                                      : t('Unavailable')}
+                                  </strong>
+                                </div>
+                              </div>
+                              {method.qr_code_payload ? (
+                                <div className="grid gap-1">
+                                  <span>{t('QR payload')}</span>
+                                  <code className="overflow-x-auto rounded bg-zinc-950/5 px-2 py-2 text-[11px] text-zinc-700 dark:bg-zinc-100/10 dark:text-zinc-200">
+                                    {method.qr_code_payload}
+                                  </code>
+                                </div>
+                              ) : null}
+                            </div>
                           </div>
                           <strong className="text-sm text-zinc-950 dark:text-zinc-50">
                             {checkoutMethodActionLabel(method.action, t)}
@@ -1899,16 +2906,49 @@ export function PortalBillingPage({ onNavigate }: PortalBillingPageProps) {
                         </p>
                         <p className="text-sm text-zinc-600 dark:text-zinc-300">
                           {t(
-                            'Simulate hosted payment callbacks so server mode can rehearse settlement, failure, and cancellation before a live payment provider is connected.',
+                            'Simulate hosted payment callbacks so server mode can rehearse settlement, failure, and cancellation on the selected payment rail before a live provider is connected.',
                           )}
                         </p>
                       </div>
                       <Badge variant="warning">{t('Provider webhooks')}</Badge>
                     </div>
+                    {providerCallbackMethods.length > 1 ? (
+                      <div className="mt-4 grid gap-2 md:max-w-sm">
+                        <span className="text-xs font-semibold uppercase tracking-[0.22em] text-zinc-500 dark:text-zinc-400">
+                          {t('Callback rail')}
+                        </span>
+                        <Select
+                          onValueChange={(value: string) => setProviderCallbackMethodId(value)}
+                          value={activeProviderCallbackMethod?.id ?? ''}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder={t('Choose provider rail')} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {providerCallbackMethods.map((method) => (
+                              <SelectItem key={method.id} value={method.id}>
+                                {t('{provider} / {channel}', {
+                                  provider: checkoutMethodProviderLabel(method.provider, t),
+                                  channel: checkoutMethodChannelLabel(method.channel, t),
+                                })}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    ) : null}
+                    {activeProviderCallbackMethod ? (
+                      <div className="mt-4 rounded-[24px] border border-dashed border-zinc-300/80 bg-white/70 p-4 text-sm text-zinc-600 dark:border-zinc-700 dark:bg-zinc-950/40 dark:text-zinc-300">
+                        {t('{provider} currently anchors the callback rehearsal on the {channel} rail.', {
+                          provider: activeProviderLabel ?? t('Provider'),
+                          channel: activeProviderChannelLabel ?? t('Payment channel'),
+                        })}
+                      </div>
+                    ) : null}
                     <div className="mt-4 flex flex-wrap gap-2">
                       <Button
-                        disabled={providerEventOrderId !== null}
-                        onClick={() => void handleProviderEvent('settled')}
+                        disabled={providerEventOrderId !== null || !activeProviderCallbackMethod}
+                        onClick={() => void handleProviderEvent('settled', activeProviderCallbackMethod)}
                         variant="primary"
                       >
                         {providerEventOrderId === checkoutSessionOrderId
@@ -1917,8 +2957,8 @@ export function PortalBillingPage({ onNavigate }: PortalBillingPageProps) {
                           : t('Simulate provider settlement')}
                       </Button>
                       <Button
-                        disabled={providerEventOrderId !== null}
-                        onClick={() => void handleProviderEvent('failed')}
+                        disabled={providerEventOrderId !== null || !activeProviderCallbackMethod}
+                        onClick={() => void handleProviderEvent('failed', activeProviderCallbackMethod)}
                         variant="secondary"
                       >
                         {providerEventOrderId === checkoutSessionOrderId
@@ -1927,8 +2967,8 @@ export function PortalBillingPage({ onNavigate }: PortalBillingPageProps) {
                           : t('Simulate provider failure')}
                       </Button>
                       <Button
-                        disabled={providerEventOrderId !== null}
-                        onClick={() => void handleProviderEvent('canceled')}
+                        disabled={providerEventOrderId !== null || !activeProviderCallbackMethod}
+                        onClick={() => void handleProviderEvent('canceled', activeProviderCallbackMethod)}
                         variant="secondary"
                       >
                         {providerEventOrderId === checkoutSessionOrderId
@@ -1962,7 +3002,12 @@ export function PortalBillingPage({ onNavigate }: PortalBillingPageProps) {
               <div className="flex items-center justify-between gap-3">
                 <span>{t('Server mode handoff')}</span>
                 <strong className="text-zinc-950 dark:text-zinc-50">
-                  {t('Provider handoff')}
+                  {activeProviderLabel
+                    ? t('{provider} / {channel}', {
+                        provider: activeProviderLabel,
+                        channel: activeProviderChannelLabel ?? t('Payment channel'),
+                      })
+                    : t('Provider handoff')}
                 </strong>
               </div>
               <div className="flex items-center justify-between gap-3">

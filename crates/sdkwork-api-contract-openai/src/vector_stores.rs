@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateVectorStoreRequest {
     pub name: String,
 }
@@ -12,7 +13,7 @@ impl CreateVectorStoreRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct UpdateVectorStoreRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -26,7 +27,7 @@ impl UpdateVectorStoreRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateVectorStoreFileRequest {
     pub file_id: String,
 }
@@ -39,7 +40,7 @@ impl CreateVectorStoreFileRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateVectorStoreFileBatchRequest {
     pub file_ids: Vec<String>,
 }
@@ -52,7 +53,7 @@ impl CreateVectorStoreFileBatchRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct VectorStoreObject {
     pub id: String,
     pub object: &'static str,
@@ -71,7 +72,7 @@ impl VectorStoreObject {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ListVectorStoresResponse {
     pub object: &'static str,
     pub data: Vec<VectorStoreObject>,
@@ -86,7 +87,7 @@ impl ListVectorStoresResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct DeleteVectorStoreResponse {
     pub id: String,
     pub object: &'static str,
@@ -103,7 +104,7 @@ impl DeleteVectorStoreResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct VectorStoreFileObject {
     pub id: String,
     pub object: &'static str,
@@ -120,7 +121,7 @@ impl VectorStoreFileObject {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ListVectorStoreFilesResponse {
     pub object: &'static str,
     pub data: Vec<VectorStoreFileObject>,
@@ -135,7 +136,7 @@ impl ListVectorStoreFilesResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct DeleteVectorStoreFileResponse {
     pub id: String,
     pub object: &'static str,
@@ -152,7 +153,7 @@ impl DeleteVectorStoreFileResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct VectorStoreFileBatchObject {
     pub id: String,
     pub object: &'static str,
@@ -175,7 +176,7 @@ impl VectorStoreFileBatchObject {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SearchVectorStoreRequest {
     pub query: String,
 }
@@ -188,7 +189,7 @@ impl SearchVectorStoreRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct VectorStoreSearchContent {
     pub r#type: &'static str,
     pub text: String,
@@ -203,7 +204,7 @@ impl VectorStoreSearchContent {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct VectorStoreSearchResult {
     pub file_id: String,
     pub filename: String,
@@ -224,7 +225,7 @@ impl VectorStoreSearchResult {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct SearchVectorStoreResponse {
     pub object: &'static str,
     pub data: Vec<VectorStoreSearchResult>,

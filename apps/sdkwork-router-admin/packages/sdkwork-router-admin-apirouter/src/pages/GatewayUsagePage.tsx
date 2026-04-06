@@ -11,8 +11,14 @@ import {
 } from '@sdkwork/ui-pc-react';
 import { Search } from 'lucide-react';
 import {
+  countCurrentlyEffectiveCommercialPricingPlans,
+  commercialPricingChargeUnitLabel,
+  commercialPricingDisplayUnit,
+  commercialPricingMethodLabel,
   embeddedAdminDataTableClassName,
   embeddedAdminDataTableSlotProps,
+  selectPrimaryCommercialPricingPlan,
+  selectPrimaryCommercialPricingRate,
   useAdminI18n,
 } from 'sdkwork-router-admin-core';
 import type {
@@ -242,6 +248,93 @@ export function GatewayUsagePage({
   const topGroupChargeback = billingEventAnalytics.group_chargeback.slice(0, 3);
   const topCapabilityMix = billingEventAnalytics.top_capabilities.slice(0, 3);
   const topAccountingModes = billingEventAnalytics.accounting_mode_mix.slice(0, 3);
+  const activeCommercialAccounts = snapshot.commercialAccounts.filter(
+    (record) => record.account.status === 'active',
+  ).length;
+  const availableCommercialBalance = snapshot.commercialAccounts.reduce(
+    (sum, record) => sum + record.available_balance,
+    0,
+  );
+  const capturedSettlementAmount = snapshot.commercialRequestSettlements.reduce(
+    (sum, settlement) => sum + settlement.captured_credit_amount,
+    0,
+  );
+  const activePricingPlans = countCurrentlyEffectiveCommercialPricingPlans(
+    snapshot.commercialPricingPlans,
+  );
+  const pricedMetrics = new Set(
+    snapshot.commercialPricingRates.map((rate) => rate.metric_code),
+  ).size;
+  const primaryPricingPlan = selectPrimaryCommercialPricingPlan(
+    snapshot.commercialPricingPlans,
+  );
+  const primaryPricingRate = selectPrimaryCommercialPricingRate(
+    snapshot.commercialPricingRates,
+    primaryPricingPlan,
+  );
+  const commercialAccountFacts = [
+    {
+      label: t('Total accounts'),
+      value: formatLocalizedNumber(snapshot.commercialAccounts.length),
+    },
+    {
+      label: t('Active accounts'),
+      value: formatLocalizedNumber(activeCommercialAccounts),
+    },
+    {
+      label: t('Available balance'),
+      value: formatLocalizedNumber(availableCommercialBalance),
+    },
+  ];
+  const requestSettlementFacts = [
+    {
+      label: t('Request settlements'),
+      value: formatLocalizedNumber(snapshot.commercialRequestSettlements.length),
+    },
+    {
+      label: t('Open holds'),
+      value: formatLocalizedNumber(
+        snapshot.commercialAccountHolds.filter((hold) =>
+          hold.status === 'held'
+          || hold.status === 'captured'
+          || hold.status === 'partially_released').length,
+      ),
+    },
+    {
+      label: t('Captured credits'),
+      value: formatLocalizedNumber(capturedSettlementAmount),
+    },
+  ];
+  const pricingPostureFacts = [
+    {
+      label: t('Plans'),
+      value: formatLocalizedNumber(snapshot.commercialPricingPlans.length),
+    },
+    {
+      label: t('Active plans'),
+      value: formatLocalizedNumber(activePricingPlans),
+    },
+    {
+      label: t('Rates'),
+      value: formatLocalizedNumber(snapshot.commercialPricingRates.length),
+    },
+    {
+      label: t('Priced metrics'),
+      value: formatLocalizedNumber(pricedMetrics),
+    },
+    {
+      label: t('Charge unit'),
+      value: commercialPricingChargeUnitLabel(primaryPricingRate?.charge_unit, t),
+    },
+    {
+      label: t('Billing method'),
+      value: commercialPricingMethodLabel(primaryPricingRate?.pricing_method, t),
+    },
+    {
+      label: t('Price unit'),
+      value: commercialPricingDisplayUnit(primaryPricingRate, t),
+    },
+  ];
 
   const columns = useMemo<DataTableColumn<UsageRecord>[]>(
     () => [
@@ -707,6 +800,71 @@ export function GatewayUsagePage({
                 </div>
               </CardContent>
             </Card>
+            </div>
+
+            <div className="grid gap-4 xl:grid-cols-3">
+              <Card>
+                <CardContent className="space-y-3 p-4">
+                  <div className="space-y-1">
+                    <div className="text-sm font-medium text-[var(--sdk-color-text-primary)]">
+                      {t('Commercial accounts')}
+                    </div>
+                    <div className="text-sm text-[var(--sdk-color-text-secondary)]">
+                      {t('Usage review now stays anchored to the canonical commercial account inventory.')}
+                    </div>
+                  </div>
+                  <div className="space-y-2 text-sm">
+                    {commercialAccountFacts.map((item) => (
+                      <div className="flex items-center justify-between gap-3" key={item.label}>
+                        <div className="text-[var(--sdk-color-text-secondary)]">{item.label}</div>
+                        <div className="font-medium text-[var(--sdk-color-text-primary)]">{item.value}</div>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardContent className="space-y-3 p-4">
+                  <div className="space-y-1">
+                    <div className="text-sm font-medium text-[var(--sdk-color-text-primary)]">
+                      {t('Request settlements')}
+                    </div>
+                    <div className="text-sm text-[var(--sdk-color-text-secondary)]">
+                      {t('Operators can inspect hold-to-settlement posture without leaving multimodal usage review.')}
+                    </div>
+                  </div>
+                  <div className="space-y-2 text-sm">
+                    {requestSettlementFacts.map((item) => (
+                      <div className="flex items-center justify-between gap-3" key={item.label}>
+                        <div className="text-[var(--sdk-color-text-secondary)]">{item.label}</div>
+                        <div className="font-medium text-[var(--sdk-color-text-primary)]">{item.value}</div>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardContent className="space-y-3 p-4">
+                  <div className="space-y-1">
+                    <div className="text-sm font-medium text-[var(--sdk-color-text-primary)]">
+                      {t('Pricing posture')}
+                    </div>
+                    <div className="text-sm text-[var(--sdk-color-text-secondary)]">
+                      {t('Commercial pricing plans and rates stay visible alongside usage analytics and billing events.')}
+                    </div>
+                  </div>
+                  <div className="space-y-2 text-sm">
+                    {pricingPostureFacts.map((item) => (
+                      <div className="flex items-center justify-between gap-3" key={item.label}>
+                        <div className="text-[var(--sdk-color-text-secondary)]">{item.label}</div>
+                        <div className="font-medium text-[var(--sdk-color-text-primary)]">{item.value}</div>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
             </div>
 
             <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">

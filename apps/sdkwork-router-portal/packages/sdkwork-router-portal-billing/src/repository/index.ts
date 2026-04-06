@@ -1,13 +1,15 @@
 import {
   cancelPortalCommerceOrder,
   createPortalCommerceOrder,
+  getPortalCommercialAccountHistory,
   getPortalBillingEventSummary,
   getPortalBillingEvents,
   getPortalCommerceCheckoutSession,
   getPortalCommerceCatalog,
-  getPortalCommerceMembership,
+  getPortalCommerceOrderCenter,
   getPortalBillingSummary,
-  listPortalCommerceOrders,
+  listPortalCommercialPricingPlans,
+  listPortalCommercialPricingRates,
   listPortalUsageRecords,
   previewPortalCommerceQuote,
   sendPortalCommercePaymentEvent,
@@ -20,17 +22,43 @@ import type {
 } from 'sdkwork-router-portal-types';
 
 import type { BillingPageData } from '../types';
+import {
+  buildBillingPaymentHistory,
+  buildBillingRefundHistory,
+} from '../services';
 
 export async function loadBillingPageData(): Promise<BillingPageData> {
-  const [summary, usage_records, billing_event_summary, billing_events, catalog, orders, membership] = await Promise.all([
+  const [
+    summary,
+    usage_records,
+    billing_event_summary,
+    billing_events,
+    catalog,
+    order_center,
+    commercial_history,
+    commercial_pricing_plans,
+    commercial_pricing_rates,
+  ] = await Promise.all([
     getPortalBillingSummary(),
     listPortalUsageRecords(),
     getPortalBillingEventSummary(),
     getPortalBillingEvents(),
     getPortalCommerceCatalog(),
-    listPortalCommerceOrders(),
-    getPortalCommerceMembership(),
+    getPortalCommerceOrderCenter(),
+    getPortalCommercialAccountHistory(),
+    listPortalCommercialPricingPlans(),
+    listPortalCommercialPricingRates(),
   ]);
+
+  const commercial_account = {
+    account: commercial_history.account,
+    available_balance: commercial_history.balance.available_balance,
+    held_balance: commercial_history.balance.held_balance,
+    consumed_balance: commercial_history.balance.consumed_balance,
+    grant_balance: commercial_history.balance.grant_balance,
+    active_lot_count: commercial_history.balance.active_lot_count,
+  };
+  const orderCenterEntries = order_center.orders;
 
   return {
     summary,
@@ -39,8 +67,18 @@ export async function loadBillingPageData(): Promise<BillingPageData> {
     billing_event_summary,
     plans: catalog.plans,
     packs: catalog.packs,
-    orders,
-    membership,
+    orders: orderCenterEntries.map((entry) => entry.order),
+    payment_history: buildBillingPaymentHistory(orderCenterEntries),
+    refund_history: buildBillingRefundHistory(orderCenterEntries),
+    membership: order_center.membership,
+    commercial_reconciliation: order_center.reconciliation,
+    commercial_account,
+    commercial_balance: commercial_history.balance,
+    commercial_benefit_lots: commercial_history.benefit_lots,
+    commercial_holds: commercial_history.holds,
+    commercial_request_settlements: commercial_history.request_settlements,
+    commercial_pricing_plans,
+    commercial_pricing_rates,
   };
 }
 
@@ -73,6 +111,14 @@ export function getBillingCheckoutSession(
   order_id: string,
 ): Promise<PortalCommerceCheckoutSession> {
   return getPortalCommerceCheckoutSession(order_id);
+}
+
+export function getBillingCommercialAccountHistory() {
+  return getPortalCommercialAccountHistory();
+}
+
+export function getBillingOrderCenter() {
+  return getPortalCommerceOrderCenter();
 }
 
 export function sendBillingPaymentEvent(

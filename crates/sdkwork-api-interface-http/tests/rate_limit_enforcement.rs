@@ -1,5 +1,6 @@
 use axum::body::{to_bytes, Body};
 use axum::http::{Request, StatusCode};
+use axum::response::Response;
 use serde_json::Value;
 use sqlx::SqlitePool;
 use tower::ServiceExt;
@@ -14,6 +15,14 @@ async fn read_json(response: axum::response::Response) -> Value {
 async fn memory_pool() -> SqlitePool {
     sdkwork_api_storage_sqlite::run_migrations("sqlite::memory:")
         .await
+        .unwrap()
+}
+
+fn header_text<'a>(response: &'a Response, name: &str) -> &'a str {
+    response
+        .headers()
+        .get(name)
+        .and_then(|value| value.to_str().ok())
         .unwrap()
 }
 
@@ -59,6 +68,14 @@ async fn gateway_chat_completions_returns_429_when_rate_limit_is_exhausted() {
         .await
         .unwrap();
     assert!(first.status().is_success());
+    assert_eq!(header_text(&first, "x-ratelimit-policy"), "rate-project-1-chat");
+    assert_eq!(header_text(&first, "x-ratelimit-limit"), "1");
+    assert_eq!(header_text(&first, "x-ratelimit-remaining"), "0");
+    let success_reset = header_text(&first, "x-ratelimit-reset")
+        .parse::<u64>()
+        .unwrap();
+    assert!(success_reset <= 60);
+    assert!(success_reset > 0);
 
     let second = gateway_app
         .oneshot(
@@ -76,6 +93,16 @@ async fn gateway_chat_completions_returns_429_when_rate_limit_is_exhausted() {
         .unwrap();
 
     assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(header_text(&second, "x-ratelimit-policy"), "rate-project-1-chat");
+    assert_eq!(header_text(&second, "x-ratelimit-limit"), "1");
+    assert_eq!(header_text(&second, "x-ratelimit-remaining"), "0");
+    let retry_after = header_text(&second, "retry-after").parse::<u64>().unwrap();
+    let rejected_reset = header_text(&second, "x-ratelimit-reset")
+        .parse::<u64>()
+        .unwrap();
+    assert!(retry_after <= 60);
+    assert!(retry_after > 0);
+    assert_eq!(rejected_reset, retry_after);
     let json = read_json(second).await;
     assert_eq!(json["error"]["code"], "rate_limit_exceeded");
 }

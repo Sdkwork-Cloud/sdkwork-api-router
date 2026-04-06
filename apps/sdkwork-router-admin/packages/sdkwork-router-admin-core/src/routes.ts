@@ -30,6 +30,20 @@ export const adminRoutes: AdminRouteDefinition[] = [
     group: 'Workspace Ops',
   },
   {
+    key: 'commercial',
+    label: 'Commercial',
+    eyebrow: 'Revenue',
+    detail: 'Commercial accounts, settlement explorer, and pricing governance',
+    group: 'Commercial',
+  },
+  {
+    key: 'pricing',
+    label: 'Pricing',
+    eyebrow: 'Finops',
+    detail: 'Pricing plans, charge units, and billing method governance',
+    group: 'Commercial',
+  },
+  {
     key: 'api-keys',
     label: 'Api Key',
     eyebrow: 'Key',

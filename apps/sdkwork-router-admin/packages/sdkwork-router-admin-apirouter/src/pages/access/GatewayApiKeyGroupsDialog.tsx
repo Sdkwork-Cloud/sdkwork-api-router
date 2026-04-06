@@ -611,7 +611,7 @@ export function GatewayApiKeyGroupsDialog({
                           color: event.target.value,
                         }))
                       }
-                      placeholder="#2563eb"
+                      placeholder={t('Example: #2563eb')}
                       value={draft.color}
                     />
                   </DialogField>

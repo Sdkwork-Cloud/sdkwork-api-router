@@ -23,7 +23,7 @@ async fn portal_token(app: axum::Router) -> String {
                 .uri("/portal/auth/register")
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    "{\"email\":\"portal-fields@example.com\",\"password\":\"hunter2!\",\"display_name\":\"Portal User\"}",
+                    "{\"email\":\"portal-fields@example.com\",\"password\":\"PortalPass123!\",\"display_name\":\"Portal User\"}",
                 ))
                 .unwrap(),
         )

@@ -142,6 +142,178 @@ async fn thread_and_run_route_returns_ok() {
 }
 
 #[tokio::test]
+async fn thread_and_run_route_returns_invalid_request_for_missing_assistant_id() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/threads/runs")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"assistant_id\":\"\",\"thread\":{\"metadata\":{\"workspace\":\"default\"}}}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_invalid_thread_and_run_request(response).await;
+}
+
+#[tokio::test]
+async fn thread_runs_create_route_returns_not_found_for_unknown_thread() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/threads/thread_missing/runs")
+                .header("content-type", "application/json")
+                .body(Body::from("{\"assistant_id\":\"asst_1\"}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["message"], "Requested thread was not found.");
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+}
+
+#[tokio::test]
+async fn thread_runs_list_route_returns_not_found_for_unknown_thread() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/threads/thread_missing/runs")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["message"], "Requested thread was not found.");
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+}
+
+#[tokio::test]
+async fn thread_run_retrieve_route_returns_not_found_for_unknown_run() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/threads/thread_1/runs/run_missing")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["message"], "Requested run was not found.");
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+}
+
+#[tokio::test]
+async fn thread_run_update_route_returns_not_found_for_unknown_run() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/threads/thread_1/runs/run_missing")
+                .header("content-type", "application/json")
+                .body(Body::from("{\"metadata\":{\"priority\":\"high\"}}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["message"], "Requested run was not found.");
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+}
+
+#[tokio::test]
+async fn thread_run_cancel_route_returns_not_found_for_unknown_run() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/threads/thread_1/runs/run_missing/cancel")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["message"], "Requested run was not found.");
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+}
+
+#[tokio::test]
+async fn thread_run_submit_tool_outputs_route_returns_not_found_for_unknown_run() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/threads/thread_1/runs/run_missing/submit_tool_outputs")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"tool_outputs\":[{\"tool_call_id\":\"call_1\",\"output\":\"{\\\"ok\\\":true}\"}]}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["message"], "Requested run was not found.");
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+}
+
+#[tokio::test]
+async fn thread_run_steps_list_route_returns_not_found_for_unknown_run() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/threads/thread_1/runs/run_missing/steps")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["message"], "Requested run was not found.");
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+}
+
+#[tokio::test]
 async fn stateless_thread_runs_routes_relay_to_openai_compatible_provider() {
     let upstream_state = UpstreamCaptureState::default();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -337,6 +509,342 @@ async fn stateless_thread_runs_routes_relay_to_openai_compatible_provider() {
     assert_eq!(create_and_run_response.status(), StatusCode::OK);
     let create_and_run_json = read_json(create_and_run_response).await;
     assert_eq!(create_and_run_json["id"], "run_1");
+}
+
+#[tokio::test]
+async fn thread_run_step_route_returns_not_found_error_for_unknown_step() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/threads/thread_1/runs/run_1/steps/step_missing")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(
+        json["error"]["message"],
+        "Requested run step was not found."
+    );
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+}
+
+#[tokio::test]
+async fn stateful_thread_runs_create_route_returns_not_found_without_usage() {
+    let pool = memory_pool().await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let api_key = support::issue_gateway_api_key(
+        &pool,
+        "tenant-run-create-missing",
+        "project-run-create-missing",
+    )
+    .await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+
+    let response = gateway_app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/threads/thread_missing/runs")
+                .header("authorization", format!("Bearer {api_key}"))
+                .header("content-type", "application/json")
+                .body(Body::from("{\"assistant_id\":\"asst_1\"}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["message"], "Requested thread was not found.");
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+
+    support::assert_no_usage_records(admin_app, &admin_token).await;
+}
+
+#[tokio::test]
+async fn stateful_thread_and_run_route_returns_invalid_request_without_usage() {
+    let pool = memory_pool().await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let api_key = support::issue_gateway_api_key(
+        &pool,
+        "tenant-thread-and-run-invalid",
+        "project-thread-and-run-invalid",
+    )
+    .await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+
+    let response = gateway_app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/threads/runs")
+                .header("authorization", format!("Bearer {api_key}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"assistant_id\":\"\",\"thread\":{\"metadata\":{\"workspace\":\"default\"}}}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_invalid_thread_and_run_request(response).await;
+    support::assert_no_usage_records(admin_app, &admin_token).await;
+}
+
+#[tokio::test]
+async fn stateful_thread_runs_list_route_returns_not_found_without_usage() {
+    let pool = memory_pool().await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let api_key = support::issue_gateway_api_key(
+        &pool,
+        "tenant-run-list-missing",
+        "project-run-list-missing",
+    )
+    .await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+
+    let response = gateway_app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/threads/thread_missing/runs")
+                .header("authorization", format!("Bearer {api_key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["message"], "Requested thread was not found.");
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+
+    support::assert_no_usage_records(admin_app, &admin_token).await;
+}
+
+#[tokio::test]
+async fn stateful_thread_run_retrieve_route_returns_not_found_without_usage() {
+    let pool = memory_pool().await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let api_key = support::issue_gateway_api_key(
+        &pool,
+        "tenant-run-retrieve-missing",
+        "project-run-retrieve-missing",
+    )
+    .await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+
+    let response = gateway_app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/threads/thread_1/runs/run_missing")
+                .header("authorization", format!("Bearer {api_key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["message"], "Requested run was not found.");
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+
+    support::assert_no_usage_records(admin_app, &admin_token).await;
+}
+
+#[tokio::test]
+async fn stateful_thread_run_update_route_returns_not_found_without_usage() {
+    let pool = memory_pool().await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let api_key = support::issue_gateway_api_key(
+        &pool,
+        "tenant-run-update-missing",
+        "project-run-update-missing",
+    )
+    .await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+
+    let response = gateway_app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/threads/thread_1/runs/run_missing")
+                .header("authorization", format!("Bearer {api_key}"))
+                .header("content-type", "application/json")
+                .body(Body::from("{\"metadata\":{\"priority\":\"high\"}}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["message"], "Requested run was not found.");
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+
+    support::assert_no_usage_records(admin_app, &admin_token).await;
+}
+
+#[tokio::test]
+async fn stateful_thread_run_cancel_route_returns_not_found_without_usage() {
+    let pool = memory_pool().await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let api_key = support::issue_gateway_api_key(
+        &pool,
+        "tenant-run-cancel-missing",
+        "project-run-cancel-missing",
+    )
+    .await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+
+    let response = gateway_app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/threads/thread_1/runs/run_missing/cancel")
+                .header("authorization", format!("Bearer {api_key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["message"], "Requested run was not found.");
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+
+    support::assert_no_usage_records(admin_app, &admin_token).await;
+}
+
+#[tokio::test]
+async fn stateful_thread_run_submit_tool_outputs_route_returns_not_found_without_usage() {
+    let pool = memory_pool().await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let api_key = support::issue_gateway_api_key(
+        &pool,
+        "tenant-run-submit-missing",
+        "project-run-submit-missing",
+    )
+    .await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+
+    let response = gateway_app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/threads/thread_1/runs/run_missing/submit_tool_outputs")
+                .header("authorization", format!("Bearer {api_key}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"tool_outputs\":[{\"tool_call_id\":\"call_1\",\"output\":\"{\\\"ok\\\":true}\"}]}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["message"], "Requested run was not found.");
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+
+    support::assert_no_usage_records(admin_app, &admin_token).await;
+}
+
+#[tokio::test]
+async fn stateful_thread_run_steps_list_route_returns_not_found_without_usage() {
+    let pool = memory_pool().await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let api_key = support::issue_gateway_api_key(
+        &pool,
+        "tenant-run-steps-list-missing",
+        "project-run-steps-list-missing",
+    )
+    .await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+
+    let response = gateway_app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/threads/thread_1/runs/run_missing/steps")
+                .header("authorization", format!("Bearer {api_key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["message"], "Requested run was not found.");
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+
+    support::assert_no_usage_records(admin_app, &admin_token).await;
+}
+
+#[tokio::test]
+async fn stateful_thread_run_step_route_returns_not_found_without_usage() {
+    let pool = memory_pool().await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let api_key = support::issue_gateway_api_key(
+        &pool,
+        "tenant-run-step-missing",
+        "project-run-step-missing",
+    )
+    .await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+
+    let response = gateway_app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/threads/thread_1/runs/run_1/steps/step_missing")
+                .header("authorization", format!("Bearer {api_key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(
+        json["error"]["message"],
+        "Requested run step was not found."
+    );
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+
+    support::assert_no_usage_records(admin_app, &admin_token).await;
 }
 
 async fn read_json(response: axum::response::Response) -> Value {
@@ -871,12 +1379,16 @@ async fn stateful_thread_run_usage_uses_thread_route_key_for_provider_selection(
     let logs_json = read_json(logs).await;
     let routing_logs = logs_json.as_array().unwrap();
     assert_eq!(routing_logs.len(), 2);
-    assert!(routing_logs
-        .iter()
-        .all(|entry| entry["route_key"] == "thread_1"));
-    assert!(routing_logs
-        .iter()
-        .all(|entry| entry["selected_provider_id"] == "provider-thread"));
+    assert!(
+        routing_logs
+            .iter()
+            .all(|entry| entry["route_key"] == "thread_1")
+    );
+    assert!(
+        routing_logs
+            .iter()
+            .all(|entry| entry["selected_provider_id"] == "provider-thread")
+    );
 }
 
 #[tokio::test]
@@ -1423,4 +1935,15 @@ fn thread_run_step_json(id: &str) -> Value {
             }
         }
     })
+}
+
+async fn assert_invalid_thread_and_run_request(response: axum::response::Response) {
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let json = read_json(response).await;
+    assert_eq!(
+        json["error"]["message"],
+        "Thread and run assistant_id is required."
+    );
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "invalid_assistant_id");
 }

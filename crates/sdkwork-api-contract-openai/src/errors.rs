@@ -1,6 +1,7 @@
 use serde::Serialize;
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct OpenAiErrorEnvelope {
     pub message: String,
     pub r#type: String,
@@ -8,7 +9,7 @@ pub struct OpenAiErrorEnvelope {
     pub code: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct OpenAiErrorResponse {
     pub error: OpenAiErrorEnvelope,
 }

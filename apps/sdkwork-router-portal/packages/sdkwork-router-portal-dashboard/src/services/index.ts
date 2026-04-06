@@ -5,9 +5,6 @@ import {
 } from 'sdkwork-router-portal-commons/format-core';
 import { translatePortalText } from 'sdkwork-router-portal-commons/i18n-core';
 import type {
-  BillingEventAccountingModeSummary,
-  BillingEventCapabilitySummary,
-  BillingEventSummary,
   PortalCommerceMembership,
   PortalDashboardSummary,
   PortalRouteKey,
@@ -22,7 +19,6 @@ import type {
   DashboardActivityItem,
   DashboardBalanceSummary,
   DashboardBreakdownItem,
-  DashboardCommercialHighlights,
   DashboardDemandPoint,
   DashboardDistributionPoint,
   DashboardInsight,
@@ -111,73 +107,6 @@ function summarizeUsageRecords(records: UsageRecord[]): DashboardMetricSummary {
     request_count,
     used_units,
     average_booked_spend: request_count > 0 ? revenue / request_count : 0,
-  };
-}
-
-function emptyBillingEventSummary(): BillingEventSummary {
-  return {
-    total_events: 0,
-    project_count: 0,
-    group_count: 0,
-    capability_count: 0,
-    total_request_count: 0,
-    total_units: 0,
-    total_input_tokens: 0,
-    total_output_tokens: 0,
-    total_tokens: 0,
-    total_image_count: 0,
-    total_audio_seconds: 0,
-    total_video_seconds: 0,
-    total_music_seconds: 0,
-    total_upstream_cost: 0,
-    total_customer_charge: 0,
-    projects: [],
-    groups: [],
-    capabilities: [],
-    accounting_modes: [],
-  };
-}
-
-function sortAccountingModes(
-  items: BillingEventAccountingModeSummary[],
-): BillingEventAccountingModeSummary[] {
-  return [...items]
-    .filter((item) => item.event_count > 0)
-    .sort((left, right) =>
-      right.total_customer_charge - left.total_customer_charge
-      || right.request_count - left.request_count
-      || left.accounting_mode.localeCompare(right.accounting_mode),
-    );
-}
-
-function sortCapabilities(
-  items: BillingEventCapabilitySummary[],
-): BillingEventCapabilitySummary[] {
-  return [...items]
-    .filter((item) => item.event_count > 0)
-    .sort((left, right) =>
-      right.total_customer_charge - left.total_customer_charge
-      || right.request_count - left.request_count
-      || right.total_tokens - left.total_tokens
-      || left.capability.localeCompare(right.capability),
-    );
-}
-
-export function buildDashboardCommercialHighlights(
-  summary?: BillingEventSummary | null,
-): DashboardCommercialHighlights {
-  const safeSummary = summary ?? emptyBillingEventSummary();
-
-  return {
-    total_customer_charge: safeSummary.total_customer_charge,
-    leading_accounting_mode: sortAccountingModes(safeSummary.accounting_modes)[0] ?? null,
-    leading_capability: sortCapabilities(safeSummary.capabilities)[0] ?? null,
-    multimodal_totals: {
-      image_count: safeSummary.total_image_count,
-      audio_seconds: safeSummary.total_audio_seconds,
-      video_seconds: safeSummary.total_video_seconds,
-      music_seconds: safeSummary.total_music_seconds,
-    },
   };
 }
 
@@ -917,7 +846,6 @@ export function buildPortalDashboardViewModel(
   usageRecords: UsageRecord[] = [],
   membership: PortalCommerceMembership | null = null,
   now: number = Date.now(),
-  billingEventSummary: BillingEventSummary | null = null,
 ): PortalDashboardPageViewModel {
   const normalizedSnapshot = normalizeDashboardSummary(snapshot);
   const normalizedRoutingSummary = normalizeRoutingSummary(routingSummary);
@@ -952,7 +880,6 @@ export function buildPortalDashboardViewModel(
   return {
     snapshot: normalizedSnapshot,
     membership,
-    commercial_highlights: buildDashboardCommercialHighlights(billingEventSummary),
     balance: buildBalanceSummary(normalizedSnapshot),
     totals: {
       revenue: totalRevenue,

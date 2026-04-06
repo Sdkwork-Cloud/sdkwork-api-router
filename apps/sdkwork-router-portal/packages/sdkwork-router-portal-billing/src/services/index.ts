@@ -6,6 +6,7 @@ import type {
   BillingEventGroupSummary,
   BillingEventRecord,
   BillingEventSummary,
+  PortalCommerceOrderCenterEntry,
   ProjectBillingSummary,
   RechargePack,
   SubscriptionPlan,
@@ -13,12 +14,115 @@ import type {
 } from 'sdkwork-router-portal-types';
 
 import type { BillingRecommendation } from '../types';
-import type { BillingEventAnalyticsViewModel } from '../types';
+import type {
+  BillingEventAnalyticsViewModel,
+  BillingPaymentHistoryRow,
+} from '../types';
 
 export type BillingEventCsvDocument = {
   headers: string[];
   rows: Array<Array<string | number>>;
 };
+
+function compareBillingPaymentHistoryRows(
+  left: BillingPaymentHistoryRow,
+  right: BillingPaymentHistoryRow,
+): number {
+  const leftKindRank = left.row_kind === 'refunded_order_state' ? 0 : 1;
+  const rightKindRank = right.row_kind === 'refunded_order_state' ? 0 : 1;
+
+  return right.received_at_ms - left.received_at_ms
+    || leftKindRank - rightKindRank
+    || left.order_id.localeCompare(right.order_id)
+    || left.id.localeCompare(right.id);
+}
+
+function buildPaymentEventHistoryRow(
+  entry: PortalCommerceOrderCenterEntry,
+  event: PortalCommerceOrderCenterEntry['payment_events'][number],
+): BillingPaymentHistoryRow {
+  return {
+    row_kind: 'payment_event',
+    id: event.payment_event_id,
+    order_id: entry.order.order_id,
+    target_name: entry.order.target_name,
+    target_kind: entry.order.target_kind,
+    payable_price_label: entry.order.payable_price_label,
+    order_status: entry.order.status,
+    order_status_after: event.order_status_after ?? null,
+    provider: event.provider,
+    event_type: event.event_type,
+    payment_event_id: event.payment_event_id,
+    provider_event_id: event.provider_event_id ?? null,
+    processing_status: event.processing_status,
+    processing_message: event.processing_message ?? null,
+    checkout_reference: entry.checkout_session.reference,
+    checkout_session_status: entry.checkout_session.session_status,
+    guidance: entry.checkout_session.guidance,
+    received_at_ms: event.received_at_ms,
+    processed_at_ms: event.processed_at_ms ?? null,
+  };
+}
+
+function hasRefundPaymentEvent(entry: PortalCommerceOrderCenterEntry): boolean {
+  return entry.payment_events.some((event) => event.event_type === 'refunded');
+}
+
+function buildRefundedOrderStateRow(
+  entry: PortalCommerceOrderCenterEntry,
+): BillingPaymentHistoryRow {
+  const observedAtMs = Math.max(
+    entry.order.updated_at_ms ?? 0,
+    entry.latest_payment_event?.processed_at_ms ?? 0,
+    entry.latest_payment_event?.received_at_ms ?? 0,
+  );
+
+  return {
+    row_kind: 'refunded_order_state',
+    id: `refund-state:${entry.order.order_id}`,
+    order_id: entry.order.order_id,
+    target_name: entry.order.target_name,
+    target_kind: entry.order.target_kind,
+    payable_price_label: entry.order.payable_price_label,
+    order_status: entry.order.status,
+    order_status_after: 'refunded',
+    provider: entry.checkout_session.provider,
+    event_type: 'refunded',
+    payment_event_id: null,
+    provider_event_id: null,
+    processing_status: null,
+    processing_message: null,
+    checkout_reference: entry.checkout_session.reference,
+    checkout_session_status: entry.checkout_session.session_status,
+    guidance: entry.checkout_session.guidance,
+    received_at_ms: observedAtMs,
+    processed_at_ms: null,
+  };
+}
+
+export function buildBillingPaymentHistory(
+  entries: PortalCommerceOrderCenterEntry[],
+): BillingPaymentHistoryRow[] {
+  const rows: BillingPaymentHistoryRow[] = [];
+
+  for (const entry of entries) {
+    for (const event of entry.payment_events) {
+      rows.push(buildPaymentEventHistoryRow(entry, event));
+    }
+
+    if (entry.order.status === 'refunded' && !hasRefundPaymentEvent(entry)) {
+      rows.push(buildRefundedOrderStateRow(entry));
+    }
+  }
+
+  return rows.sort(compareBillingPaymentHistoryRows);
+}
+
+export function buildBillingRefundHistory(
+  entries: PortalCommerceOrderCenterEntry[],
+): BillingPaymentHistoryRow[] {
+  return buildBillingPaymentHistory(entries).filter((row) => row.event_type === 'refunded');
+}
 
 function buildDailyUsageSeries(usageRecords: UsageRecord[]): number[] {
   const daily = new Map<string, number>();

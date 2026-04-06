@@ -2,8 +2,9 @@ use std::collections::BTreeSet;
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RoutingCandidateHealth {
     Healthy,
@@ -11,7 +12,7 @@ pub enum RoutingCandidateHealth {
     Unknown,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RoutingStrategy {
     #[default]
@@ -46,7 +47,7 @@ impl FromStr for RoutingStrategy {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct RoutingCandidateAssessment {
     pub provider_id: String,
     pub available: bool,
@@ -154,7 +155,7 @@ impl RoutingCandidateAssessment {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct RoutingDecision {
     pub selected_provider_id: String,
     pub candidate_ids: Vec<String>,
@@ -174,6 +175,8 @@ pub struct RoutingDecision {
     pub fallback_reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requested_region: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_health_recovery_probe: Option<ProviderHealthRecoveryProbe>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub slo_applied: bool,
     #[serde(default, skip_serializing_if = "is_false")]
@@ -195,6 +198,7 @@ impl RoutingDecision {
             selection_reason: None,
             fallback_reason: None,
             requested_region: None,
+            provider_health_recovery_probe: None,
             slo_applied: false,
             slo_degraded: false,
             assessments: Vec::new(),
@@ -273,6 +277,22 @@ impl RoutingDecision {
         self
     }
 
+    pub fn with_provider_health_recovery_probe(
+        mut self,
+        provider_health_recovery_probe: ProviderHealthRecoveryProbe,
+    ) -> Self {
+        self.provider_health_recovery_probe = Some(provider_health_recovery_probe);
+        self
+    }
+
+    pub fn with_provider_health_recovery_probe_option(
+        mut self,
+        provider_health_recovery_probe: Option<ProviderHealthRecoveryProbe>,
+    ) -> Self {
+        self.provider_health_recovery_probe = provider_health_recovery_probe;
+        self
+    }
+
     pub fn with_slo_state(mut self, slo_applied: bool, slo_degraded: bool) -> Self {
         self.slo_applied = slo_applied;
         self.slo_degraded = slo_degraded;
@@ -285,7 +305,43 @@ impl RoutingDecision {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderHealthRecoveryProbeOutcome {
+    Selected,
+    LeaseContended,
+    LeaseError,
+}
+
+impl ProviderHealthRecoveryProbeOutcome {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Selected => "selected",
+            Self::LeaseContended => "lease_contended",
+            Self::LeaseError => "lease_error",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ProviderHealthRecoveryProbe {
+    pub provider_id: String,
+    pub outcome: ProviderHealthRecoveryProbeOutcome,
+}
+
+impl ProviderHealthRecoveryProbe {
+    pub fn new(
+        provider_id: impl Into<String>,
+        outcome: ProviderHealthRecoveryProbeOutcome,
+    ) -> Self {
+        Self {
+            provider_id: provider_id.into(),
+            outcome,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RoutingDecisionSource {
     Gateway,
@@ -316,7 +372,7 @@ impl FromStr for RoutingDecisionSource {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct RoutingDecisionLog {
     pub decision_id: String,
     pub decision_source: RoutingDecisionSource,
@@ -598,6 +654,14 @@ pub struct RoutingPolicy {
     pub max_latency_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub require_healthy: bool,
+    #[serde(default = "default_enabled")]
+    pub execution_failover_enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_retry_max_attempts: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_retry_base_delay_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_retry_max_delay_ms: Option<u64>,
 }
 
 impl RoutingPolicy {
@@ -618,6 +682,10 @@ impl RoutingPolicy {
             max_cost: None,
             max_latency_ms: None,
             require_healthy: false,
+            execution_failover_enabled: true,
+            upstream_retry_max_attempts: None,
+            upstream_retry_base_delay_ms: None,
+            upstream_retry_max_delay_ms: None,
         }
     }
 
@@ -676,6 +744,50 @@ impl RoutingPolicy {
         self
     }
 
+    pub fn with_execution_failover_enabled(mut self, execution_failover_enabled: bool) -> Self {
+        self.execution_failover_enabled = execution_failover_enabled;
+        self
+    }
+
+    pub fn with_upstream_retry_max_attempts(mut self, upstream_retry_max_attempts: u32) -> Self {
+        self.upstream_retry_max_attempts = Some(upstream_retry_max_attempts);
+        self
+    }
+
+    pub fn with_upstream_retry_max_attempts_option(
+        mut self,
+        upstream_retry_max_attempts: Option<u32>,
+    ) -> Self {
+        self.upstream_retry_max_attempts = upstream_retry_max_attempts;
+        self
+    }
+
+    pub fn with_upstream_retry_base_delay_ms(mut self, upstream_retry_base_delay_ms: u64) -> Self {
+        self.upstream_retry_base_delay_ms = Some(upstream_retry_base_delay_ms);
+        self
+    }
+
+    pub fn with_upstream_retry_base_delay_ms_option(
+        mut self,
+        upstream_retry_base_delay_ms: Option<u64>,
+    ) -> Self {
+        self.upstream_retry_base_delay_ms = upstream_retry_base_delay_ms;
+        self
+    }
+
+    pub fn with_upstream_retry_max_delay_ms(mut self, upstream_retry_max_delay_ms: u64) -> Self {
+        self.upstream_retry_max_delay_ms = Some(upstream_retry_max_delay_ms);
+        self
+    }
+
+    pub fn with_upstream_retry_max_delay_ms_option(
+        mut self,
+        upstream_retry_max_delay_ms: Option<u64>,
+    ) -> Self {
+        self.upstream_retry_max_delay_ms = upstream_retry_max_delay_ms;
+        self
+    }
+
     pub fn matches(&self, capability: &str, model: &str) -> bool {
         self.capability == capability && glob_matches(&self.model_pattern, model)
     }
@@ -717,7 +829,7 @@ impl RoutingPolicy {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct RoutingProfileRecord {
     pub profile_id: String,
     pub tenant_id: String,
@@ -855,7 +967,7 @@ impl RoutingProfileRecord {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct CompiledRoutingSnapshotRecord {
     pub snapshot_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1055,7 +1167,7 @@ impl CompiledRoutingSnapshotRecord {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ProjectRoutingPreferences {
     pub project_id: String,
     #[serde(default)]

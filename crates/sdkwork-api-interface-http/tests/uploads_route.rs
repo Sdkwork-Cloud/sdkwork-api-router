@@ -91,6 +91,66 @@ async fn upload_cancel_route_returns_ok() {
 }
 
 #[tokio::test]
+async fn upload_parts_route_returns_not_found_for_unknown_upload() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/uploads/upload_missing/parts")
+                .header(
+                    "content-type",
+                    "multipart/form-data; boundary=----sdkwork-upload-part",
+                )
+                .body(Body::from(build_upload_part_multipart_body(
+                    "----sdkwork-upload-part",
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested upload session was not found.").await;
+}
+
+#[tokio::test]
+async fn upload_complete_route_returns_not_found_for_unknown_upload() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/uploads/upload_missing/complete")
+                .header("content-type", "application/json")
+                .body(Body::from("{\"part_ids\":[\"part_1\",\"part_2\"]}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested upload session was not found.").await;
+}
+
+#[tokio::test]
+async fn upload_cancel_route_returns_not_found_for_unknown_upload() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/uploads/upload_missing/cancel")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested upload session was not found.").await;
+}
+
+#[tokio::test]
 async fn stateless_upload_routes_relay_to_openai_compatible_provider() {
     let upstream_state = UpstreamCaptureState::default();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -183,13 +243,15 @@ async fn stateless_upload_routes_relay_to_openai_compatible_provider() {
         upstream_state.authorization.lock().unwrap().as_deref(),
         Some("Bearer sk-stateless-openai")
     );
-    assert!(upstream_state
-        .content_type
-        .lock()
-        .unwrap()
-        .as_deref()
-        .unwrap_or_default()
-        .starts_with("multipart/form-data"));
+    assert!(
+        upstream_state
+            .content_type
+            .lock()
+            .unwrap()
+            .as_deref()
+            .unwrap_or_default()
+            .starts_with("multipart/form-data")
+    );
 
     let cancel_response = app
         .oneshot(
@@ -206,6 +268,91 @@ async fn stateless_upload_routes_relay_to_openai_compatible_provider() {
     assert_eq!(cancel_json["status"], "cancelled");
 }
 
+#[tokio::test]
+async fn stateful_upload_parts_route_returns_not_found_without_usage() {
+    let ctx = local_upload_test_context(
+        "tenant-upload-parts-missing",
+        "project-upload-parts-missing",
+    )
+    .await;
+
+    let response = ctx
+        .gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/uploads/upload_missing/parts")
+                .header(
+                    "content-type",
+                    "multipart/form-data; boundary=----sdkwork-upload-part",
+                )
+                .header("authorization", format!("Bearer {}", ctx.api_key))
+                .body(Body::from(build_upload_part_multipart_body(
+                    "----sdkwork-upload-part",
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested upload session was not found.").await;
+    support::assert_no_usage_records(ctx.admin_app, &ctx.admin_token).await;
+}
+
+#[tokio::test]
+async fn stateful_upload_complete_route_returns_not_found_without_usage() {
+    let ctx = local_upload_test_context(
+        "tenant-upload-complete-missing",
+        "project-upload-complete-missing",
+    )
+    .await;
+
+    let response = ctx
+        .gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/uploads/upload_missing/complete")
+                .header("authorization", format!("Bearer {}", ctx.api_key))
+                .header("content-type", "application/json")
+                .body(Body::from("{\"part_ids\":[\"part_1\",\"part_2\"]}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested upload session was not found.").await;
+    support::assert_no_usage_records(ctx.admin_app, &ctx.admin_token).await;
+}
+
+#[tokio::test]
+async fn stateful_upload_cancel_route_returns_not_found_without_usage() {
+    let ctx = local_upload_test_context(
+        "tenant-upload-cancel-missing",
+        "project-upload-cancel-missing",
+    )
+    .await;
+
+    let response = ctx
+        .gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/uploads/upload_missing/cancel")
+                .header("authorization", format!("Bearer {}", ctx.api_key))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested upload session was not found.").await;
+    support::assert_no_usage_records(ctx.admin_app, &ctx.admin_token).await;
+}
+
 async fn read_json(response: axum::response::Response) -> Value {
     let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
@@ -213,10 +360,40 @@ async fn read_json(response: axum::response::Response) -> Value {
     serde_json::from_slice(&bytes).unwrap()
 }
 
+async fn assert_openai_not_found(response: axum::response::Response, message: &str) {
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["message"], message);
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+}
+
 async fn memory_pool() -> SqlitePool {
     sdkwork_api_storage_sqlite::run_migrations("sqlite::memory:")
         .await
         .unwrap()
+}
+
+struct LocalUploadTestContext {
+    admin_app: Router,
+    admin_token: String,
+    api_key: String,
+    gateway_app: Router,
+}
+
+async fn local_upload_test_context(tenant_id: &str, project_id: &str) -> LocalUploadTestContext {
+    let pool = memory_pool().await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let api_key = support::issue_gateway_api_key(&pool, tenant_id, project_id).await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+
+    LocalUploadTestContext {
+        admin_app,
+        admin_token,
+        api_key,
+        gateway_app,
+    }
 }
 
 #[derive(Clone, Default)]
@@ -375,13 +552,15 @@ async fn stateful_upload_routes_relay_to_openai_compatible_provider() {
         upstream_state.authorization.lock().unwrap().as_deref(),
         Some("Bearer sk-upstream-openai")
     );
-    assert!(upstream_state
-        .content_type
-        .lock()
-        .unwrap()
-        .as_deref()
-        .unwrap_or_default()
-        .starts_with("multipart/form-data"));
+    assert!(
+        upstream_state
+            .content_type
+            .lock()
+            .unwrap()
+            .as_deref()
+            .unwrap_or_default()
+            .starts_with("multipart/form-data")
+    );
 
     let cancel_response = gateway_app
         .oneshot(
@@ -766,13 +945,15 @@ async fn stateful_upload_part_create_usage_uses_upload_route_key_for_provider_se
         upstream_state.authorization.lock().unwrap().as_deref(),
         Some("Bearer sk-upload-create")
     );
-    assert!(upstream_state
-        .content_type
-        .lock()
-        .unwrap()
-        .as_deref()
-        .unwrap_or_default()
-        .starts_with("multipart/form-data"));
+    assert!(
+        upstream_state
+            .content_type
+            .lock()
+            .unwrap()
+            .as_deref()
+            .unwrap_or_default()
+            .starts_with("multipart/form-data")
+    );
 
     let usage = admin_app
         .clone()

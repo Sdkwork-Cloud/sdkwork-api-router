@@ -27,6 +27,12 @@ const TenantsPage = lazy(async () => ({
 const CouponsPage = lazy(async () => ({
   default: (await import('sdkwork-router-admin-coupons')).CouponsPage,
 }));
+const CommercialPage = lazy(async () => ({
+  default: (await import('sdkwork-router-admin-commercial')).CommercialPage,
+}));
+const PricingPage = lazy(async () => ({
+  default: (await import('sdkwork-router-admin-pricing')).PricingPage,
+}));
 const GatewayAccessPage = lazy(async () => ({
   default: (await import('sdkwork-router-admin-apirouter')).GatewayAccessPage,
 }));
@@ -182,6 +188,10 @@ export function AppRoutes() {
     handleSaveModel,
     handleSaveModelPrice,
     handleSaveApiKeyGroup,
+    handleUpdateMarketingCampaignBudgetStatus,
+    handleUpdateMarketingCampaignStatus,
+    handleUpdateMarketingCouponCodeStatus,
+    handleUpdateMarketingCouponTemplateStatus,
     handleSaveOperatorUser,
     handleSavePortalUser,
     handleSaveProject,
@@ -277,11 +287,31 @@ export function AppRoutes() {
               onDeleteCoupon={handleDeleteCoupon}
               onSaveCoupon={handleSaveCoupon}
               onToggleCoupon={handleToggleCoupon}
+              onUpdateMarketingCampaignBudgetStatus={handleUpdateMarketingCampaignBudgetStatus}
+              onUpdateMarketingCampaignStatus={handleUpdateMarketingCampaignStatus}
+              onUpdateMarketingCouponCodeStatus={handleUpdateMarketingCouponCodeStatus}
+              onUpdateMarketingCouponTemplateStatus={handleUpdateMarketingCouponTemplateStatus}
               snapshot={snapshot}
             />
           </ProtectedPage>
         }
         path={ROUTE_PATHS.COUPONS}
+      />
+      <Route
+        element={
+          <ProtectedPage routeKey={location.pathname}>
+            <CommercialPage snapshot={snapshot} />
+          </ProtectedPage>
+        }
+        path={ROUTE_PATHS.COMMERCIAL}
+      />
+      <Route
+        element={
+          <ProtectedPage routeKey={location.pathname}>
+            <PricingPage snapshot={snapshot} />
+          </ProtectedPage>
+        }
+        path={ROUTE_PATHS.PRICING}
       />
       <Route
         element={<Navigate replace to={ROUTE_PATHS.API_ROUTER_API_KEYS} />}

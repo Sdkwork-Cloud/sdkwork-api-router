@@ -16,14 +16,29 @@ import {
   listApiKeys,
   listApiKeyGroups,
   listBillingEvents,
+  listCommercePaymentEvents,
   listChannelModels,
   listChannels,
+  listCommercialAccountHolds,
+  listCommercialAccountLedger,
+  listCommercialAccounts,
+  listCommercialPricingPlans,
+  listCommercialPricingRates,
+  listCommercialRequestSettlements,
   listCompiledRoutingSnapshots,
   listCoupons,
   listCredentials,
+  listMarketingCampaignBudgets,
+  listMarketingCampaigns,
+  listMarketingCouponCodes,
+  listMarketingCouponRedemptions,
+  listMarketingCouponReservations,
+  listMarketingCouponRollbacks,
+  listMarketingCouponTemplates,
   listModelPrices,
   listModels,
   listOperatorUsers,
+  listRecentCommerceOrders,
   listPortalUsers,
   listProjects,
   listProviderHealthSnapshots,
@@ -42,6 +57,8 @@ import {
 import type {
   AdminSessionUser,
   AdminWorkspaceSnapshot,
+  CommercialAccountSummary,
+  CommercialRequestSettlementRecord,
 } from 'sdkwork-router-admin-types';
 import {
   createWorkbenchActions,
@@ -61,6 +78,87 @@ interface AdminWorkbenchContextValue extends WorkbenchActions {
 }
 
 const AdminWorkbenchContext = createContext<AdminWorkbenchContextValue | null>(null);
+
+function selectCommercialLedgerAccountIds(
+  commercialAccounts: CommercialAccountSummary[],
+  commercialRequestSettlements: CommercialRequestSettlementRecord[],
+  maxAccounts = 8,
+): number[] {
+  const selected = new Set<number>();
+
+  const recentSettlementAccountIds = [...commercialRequestSettlements]
+    .sort((left, right) =>
+      right.updated_at_ms - left.updated_at_ms
+      || right.request_settlement_id - left.request_settlement_id,
+    )
+    .map((settlement) => settlement.account_id);
+
+  for (const accountId of recentSettlementAccountIds) {
+    selected.add(accountId);
+    if (selected.size >= maxAccounts) {
+      return [...selected];
+    }
+  }
+
+  const priorityAccountIds = commercialAccounts
+    .filter((account) =>
+      account.held_balance > 0
+      || account.account.status !== 'active',
+    )
+    .map((account) => account.account.account_id);
+
+  for (const accountId of priorityAccountIds) {
+    selected.add(accountId);
+    if (selected.size >= maxAccounts) {
+      return [...selected];
+    }
+  }
+
+  for (const account of commercialAccounts) {
+    selected.add(account.account.account_id);
+    if (selected.size >= maxAccounts) {
+      break;
+    }
+  }
+
+  return [...selected];
+}
+
+function selectCommercePaymentAuditOrderIds(
+  commerceOrders: AdminWorkspaceSnapshot['commerceOrders'],
+  maxOrders = 10,
+): string[] {
+  const selected = new Set<string>();
+
+  const priorityOrders = [...commerceOrders]
+    .sort((left, right) =>
+      right.updated_at_ms - left.updated_at_ms
+      || right.created_at_ms - left.created_at_ms
+      || right.order_id.localeCompare(left.order_id),
+    )
+    .filter((order) =>
+      order.status === 'refunded'
+      || order.status === 'pending_payment'
+      || order.status === 'failed'
+      || order.status === 'canceled',
+    );
+
+  for (const order of priorityOrders) {
+    selected.add(order.order_id);
+    if (selected.size >= maxOrders) {
+      return [...selected];
+    }
+  }
+
+  for (const order of commerceOrders) {
+    selected.add(order.order_id);
+    if (selected.size >= maxOrders) {
+      break;
+    }
+  }
+
+  return [...selected];
+}
 
 export function AdminWorkbenchProvider({ children }: { children: ReactNode }) {
   const [authResolved, setAuthResolved] = useState(false);
@@ -104,6 +202,19 @@ export function AdminWorkbenchProvider({ children }: { children: ReactNode }) {
         billingEvents,
         billingEventSummary,
         billingSummary,
+        commerceOrders,
+        couponTemplates,
+        marketingCampaigns,
+        campaignBudgets,
+        couponCodes,
+        couponReservations,
+        couponRedemptions,
+        couponRollbacks,
+        commercialAccounts,
+        commercialAccountHolds,
+        commercialRequestSettlements,
+        commercialPricingPlans,
+        commercialPricingRates,
         routingLogs,
         providerHealth,
         runtimeStatuses,
@@ -128,10 +239,41 @@ export function AdminWorkbenchProvider({ children }: { children: ReactNode }) {
         listBillingEvents(),
         getBillingEventSummary(),
         getBillingSummary(),
+        listRecentCommerceOrders(24),
+        listMarketingCouponTemplates(),
+        listMarketingCampaigns(),
+        listMarketingCampaignBudgets(),
+        listMarketingCouponCodes(),
+        listMarketingCouponReservations(),
+        listMarketingCouponRedemptions(),
+        listMarketingCouponRollbacks(),
+        listCommercialAccounts(),
+        listCommercialAccountHolds(),
+        listCommercialRequestSettlements(),
+        listCommercialPricingPlans(),
+        listCommercialPricingRates(),
         listRoutingDecisionLogs(),
         listProviderHealthSnapshots(),
         listRuntimeStatuses(),
       ]);
+
+      const commercialLedgerAccountIds = selectCommercialLedgerAccountIds(
+        commercialAccounts,
+        commercialRequestSettlements,
+      );
+      const commercePaymentAuditOrderIds = selectCommercePaymentAuditOrderIds(
+        commerceOrders,
+      );
+      const commercialAccountLedger = (
+        await Promise.all(
+          commercialLedgerAccountIds.map((accountId) => listCommercialAccountLedger(accountId)),
+        )
+      ).flat();
+      const commercePaymentEvents = (
+        await Promise.all(
+          commercePaymentAuditOrderIds.map((orderId) => listCommercePaymentEvents(orderId)),
+        )
+      ).flat();
 
       const nextSnapshot = buildSnapshot(explicitSessionUser, coupons, {
         operatorDirectory,
@@ -155,6 +297,21 @@ export function AdminWorkbenchProvider({ children }: { children: ReactNode }) {
         billingEvents,
         billingEventSummary,
         billingSummary,
+        commerceOrders,
+        commercePaymentEvents,
+        couponTemplates,
+        marketingCampaigns,
+        campaignBudgets,
+        couponCodes,
+        couponReservations,
+        couponRedemptions,
+        couponRollbacks,
+        commercialAccounts,
+        commercialAccountHolds,
+        commercialAccountLedger,
+        commercialRequestSettlements,
+        commercialPricingPlans,
+        commercialPricingRates,
         routingLogs,
         providerHealth,
         runtimeStatuses,
@@ -231,7 +388,16 @@ export function AdminWorkbenchProvider({ children }: { children: ReactNode }) {
     setStatus('Signed out of the super-admin workspace.');
     setAuthResolved(true);
   }
-  const actions = createWorkbenchActions({
+  const {
+    handleCloneCommercialPricingPlan,
+    handlePublishCommercialPricingPlan,
+    handleScheduleCommercialPricingPlan,
+    handleRetireCommercialPricingPlan,
+    handleSynchronizeCommercialPricingLifecycle,
+    handleUpdateCommercialPricingPlan,
+    handleUpdateCommercialPricingRate,
+    ...otherActions
+  } = createWorkbenchActions({
     refreshWorkspace: () => refreshWorkspace(),
     setStatus,
   });
@@ -245,7 +411,14 @@ export function AdminWorkbenchProvider({ children }: { children: ReactNode }) {
     refreshWorkspace,
     handleLogin,
     handleLogout,
-    ...actions,
+    ...otherActions,
+    handleCloneCommercialPricingPlan,
+    handlePublishCommercialPricingPlan,
+    handleScheduleCommercialPricingPlan,
+    handleRetireCommercialPricingPlan,
+    handleSynchronizeCommercialPricingLifecycle,
+    handleUpdateCommercialPricingPlan,
+    handleUpdateCommercialPricingRate,
   };
 
   return (

@@ -29,6 +29,7 @@ test('portal route pages expose contextual handoffs to the next user action', ()
   assert.match(billingPage, /Open usage/);
   assert.match(billingPage, /Open account/);
   assert.doesNotMatch(billingPage, /Activation path/);
+  assert.match(userPage, /data-slot="portal-user-toolbar"/);
   assert.match(userPage, /Return to command center/);
   assert.match(accountPage, /Search account history/);
 });

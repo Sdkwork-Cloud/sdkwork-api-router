@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateUploadRequest {
     pub purpose: String,
     pub filename: String,
@@ -24,7 +25,7 @@ impl CreateUploadRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct UploadObject {
     pub id: String,
     pub object: &'static str,
@@ -92,9 +93,10 @@ impl UploadObject {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct AddUploadPartRequest {
     pub upload_id: String,
+    #[schema(value_type = String, format = Binary)]
     pub data: Vec<u8>,
     pub filename: Option<String>,
     pub content_type: Option<String>,
@@ -121,7 +123,7 @@ impl AddUploadPartRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CompleteUploadRequest {
     #[serde(skip)]
     pub upload_id: String,
@@ -141,7 +143,7 @@ impl CompleteUploadRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct UploadPartObject {
     pub id: String,
     pub object: &'static str,

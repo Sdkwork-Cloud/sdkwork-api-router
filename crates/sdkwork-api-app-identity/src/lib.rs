@@ -1,10 +1,15 @@
 use anyhow::{anyhow, Result};
 use argon2::{
-    password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
+    password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
 };
-use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
-use rand_core::OsRng;
+use hmac::{Hmac, Mac};
+use jsonwebtoken::{
+    crypto::{CryptoProvider, JwkUtils, JwtSigner, JwtVerifier},
+    errors::{new_error, ErrorKind as JwtErrorKind, Result as JwtResult},
+    signature::{Signer, Verifier},
+    decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation,
+};
 use sdkwork_api_domain_billing::BillingAccountingMode;
 use sdkwork_api_domain_identity::{
     AdminUserProfile, AdminUserRecord, ApiKeyGroupRecord, GatewayApiKeyRecord, GatewayAuthSubject,
@@ -14,8 +19,11 @@ use sdkwork_api_domain_tenant::{Project, Tenant};
 use sdkwork_api_storage_core::{AdminStore, IdentityKernelStore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use sha2_010::Sha256 as JwtSha256;
 use std::str::FromStr;
+use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
+use utoipa::ToSchema;
 
 const ADMIN_JWT_ISSUER: &str = "sdkwork-admin";
 const ADMIN_JWT_AUDIENCE: &str = "sdkwork-admin-ui";
@@ -38,10 +46,103 @@ const DEFAULT_PORTAL_USER_ID: &str = "user_local_demo";
 const DEFAULT_PORTAL_TENANT_ID: &str = "tenant_local_demo";
 const DEFAULT_PORTAL_PROJECT_ID: &str = "project_local_demo";
 
+type HmacSha256 = Hmac<JwtSha256>;
+
+static HMAC_ONLY_JWT_PROVIDER: CryptoProvider = CryptoProvider {
+    signer_factory: hmac_jwt_signer_factory,
+    verifier_factory: hmac_jwt_verifier_factory,
+    jwk_utils: JwkUtils::new_unimplemented(),
+};
+
+#[derive(Clone)]
+struct Hs256Signer(HmacSha256);
+
+impl Hs256Signer {
+    fn new(encoding_key: &EncodingKey) -> JwtResult<Self> {
+        let inner = HmacSha256::new_from_slice(encoding_key.try_get_hmac_secret()?)
+            .map_err(|_| new_error(JwtErrorKind::InvalidKeyFormat))?;
+        Ok(Self(inner))
+    }
+}
+
+impl Signer<Vec<u8>> for Hs256Signer {
+    fn try_sign(&self, msg: &[u8]) -> std::result::Result<Vec<u8>, jsonwebtoken::signature::Error> {
+        let mut signer = self.0.clone();
+        signer.reset();
+        signer.update(msg);
+        Ok(signer.finalize().into_bytes().to_vec())
+    }
+}
+
+impl JwtSigner for Hs256Signer {
+    fn algorithm(&self) -> Algorithm {
+        Algorithm::HS256
+    }
+}
+
+#[derive(Clone)]
+struct Hs256Verifier(HmacSha256);
+
+impl Hs256Verifier {
+    fn new(decoding_key: &DecodingKey) -> JwtResult<Self> {
+        let inner = HmacSha256::new_from_slice(decoding_key.try_get_hmac_secret()?)
+            .map_err(|_| new_error(JwtErrorKind::InvalidKeyFormat))?;
+        Ok(Self(inner))
+    }
+}
+
+impl Verifier<Vec<u8>> for Hs256Verifier {
+    fn verify(
+        &self,
+        msg: &[u8],
+        signature: &Vec<u8>,
+    ) -> std::result::Result<(), jsonwebtoken::signature::Error> {
+        let mut verifier = self.0.clone();
+        verifier.reset();
+        verifier.update(msg);
+        verifier
+            .verify_slice(signature)
+            .map_err(jsonwebtoken::signature::Error::from_source)
+    }
+}
+
+impl JwtVerifier for Hs256Verifier {
+    fn algorithm(&self) -> Algorithm {
+        Algorithm::HS256
+    }
+}
+
+fn hmac_jwt_signer_factory(
+    algorithm: &Algorithm,
+    key: &EncodingKey,
+) -> JwtResult<Box<dyn JwtSigner>> {
+    match algorithm {
+        Algorithm::HS256 => Ok(Box::new(Hs256Signer::new(key)?)),
+        _ => Err(new_error(JwtErrorKind::InvalidAlgorithm)),
+    }
+}
+
+fn hmac_jwt_verifier_factory(
+    algorithm: &Algorithm,
+    key: &DecodingKey,
+) -> JwtResult<Box<dyn JwtVerifier>> {
+    match algorithm {
+        Algorithm::HS256 => Ok(Box::new(Hs256Verifier::new(key)?)),
+        _ => Err(new_error(JwtErrorKind::InvalidAlgorithm)),
+    }
+}
+
+fn ensure_jsonwebtoken_provider() {
+    static INSTALL_ONCE: OnceLock<()> = OnceLock::new();
+    INSTALL_ONCE.get_or_init(|| {
+        let _ = HMAC_ONLY_JWT_PROVIDER.install_default();
+    });
+}
+
 type AdminResult<T> = std::result::Result<T, AdminIdentityError>;
 type PortalResult<T> = std::result::Result<T, PortalIdentityError>;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct Claims {
     pub sub: String,
     pub iss: String,
@@ -50,7 +151,7 @@ pub struct Claims {
     pub iat: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct PortalClaims {
     pub sub: String,
     pub iss: String,
@@ -89,7 +190,7 @@ impl GatewayRequestContext {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct CreatedGatewayApiKey {
     pub plaintext: String,
     pub hashed: String,
@@ -141,13 +242,13 @@ pub struct PortalApiKeyGroupInput {
     pub default_accounting_mode: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct PortalWorkspaceScope {
     pub tenant_id: String,
     pub project_id: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct PortalAuthSession {
     pub token: String,
     pub user: PortalUserProfile,
@@ -160,7 +261,7 @@ pub struct AdminAuthSession {
     pub user: AdminUserProfile,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct PortalWorkspaceSummary {
     pub user: PortalUserProfile,
     pub tenant: Tenant,
@@ -250,10 +351,16 @@ impl From<anyhow::Error> for AdminIdentityError {
 pub fn hash_gateway_api_key(value: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(value.as_bytes());
-    format!("{:x}", hasher.finalize())
+    let digest = hasher.finalize();
+    let mut encoded = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        encoded.push_str(&format!("{byte:02x}"));
+    }
+    encoded
 }
 
 pub fn issue_jwt(subject: &str, signing_secret: &str) -> Result<String> {
+    ensure_jsonwebtoken_provider();
     let issued_at = now_epoch_secs()?;
     let claims = Claims {
         sub: subject.to_owned(),
@@ -270,6 +377,7 @@ pub fn issue_jwt(subject: &str, signing_secret: &str) -> Result<String> {
 }
 
 pub fn verify_jwt(token: &str, signing_secret: &str) -> Result<Claims> {
+    ensure_jsonwebtoken_provider();
     let mut validation = Validation::new(Algorithm::HS256);
     validation.set_audience(&[ADMIN_JWT_AUDIENCE]);
     validation.set_issuer(&[ADMIN_JWT_ISSUER]);
@@ -282,6 +390,7 @@ pub fn verify_jwt(token: &str, signing_secret: &str) -> Result<Claims> {
 }
 
 pub fn verify_portal_jwt(token: &str, signing_secret: &str) -> Result<PortalClaims> {
+    ensure_jsonwebtoken_provider();
     let mut validation = Validation::new(Algorithm::HS256);
     validation.set_audience(&[PORTAL_JWT_AUDIENCE]);
     validation.set_issuer(&[PORTAL_JWT_ISSUER]);
@@ -1008,6 +1117,27 @@ pub async fn resolve_gateway_request_context(
         api_key_hash: hashed_key,
         api_key_group_id: record.api_key_group_id,
     }))
+}
+
+pub fn gateway_auth_subject_from_request_context(
+    context: &GatewayRequestContext,
+) -> GatewayAuthSubject {
+    GatewayAuthSubject::for_api_key(
+        stable_gateway_principal_id("tenant", &[context.tenant_id()]),
+        stable_gateway_principal_id(
+            "organization",
+            &[context.tenant_id(), context.project_id()],
+        ),
+        stable_gateway_principal_id("project_principal", &[context.tenant_id(), context.project_id()]),
+        stable_gateway_principal_id("api_key", &[context.api_key_hash()]),
+        context.api_key_hash().to_owned(),
+    )
+    .with_platform("gateway")
+    .with_owner(format!(
+        "project:{}:{}",
+        context.tenant_id(),
+        context.project_id()
+    ))
 }
 
 pub async fn resolve_gateway_auth_subject_from_api_key<S>(
@@ -1821,6 +1951,7 @@ fn portal_session_from_user(
 }
 
 fn issue_portal_jwt(user: &PortalUserRecord, signing_secret: &str) -> PortalResult<String> {
+    ensure_jsonwebtoken_provider();
     let issued_at = now_epoch_secs().map_err(PortalIdentityError::from)?;
     let claims = PortalClaims {
         sub: user.id.clone(),
@@ -1913,8 +2044,23 @@ fn validate_current_password(password: &str) -> std::result::Result<(), String> 
 }
 
 fn validate_password_strength(password: &str) -> std::result::Result<(), String> {
-    if password.len() < 8 {
-        return Err("password must be at least 8 characters".to_owned());
+    if password.chars().count() < 12 {
+        return Err("password must be at least 12 characters".to_owned());
+    }
+    if password.chars().any(char::is_whitespace) {
+        return Err("password must not contain whitespace".to_owned());
+    }
+    if !password.chars().any(|ch| ch.is_ascii_uppercase()) {
+        return Err("password must include an uppercase letter".to_owned());
+    }
+    if !password.chars().any(|ch| ch.is_ascii_lowercase()) {
+        return Err("password must include a lowercase letter".to_owned());
+    }
+    if !password.chars().any(|ch| ch.is_ascii_digit()) {
+        return Err("password must include a number".to_owned());
+    }
+    if !password.chars().any(|ch| ch.is_ascii_punctuation()) {
+        return Err("password must include a special character".to_owned());
     }
     Ok(())
 }
@@ -2112,6 +2258,21 @@ fn default_gateway_api_key_label(environment: &str) -> String {
     format!("{} gateway key", environment.trim())
 }
 
+fn stable_gateway_principal_id(scope: &str, parts: &[&str]) -> u64 {
+    let mut hasher = Sha256::new();
+    hasher.update(b"sdkwork.gateway-commercial-principal.v1");
+    hasher.update([0x1f]);
+    hasher.update(scope.as_bytes());
+    for part in parts {
+        hasher.update([0x1f]);
+        hasher.update(part.as_bytes());
+    }
+    let digest = hasher.finalize();
+    let mut bytes = [0_u8; 8];
+    bytes.copy_from_slice(&digest[..8]);
+    (u64::from_be_bytes(bytes) & 0x3fff_ffff_ffff_ffff) | (1_u64 << 62)
+}
+
 fn normalize_gateway_api_key_label(label: &str) -> String {
     let trimmed = label.trim();
     if trimmed.is_empty() {
@@ -2258,4 +2419,32 @@ fn now_epoch_millis() -> Result<u64> {
             .map_err(|_| anyhow!("system clock error"))?
             .as_millis(),
     )?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_password_strength;
+
+    #[test]
+    fn validate_password_strength_rejects_weak_password_shapes() {
+        let cases = [
+            ("Short1!", "password must be at least 12 characters"),
+            ("password1234!", "password must include an uppercase letter"),
+            ("PASSWORD1234!", "password must include a lowercase letter"),
+            ("PasswordOnly!!", "password must include a number"),
+            ("Password1234", "password must include a special character"),
+            ("Password 123!", "password must not contain whitespace"),
+        ];
+
+        for (password, expected) in cases {
+            let error = validate_password_strength(password).unwrap_err();
+            assert_eq!(error, expected, "password `{password}`");
+        }
+    }
+
+    #[test]
+    fn validate_password_strength_accepts_strong_passwords() {
+        assert!(validate_password_strength("Password1234!").is_ok());
+        assert!(validate_password_strength("ChangeMe123!").is_ok());
+    }
 }

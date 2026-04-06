@@ -26,4 +26,14 @@ export {
   embeddedAdminDataTableClassName,
   embeddedAdminDataTableSlotProps,
 } from './tableShell';
+export {
+  countCurrentlyEffectiveCommercialPricingPlans,
+  commercialPricingChargeUnitLabel,
+  commercialPricingDisplayUnit,
+  commercialPricingMethodLabel,
+  isCommercialPricingPlanEffectiveAt,
+  compareCommercialPricingRates,
+  selectPrimaryCommercialPricingPlan,
+  selectPrimaryCommercialPricingRate,
+} from './commercialPricing';
 export { AdminWorkbenchProvider, useAdminWorkbench } from './workbench';

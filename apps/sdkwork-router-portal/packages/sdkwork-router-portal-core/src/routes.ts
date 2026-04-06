@@ -47,14 +47,6 @@ export const portalRoutes: PortalRouteDefinition[] = [
     sidebarVisible: false,
   },
   {
-    key: 'billing',
-    group: 'revenue',
-    labelKey: 'Billing',
-    eyebrowKey: 'Commerce',
-    detailKey: 'Plans, recharge packs, and billing recovery',
-    sidebarVisible: false,
-  },
-  {
     key: 'credits',
     group: 'revenue',
     labelKey: 'Redeem',
@@ -67,6 +59,21 @@ export const portalRoutes: PortalRouteDefinition[] = [
     labelKey: 'Recharge',
     eyebrowKey: 'Balance',
     detailKey: 'Top up balance with server-managed recharge options',
+  },
+  {
+    key: 'billing',
+    group: 'revenue',
+    labelKey: 'Billing',
+    eyebrowKey: 'Commerce',
+    detailKey: 'Plans, recharge packs, and billing recovery',
+    sidebarVisible: false,
+  },
+  {
+    key: 'settlements',
+    group: 'revenue',
+    labelKey: 'Settlements',
+    eyebrowKey: 'Evidence',
+    detailKey: 'Canonical holds, request settlements, and pricing posture',
   },
   {
     key: 'account',

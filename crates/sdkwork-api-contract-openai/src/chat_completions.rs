@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ChatMessageInput {
     pub role: String,
     pub content: Value,
@@ -9,7 +10,7 @@ pub struct ChatMessageInput {
     pub extra: Map<String, Value>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateChatCompletionRequest {
     pub model: String,
     pub messages: Vec<ChatMessageInput>,
@@ -18,7 +19,7 @@ pub struct CreateChatCompletionRequest {
     pub extra: Map<String, Value>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct UpdateChatCompletionRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Value>,
@@ -32,19 +33,19 @@ impl UpdateChatCompletionRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ChunkChoice {
     pub index: u32,
     pub delta: ChunkDelta,
     pub finish_reason: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Default)]
+#[derive(Debug, Clone, Serialize, Default, ToSchema)]
 pub struct ChunkDelta {
     pub content: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ChatCompletionChunk {
     pub id: String,
     pub object: &'static str,
@@ -67,20 +68,20 @@ impl ChatCompletionChunk {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ChatCompletionMessage {
     pub role: &'static str,
     pub content: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ChatCompletionChoice {
     pub index: u32,
     pub message: ChatCompletionMessage,
     pub finish_reason: &'static str,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ChatCompletionResponse {
     pub id: String,
     pub object: &'static str,
@@ -115,7 +116,7 @@ impl ChatCompletionResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ListChatCompletionsResponse {
     pub object: &'static str,
     pub data: Vec<ChatCompletionResponse>,
@@ -130,7 +131,7 @@ impl ListChatCompletionsResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct DeleteChatCompletionResponse {
     pub id: String,
     pub object: &'static str,
@@ -147,7 +148,7 @@ impl DeleteChatCompletionResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ChatCompletionMessageObject {
     pub id: String,
     pub object: &'static str,
@@ -166,7 +167,7 @@ impl ChatCompletionMessageObject {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ListChatCompletionMessagesResponse {
     pub object: &'static str,
     pub data: Vec<ChatCompletionMessageObject>,

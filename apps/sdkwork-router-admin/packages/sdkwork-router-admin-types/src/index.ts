@@ -3,6 +3,8 @@ export type AdminRouteKey =
   | 'users'
   | 'tenants'
   | 'coupons'
+  | 'commercial'
+  | 'pricing'
   | 'api-keys'
   | 'rate-limits'
   | 'route-config'
@@ -64,6 +66,8 @@ export type AdminRouteModuleId =
   | 'sdkwork-router-admin-users'
   | 'sdkwork-router-admin-tenants'
   | 'sdkwork-router-admin-coupons'
+  | 'sdkwork-router-admin-commercial'
+  | 'sdkwork-router-admin-pricing'
   | 'sdkwork-router-admin-apirouter'
   | 'sdkwork-router-admin-catalog'
   | 'sdkwork-router-admin-traffic'
@@ -145,6 +149,131 @@ export interface CouponRecord {
   expires_on: string;
 }
 
+export type MarketingBenefitKind = 'percentage_off' | 'fixed_amount_off' | 'grant_units';
+export type MarketingStackingPolicy = 'exclusive' | 'stackable' | 'best_of_group';
+export type MarketingSubjectScope = 'user' | 'project' | 'workspace' | 'account';
+export type CouponTemplateStatus = 'draft' | 'active' | 'archived';
+export type CouponDistributionKind = 'shared_code' | 'unique_code' | 'auto_claim';
+export type MarketingCampaignStatus =
+  | 'draft'
+  | 'scheduled'
+  | 'active'
+  | 'paused'
+  | 'ended'
+  | 'archived';
+export type CampaignBudgetStatus = 'draft' | 'active' | 'exhausted' | 'closed';
+export type CouponCodeStatus = 'available' | 'reserved' | 'redeemed' | 'expired' | 'disabled';
+export type CouponReservationStatus = 'reserved' | 'released' | 'confirmed' | 'expired';
+export type CouponRedemptionStatus =
+  | 'pending'
+  | 'redeemed'
+  | 'partially_rolled_back'
+  | 'rolled_back'
+  | 'failed';
+export type CouponRollbackType = 'cancel' | 'refund' | 'partial_refund' | 'manual';
+export type CouponRollbackStatus = 'pending' | 'completed' | 'failed';
+
+export interface CouponBenefitSpec {
+  benefit_kind: MarketingBenefitKind;
+  subsidy_percent?: number | null;
+  subsidy_amount_minor?: number | null;
+  grant_units?: number | null;
+  currency_code?: string | null;
+}
+
+export interface CouponRestrictionSpec {
+  subject_scope: MarketingSubjectScope;
+  min_order_amount_minor?: number | null;
+  first_order_only: boolean;
+  new_customer_only: boolean;
+  exclusive_group?: string | null;
+  stacking_policy: MarketingStackingPolicy;
+  max_redemptions_per_subject?: number | null;
+  eligible_target_kinds: string[];
+}
+
+export interface CouponTemplateRecord {
+  coupon_template_id: string;
+  template_key: string;
+  display_name: string;
+  status: CouponTemplateStatus;
+  distribution_kind: CouponDistributionKind;
+  benefit: CouponBenefitSpec;
+  restriction: CouponRestrictionSpec;
+  created_at_ms: number;
+  updated_at_ms: number;
+}
+
+export interface MarketingCampaignRecord {
+  marketing_campaign_id: string;
+  coupon_template_id: string;
+  display_name: string;
+  status: MarketingCampaignStatus;
+  start_at_ms?: number | null;
+  end_at_ms?: number | null;
+  created_at_ms: number;
+  updated_at_ms: number;
+}
+
+export interface CampaignBudgetRecord {
+  campaign_budget_id: string;
+  marketing_campaign_id: string;
+  status: CampaignBudgetStatus;
+  total_budget_minor: number;
+  reserved_budget_minor: number;
+  consumed_budget_minor: number;
+  created_at_ms: number;
+  updated_at_ms: number;
+}
+
+export interface CouponCodeRecord {
+  coupon_code_id: string;
+  coupon_template_id: string;
+  code_value: string;
+  status: CouponCodeStatus;
+  claimed_subject_scope?: MarketingSubjectScope | null;
+  claimed_subject_id?: string | null;
+  expires_at_ms?: number | null;
+  created_at_ms: number;
+  updated_at_ms: number;
+}
+
+export interface CouponReservationRecord {
+  coupon_reservation_id: string;
+  coupon_code_id: string;
+  subject_scope: MarketingSubjectScope;
+  subject_id: string;
+  reservation_status: CouponReservationStatus;
+  budget_reserved_minor: number;
+  expires_at_ms: number;
+  created_at_ms: number;
+  updated_at_ms: number;
+}
+
+export interface CouponRedemptionRecord {
+  coupon_redemption_id: string;
+  coupon_reservation_id: string;
+  coupon_code_id: string;
+  coupon_template_id: string;
+  redemption_status: CouponRedemptionStatus;
+  subsidy_amount_minor: number;
+  order_id?: string | null;
+  payment_event_id?: string | null;
+  redeemed_at_ms: number;
+  updated_at_ms: number;
+}
+
+export interface CouponRollbackRecord {
+  coupon_rollback_id: string;
+  coupon_redemption_id: string;
+  rollback_type: CouponRollbackType;
+  rollback_status: CouponRollbackStatus;
+  restored_budget_minor: number;
+  restored_inventory_count: number;
+  created_at_ms: number;
+  updated_at_ms: number;
+}
+
 export interface TenantRecord {
   id: string;
   name: string;
@@ -154,6 +283,78 @@ export interface ProjectRecord {
   tenant_id: string;
   id: string;
   name: string;
+}
+
+export type CommerceOrderStatus =
+  | 'pending_payment'
+  | 'fulfilled'
+  | 'canceled'
+  | 'failed'
+  | 'refunded';
+
+export type CommercePaymentEventType =
+  | 'settled'
+  | 'failed'
+  | 'canceled'
+  | 'refunded';
+
+export type CommercePaymentEventProcessingStatus =
+  | 'received'
+  | 'processed'
+  | 'ignored'
+  | 'rejected'
+  | 'failed';
+
+export interface CommerceOrderRecord {
+  order_id: string;
+  project_id: string;
+  user_id: string;
+  target_kind: string;
+  target_id: string;
+  target_name: string;
+  list_price_cents: number;
+  payable_price_cents: number;
+  list_price_label: string;
+  payable_price_label: string;
+  granted_units: number;
+  bonus_units: number;
+  applied_coupon_code?: string | null;
+  coupon_reservation_id?: string | null;
+  coupon_redemption_id?: string | null;
+  marketing_campaign_id?: string | null;
+  subsidy_amount_minor: number;
+  status: CommerceOrderStatus;
+  source: string;
+  created_at_ms: number;
+  updated_at_ms: number;
+}
+
+export interface CommercePaymentEventRecord {
+  payment_event_id: string;
+  order_id: string;
+  project_id: string;
+  user_id: string;
+  provider: string;
+  provider_event_id?: string | null;
+  dedupe_key: string;
+  event_type: CommercePaymentEventType;
+  payload_json: string;
+  processing_status: CommercePaymentEventProcessingStatus;
+  processing_message?: string | null;
+  received_at_ms: number;
+  processed_at_ms?: number | null;
+  order_status_after?: CommerceOrderStatus | null;
+}
+
+export interface CommerceOrderAuditRecord {
+  order: CommerceOrderRecord;
+  payment_events: CommercePaymentEventRecord[];
+  coupon_reservation?: CouponReservationRecord | null;
+  coupon_redemption?: CouponRedemptionRecord | null;
+  coupon_rollbacks: CouponRollbackRecord[];
+  coupon_code?: CouponCodeRecord | null;
+  coupon_template?: CouponTemplateRecord | null;
+  marketing_campaign?: MarketingCampaignRecord | null;
 }
 
 export interface GatewayApiKeyRecord {
@@ -186,6 +387,296 @@ export interface ApiKeyGroupRecord {
   active: boolean;
   created_at_ms: number;
   updated_at_ms: number;
+}
+
+export type CommercialAccountType = 'primary' | 'grant' | 'postpaid';
+export type CommercialAccountStatus = 'active' | 'suspended' | 'closed';
+export type CommercialAccountBenefitType =
+  | 'cash_credit'
+  | 'promo_credit'
+  | 'request_allowance'
+  | 'token_allowance'
+  | 'image_allowance'
+  | 'audio_allowance'
+  | 'video_allowance'
+  | 'music_allowance';
+export type CommercialAccountBenefitSourceType =
+  | 'recharge'
+  | 'coupon'
+  | 'grant'
+  | 'order'
+  | 'manual_adjustment';
+export type CommercialAccountBenefitLotStatus =
+  | 'active'
+  | 'exhausted'
+  | 'expired'
+  | 'disabled';
+export type CommercialAccountHoldStatus =
+  | 'held'
+  | 'captured'
+  | 'partially_released'
+  | 'released'
+  | 'expired'
+  | 'failed';
+export type CommercialRequestSettlementStatus =
+  | 'pending'
+  | 'captured'
+  | 'partially_released'
+  | 'released'
+  | 'refunded'
+  | 'failed';
+export type CommercialAccountLedgerEntryType =
+  | 'hold_create'
+  | 'hold_release'
+  | 'settlement_capture'
+  | 'grant_issue'
+  | 'manual_adjustment'
+  | 'refund';
+
+export interface CommercialAccountRecord {
+  account_id: number;
+  tenant_id: number;
+  organization_id: number;
+  user_id: number;
+  account_type: CommercialAccountType;
+  currency_code: string;
+  credit_unit_code: string;
+  status: CommercialAccountStatus;
+  allow_overdraft: boolean;
+  overdraft_limit: number;
+  created_at_ms: number;
+  updated_at_ms: number;
+}
+
+export interface CommercialAccountLotBalanceSnapshot {
+  lot_id: number;
+  benefit_type: CommercialAccountBenefitType;
+  scope_json?: string | null;
+  expires_at_ms?: number | null;
+  original_quantity: number;
+  remaining_quantity: number;
+  held_quantity: number;
+  available_quantity: number;
+}
+
+export interface CommercialAccountBalanceSnapshot {
+  account_id: number;
+  available_balance: number;
+  held_balance: number;
+  consumed_balance: number;
+  grant_balance: number;
+  active_lot_count: number;
+  lots: CommercialAccountLotBalanceSnapshot[];
+}
+
+export interface CommercialAccountSummary {
+  account: CommercialAccountRecord;
+  available_balance: number;
+  held_balance: number;
+  consumed_balance: number;
+  grant_balance: number;
+  active_lot_count: number;
+}
+
+export interface CommercialAccountBenefitLotRecord {
+  lot_id: number;
+  tenant_id: number;
+  organization_id: number;
+  account_id: number;
+  user_id: number;
+  benefit_type: CommercialAccountBenefitType;
+  source_type: CommercialAccountBenefitSourceType;
+  source_id?: number | null;
+  scope_json?: string | null;
+  original_quantity: number;
+  remaining_quantity: number;
+  held_quantity: number;
+  priority: number;
+  acquired_unit_cost?: number | null;
+  issued_at_ms: number;
+  expires_at_ms?: number | null;
+  status: CommercialAccountBenefitLotStatus;
+  created_at_ms: number;
+  updated_at_ms: number;
+}
+
+export interface CommercialAccountHoldRecord {
+  hold_id: number;
+  tenant_id: number;
+  organization_id: number;
+  account_id: number;
+  user_id: number;
+  request_id: number;
+  status: CommercialAccountHoldStatus;
+  estimated_quantity: number;
+  captured_quantity: number;
+  released_quantity: number;
+  expires_at_ms: number;
+  created_at_ms: number;
+  updated_at_ms: number;
+}
+
+export interface CommercialRequestSettlementRecord {
+  request_settlement_id: number;
+  tenant_id: number;
+  organization_id: number;
+  request_id: number;
+  account_id: number;
+  user_id: number;
+  hold_id?: number | null;
+  status: CommercialRequestSettlementStatus;
+  estimated_credit_hold: number;
+  released_credit_amount: number;
+  captured_credit_amount: number;
+  provider_cost_amount: number;
+  retail_charge_amount: number;
+  shortfall_amount: number;
+  refunded_amount: number;
+  settled_at_ms: number;
+  created_at_ms: number;
+  updated_at_ms: number;
+}
+
+export interface CommercialAccountLedgerEntryRecord {
+  ledger_entry_id: number;
+  tenant_id: number;
+  organization_id: number;
+  account_id: number;
+  user_id: number;
+  request_id?: number | null;
+  hold_id?: number | null;
+  entry_type: CommercialAccountLedgerEntryType;
+  benefit_type?: string | null;
+  quantity: number;
+  amount: number;
+  created_at_ms: number;
+}
+
+export interface CommercialAccountLedgerAllocationRecord {
+  ledger_allocation_id: number;
+  tenant_id: number;
+  organization_id: number;
+  ledger_entry_id: number;
+  lot_id: number;
+  quantity_delta: number;
+  created_at_ms: number;
+}
+
+export interface CommercialAccountLedgerHistoryEntry {
+  entry: CommercialAccountLedgerEntryRecord;
+  allocations: CommercialAccountLedgerAllocationRecord[];
+}
+
+export interface CommercialPricingPlanRecord {
+  pricing_plan_id: number;
+  tenant_id: number;
+  organization_id: number;
+  plan_code: string;
+  plan_version: number;
+  display_name: string;
+  currency_code: string;
+  credit_unit_code: string;
+  status: string;
+  effective_from_ms: number;
+  effective_to_ms?: number | null;
+  created_at_ms: number;
+  updated_at_ms: number;
+}
+
+export type CommercialPricingChargeUnit =
+  | 'input_token'
+  | 'output_token'
+  | 'cache_read_token'
+  | 'cache_write_token'
+  | 'request'
+  | 'image'
+  | 'audio_second'
+  | 'audio_minute'
+  | 'video_second'
+  | 'video_minute'
+  | 'music_track'
+  | 'character'
+  | 'storage_mb_day'
+  | 'tool_call'
+  | 'unit';
+
+export type CommercialPricingMethod =
+  | 'per_unit'
+  | 'flat'
+  | 'step'
+  | 'included_then_per_unit';
+
+export interface CommercialPricingRateRecord {
+  pricing_rate_id: number;
+  tenant_id: number;
+  organization_id: number;
+  pricing_plan_id: number;
+  metric_code: string;
+  capability_code?: string | null;
+  model_code?: string | null;
+  provider_code?: string | null;
+  charge_unit: CommercialPricingChargeUnit;
+  pricing_method: CommercialPricingMethod;
+  quantity_step: number;
+  unit_price: number;
+  display_price_unit: string;
+  minimum_billable_quantity: number;
+  minimum_charge: number;
+  rounding_increment: number;
+  rounding_mode: string;
+  included_quantity: number;
+  priority: number;
+  notes?: string | null;
+  status: string;
+  created_at_ms: number;
+  updated_at_ms: number;
+}
+
+export interface CommercialPricingPlanCreateInput {
+  tenant_id: number;
+  organization_id: number;
+  plan_code: string;
+  plan_version: number;
+  display_name: string;
+  currency_code: string;
+  credit_unit_code: string;
+  status: string;
+  effective_from_ms: number;
+  effective_to_ms?: number | null;
+}
+
+export interface CommercialPricingRateCreateInput {
+  tenant_id: number;
+  organization_id: number;
+  pricing_plan_id: number;
+  metric_code: string;
+  capability_code?: string | null;
+  model_code?: string | null;
+  provider_code?: string | null;
+  charge_unit: CommercialPricingChargeUnit;
+  pricing_method: CommercialPricingMethod;
+  quantity_step: number;
+  unit_price: number;
+  display_price_unit: string;
+  minimum_billable_quantity: number;
+  minimum_charge: number;
+  rounding_increment: number;
+  rounding_mode: string;
+  included_quantity: number;
+  priority: number;
+  notes?: string | null;
+  status: string;
+}
+
+export interface CommercialPricingLifecycleSynchronizationReport {
+  changed: boolean;
+  due_group_count: number;
+  activated_plan_count: number;
+  archived_plan_count: number;
+  activated_rate_count: number;
+  archived_rate_count: number;
+  skipped_plan_count: number;
+  synchronized_at_ms: number;
 }
 
 export type BillingAccountingMode = 'platform_credit' | 'byok' | 'passthrough';
@@ -553,6 +1044,13 @@ export interface AdminWorkspaceSnapshot {
   operatorUsers: ManagedUser[];
   portalUsers: ManagedUser[];
   coupons: CouponRecord[];
+  couponTemplates: CouponTemplateRecord[];
+  marketingCampaigns: MarketingCampaignRecord[];
+  campaignBudgets: CampaignBudgetRecord[];
+  couponCodes: CouponCodeRecord[];
+  couponReservations: CouponReservationRecord[];
+  couponRedemptions: CouponRedemptionRecord[];
+  couponRollbacks: CouponRollbackRecord[];
   tenants: TenantRecord[];
   projects: ProjectRecord[];
   apiKeys: GatewayApiKeyRecord[];
@@ -572,6 +1070,14 @@ export interface AdminWorkspaceSnapshot {
   billingEvents: BillingEventRecord[];
   billingEventSummary: BillingEventSummary;
   billingSummary: BillingSummary;
+  commerceOrders: CommerceOrderRecord[];
+  commercePaymentEvents: CommercePaymentEventRecord[];
+  commercialAccounts: CommercialAccountSummary[];
+  commercialAccountHolds: CommercialAccountHoldRecord[];
+  commercialAccountLedger: CommercialAccountLedgerHistoryEntry[];
+  commercialRequestSettlements: CommercialRequestSettlementRecord[];
+  commercialPricingPlans: CommercialPricingPlanRecord[];
+  commercialPricingRates: CommercialPricingRateRecord[];
   routingLogs: RoutingDecisionLogRecord[];
   providerHealth: ProviderHealthSnapshot[];
   runtimeStatuses: RuntimeStatusRecord[];

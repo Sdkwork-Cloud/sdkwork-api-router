@@ -66,6 +66,31 @@ async fn vector_store_file_retrieve_route_returns_ok() {
 }
 
 #[tokio::test]
+async fn vector_store_file_retrieve_route_returns_not_found_for_unknown_file() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/vector_stores/vs_1/files/file_missing")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(
+        json["error"]["message"],
+        "Requested vector store file was not found."
+    );
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+}
+
+#[tokio::test]
 async fn vector_store_file_delete_route_returns_ok() {
     let app = sdkwork_api_interface_http::gateway_router();
     let response = app
@@ -80,6 +105,31 @@ async fn vector_store_file_delete_route_returns_ok() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn vector_store_file_delete_route_returns_not_found_for_unknown_file() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/v1/vector_stores/vs_1/files/file_missing")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(
+        json["error"]["message"],
+        "Requested vector store file was not found."
+    );
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
 }
 
 #[tokio::test]
@@ -561,8 +611,8 @@ async fn stateful_vector_store_file_usage_uses_vector_store_route_key_for_provid
 }
 
 #[tokio::test]
-async fn stateful_vector_store_file_create_usage_uses_vector_store_route_key_for_provider_selection(
-) {
+async fn stateful_vector_store_file_create_usage_uses_vector_store_route_key_for_provider_selection()
+ {
     let tenant_id = "tenant-vector-file-create";
     let project_id = "project-vector-file-create";
     let upstream_state = UpstreamCaptureState::default();
@@ -962,6 +1012,81 @@ async fn stateful_vector_store_file_create_usage_uses_created_vector_store_file_
         "vs_1",
     )
     .await;
+}
+
+#[tokio::test]
+async fn stateful_vector_store_file_retrieve_route_returns_not_found_without_usage() {
+    let pool = memory_pool().await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let api_key = support::issue_gateway_api_key(
+        &pool,
+        "tenant-vector-file-retrieve-missing",
+        "project-vector-file-retrieve-missing",
+    )
+    .await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+
+    let response = gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/vector_stores/vs_1/files/file_missing")
+                .header("authorization", format!("Bearer {api_key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(
+        json["error"]["message"],
+        "Requested vector store file was not found."
+    );
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+
+    support::assert_no_usage_records(admin_app, &admin_token).await;
+}
+
+#[tokio::test]
+async fn stateful_vector_store_file_delete_route_returns_not_found_without_usage() {
+    let pool = memory_pool().await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let api_key = support::issue_gateway_api_key(
+        &pool,
+        "tenant-vector-file-delete-missing",
+        "project-vector-file-delete-missing",
+    )
+    .await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+
+    let response = gateway_app
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/v1/vector_stores/vs_1/files/file_missing")
+                .header("authorization", format!("Bearer {api_key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(
+        json["error"]["message"],
+        "Requested vector store file was not found."
+    );
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+
+    support::assert_no_usage_records(admin_app, &admin_token).await;
 }
 
 async fn upstream_vector_store_files_handler(

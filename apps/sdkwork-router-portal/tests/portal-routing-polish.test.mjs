@@ -61,7 +61,7 @@ test('routing module speaks in user-facing routing posture language', () => {
   const routingPage = read('packages/sdkwork-router-portal-routing/src/pages/index.tsx');
   const routingServices = read('packages/sdkwork-router-portal-routing/src/services/index.ts');
 
-  assert.match(routingPage, /SectionHeader/);
+  assert.match(routingPage, /data-slot="portal-routing-toolbar"/);
   assert.match(routingPage, /ManagementWorkbench/);
   assert.match(routingPage, /Routing workbench/);
   assert.match(routingPage, /Preset catalog/);
@@ -75,6 +75,7 @@ test('routing module speaks in user-facing routing posture language', () => {
   assert.match(routingPage, /Selection seed/);
   assert.match(routingPage, /Search routing evidence/);
   assert.match(routingPage, /Save posture/);
+  assert.doesNotMatch(routingPage, /<SectionHeader/);
   assert.doesNotMatch(routingPage, /<Surface/);
   assert.doesNotMatch(routingPage, /<Tabs/);
   assert.doesNotMatch(routingPage, /Policy editor/);
@@ -102,10 +103,11 @@ test('routing dialogs, actions, and status feedback localize through shared port
     routingPage,
     /t\(\s*'Preview updated with the current routing posture and added to the evidence stream\.'/,
   );
+  assert.match(routingPage, /data-slot="portal-routing-toolbar"/);
   assert.match(routingPage, /t\('Edit posture'\)/);
   assert.match(routingPage, /t\('Run preview'\)/);
   assert.match(routingPage, /t\('Manage routing profiles'\)/);
-  assert.match(routingPage, /title=\{t\('Routing'\)\}/);
+  assert.doesNotMatch(routingPage, /title=\{t\('Routing'\)\}/);
   assert.match(routingPage, /title=\{t\('Preparing routing workbench'\)\}/);
 
   assert.match(commons, /'Edit routing posture'/);

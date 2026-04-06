@@ -30,6 +30,24 @@ async fn completions_route_returns_ok() {
     assert_eq!(response.status(), StatusCode::OK);
 }
 
+#[tokio::test]
+async fn completions_route_returns_invalid_request_for_missing_model() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/completions")
+                .header("content-type", "application/json")
+                .body(Body::from("{\"model\":\"\",\"prompt\":\"hi\"}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_invalid_completion_request(response).await;
+}
+
 async fn read_json(response: axum::response::Response) -> Value {
     let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
@@ -205,6 +223,36 @@ async fn stateful_completions_route_relays_to_openai_compatible_provider() {
     );
 }
 
+#[tokio::test]
+async fn stateful_completions_route_returns_invalid_request_for_missing_model_without_usage() {
+    let pool = memory_pool().await;
+    let api_key = support::issue_gateway_api_key(
+        &pool,
+        "tenant-completion-invalid",
+        "project-completion-invalid",
+    )
+    .await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+
+    let response = gateway_app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/completions")
+                .header("authorization", format!("Bearer {api_key}"))
+                .header("content-type", "application/json")
+                .body(Body::from("{\"model\":\"\",\"prompt\":\"hi\"}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_invalid_completion_request(response).await;
+    support::assert_no_usage_records(admin_app, &admin_token).await;
+}
+
 async fn upstream_completions_handler(
     State(state): State<UpstreamCaptureState>,
     headers: axum::http::HeaderMap,
@@ -222,4 +270,12 @@ async fn upstream_completions_handler(
             "choices":[{"index":0,"text":"relay completion","finish_reason":"stop"}]
         })),
     )
+}
+
+async fn assert_invalid_completion_request(response: axum::response::Response) {
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["message"], "Completion model is required.");
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "invalid_model");
 }

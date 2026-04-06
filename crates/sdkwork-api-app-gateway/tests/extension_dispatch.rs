@@ -28,6 +28,7 @@ use sdkwork_api_extension_host::{
 use sdkwork_api_provider_core::ProviderRequest;
 use sdkwork_api_storage_sqlite::{run_migrations, SqliteAdminStore};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use serial_test::serial;
 use std::fs;
 use std::io::{Read, Write};
@@ -290,6 +291,7 @@ async fn discovered_connector_extension_can_relay_through_supported_protocol() {
         let upstream_state = upstream_state.clone();
         move || serve_connector_compatible_upstream(listener, upstream_state, 2)
     });
+    wait_for_health(&format!("http://{address}")).await;
 
     let pool = run_migrations("sqlite::memory:").await.unwrap();
     let store = SqliteAdminStore::new(pool);
@@ -397,6 +399,7 @@ async fn extension_host_cache_reuses_configured_host_for_stable_policy() {
         let upstream_state = upstream_state.clone();
         move || serve_connector_compatible_upstream(listener, upstream_state, 2)
     });
+    wait_for_health(&format!("http://{address}")).await;
 
     let request = chat_request("gpt-4.1");
     let first_response = execute_json_provider_request_with_runtime(
@@ -587,6 +590,7 @@ async fn unsigned_discovered_connector_extension_is_blocked_when_signature_is_re
         let upstream_state = upstream_state.clone();
         move || serve_connector_compatible_upstream(listener, upstream_state, 1)
     });
+    wait_for_health(&format!("http://{address}")).await;
 
     let pool = run_migrations("sqlite::memory:").await.unwrap();
     let store = SqliteAdminStore::new(pool);
@@ -1124,8 +1128,28 @@ fn serve_connector_compatible_upstream(
     state: UpstreamCaptureState,
     expected_requests: usize,
 ) {
-    for _ in 0..expected_requests {
-        let (mut stream, _) = listener.accept().unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let mut handled_requests = 0_usize;
+    let mut idle_since = None;
+    loop {
+        let (mut stream, _) = match listener.accept() {
+            Ok(connection) => {
+                idle_since = None;
+                connection
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                if handled_requests >= expected_requests {
+                    let idle_for = idle_since.get_or_insert_with(std::time::Instant::now);
+                    if idle_for.elapsed() >= Duration::from_millis(200) {
+                        break;
+                    }
+                }
+                thread::sleep(Duration::from_millis(10));
+                continue;
+            }
+            Err(error) => panic!("connector-compatible upstream accept failed: {error}"),
+        };
+        handled_requests += 1;
         let mut buffer = [0_u8; 4096];
         let bytes_read = stream.read(&mut buffer).unwrap();
         let request = String::from_utf8_lossy(&buffer[..bytes_read]);
@@ -1453,7 +1477,6 @@ fn sign_native_dynamic_package(
     signing_key: &SigningKey,
 ) -> String {
     use ed25519_dalek::Signer;
-    use sha2::{Digest, Sha256};
 
     #[derive(serde::Serialize)]
     struct PackageSignaturePayload<'a> {
@@ -1480,13 +1503,22 @@ fn sign_native_dynamic_package(
                 .unwrap()
                 .to_string_lossy()
                 .replace('\\', "/"),
-            sha256: format!("{:x}", Sha256::digest(std::fs::read(&path).unwrap())),
+            sha256: sha256_hex_path(&path),
         })
         .collect::<Vec<_>>();
 
     let payload = serde_json::to_vec(&PackageSignaturePayload { manifest, files }).unwrap();
     let signature = signing_key.sign(&payload);
     STANDARD.encode(signature.to_bytes())
+}
+
+fn sha256_hex_path(path: &Path) -> String {
+    let digest = Sha256::digest(std::fs::read(path).unwrap());
+    let mut encoded = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        encoded.push_str(&format!("{byte:02x}"));
+    }
+    encoded
 }
 
 struct NativeDynamicLifecycleLogGuard {

@@ -55,6 +55,7 @@ const routeIcons: Record<PortalRouteKey, LucideIcon> = {
   credits: Coins,
   recharge: WalletCards,
   billing: WalletCards,
+  settlements: ReceiptText,
   account: ReceiptText,
 };
 
@@ -69,11 +70,14 @@ const routeGroupLabelKeys: Record<PortalRouteGroupKey, string> = {
 interface SidebarNavItem {
   key: PortalRouteKey;
   labelKey: string;
+  eyebrowKey: string;
+  detailKey: string;
   path: string;
   icon: LucideIcon;
 }
 
 interface SidebarNavGroup {
+  key: PortalRouteGroupKey;
   section: string;
   items: SidebarNavItem[];
 }
@@ -208,6 +212,7 @@ export function PortalNavigationRail({
 
   const navGroups: SidebarNavGroup[] = routeGroupOrder
     .map((groupKey) => ({
+      key: groupKey,
       section: t(routeGroupLabelKeys[groupKey]),
       items: portalSidebarRoutes
         .filter(
@@ -217,11 +222,21 @@ export function PortalNavigationRail({
         .map((route) => ({
           key: route.key,
           labelKey: route.labelKey,
+          eyebrowKey: route.eyebrowKey,
+          detailKey: route.detailKey,
           path: resolvePortalPath(route.key),
           icon: routeIcons[route.key],
         })),
     }))
     .filter((group) => group.items.length > 0);
+
+  const activeGroupKey =
+    navGroups.find((group) =>
+      group.items.some(
+        (item) =>
+          location.pathname === item.path || location.pathname.startsWith(`${item.path}/`),
+      ),
+    )?.key ?? null;
 
   const showEdgeAffordances = isSidebarHovered || isSidebarResizing;
 
@@ -249,93 +264,98 @@ export function PortalNavigationRail({
     >
       <div className="flex h-full w-full flex-col overflow-hidden border-r border-zinc-900/90 bg-zinc-950 [background:var(--portal-sidebar-background)] [border-color:var(--portal-sidebar-border)] text-zinc-300 shadow-[var(--portal-sidebar-shadow)]">
         <nav
-          className={`scrollbar-hide relative flex-1 space-y-5 overflow-x-hidden overflow-y-auto ${
+          className={`scrollbar-hide relative flex-1 overflow-x-hidden overflow-y-auto ${
             isSidebarCollapsed ? 'px-2 py-4' : 'px-3 py-5'
           }`}
         >
-          {navGroups.map((group) => (
-            <div key={group.section}>
-              {!isSidebarCollapsed ? (
-                <div className="sidebar-group-badge mb-3 px-3">
-                  <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-zinc-400 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
-                    <span className="h-1.5 w-1.5 rounded-full bg-primary-400/80" />
-                    {group.section}
-                    <span className="ml-1 text-[9px] tracking-[0.18em] text-zinc-500">
-                      {group.items.length}
-                    </span>
-                  </span>
-                </div>
-              ) : (
-                <div className="mx-2 my-4 h-px bg-white/8" />
-              )}
-              <div className="space-y-1">
-                {group.items.map((item) => (
-                  <NavLink
-                    key={item.key}
-                    to={item.path}
-                    title={isSidebarCollapsed ? t(item.labelKey) : undefined}
-                    onPointerDown={() => prefetchSidebarRoute(item.path)}
-                    onMouseEnter={() => scheduleSidebarRoutePrefetch(item.path)}
-                    onMouseLeave={() => cancelSidebarRoutePrefetch(item.path)}
-                    onFocus={() => scheduleSidebarRoutePrefetch(item.path)}
-                    onBlur={() => cancelSidebarRoutePrefetch(item.path)}
-                    className={({ isActive }) =>
-                      `group relative flex items-center rounded-2xl border border-transparent transition-all duration-200 ${
-                        isSidebarCollapsed
-                          ? 'mx-auto h-11 w-11 justify-center'
-                          : 'justify-between px-3 py-2.5'
-                      } ${
-                        isActive
-                          ? 'bg-white/[0.08] font-medium text-white shadow-[0_16px_34px_rgba(2,6,23,0.24),inset_0_1px_0_rgba(255,255,255,0.05)] border-white/10'
-                          : 'text-zinc-400 hover:bg-white/[0.05] hover:text-zinc-200 hover:border-white/6'
-                      }`
-                    }
+          <div className={isSidebarCollapsed ? 'space-y-4' : 'space-y-5'}>
+            {navGroups.map((group) => {
+              const isGroupActive = activeGroupKey === group.key;
+
+              return (
+                <section
+                  key={group.section}
+                  className={isSidebarCollapsed ? 'space-y-2.5' : 'space-y-2'}
+                  data-slot="sidebar-nav-group"
+                >
+                  <div
+                    className={`px-3 text-[11px] font-semibold uppercase tracking-[0.18em] ${
+                      isSidebarCollapsed
+                        ? 'sr-only'
+                        : isGroupActive
+                          ? 'text-zinc-300'
+                          : 'text-zinc-500'
+                    }`}
+                    data-slot="sidebar-nav-group-header"
                   >
-                    {({ isActive }) => (
-                      <>
-                        {isActive && !isSidebarCollapsed ? (
-                          <div className="portal-nav-item-indicator absolute left-1.5 top-1/2 h-6 w-1 -translate-y-1/2 rounded-r-full bg-primary-400 shadow-[0_0_18px_rgb(var(--portal-accent-rgb)/0.55)]" />
-                        ) : null}
-                        <div className="flex items-center gap-3">
-                          <div
-                            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border transition-all duration-200 ${
-                              isActive
-                                ? 'border-primary-400/20 bg-primary-500/12 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]'
-                                : 'border-white/6 bg-white/[0.03] group-hover:border-white/10 group-hover:bg-white/[0.06]'
-                            }`}
-                          >
+                    {group.section}
+                  </div>
+
+                  <div
+                    className={isSidebarCollapsed ? 'space-y-1.5' : 'space-y-1'}
+                    data-slot="sidebar-nav-list"
+                  >
+                    {group.items.map((item) => (
+                      <NavLink
+                        data-slot="sidebar-nav-item"
+                        key={item.key}
+                        title={isSidebarCollapsed ? t(item.labelKey) : undefined}
+                        to={item.path}
+                        onBlur={() => cancelSidebarRoutePrefetch(item.path)}
+                        onFocus={() => scheduleSidebarRoutePrefetch(item.path)}
+                        onMouseEnter={() => scheduleSidebarRoutePrefetch(item.path)}
+                        onMouseLeave={() => cancelSidebarRoutePrefetch(item.path)}
+                        onPointerDown={() => prefetchSidebarRoute(item.path)}
+                        className={({ isActive }) =>
+                          `group relative flex items-center rounded-2xl transition-colors duration-150 ${
+                            isSidebarCollapsed
+                              ? 'mx-auto h-11 w-11 justify-center'
+                              : 'h-10 gap-3 px-3'
+                          } ${
+                            isActive
+                              ? 'bg-white/[0.08] text-white'
+                              : 'text-zinc-400 hover:bg-white/[0.05] hover:text-zinc-200'
+                          }`
+                        }
+                      >
+                        {({ isActive }) => (
+                          <>
                             <item.icon
-                              className={`h-4 w-4 shrink-0 transition-colors ${
-                                isActive
-                                  ? 'text-primary-300'
-                                  : 'text-zinc-500 group-hover:text-zinc-200'
+                              className={`h-4 w-4 shrink-0 ${
+                                isActive ? 'text-white' : 'text-zinc-500 group-hover:text-zinc-200'
                               }`}
                             />
-                          </div>
-                          {!isSidebarCollapsed ? (
-                            <span className="text-[14px] tracking-tight text-current">{t(item.labelKey)}</span>
-                          ) : null}
-                        </div>
-                      </>
-                    )}
-                  </NavLink>
-                ))}
-              </div>
-            </div>
-          ))}
+                            {!isSidebarCollapsed ? (
+                              <span className="truncate text-sm tracking-tight text-current">
+                                {t(item.labelKey)}
+                              </span>
+                            ) : null}
+                          </>
+                        )}
+                      </NavLink>
+                    ))}
+                  </div>
+                </section>
+              );
+            })}
+          </div>
         </nav>
 
-        <div className="relative flex flex-col gap-1 border-t border-white/6 p-3">
-          <div ref={userMenuRef} className="relative">
+        <div className="border-t border-white/6 p-3">
+          <div
+            className="relative"
+            data-slot="sidebar-profile-shell"
+            ref={userMenuRef}
+          >
             {isUserMenuOpen ? (
               <div
-                className={`absolute z-40 rounded-3xl border border-white/10 bg-zinc-950/96 p-2 shadow-[0_22px_52px_rgba(2,6,23,0.4)] backdrop-blur-xl ${
+                className={`absolute z-40 rounded-2xl border border-white/10 bg-zinc-950/96 p-2 shadow-[0_22px_52px_rgba(2,6,23,0.4)] backdrop-blur-xl ${
                   isSidebarCollapsed ? 'bottom-0 left-full ml-3 w-64' : 'bottom-full left-0 right-0 mb-2'
                 }`}
               >
-                <div className="mb-2 rounded-2xl border border-white/8 bg-white/[0.04] p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+                <div className="mb-2 rounded-xl border border-white/8 bg-white/[0.04] p-3">
                   <div className="flex items-center gap-3">
-                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-primary-400/20 bg-primary-500/15 text-sm font-bold text-primary-200">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/[0.08] text-sm font-bold text-white">
                       {userInitials}
                     </div>
                     <div className="min-w-0">
@@ -345,7 +365,7 @@ export function PortalNavigationRail({
                       <div className="truncate text-xs text-zinc-400">{userEmail}</div>
                     </div>
                   </div>
-                  <div className="mt-3 inline-flex items-center rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-300">
+                  <div className="mt-3 inline-flex items-center rounded-full border border-white/8 bg-white/[0.05] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-300">
                     {resolvedWorkspace?.project.name ?? t('Portal workspace')}
                   </div>
                 </div>
@@ -353,7 +373,7 @@ export function PortalNavigationRail({
                 <button
                   type="button"
                   onClick={handleOpenUserDetails}
-                  className="flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left text-sm text-zinc-300 transition-colors hover:bg-white/[0.06] hover:text-white"
+                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-zinc-300 transition-colors hover:bg-white/[0.06] hover:text-white"
                 >
                   <UserRound className="h-4 w-4 text-zinc-500" />
                   <span>{t('User details')}</span>
@@ -362,7 +382,7 @@ export function PortalNavigationRail({
                 <button
                   type="button"
                   onClick={handleOpenSettings}
-                  className="mt-1 flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left text-sm text-zinc-300 transition-colors hover:bg-white/[0.06] hover:text-white"
+                  className="mt-1 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-zinc-300 transition-colors hover:bg-white/[0.06] hover:text-white"
                 >
                   <Settings2 className="h-4 w-4 text-zinc-500" />
                   <span>{t('Settings')}</span>
@@ -373,7 +393,7 @@ export function PortalNavigationRail({
                   onClick={() => {
                     void handleSignOut();
                   }}
-                  className="mt-1 flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left text-sm text-rose-300 transition-colors hover:bg-rose-500/10 hover:text-rose-200"
+                  className="mt-1 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-rose-300 transition-colors hover:bg-rose-500/10 hover:text-rose-200"
                 >
                   <LogOut className="h-4 w-4" />
                   <span>{t('Sign out')}</span>
@@ -383,16 +403,16 @@ export function PortalNavigationRail({
 
             <button
               type="button"
-              data-slot="sidebar-user-control"
-              title={isSidebarCollapsed ? userMenuTitle : undefined}
-              onClick={() => setIsUserMenuOpen((open) => !open)}
-              className={`group relative flex w-full items-center rounded-2xl border border-white/8 bg-white/[0.04] text-zinc-300 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-all duration-200 hover:bg-white/[0.07] hover:text-white ${
+              className={`group relative flex w-full items-center rounded-2xl text-zinc-300 transition-colors duration-150 hover:bg-white/[0.05] hover:text-white ${
                 isSidebarCollapsed
                   ? 'mx-auto h-11 w-11 justify-center px-0'
-                  : 'gap-3 px-2.5 py-2.5'
+                  : 'gap-3 px-3 py-2.5'
               }`}
+              data-slot="sidebar-user-control"
+              onClick={() => setIsUserMenuOpen((open) => !open)}
+              title={isSidebarCollapsed ? userMenuTitle : undefined}
             >
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl border border-white/8 bg-white/[0.08] text-sm font-semibold text-white">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/[0.08] text-sm font-semibold text-white">
                 {userInitials}
               </div>
 

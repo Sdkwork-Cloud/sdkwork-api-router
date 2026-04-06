@@ -1,6 +1,6 @@
 use sdkwork_api_storage_core::{
     AdminStore, BillingStore, CatalogStore, CredentialStore, ExtensionStore, IdentityStore,
-    RoutingStore, StorageDialect, TenantStore, UsageStore,
+    MarketingStore, RoutingStore, StorageDialect, TenantStore, UsageStore,
 };
 use sdkwork_api_storage_postgres::PostgresAdminStore;
 
@@ -19,6 +19,7 @@ async fn postgres_store_implements_admin_store_trait() {
     let _usage_store: &dyn UsageStore = &store;
     let _billing_store: &dyn BillingStore = &store;
     let _extension_store: &dyn ExtensionStore = &store;
+    let _marketing_store: &dyn MarketingStore = &store;
 
     assert_eq!(trait_store.dialect(), StorageDialect::Postgres);
 }

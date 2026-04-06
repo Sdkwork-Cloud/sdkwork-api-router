@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct LedgerEntry {
     pub project_id: String,
     pub units: u64,
@@ -18,7 +19,9 @@ impl LedgerEntry {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, ToSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum BillingAccountingMode {
     PlatformCredit,
@@ -55,7 +58,7 @@ impl FromStr for BillingAccountingMode {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct BillingEventRecord {
     pub event_id: String,
     pub tenant_id: String,
@@ -249,8 +252,7 @@ impl BillingEventRecord {
         fallback_reason: Option<&str>,
     ) -> Self {
         self.applied_routing_profile_id = applied_routing_profile_id.map(ToOwned::to_owned);
-        self.compiled_routing_snapshot_id =
-            compiled_routing_snapshot_id.map(ToOwned::to_owned);
+        self.compiled_routing_snapshot_id = compiled_routing_snapshot_id.map(ToOwned::to_owned);
         self.fallback_reason = fallback_reason.map(ToOwned::to_owned);
         self
     }
@@ -331,7 +333,7 @@ fn default_request_count() -> u64 {
     1
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ProjectBillingSummary {
     pub project_id: String,
     pub entry_count: u64,
@@ -362,7 +364,7 @@ impl ProjectBillingSummary {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct BillingSummary {
     pub total_entries: u64,
     pub project_count: u64,
@@ -387,7 +389,7 @@ impl BillingSummary {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct BillingEventProjectSummary {
     pub project_id: String,
     pub event_count: u64,
@@ -404,7 +406,7 @@ pub struct BillingEventProjectSummary {
     pub total_customer_charge: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct BillingEventGroupSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_key_group_id: Option<String>,
@@ -415,7 +417,7 @@ pub struct BillingEventGroupSummary {
     pub total_customer_charge: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct BillingEventCapabilitySummary {
     pub capability: String,
     pub event_count: u64,
@@ -429,7 +431,7 @@ pub struct BillingEventCapabilitySummary {
     pub total_customer_charge: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct BillingEventAccountingModeSummary {
     pub accounting_mode: BillingAccountingMode,
     pub event_count: u64,
@@ -438,7 +440,7 @@ pub struct BillingEventAccountingModeSummary {
     pub total_customer_charge: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct BillingEventSummary {
     pub total_events: u64,
     pub project_count: u64,
@@ -494,7 +496,7 @@ pub type RequestId = u64;
 pub type PricingPlanId = u64;
 pub type PricingRateId = u64;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AccountType {
     Primary,
@@ -502,7 +504,7 @@ pub enum AccountType {
     Postpaid,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AccountStatus {
     Active,
@@ -510,7 +512,7 @@ pub enum AccountStatus {
     Closed,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct AccountRecord {
     pub account_id: AccountId,
     pub tenant_id: u64,
@@ -586,7 +588,7 @@ impl AccountRecord {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AccountBenefitType {
     CashCredit,
@@ -599,7 +601,7 @@ pub enum AccountBenefitType {
     MusicAllowance,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AccountBenefitSourceType {
     Recharge,
@@ -609,7 +611,7 @@ pub enum AccountBenefitSourceType {
     ManualAdjustment,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AccountBenefitLotStatus {
     Active,
@@ -618,7 +620,7 @@ pub enum AccountBenefitLotStatus {
     Disabled,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct AccountBenefitLotRecord {
     pub lot_id: BenefitLotId,
     pub tenant_id: u64,
@@ -743,7 +745,7 @@ impl AccountBenefitLotRecord {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AccountHoldStatus {
     Held,
@@ -754,7 +756,7 @@ pub enum AccountHoldStatus {
     Failed,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct AccountHoldRecord {
     pub hold_id: HoldId,
     pub tenant_id: u64,
@@ -895,7 +897,7 @@ impl AccountHoldAllocationRecord {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AccountLedgerEntryType {
     HoldCreate,
@@ -906,7 +908,7 @@ pub enum AccountLedgerEntryType {
     Refund,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct AccountLedgerEntryRecord {
     pub ledger_entry_id: u64,
     pub tenant_id: u64,
@@ -981,7 +983,7 @@ impl AccountLedgerEntryRecord {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct AccountLedgerAllocationRecord {
     pub ledger_allocation_id: u64,
     pub tenant_id: u64,
@@ -1022,7 +1024,7 @@ impl AccountLedgerAllocationRecord {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RequestSettlementStatus {
     Pending,
@@ -1033,7 +1035,7 @@ pub enum RequestSettlementStatus {
     Failed,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct RequestSettlementRecord {
     pub request_settlement_id: u64,
     pub tenant_id: u64,
@@ -1148,7 +1150,7 @@ impl RequestSettlementRecord {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct PricingPlanRecord {
     pub pricing_plan_id: PricingPlanId,
     pub tenant_id: u64,
@@ -1159,6 +1161,9 @@ pub struct PricingPlanRecord {
     pub currency_code: String,
     pub credit_unit_code: String,
     pub status: String,
+    pub effective_from_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effective_to_ms: Option<u64>,
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
 }
@@ -1181,6 +1186,8 @@ impl PricingPlanRecord {
             currency_code: "USD".to_owned(),
             credit_unit_code: "credit".to_owned(),
             status: "draft".to_owned(),
+            effective_from_ms: 0,
+            effective_to_ms: None,
             created_at_ms: 0,
             updated_at_ms: 0,
         }
@@ -1206,6 +1213,16 @@ impl PricingPlanRecord {
         self
     }
 
+    pub fn with_effective_from_ms(mut self, effective_from_ms: u64) -> Self {
+        self.effective_from_ms = effective_from_ms;
+        self
+    }
+
+    pub fn with_effective_to_ms(mut self, effective_to_ms: Option<u64>) -> Self {
+        self.effective_to_ms = effective_to_ms;
+        self
+    }
+
     pub fn with_created_at_ms(mut self, created_at_ms: u64) -> Self {
         self.created_at_ms = created_at_ms;
         self
@@ -1217,7 +1234,55 @@ impl PricingPlanRecord {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct AccountCommerceReconciliationStateRecord {
+    pub tenant_id: u64,
+    pub organization_id: u64,
+    pub account_id: AccountId,
+    pub project_id: String,
+    pub last_order_updated_at_ms: u64,
+    pub last_order_created_at_ms: u64,
+    pub last_order_id: String,
+    pub updated_at_ms: u64,
+}
+
+impl AccountCommerceReconciliationStateRecord {
+    pub fn new(
+        tenant_id: u64,
+        organization_id: u64,
+        account_id: AccountId,
+        project_id: impl Into<String>,
+        last_order_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            tenant_id,
+            organization_id,
+            account_id,
+            project_id: project_id.into(),
+            last_order_updated_at_ms: 0,
+            last_order_created_at_ms: 0,
+            last_order_id: last_order_id.into(),
+            updated_at_ms: 0,
+        }
+    }
+
+    pub fn with_last_order_updated_at_ms(mut self, last_order_updated_at_ms: u64) -> Self {
+        self.last_order_updated_at_ms = last_order_updated_at_ms;
+        self
+    }
+
+    pub fn with_last_order_created_at_ms(mut self, last_order_created_at_ms: u64) -> Self {
+        self.last_order_created_at_ms = last_order_created_at_ms;
+        self
+    }
+
+    pub fn with_updated_at_ms(mut self, updated_at_ms: u64) -> Self {
+        self.updated_at_ms = updated_at_ms;
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct PricingRateRecord {
     pub pricing_rate_id: PricingRateId,
     pub tenant_id: u64,
@@ -1225,12 +1290,27 @@ pub struct PricingRateRecord {
     pub pricing_plan_id: PricingPlanId,
     pub metric_code: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capability_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_code: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_code: Option<String>,
+    pub charge_unit: String,
+    pub pricing_method: String,
     pub quantity_step: f64,
     pub unit_price: f64,
+    pub display_price_unit: String,
+    pub minimum_billable_quantity: f64,
+    pub minimum_charge: f64,
+    pub rounding_increment: f64,
+    pub rounding_mode: String,
+    pub included_quantity: f64,
+    pub priority: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    pub status: String,
     pub created_at_ms: u64,
+    pub updated_at_ms: u64,
 }
 
 impl PricingRateRecord {
@@ -1247,12 +1327,30 @@ impl PricingRateRecord {
             organization_id,
             pricing_plan_id,
             metric_code: metric_code.into(),
+            capability_code: None,
             model_code: None,
             provider_code: None,
+            charge_unit: "unit".to_owned(),
+            pricing_method: "per_unit".to_owned(),
             quantity_step: 1.0,
             unit_price: 0.0,
+            display_price_unit: String::new(),
+            minimum_billable_quantity: 0.0,
+            minimum_charge: 0.0,
+            rounding_increment: 1.0,
+            rounding_mode: "none".to_owned(),
+            included_quantity: 0.0,
+            priority: 0,
+            notes: None,
+            status: "draft".to_owned(),
             created_at_ms: 0,
+            updated_at_ms: 0,
         }
+    }
+
+    pub fn with_capability_code(mut self, capability_code: Option<String>) -> Self {
+        self.capability_code = capability_code;
+        self
     }
 
     pub fn with_model_code(mut self, model_code: Option<String>) -> Self {
@@ -1262,6 +1360,16 @@ impl PricingRateRecord {
 
     pub fn with_provider_code(mut self, provider_code: Option<String>) -> Self {
         self.provider_code = provider_code;
+        self
+    }
+
+    pub fn with_charge_unit(mut self, charge_unit: impl Into<String>) -> Self {
+        self.charge_unit = charge_unit.into();
+        self
+    }
+
+    pub fn with_pricing_method(mut self, pricing_method: impl Into<String>) -> Self {
+        self.pricing_method = pricing_method.into();
         self
     }
 
@@ -1275,8 +1383,58 @@ impl PricingRateRecord {
         self
     }
 
+    pub fn with_display_price_unit(mut self, display_price_unit: impl Into<String>) -> Self {
+        self.display_price_unit = display_price_unit.into();
+        self
+    }
+
+    pub fn with_minimum_billable_quantity(mut self, minimum_billable_quantity: f64) -> Self {
+        self.minimum_billable_quantity = minimum_billable_quantity;
+        self
+    }
+
+    pub fn with_minimum_charge(mut self, minimum_charge: f64) -> Self {
+        self.minimum_charge = minimum_charge;
+        self
+    }
+
+    pub fn with_rounding_increment(mut self, rounding_increment: f64) -> Self {
+        self.rounding_increment = rounding_increment;
+        self
+    }
+
+    pub fn with_rounding_mode(mut self, rounding_mode: impl Into<String>) -> Self {
+        self.rounding_mode = rounding_mode.into();
+        self
+    }
+
+    pub fn with_included_quantity(mut self, included_quantity: f64) -> Self {
+        self.included_quantity = included_quantity;
+        self
+    }
+
+    pub fn with_priority(mut self, priority: u64) -> Self {
+        self.priority = priority;
+        self
+    }
+
+    pub fn with_notes(mut self, notes: Option<String>) -> Self {
+        self.notes = notes;
+        self
+    }
+
+    pub fn with_status(mut self, status: impl Into<String>) -> Self {
+        self.status = status.into();
+        self
+    }
+
     pub fn with_created_at_ms(mut self, created_at_ms: u64) -> Self {
         self.created_at_ms = created_at_ms;
+        self
+    }
+
+    pub fn with_updated_at_ms(mut self, updated_at_ms: u64) -> Self {
+        self.updated_at_ms = updated_at_ms;
         self
     }
 }

@@ -1,0 +1,60 @@
+name: rust-verification
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/rust-verification.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/**'
+      - 'services/**'
+      - 'scripts/check-rust-verification-matrix.mjs'
+      - 'scripts/check-rust-verification-matrix.test.mjs'
+      - 'scripts/rust-verification-workflow.test.mjs'
+      - 'docs/review/2026-04-06-rust-verification-matrix.md'
+  workflow_dispatch:
+    inputs:
+      group:
+        description: Optional verification group to run
+        required: false
+        type: string
+
+jobs:
+  rust-verification:
+    name: Rust verification (${{ matrix.group }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - group: interface-openapi
+          - group: gateway-service
+          - group: admin-service
+          - group: portal-service
+          - group: product-runtime
+    steps:
+      - name: Skip non-selected dispatch groups
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.group != '' && github.event.inputs.group != matrix.group }}
+        run: echo "Skipping ${{ matrix.group }} because workflow_dispatch requested ${{ github.event.inputs.group }}"
+
+      - name: Checkout repository
+        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.group == '' || github.event.inputs.group == matrix.group }}
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.group == '' || github.event.inputs.group == matrix.group }}
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Install Rust toolchain
+        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.group == '' || github.event.inputs.group == matrix.group }}
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.group == '' || github.event.inputs.group == matrix.group }}
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run package-group verification
+        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.group == '' || github.event.inputs.group == matrix.group }}
+        run: node scripts/check-rust-verification-matrix.mjs --group ${{ matrix.group }}

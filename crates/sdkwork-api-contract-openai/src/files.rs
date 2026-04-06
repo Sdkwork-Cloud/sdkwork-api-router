@@ -1,9 +1,11 @@
 use serde::Serialize;
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct CreateFileRequest {
     pub purpose: String,
     pub filename: String,
+    #[schema(value_type = String, format = Binary)]
     pub bytes: Vec<u8>,
     pub content_type: Option<String>,
 }
@@ -24,7 +26,7 @@ impl CreateFileRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct FileObject {
     pub id: String,
     pub object: &'static str,
@@ -60,7 +62,7 @@ impl FileObject {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ListFilesResponse {
     pub object: &'static str,
     pub data: Vec<FileObject>,
@@ -75,7 +77,7 @@ impl ListFilesResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct DeleteFileResponse {
     pub id: String,
     pub object: &'static str,

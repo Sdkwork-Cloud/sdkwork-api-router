@@ -47,14 +47,29 @@ fn benefit_lot_and_pricing_plan_records_capture_commercial_kernel_metadata() {
         .with_currency_code("USD")
         .with_credit_unit_code("credit")
         .with_status("active")
+        .with_effective_from_ms(1_717_171_700)
+        .with_effective_to_ms(Some(1_717_999_999))
         .with_created_at_ms(1_717_171_730)
         .with_updated_at_ms(1_717_171_731);
     let rate = PricingRateRecord::new(9201, 1001, 2002, 9101, "token.input")
         .with_model_code(Some("gpt-4.1".to_owned()))
         .with_provider_code(Some("provider-openai-official".to_owned()))
+        .with_capability_code(Some("responses".to_owned()))
+        .with_charge_unit("input_token")
+        .with_pricing_method("per_unit")
         .with_quantity_step(1.0)
         .with_unit_price(0.0025)
-        .with_created_at_ms(1_717_171_740);
+        .with_display_price_unit("USD / 1M input tokens")
+        .with_minimum_billable_quantity(0.0)
+        .with_minimum_charge(0.0)
+        .with_rounding_increment(1.0)
+        .with_rounding_mode("ceil")
+        .with_included_quantity(0.0)
+        .with_priority(100)
+        .with_notes(Some("Retail token input pricing".to_owned()))
+        .with_status("active")
+        .with_created_at_ms(1_717_171_740)
+        .with_updated_at_ms(1_717_171_741);
 
     assert_eq!(lot.account_id, 7001);
     assert_eq!(lot.user_id, 9001);
@@ -64,7 +79,17 @@ fn benefit_lot_and_pricing_plan_records_capture_commercial_kernel_metadata() {
     assert_eq!(lot.status, AccountBenefitLotStatus::Active);
     assert_eq!(plan.plan_code, "default-retail");
     assert_eq!(plan.plan_version, 3);
+    assert_eq!(plan.effective_from_ms, 1_717_171_700);
+    assert_eq!(plan.effective_to_ms, Some(1_717_999_999));
     assert_eq!(rate.pricing_plan_id, 9101);
     assert_eq!(rate.metric_code, "token.input");
     assert_eq!(rate.model_code.as_deref(), Some("gpt-4.1"));
+    assert_eq!(rate.capability_code.as_deref(), Some("responses"));
+    assert_eq!(rate.charge_unit, "input_token");
+    assert_eq!(rate.pricing_method, "per_unit");
+    assert_eq!(rate.display_price_unit, "USD / 1M input tokens");
+    assert_eq!(rate.rounding_mode, "ceil");
+    assert_eq!(rate.priority, 100);
+    assert_eq!(rate.notes.as_deref(), Some("Retail token input pricing"));
+    assert_eq!(rate.status, "active");
 }

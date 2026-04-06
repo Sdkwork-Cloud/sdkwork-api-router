@@ -1,6 +1,9 @@
 import {
+  cloneCommercialPricingPlan,
   createApiKey,
   createApiKeyGroup,
+  createCommercialPricingPlan,
+  createCommercialPricingRate,
   createRoutingProfile,
   createRateLimitPolicy,
   deleteApiKey,
@@ -17,27 +20,45 @@ import {
   deleteProvider,
   deleteTenant,
   reloadExtensionRuntimes,
+  scheduleCommercialPricingPlan,
+  retireCommercialPricingPlan,
   saveChannel,
   saveChannelModel,
   saveCoupon,
   saveCredential,
   saveModel,
   saveModelPrice,
+  updateMarketingCampaignBudgetStatus,
+  updateMarketingCampaignStatus,
+  updateMarketingCouponCodeStatus,
+  updateMarketingCouponTemplateStatus,
   saveOperatorUser,
   savePortalUser,
   saveProject,
   saveProvider,
   saveTenant,
+  publishCommercialPricingPlan,
   updateApiKey,
   updateApiKeyGroup,
   updateApiKeyGroupStatus,
+  updateCommercialPricingPlan,
+  updateCommercialPricingRate,
   updateApiKeyStatus,
   updateOperatorUserStatus,
   updatePortalUserStatus,
+  synchronizeCommercialPricingLifecycle,
 } from 'sdkwork-router-admin-admin-api';
 import type {
+  CommercialPricingLifecycleSynchronizationReport,
+  CampaignBudgetStatus,
+  CommercialPricingPlanCreateInput,
+  CommercialPricingPlanRecord,
+  CommercialPricingRateCreateInput,
+  CouponCodeStatus,
   CouponRecord,
+  CouponTemplateStatus,
   CreatedGatewayApiKey,
+  MarketingCampaignStatus,
   RuntimeReloadReport,
 } from 'sdkwork-router-admin-types';
 
@@ -155,6 +176,22 @@ export interface WorkbenchActions {
   handleSaveCoupon: (coupon: CouponRecord) => Promise<void>;
   handleToggleCoupon: (coupon: CouponRecord) => Promise<void>;
   handleDeleteCoupon: (couponId: string) => Promise<void>;
+  handleUpdateMarketingCouponTemplateStatus: (
+    couponTemplateId: string,
+    status: CouponTemplateStatus,
+  ) => Promise<void>;
+  handleUpdateMarketingCampaignStatus: (
+    marketingCampaignId: string,
+    status: MarketingCampaignStatus,
+  ) => Promise<void>;
+  handleUpdateMarketingCampaignBudgetStatus: (
+    campaignBudgetId: string,
+    status: CampaignBudgetStatus,
+  ) => Promise<void>;
+  handleUpdateMarketingCouponCodeStatus: (
+    couponCodeId: string,
+    status: CouponCodeStatus,
+  ) => Promise<void>;
   handleSaveTenant: (input: { id: string; name: string }) => Promise<void>;
   handleDeleteTenant: (tenantId: string) => Promise<void>;
   handleSaveProject: (input: {
@@ -176,6 +213,38 @@ export interface WorkbenchActions {
     plaintext_key?: string;
     api_key_group_id?: string | null;
   }) => Promise<CreatedGatewayApiKey>;
+  handleCreateCommercialPricingPlan: (
+    input: CommercialPricingPlanCreateInput,
+  ) => Promise<void>;
+  handleCreateCommercialPricingRate: (
+    input: CommercialPricingRateCreateInput,
+  ) => Promise<void>;
+  handleUpdateCommercialPricingPlan: (
+    pricingPlanId: number,
+    input: CommercialPricingPlanCreateInput,
+  ) => Promise<void>;
+  handleCloneCommercialPricingPlan: (
+    pricingPlanId: number,
+    input?: {
+      plan_version?: number;
+      display_name?: string | null;
+      status?: string;
+    },
+  ) => Promise<CommercialPricingPlanRecord>;
+  handlePublishCommercialPricingPlan: (
+    pricingPlanId: number,
+  ) => Promise<CommercialPricingPlanRecord>;
+  handleScheduleCommercialPricingPlan: (
+    pricingPlanId: number,
+  ) => Promise<CommercialPricingPlanRecord>;
+  handleRetireCommercialPricingPlan: (
+    pricingPlanId: number,
+  ) => Promise<CommercialPricingPlanRecord>;
+  handleSynchronizeCommercialPricingLifecycle: () => Promise<CommercialPricingLifecycleSynchronizationReport>;
+  handleUpdateCommercialPricingRate: (
+    pricingRateId: number,
+    input: CommercialPricingRateCreateInput,
+  ) => Promise<void>;
   handleUpdateApiKey: (input: {
     hashed_key: string;
     tenant_id: string;
@@ -386,6 +455,50 @@ export function createWorkbenchActions({
       });
     },
 
+    async handleUpdateMarketingCouponTemplateStatus(couponTemplateId, status) {
+      await runRefreshingAction({
+        action: () => updateMarketingCouponTemplateStatus(couponTemplateId, status),
+        failureStatus: 'Failed to update coupon template status.',
+        refreshWorkspace,
+        setStatus,
+        startStatus: `Updating coupon template ${couponTemplateId} status...`,
+        successStatus: 'Coupon template status updated.',
+      });
+    },
+
+    async handleUpdateMarketingCampaignStatus(marketingCampaignId, status) {
+      await runRefreshingAction({
+        action: () => updateMarketingCampaignStatus(marketingCampaignId, status),
+        failureStatus: 'Failed to update marketing campaign status.',
+        refreshWorkspace,
+        setStatus,
+        startStatus: `Updating marketing campaign ${marketingCampaignId} status...`,
+        successStatus: 'Marketing campaign status updated.',
+      });
+    },
+
+    async handleUpdateMarketingCampaignBudgetStatus(campaignBudgetId, status) {
+      await runRefreshingAction({
+        action: () => updateMarketingCampaignBudgetStatus(campaignBudgetId, status),
+        failureStatus: 'Failed to update campaign budget status.',
+        refreshWorkspace,
+        setStatus,
+        startStatus: `Updating campaign budget ${campaignBudgetId} status...`,
+        successStatus: 'Campaign budget status updated.',
+      });
+    },
+
+    async handleUpdateMarketingCouponCodeStatus(couponCodeId, status) {
+      await runRefreshingAction({
+        action: () => updateMarketingCouponCodeStatus(couponCodeId, status),
+        failureStatus: 'Failed to update coupon code status.',
+        refreshWorkspace,
+        setStatus,
+        startStatus: `Updating coupon code ${couponCodeId} status...`,
+        successStatus: 'Coupon code status updated.',
+      });
+    },
+
     async handleSaveTenant(input) {
       await runRefreshingAction({
         action: () => saveTenant(input),
@@ -510,6 +623,122 @@ export function createWorkbenchActions({
         startStatus: 'Issuing gateway key...',
         successStatus: (created) =>
           `Gateway key issued for ${created.project_id} (${created.environment}).`,
+      });
+    },
+
+    async handleCreateCommercialPricingPlan(input) {
+      await runRefreshingAction({
+        action: () => createCommercialPricingPlan(input),
+        failureStatus: 'Failed to create commercial pricing plan.',
+        refreshWorkspace,
+        rethrow: true,
+        setStatus,
+        startStatus: 'Creating commercial pricing plan...',
+        successStatus: (plan) => `Commercial pricing plan ${plan.display_name} created.`,
+      });
+    },
+
+    async handleCreateCommercialPricingRate(input) {
+      await runRefreshingAction({
+        action: () => createCommercialPricingRate(input),
+        failureStatus: 'Failed to create commercial pricing rate.',
+        refreshWorkspace,
+        rethrow: true,
+        setStatus,
+        startStatus: 'Creating commercial pricing rate...',
+        successStatus: (rate) => `Commercial pricing rate ${rate.metric_code} created.`,
+      });
+    },
+
+    async handleUpdateCommercialPricingPlan(pricingPlanId, input) {
+      await runRefreshingAction({
+        action: () => updateCommercialPricingPlan(pricingPlanId, input),
+        failureStatus: 'Failed to update commercial pricing plan.',
+        refreshWorkspace,
+        rethrow: true,
+        setStatus,
+        startStatus: `Updating commercial pricing plan ${pricingPlanId}...`,
+        successStatus: (plan) => `Commercial pricing plan ${plan.display_name} updated.`,
+      });
+    },
+
+    async handleCloneCommercialPricingPlan(pricingPlanId, input) {
+      return runRefreshingAction({
+        action: () => cloneCommercialPricingPlan(pricingPlanId, input),
+        failureStatus: 'Failed to clone commercial pricing plan.',
+        refreshWorkspace,
+        rethrow: true,
+        setStatus,
+        startStatus: `Cloning commercial pricing plan ${pricingPlanId}...`,
+        successStatus: (plan) => `Commercial pricing plan ${plan.display_name} cloned.`,
+      });
+    },
+
+    async handlePublishCommercialPricingPlan(pricingPlanId) {
+      return runRefreshingAction({
+        action: () => publishCommercialPricingPlan(pricingPlanId),
+        failureStatus: 'Failed to publish commercial pricing plan.',
+        refreshWorkspace,
+        rethrow: true,
+        setStatus,
+        startStatus: `Publishing commercial pricing plan ${pricingPlanId}...`,
+        successStatus: (plan) => `Commercial pricing plan ${plan.display_name} published.`,
+      });
+    },
+
+    async handleScheduleCommercialPricingPlan(pricingPlanId) {
+      return runRefreshingAction({
+        action: () => scheduleCommercialPricingPlan(pricingPlanId),
+        failureStatus: 'Failed to schedule commercial pricing plan.',
+        refreshWorkspace,
+        rethrow: true,
+        setStatus,
+        startStatus: `Scheduling commercial pricing plan ${pricingPlanId}...`,
+        successStatus: (plan) => `Commercial pricing plan ${plan.display_name} scheduled.`,
+      });
+    },
+
+    async handleRetireCommercialPricingPlan(pricingPlanId) {
+      return runRefreshingAction({
+        action: () => retireCommercialPricingPlan(pricingPlanId),
+        failureStatus: 'Failed to retire commercial pricing plan.',
+        refreshWorkspace,
+        rethrow: true,
+        setStatus,
+        startStatus: `Retiring commercial pricing plan ${pricingPlanId}...`,
+        successStatus: (plan) => `Commercial pricing plan ${plan.display_name} retired.`,
+      });
+    },
+
+    async handleSynchronizeCommercialPricingLifecycle() {
+      return runRefreshingAction({
+        action: () => synchronizeCommercialPricingLifecycle(),
+        failureStatus: 'Failed to synchronize pricing lifecycle.',
+        refreshWorkspace,
+        rethrow: true,
+        setStatus,
+        startStatus: 'Synchronizing pricing lifecycle...',
+        successStatus: (report) => {
+          if (report.changed) {
+            return `Pricing lifecycle synchronized. Activated ${report.activated_plan_count} plans and ${report.activated_rate_count} rates.`;
+          }
+          if (report.skipped_plan_count > 0) {
+            return `Pricing lifecycle scan finished. ${report.skipped_plan_count} due versions still require rate rows.`;
+          }
+          return 'Pricing lifecycle already up to date.';
+        },
+      });
+    },
+
+    async handleUpdateCommercialPricingRate(pricingRateId, input) {
+      await runRefreshingAction({
+        action: () => updateCommercialPricingRate(pricingRateId, input),
+        failureStatus: 'Failed to update commercial pricing rate.',
+        refreshWorkspace,
+        rethrow: true,
+        setStatus,
+        startStatus: `Updating commercial pricing rate ${pricingRateId}...`,
+        successStatus: (rate) => `Commercial pricing rate ${rate.metric_code} updated.`,
       });
     },
 

@@ -1,5 +1,11 @@
 export type PortalAnonymousRouteKey = 'login' | 'register' | 'forgot-password';
-export type PortalTopLevelRouteKey = 'home' | 'console' | 'models' | 'docs' | 'downloads';
+export type PortalTopLevelRouteKey =
+  | 'home'
+  | 'console'
+  | 'models'
+  | 'api-reference'
+  | 'docs'
+  | 'downloads';
 export type PortalRouteKey =
   | 'gateway'
   | 'dashboard'
@@ -10,6 +16,7 @@ export type PortalRouteKey =
   | 'credits'
   | 'recharge'
   | 'billing'
+  | 'settlements'
   | 'account';
 export type PortalRouteGroupKey = 'operations' | 'access' | 'revenue';
 export type PortalThemeMode = 'light' | 'dark' | 'system';
@@ -41,6 +48,7 @@ export type PortalRouteModuleId =
   | 'sdkwork-router-portal-credits'
   | 'sdkwork-router-portal-recharge'
   | 'sdkwork-router-portal-billing'
+  | 'sdkwork-router-portal-settlements'
   | 'sdkwork-router-portal-account';
 
 export interface PortalModuleLoadingPolicy {
@@ -209,6 +217,259 @@ export interface ProjectBillingSummary {
   quota_limit_units?: number | null;
   remaining_units?: number | null;
   exhausted: boolean;
+}
+
+export type CommercialAccountType = 'primary' | 'grant' | 'postpaid';
+export type CommercialAccountStatus = 'active' | 'suspended' | 'closed';
+export type CommercialAccountBenefitType =
+  | 'cash_credit'
+  | 'promo_credit'
+  | 'request_allowance'
+  | 'token_allowance'
+  | 'image_allowance'
+  | 'audio_allowance'
+  | 'video_allowance'
+  | 'music_allowance';
+export type CommercialAccountBenefitSourceType =
+  | 'recharge'
+  | 'coupon'
+  | 'grant'
+  | 'order'
+  | 'manual_adjustment';
+export type CommercialAccountBenefitLotStatus =
+  | 'active'
+  | 'exhausted'
+  | 'expired'
+  | 'disabled';
+export type CommercialAccountHoldStatus =
+  | 'held'
+  | 'captured'
+  | 'partially_released'
+  | 'released'
+  | 'expired'
+  | 'failed';
+export type CommercialRequestSettlementStatus =
+  | 'pending'
+  | 'captured'
+  | 'partially_released'
+  | 'released'
+  | 'refunded'
+  | 'failed';
+
+export interface CommercialAccountRecord {
+  account_id: number;
+  tenant_id: number;
+  organization_id: number;
+  user_id: number;
+  account_type: CommercialAccountType;
+  currency_code: string;
+  credit_unit_code: string;
+  status: CommercialAccountStatus;
+  allow_overdraft: boolean;
+  overdraft_limit: number;
+  created_at_ms: number;
+  updated_at_ms: number;
+}
+
+export interface CommercialAccountLotBalanceSnapshot {
+  lot_id: number;
+  benefit_type: CommercialAccountBenefitType;
+  scope_json?: string | null;
+  expires_at_ms?: number | null;
+  original_quantity: number;
+  remaining_quantity: number;
+  held_quantity: number;
+  available_quantity: number;
+}
+
+export interface CommercialAccountBalanceSnapshot {
+  account_id: number;
+  available_balance: number;
+  held_balance: number;
+  consumed_balance: number;
+  grant_balance: number;
+  active_lot_count: number;
+  lots: CommercialAccountLotBalanceSnapshot[];
+}
+
+export interface CommercialAccountSummary {
+  account: CommercialAccountRecord;
+  available_balance: number;
+  held_balance: number;
+  consumed_balance: number;
+  grant_balance: number;
+  active_lot_count: number;
+}
+
+export type CommercialAccountLedgerEntryType =
+  | 'hold_create'
+  | 'hold_release'
+  | 'settlement_capture'
+  | 'grant_issue'
+  | 'manual_adjustment'
+  | 'refund';
+
+export interface CommercialAccountLedgerEntryRecord {
+  ledger_entry_id: number;
+  tenant_id: number;
+  organization_id: number;
+  account_id: number;
+  user_id: number;
+  request_id?: number | null;
+  hold_id?: number | null;
+  entry_type: CommercialAccountLedgerEntryType;
+  benefit_type?: string | null;
+  quantity: number;
+  amount: number;
+  created_at_ms: number;
+}
+
+export interface CommercialAccountLedgerAllocationRecord {
+  ledger_allocation_id: number;
+  tenant_id: number;
+  organization_id: number;
+  ledger_entry_id: number;
+  lot_id: number;
+  quantity_delta: number;
+  created_at_ms: number;
+}
+
+export interface CommercialAccountLedgerHistoryEntry {
+  entry: CommercialAccountLedgerEntryRecord;
+  allocations: CommercialAccountLedgerAllocationRecord[];
+}
+
+export interface CommercialAccountHistorySnapshot {
+  account: CommercialAccountRecord;
+  balance: CommercialAccountBalanceSnapshot;
+  benefit_lots: CommercialAccountBenefitLotRecord[];
+  holds: CommercialAccountHoldRecord[];
+  request_settlements: CommercialRequestSettlementRecord[];
+  ledger: CommercialAccountLedgerHistoryEntry[];
+}
+
+export interface CommercialAccountBenefitLotRecord {
+  lot_id: number;
+  tenant_id: number;
+  organization_id: number;
+  account_id: number;
+  user_id: number;
+  benefit_type: CommercialAccountBenefitType;
+  source_type: CommercialAccountBenefitSourceType;
+  source_id?: number | null;
+  scope_json?: string | null;
+  original_quantity: number;
+  remaining_quantity: number;
+  held_quantity: number;
+  priority: number;
+  acquired_unit_cost?: number | null;
+  issued_at_ms: number;
+  expires_at_ms?: number | null;
+  status: CommercialAccountBenefitLotStatus;
+  created_at_ms: number;
+  updated_at_ms: number;
+}
+
+export interface CommercialAccountHoldRecord {
+  hold_id: number;
+  tenant_id: number;
+  organization_id: number;
+  account_id: number;
+  user_id: number;
+  request_id: number;
+  status: CommercialAccountHoldStatus;
+  estimated_quantity: number;
+  captured_quantity: number;
+  released_quantity: number;
+  expires_at_ms: number;
+  created_at_ms: number;
+  updated_at_ms: number;
+}
+
+export interface CommercialRequestSettlementRecord {
+  request_settlement_id: number;
+  tenant_id: number;
+  organization_id: number;
+  request_id: number;
+  account_id: number;
+  user_id: number;
+  hold_id?: number | null;
+  status: CommercialRequestSettlementStatus;
+  estimated_credit_hold: number;
+  released_credit_amount: number;
+  captured_credit_amount: number;
+  provider_cost_amount: number;
+  retail_charge_amount: number;
+  shortfall_amount: number;
+  refunded_amount: number;
+  settled_at_ms: number;
+  created_at_ms: number;
+  updated_at_ms: number;
+}
+
+export interface CommercialPricingPlanRecord {
+  pricing_plan_id: number;
+  tenant_id: number;
+  organization_id: number;
+  plan_code: string;
+  plan_version: number;
+  display_name: string;
+  currency_code: string;
+  credit_unit_code: string;
+  status: string;
+  effective_from_ms: number;
+  effective_to_ms?: number | null;
+  created_at_ms: number;
+  updated_at_ms: number;
+}
+
+export type CommercialPricingChargeUnit =
+  | 'input_token'
+  | 'output_token'
+  | 'cache_read_token'
+  | 'cache_write_token'
+  | 'request'
+  | 'image'
+  | 'audio_second'
+  | 'audio_minute'
+  | 'video_second'
+  | 'video_minute'
+  | 'music_track'
+  | 'character'
+  | 'storage_mb_day'
+  | 'tool_call'
+  | 'unit';
+
+export type CommercialPricingMethod =
+  | 'per_unit'
+  | 'flat'
+  | 'step'
+  | 'included_then_per_unit';
+
+export interface CommercialPricingRateRecord {
+  pricing_rate_id: number;
+  tenant_id: number;
+  organization_id: number;
+  pricing_plan_id: number;
+  metric_code: string;
+  capability_code?: string | null;
+  model_code?: string | null;
+  provider_code?: string | null;
+  charge_unit: CommercialPricingChargeUnit;
+  pricing_method: CommercialPricingMethod;
+  quantity_step: number;
+  unit_price: number;
+  display_price_unit: string;
+  minimum_billable_quantity: number;
+  minimum_charge: number;
+  rounding_increment: number;
+  rounding_mode: string;
+  included_quantity: number;
+  priority: number;
+  notes?: string | null;
+  status: string;
+  created_at_ms: number;
+  updated_at_ms: number;
 }
 
 export type BillingAccountingMode = 'platform_credit' | 'byok' | 'passthrough';
@@ -603,6 +864,239 @@ export interface PortalCommerceCatalog {
   coupons: PortalCommerceCoupon[];
 }
 
+export type MarketingBenefitKind = 'percentage_off' | 'fixed_amount_off' | 'grant_units';
+export type MarketingStackingPolicy = 'exclusive' | 'stackable' | 'best_of_group';
+export type MarketingSubjectScope = 'user' | 'project' | 'workspace' | 'account';
+export type CouponTemplateStatus = 'draft' | 'active' | 'archived';
+export type CouponDistributionKind = 'shared_code' | 'unique_code' | 'auto_claim';
+export type MarketingCampaignStatus =
+  | 'draft'
+  | 'scheduled'
+  | 'active'
+  | 'paused'
+  | 'ended'
+  | 'archived';
+export type CampaignBudgetStatus = 'draft' | 'active' | 'exhausted' | 'closed';
+export type CouponCodeStatus = 'available' | 'reserved' | 'redeemed' | 'expired' | 'disabled';
+export type CouponReservationStatus = 'reserved' | 'released' | 'confirmed' | 'expired';
+export type CouponRedemptionStatus =
+  | 'pending'
+  | 'redeemed'
+  | 'partially_rolled_back'
+  | 'rolled_back'
+  | 'failed';
+export type CouponRollbackType = 'cancel' | 'refund' | 'partial_refund' | 'manual';
+export type CouponRollbackStatus = 'pending' | 'completed' | 'failed';
+
+export interface CouponBenefitSpec {
+  benefit_kind: MarketingBenefitKind;
+  subsidy_percent?: number | null;
+  subsidy_amount_minor?: number | null;
+  grant_units?: number | null;
+  currency_code?: string | null;
+}
+
+export interface CouponRestrictionSpec {
+  subject_scope: MarketingSubjectScope;
+  min_order_amount_minor?: number | null;
+  first_order_only: boolean;
+  new_customer_only: boolean;
+  exclusive_group?: string | null;
+  stacking_policy: MarketingStackingPolicy;
+  max_redemptions_per_subject?: number | null;
+  eligible_target_kinds: string[];
+}
+
+export interface CouponTemplateRecord {
+  coupon_template_id: string;
+  template_key: string;
+  display_name: string;
+  status: CouponTemplateStatus;
+  distribution_kind: CouponDistributionKind;
+  benefit: CouponBenefitSpec;
+  restriction: CouponRestrictionSpec;
+  created_at_ms: number;
+  updated_at_ms: number;
+}
+
+export interface MarketingCampaignRecord {
+  marketing_campaign_id: string;
+  coupon_template_id: string;
+  display_name: string;
+  status: MarketingCampaignStatus;
+  start_at_ms?: number | null;
+  end_at_ms?: number | null;
+  created_at_ms: number;
+  updated_at_ms: number;
+}
+
+export interface CampaignBudgetRecord {
+  campaign_budget_id: string;
+  marketing_campaign_id: string;
+  status: CampaignBudgetStatus;
+  total_budget_minor: number;
+  reserved_budget_minor: number;
+  consumed_budget_minor: number;
+  created_at_ms: number;
+  updated_at_ms: number;
+}
+
+export interface CouponCodeRecord {
+  coupon_code_id: string;
+  coupon_template_id: string;
+  code_value: string;
+  status: CouponCodeStatus;
+  claimed_subject_scope?: MarketingSubjectScope | null;
+  claimed_subject_id?: string | null;
+  expires_at_ms?: number | null;
+  created_at_ms: number;
+  updated_at_ms: number;
+}
+
+export interface CouponReservationRecord {
+  coupon_reservation_id: string;
+  coupon_code_id: string;
+  subject_scope: MarketingSubjectScope;
+  subject_id: string;
+  reservation_status: CouponReservationStatus;
+  budget_reserved_minor: number;
+  expires_at_ms: number;
+  created_at_ms: number;
+  updated_at_ms: number;
+}
+
+export interface CouponRedemptionRecord {
+  coupon_redemption_id: string;
+  coupon_reservation_id: string;
+  coupon_code_id: string;
+  coupon_template_id: string;
+  redemption_status: CouponRedemptionStatus;
+  subsidy_amount_minor: number;
+  order_id?: string | null;
+  payment_event_id?: string | null;
+  redeemed_at_ms: number;
+  updated_at_ms: number;
+}
+
+export interface CouponRollbackRecord {
+  coupon_rollback_id: string;
+  coupon_redemption_id: string;
+  rollback_type: CouponRollbackType;
+  rollback_status: CouponRollbackStatus;
+  restored_budget_minor: number;
+  restored_inventory_count: number;
+  created_at_ms: number;
+  updated_at_ms: number;
+}
+
+export interface PortalCouponValidationRequest {
+  coupon_code: string;
+  subject_scope: MarketingSubjectScope;
+  target_kind: PortalCommerceQuoteKind;
+  order_amount_minor: number;
+  reserve_amount_minor: number;
+}
+
+export interface PortalCouponValidationDecisionResponse {
+  eligible: boolean;
+  rejection_reason?: string | null;
+  reservable_budget_minor: number;
+}
+
+export interface PortalCouponValidationResponse {
+  decision: PortalCouponValidationDecisionResponse;
+  template: CouponTemplateRecord;
+  campaign: MarketingCampaignRecord;
+  budget: CampaignBudgetRecord;
+  code: CouponCodeRecord;
+}
+
+export interface PortalCouponReservationRequest {
+  coupon_code: string;
+  subject_scope: MarketingSubjectScope;
+  target_kind: PortalCommerceQuoteKind;
+  reserve_amount_minor: number;
+  ttl_ms: number;
+  idempotency_key?: string | null;
+}
+
+export interface PortalCouponReservationResponse {
+  reservation: CouponReservationRecord;
+  template: CouponTemplateRecord;
+  campaign: MarketingCampaignRecord;
+  budget: CampaignBudgetRecord;
+  code: CouponCodeRecord;
+}
+
+export interface PortalCouponRedemptionConfirmRequest {
+  coupon_reservation_id: string;
+  subsidy_amount_minor: number;
+  order_id?: string | null;
+  payment_event_id?: string | null;
+  idempotency_key?: string | null;
+}
+
+export interface PortalCouponRedemptionConfirmResponse {
+  reservation: CouponReservationRecord;
+  redemption: CouponRedemptionRecord;
+  budget: CampaignBudgetRecord;
+  code: CouponCodeRecord;
+}
+
+export interface PortalCouponRedemptionRollbackRequest {
+  coupon_redemption_id: string;
+  rollback_type: CouponRollbackType;
+  restored_budget_minor: number;
+  restored_inventory_count: number;
+  idempotency_key?: string | null;
+}
+
+export interface PortalCouponRedemptionRollbackResponse {
+  redemption: CouponRedemptionRecord;
+  rollback: CouponRollbackRecord;
+  budget: CampaignBudgetRecord;
+  code: CouponCodeRecord;
+}
+
+export interface PortalMarketingRedemptionSummary {
+  total_count: number;
+  redeemed_count: number;
+  partially_rolled_back_count: number;
+  rolled_back_count: number;
+  failed_count: number;
+}
+
+export interface PortalMarketingCodeSummary {
+  total_count: number;
+  available_count: number;
+  reserved_count: number;
+  redeemed_count: number;
+  disabled_count: number;
+  expired_count: number;
+}
+
+export interface PortalMarketingCodeItem {
+  code: CouponCodeRecord;
+  latest_reservation?: CouponReservationRecord | null;
+  latest_redemption?: CouponRedemptionRecord | null;
+}
+
+export interface PortalMarketingCodesResponse {
+  summary: PortalMarketingCodeSummary;
+  items: PortalMarketingCodeItem[];
+}
+
+export interface PortalMarketingRedemptionsResponse {
+  summary: PortalMarketingRedemptionSummary;
+  items: CouponRedemptionRecord[];
+}
+
+export interface PortalMarketingRewardHistoryItem {
+  redemption: CouponRedemptionRecord;
+  code: CouponCodeRecord;
+  rollbacks: CouponRollbackRecord[];
+}
+
 export type PortalCommerceQuoteKind =
   | 'subscription_plan'
   | 'recharge_pack'
@@ -647,20 +1141,70 @@ export type PortalCommerceOrderStatus =
   | 'pending_payment'
   | 'fulfilled'
   | 'canceled'
-  | 'failed';
+  | 'failed'
+  | 'refunded';
 
 export type PortalCommerceCheckoutSessionStatus =
   | 'open'
   | 'settled'
   | 'canceled'
   | 'failed'
+  | 'refunded'
   | 'not_required'
   | 'closed';
 
-export type PortalCommercePaymentEventType = 'settled' | 'failed' | 'canceled';
+export type PortalCommercePaymentEventType =
+  | 'settled'
+  | 'failed'
+  | 'canceled'
+  | 'refunded';
+
+export type PortalCommercePaymentProvider =
+  | 'manual_lab'
+  | 'stripe'
+  | 'alipay'
+  | 'wechat_pay'
+  | 'no_payment_required';
+
+export type PortalCommerceCheckoutMethodChannel =
+  | 'operator_settlement'
+  | 'hosted_checkout'
+  | 'scan_qr';
+
+export type PortalCommerceCheckoutMethodSessionKind =
+  | 'operator_action'
+  | 'hosted_checkout'
+  | 'qr_code';
+
+export type PortalCommercePaymentEventProcessingStatus =
+  | 'received'
+  | 'processed'
+  | 'ignored'
+  | 'rejected'
+  | 'failed';
 
 export interface PortalCommercePaymentEventRequest {
   event_type: PortalCommercePaymentEventType;
+  provider?: PortalCommercePaymentProvider | null;
+  provider_event_id?: string | null;
+  checkout_method_id?: string | null;
+}
+
+export interface PortalCommercePaymentEventRecord {
+  payment_event_id: string;
+  order_id: string;
+  project_id: string;
+  user_id: string;
+  provider: string;
+  provider_event_id?: string | null;
+  dedupe_key: string;
+  event_type: PortalCommercePaymentEventType;
+  payload_json: string;
+  processing_status: PortalCommercePaymentEventProcessingStatus;
+  processing_message?: string | null;
+  received_at_ms: number;
+  processed_at_ms?: number | null;
+  order_status_after?: PortalCommerceOrderStatus | null;
 }
 
 export interface PortalCommerceCheckoutSessionMethod {
@@ -669,13 +1213,23 @@ export interface PortalCommerceCheckoutSessionMethod {
   detail: string;
   action: 'settle_order' | 'cancel_order' | 'provider_handoff';
   availability: 'available' | 'planned' | 'closed';
+  provider: PortalCommercePaymentProvider;
+  channel: PortalCommerceCheckoutMethodChannel;
+  session_kind: PortalCommerceCheckoutMethodSessionKind;
+  session_reference: string;
+  qr_code_payload?: string | null;
+  webhook_verification: string;
+  supports_refund: boolean;
+  supports_partial_refund: boolean;
+  recommended: boolean;
+  supports_webhook: boolean;
 }
 
 export interface PortalCommerceCheckoutSession {
   order_id: string;
   order_status: PortalCommerceOrderStatus;
   session_status: PortalCommerceCheckoutSessionStatus;
-  provider: string;
+  provider: PortalCommercePaymentProvider;
   mode: string;
   reference: string;
   payable_price_label: string;
@@ -697,9 +1251,14 @@ export interface PortalCommerceOrder {
   granted_units: number;
   bonus_units: number;
   applied_coupon_code?: string | null;
+  coupon_reservation_id?: string | null;
+  coupon_redemption_id?: string | null;
+  marketing_campaign_id?: string | null;
+  subsidy_amount_minor?: number;
   status: PortalCommerceOrderStatus;
   source: PortalDataSource;
   created_at_ms: number;
+  updated_at_ms?: number;
 }
 
 export interface PortalCommerceMembership {
@@ -716,4 +1275,29 @@ export interface PortalCommerceMembership {
   source: PortalDataSource;
   activated_at_ms: number;
   updated_at_ms: number;
+}
+
+export interface PortalCommerceOrderCenterEntry {
+  order: PortalCommerceOrder;
+  payment_events: PortalCommercePaymentEventRecord[];
+  latest_payment_event?: PortalCommercePaymentEventRecord | null;
+  checkout_session: PortalCommerceCheckoutSession;
+}
+
+export interface PortalCommerceReconciliationSummary {
+  account_id: number;
+  last_reconciled_order_id: string;
+  last_reconciled_order_updated_at_ms: number;
+  last_reconciled_order_created_at_ms: number;
+  last_reconciled_at_ms: number;
+  backlog_order_count: number;
+  checkpoint_lag_ms: number;
+  healthy: boolean;
+}
+
+export interface PortalCommerceOrderCenterResponse {
+  project_id: string;
+  membership: PortalCommerceMembership | null;
+  reconciliation: PortalCommerceReconciliationSummary | null;
+  orders: PortalCommerceOrderCenterEntry[];
 }

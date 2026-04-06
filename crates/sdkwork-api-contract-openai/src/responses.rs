@@ -1,14 +1,15 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateResponseRequest {
     pub model: String,
     pub input: Value,
     pub stream: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CountResponseInputTokensRequest {
     pub model: String,
     pub input: Value,
@@ -23,7 +24,7 @@ impl CountResponseInputTokensRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CompactResponseRequest {
     pub model: String,
     pub input: Value,
@@ -38,7 +39,7 @@ impl CompactResponseRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ResponseObject {
     pub id: String,
     pub object: &'static str,
@@ -48,12 +49,12 @@ pub struct ResponseObject {
     pub output: Vec<ResponseOutputItem>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ResponseOutputItem {
     pub r#type: &'static str,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ResponseInputItemObject {
     pub id: String,
     pub object: &'static str,
@@ -70,7 +71,7 @@ impl ResponseInputItemObject {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ListResponseInputItemsResponse {
     pub object: &'static str,
     pub data: Vec<ResponseInputItemObject>,
@@ -85,7 +86,7 @@ impl ListResponseInputItemsResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct DeleteResponseResponse {
     pub id: String,
     pub object: &'static str,
@@ -102,7 +103,7 @@ impl DeleteResponseResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ResponseInputTokensObject {
     pub object: &'static str,
     pub input_tokens: u64,
@@ -117,7 +118,7 @@ impl ResponseInputTokensObject {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ResponseCompactionObject {
     pub id: String,
     pub object: &'static str,

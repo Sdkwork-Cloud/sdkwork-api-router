@@ -2,6 +2,7 @@ use anyhow::{ensure, Result};
 use async_trait::async_trait;
 use sdkwork_api_domain_rate_limit::RateLimitCheckResult;
 use sdkwork_api_storage_core::AdminStore;
+use sha2::{Digest, Sha256};
 use std::borrow::ToOwned;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -9,6 +10,70 @@ pub use sdkwork_api_domain_rate_limit::{RateLimitCheckResult as RateLimitCheck, 
 
 pub fn service_name() -> &'static str {
     "rate-limit-service"
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CouponRateLimitAction {
+    Validate,
+    Claim,
+    Reserve,
+    Confirm,
+    Rollback,
+}
+
+pub fn coupon_route_key(action: CouponRateLimitAction) -> &'static str {
+    match action {
+        CouponRateLimitAction::Validate => "marketing.coupon.validate",
+        CouponRateLimitAction::Claim => "marketing.coupon.claim",
+        CouponRateLimitAction::Reserve => "marketing.coupon.reserve",
+        CouponRateLimitAction::Confirm => "marketing.coupon.confirm",
+        CouponRateLimitAction::Rollback => "marketing.coupon.rollback",
+    }
+}
+
+pub fn coupon_actor_bucket(kind: &str, value: &str) -> String {
+    format!("{}:{}", kind.trim().to_ascii_lowercase(), value.trim())
+}
+
+pub fn coupon_code_hash(code: &str) -> String {
+    let normalized = normalize_coupon_code(code);
+    let mut hasher = Sha256::new();
+    hasher.update(normalized.as_bytes());
+    let digest = hasher.finalize();
+    digest
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>()
+}
+
+pub fn create_coupon_rate_limit_policy(
+    policy_id: &str,
+    project_id: &str,
+    action: CouponRateLimitAction,
+    requests_per_window: u64,
+    window_seconds: u64,
+    burst_requests: u64,
+    enabled: bool,
+    actor_bucket: Option<&str>,
+    coupon_code: Option<&str>,
+    notes: Option<&str>,
+) -> Result<RateLimitPolicy> {
+    let coupon_hash = coupon_code
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(coupon_code_hash);
+    create_rate_limit_policy(
+        policy_id,
+        project_id,
+        requests_per_window,
+        window_seconds,
+        burst_requests,
+        enabled,
+        Some(coupon_route_key(action)),
+        actor_bucket,
+        coupon_hash.as_deref(),
+        notes,
+    )
 }
 
 pub fn create_rate_limit_policy(
@@ -150,6 +215,40 @@ where
         .await?;
 
     Ok(result)
+}
+
+pub async fn check_coupon_rate_limit<S>(
+    store: &S,
+    project_id: &str,
+    action: CouponRateLimitAction,
+    actor_bucket: Option<&str>,
+    coupon_code: Option<&str>,
+    requested_requests: u64,
+) -> Result<RateLimitCheckResult>
+where
+    S: RateLimitPolicyStore + ?Sized,
+{
+    let coupon_hash = coupon_code
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(coupon_code_hash);
+    check_rate_limit(
+        store,
+        project_id,
+        actor_bucket,
+        coupon_route_key(action),
+        coupon_hash.as_deref(),
+        requested_requests,
+    )
+    .await
+}
+
+fn normalize_coupon_code(code: &str) -> String {
+    code.trim()
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>()
+        .to_ascii_uppercase()
 }
 
 fn now_epoch_millis() -> u64 {

@@ -10,9 +10,9 @@ async-trait.workspace = true
 axum.workspace = true
 bytes.workspace = true
 http = "1"
-pingora-core = "0.6"
-pingora-http = "0.6"
-pingora-proxy = "0.6"
+pingora-core = "0.8"
+pingora-http = "0.8"
+pingora-proxy = "0.8"
 reqwest.workspace = true
 tokio = { workspace = true, features = ["net", "rt-multi-thread"] }
 

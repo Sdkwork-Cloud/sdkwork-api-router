@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, ToSchema)]
 pub struct CreateThreadRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub messages: Option<Vec<Value>>,
@@ -21,7 +22,7 @@ impl CreateThreadRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, ToSchema)]
 pub struct UpdateThreadRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Value>,
@@ -38,7 +39,7 @@ impl UpdateThreadRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ThreadObject {
     pub id: String,
     pub object: &'static str,
@@ -65,7 +66,7 @@ impl ThreadObject {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct DeleteThreadResponse {
     pub id: String,
     pub object: &'static str,
@@ -82,7 +83,7 @@ impl DeleteThreadResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateThreadMessageRequest {
     pub role: String,
     pub content: Value,
@@ -103,7 +104,7 @@ impl CreateThreadMessageRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, ToSchema)]
 pub struct UpdateThreadMessageRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Value>,
@@ -117,19 +118,19 @@ impl UpdateThreadMessageRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ThreadTextObject {
     pub value: String,
     pub annotations: Vec<Value>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ThreadMessageContentObject {
     pub r#type: &'static str,
     pub text: ThreadTextObject,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ThreadMessageObject {
     pub id: String,
     pub object: &'static str,
@@ -172,7 +173,7 @@ impl ThreadMessageObject {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ListThreadMessagesResponse {
     pub object: &'static str,
     pub data: Vec<ThreadMessageObject>,
@@ -193,7 +194,7 @@ impl ListThreadMessagesResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct DeleteThreadMessageResponse {
     pub id: String,
     pub object: &'static str,

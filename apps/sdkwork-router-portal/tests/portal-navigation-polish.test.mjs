@@ -21,8 +21,18 @@ test('portal navigation rail follows claw-studio grouped business navigation and
   assert.match(navigationRail, /Revenue/);
   assert.match(navigationRail, /mx-auto h-11 w-11 justify-center/);
   assert.match(navigationRail, /group relative flex items-center rounded-2xl/);
+  assert.match(navigationRail, /data-slot="sidebar-nav-group"/);
+  assert.match(navigationRail, /data-slot="sidebar-nav-group-header"/);
+  assert.match(navigationRail, /data-slot="sidebar-nav-list"/);
+  assert.match(navigationRail, /data-slot="sidebar-nav-item"/);
+  assert.match(navigationRail, /eyebrowKey/);
+  assert.match(navigationRail, /detailKey/);
+  assert.match(navigationRail, /data-slot="sidebar-profile-shell"/);
   assert.match(navigationRail, /data-slot="sidebar-edge-control"/);
   assert.match(navigationRail, /data-slot="sidebar-user-control"/);
+  assert.doesNotMatch(navigationRail, /data-slot="sidebar-nav-group-count"/);
+  assert.doesNotMatch(navigationRail, /data-slot="sidebar-active-route-panel"/);
+  assert.doesNotMatch(navigationRail, /rounded-\[26px\]/);
   assert.doesNotMatch(navigationRail, /Active workspace/);
   assert.doesNotMatch(navigationRail, /Route signals/);
   assert.doesNotMatch(navigationRail, /<NavigationRail|NavigationRail\s*\}\s*from/);

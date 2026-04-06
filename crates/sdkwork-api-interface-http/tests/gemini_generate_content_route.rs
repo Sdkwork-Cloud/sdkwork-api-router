@@ -96,6 +96,41 @@ async fn stateless_gemini_generate_content_route_translates_to_chat_completions(
 
 #[serial]
 #[tokio::test]
+async fn stateless_gemini_generate_content_route_returns_invalid_request_for_missing_model() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1beta/models/:generateContent")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "contents": [
+                            {
+                                "role": "user",
+                                "parts": [
+                                    { "text": "hello from gemini" }
+                                ]
+                            }
+                        ]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["code"], 400);
+    assert_eq!(json["error"]["status"], "INVALID_ARGUMENT");
+    assert_eq!(json["error"]["message"], "Chat completion model is required.");
+}
+
+#[serial]
+#[tokio::test]
 async fn stateful_gemini_generate_content_route_accepts_query_key_and_records_usage() {
     let upstream_state = UpstreamCaptureState::default();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -157,6 +192,51 @@ async fn stateful_gemini_generate_content_route_accepts_query_key_and_records_us
         "gemini-2.5-pro",
     )
     .await;
+}
+
+#[serial]
+#[tokio::test]
+async fn stateful_gemini_generate_content_route_returns_invalid_request_for_missing_model_without_usage(
+) {
+    let pool = memory_pool().await;
+    let api_key =
+        support::issue_gateway_api_key(&pool, "tenant-gemini-invalid", "project-gemini-invalid")
+            .await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+
+    let response = gateway_app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1beta/models/:generateContent?key={api_key}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "contents": [
+                            {
+                                "role": "user",
+                                "parts": [
+                                    { "text": "route by gemini" }
+                                ]
+                            }
+                        ]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["code"], 400);
+    assert_eq!(json["error"]["status"], "INVALID_ARGUMENT");
+    assert_eq!(json["error"]["message"], "Chat completion model is required.");
+
+    support::assert_no_usage_records(admin_app, &admin_token).await;
 }
 
 #[serial]
@@ -225,6 +305,90 @@ async fn stateless_gemini_stream_generate_content_route_returns_gemini_sse_event
 
 #[serial]
 #[tokio::test]
+async fn stateless_gemini_stream_generate_content_route_returns_invalid_request_for_missing_model(
+) {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1beta/models/:streamGenerateContent?alt=sse")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "contents": [
+                            {
+                                "role": "user",
+                                "parts": [
+                                    { "text": "stream to gemini" }
+                                ]
+                            }
+                        ]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["code"], 400);
+    assert_eq!(json["error"]["status"], "INVALID_ARGUMENT");
+    assert_eq!(json["error"]["message"], "Chat completion model is required.");
+}
+
+#[serial]
+#[tokio::test]
+async fn stateful_gemini_stream_generate_content_route_returns_invalid_request_for_missing_model_without_usage(
+) {
+    let pool = memory_pool().await;
+    let api_key = support::issue_gateway_api_key(
+        &pool,
+        "tenant-gemini-stream-invalid",
+        "project-gemini-stream-invalid",
+    )
+    .await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+
+    let response = gateway_app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1beta/models/:streamGenerateContent?alt=sse&key={api_key}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "contents": [
+                            {
+                                "role": "user",
+                                "parts": [
+                                    { "text": "stream to gemini" }
+                                ]
+                            }
+                        ]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["code"], 400);
+    assert_eq!(json["error"]["status"], "INVALID_ARGUMENT");
+    assert_eq!(json["error"]["message"], "Chat completion model is required.");
+
+    support::assert_no_usage_records(admin_app, &admin_token).await;
+}
+
+#[serial]
+#[tokio::test]
 async fn gemini_count_tokens_route_returns_total_tokens() {
     let app = sdkwork_api_interface_http::gateway_router();
     let response = app
@@ -254,6 +418,89 @@ async fn gemini_count_tokens_route_returns_total_tokens() {
     assert_eq!(response.status(), StatusCode::OK);
     let json = read_json(response).await;
     assert_eq!(json["totalTokens"], 42);
+}
+
+#[serial]
+#[tokio::test]
+async fn gemini_count_tokens_route_returns_invalid_request_for_missing_model() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1beta/models/:countTokens")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "contents": [
+                            {
+                                "role": "user",
+                                "parts": [
+                                    { "text": "count my gemini tokens" }
+                                ]
+                            }
+                        ]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["code"], 400);
+    assert_eq!(json["error"]["status"], "INVALID_ARGUMENT");
+    assert_eq!(json["error"]["message"], "Response model is required.");
+}
+
+#[serial]
+#[tokio::test]
+async fn stateful_gemini_count_tokens_route_returns_invalid_request_for_missing_model_without_usage(
+) {
+    let pool = memory_pool().await;
+    let api_key = support::issue_gateway_api_key(
+        &pool,
+        "tenant-gemini-count-invalid",
+        "project-gemini-count-invalid",
+    )
+    .await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+
+    let response = gateway_app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1beta/models/:countTokens?key={api_key}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "contents": [
+                            {
+                                "role": "user",
+                                "parts": [
+                                    { "text": "count my gemini tokens" }
+                                ]
+                            }
+                        ]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["code"], 400);
+    assert_eq!(json["error"]["status"], "INVALID_ARGUMENT");
+    assert_eq!(json["error"]["message"], "Response model is required.");
+
+    support::assert_no_usage_records(admin_app, &admin_token).await;
 }
 
 async fn read_json(response: axum::response::Response) -> Value {

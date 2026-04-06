@@ -31,7 +31,7 @@ async fn portal_register_login_and_me_flow_works() {
                 .uri("/portal/auth/register")
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    "{\"email\":\"portal@example.com\",\"password\":\"hunter2!\",\"display_name\":\"Portal User\"}",
+                    "{\"email\":\"portal@example.com\",\"password\":\"PortalPass123!\",\"display_name\":\"Portal User\"}",
                 ))
                 .unwrap(),
         )
@@ -60,7 +60,7 @@ async fn portal_register_login_and_me_flow_works() {
                 .uri("/portal/auth/register")
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    "{\"email\":\"portal@example.com\",\"password\":\"hunter2!\",\"display_name\":\"Portal User\"}",
+                    "{\"email\":\"portal@example.com\",\"password\":\"PortalPass123!\",\"display_name\":\"Portal User\"}",
                 ))
                 .unwrap(),
         )
@@ -77,7 +77,7 @@ async fn portal_register_login_and_me_flow_works() {
                 .uri("/portal/auth/login")
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    "{\"email\":\"portal@example.com\",\"password\":\"hunter2!\"}",
+                    "{\"email\":\"portal@example.com\",\"password\":\"PortalPass123!\"}",
                 ))
                 .unwrap(),
         )
@@ -131,12 +131,44 @@ async fn portal_login_preflight_includes_cors_headers() {
             .headers()
             .get("access-control-allow-origin")
             .and_then(|value| value.to_str().ok()),
-        Some("*")
+        Some("http://localhost:5174")
     );
     assert!(response
         .headers()
         .get("access-control-allow-methods")
         .is_some());
+}
+
+#[tokio::test]
+async fn portal_metrics_route_requires_bearer_token() {
+    let pool = memory_pool().await;
+    let app = sdkwork_api_interface_portal::portal_router_with_pool(pool);
+
+    let unauthorized = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/metrics")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+
+    let authorized = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/metrics")
+                .header("authorization", "Bearer local-dev-metrics-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(authorized.status(), StatusCode::OK);
 }
 
 #[tokio::test]
@@ -152,7 +184,7 @@ async fn portal_login_rejects_invalid_password() {
                 .uri("/portal/auth/register")
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    "{\"email\":\"portal@example.com\",\"password\":\"hunter2!\",\"display_name\":\"Portal User\"}",
+                    "{\"email\":\"portal@example.com\",\"password\":\"PortalPass123!\",\"display_name\":\"Portal User\"}",
                 ))
                 .unwrap(),
         )
@@ -293,7 +325,7 @@ async fn portal_routes_apply_rotated_live_jwt_secret_to_new_requests() {
                 .uri("/portal/auth/register")
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    "{\"email\":\"rotate@example.com\",\"password\":\"hunter2!\",\"display_name\":\"Rotate User\"}",
+                    "{\"email\":\"rotate@example.com\",\"password\":\"PortalPass123!\",\"display_name\":\"Rotate User\"}",
                 ))
                 .unwrap(),
         )
@@ -343,7 +375,7 @@ async fn portal_routes_apply_rotated_live_jwt_secret_to_new_requests() {
                 .uri("/portal/auth/login")
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    "{\"email\":\"rotate@example.com\",\"password\":\"hunter2!\"}",
+                    "{\"email\":\"rotate@example.com\",\"password\":\"PortalPass123!\"}",
                 ))
                 .unwrap(),
         )

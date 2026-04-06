@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateRealtimeSessionRequest {
     pub model: String,
     pub voice: Option<String>,
@@ -15,7 +16,7 @@ impl CreateRealtimeSessionRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct RealtimeSessionObject {
     pub id: String,
     pub object: &'static str,
@@ -34,7 +35,7 @@ impl RealtimeSessionObject {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct RealtimeClientSecret {
     pub value: String,
     pub expires_at: u64,

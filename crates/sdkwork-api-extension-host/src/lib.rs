@@ -10,23 +10,23 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, Result as AnyhowResult};
+use anyhow::{Result as AnyhowResult, anyhow};
 use async_trait::async_trait;
-use base64::{engine::general_purpose::STANDARD, Engine as _};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use bytes::Bytes;
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-use futures_util::stream;
 use futures_util::StreamExt;
+use futures_util::stream;
 use libloading::Library;
 use sdkwork_api_extension_abi::{
-    free_raw_c_string, from_raw_c_str, into_raw_c_string, ExtensionHealthCheckResult,
-    ExtensionLifecycleContext, ExtensionLifecycleResult, ProviderInvocation,
-    ProviderInvocationResult, ProviderStreamInvocationResult, ProviderStreamWriter,
-    SDKWORK_EXTENSION_ABI_VERSION, SDKWORK_EXTENSION_ABI_VERSION_SYMBOL,
+    ExtensionHealthCheckResult, ExtensionLifecycleContext, ExtensionLifecycleResult,
+    ProviderInvocation, ProviderInvocationResult, ProviderStreamInvocationResult,
+    ProviderStreamWriter, SDKWORK_EXTENSION_ABI_VERSION, SDKWORK_EXTENSION_ABI_VERSION_SYMBOL,
     SDKWORK_EXTENSION_FREE_STRING_SYMBOL, SDKWORK_EXTENSION_HEALTH_CHECK_JSON_SYMBOL,
     SDKWORK_EXTENSION_INIT_JSON_SYMBOL, SDKWORK_EXTENSION_MANIFEST_JSON_SYMBOL,
     SDKWORK_EXTENSION_PROVIDER_EXECUTE_JSON_SYMBOL,
     SDKWORK_EXTENSION_PROVIDER_EXECUTE_STREAM_JSON_SYMBOL, SDKWORK_EXTENSION_SHUTDOWN_JSON_SYMBOL,
+    free_raw_c_string, from_raw_c_str, into_raw_c_string,
 };
 use sdkwork_api_extension_core::{
     ExtensionInstallation, ExtensionInstance, ExtensionManifest, ExtensionRuntime,
@@ -36,7 +36,7 @@ use sdkwork_api_provider_core::{
     ProviderAdapter, ProviderExecutionAdapter, ProviderOutput, ProviderRequest,
     ProviderRequestOptions, ProviderStreamOutput,
 };
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tokio::sync::mpsc::{self, UnboundedSender};
@@ -665,7 +665,7 @@ pub fn verify_discovered_extension_package_trust(
                     code: "package_payload_unreadable".to_owned(),
                     message: message.to_string(),
                 }],
-            }
+            };
         }
     };
 
@@ -922,7 +922,7 @@ pub fn list_connector_runtime_statuses() -> Result<Vec<ConnectorRuntimeStatus>, 
                     return Err(ExtensionHostError::ConnectorRuntimeShutdownFailed {
                         instance_id: instance_id.clone(),
                         message: error.to_string(),
-                    })
+                    });
                 }
             }
         }
@@ -955,8 +955,8 @@ pub fn list_connector_runtime_statuses() -> Result<Vec<ConnectorRuntimeStatus>, 
     Ok(statuses)
 }
 
-pub fn list_native_dynamic_runtime_statuses(
-) -> Result<Vec<NativeDynamicRuntimeStatus>, ExtensionHostError> {
+pub fn list_native_dynamic_runtime_statuses()
+-> Result<Vec<NativeDynamicRuntimeStatus>, ExtensionHostError> {
     let runtimes = {
         let registry = native_dynamic_runtime_registry()?;
         registry.values().cloned().collect::<Vec<_>>()
@@ -2186,6 +2186,8 @@ fn provider_invocation_from_request_with_options(
     base_url: &str,
     options: &ProviderRequestOptions,
 ) -> Result<ProviderInvocation, ExtensionHostError> {
+    let resolved_headers = options.resolved_headers();
+
     macro_rules! invocation_with_body {
         ($operation:expr, [$($param:expr),*], $body:expr, $expects_stream:expr) => {
             ProviderInvocation::new(
@@ -2196,7 +2198,7 @@ fn provider_invocation_from_request_with_options(
                 serialize_json_body($body, $operation)?,
                 $expects_stream,
             )
-            .with_headers(options.headers().clone())
+            .with_headers(resolved_headers.clone())
         };
     }
 
@@ -2210,7 +2212,7 @@ fn provider_invocation_from_request_with_options(
                 Value::Null,
                 $expects_stream,
             )
-            .with_headers(options.headers().clone())
+            .with_headers(resolved_headers.clone())
         };
     }
 
@@ -2774,10 +2776,19 @@ fn collect_package_file_digests_in(
             .replace('\\', "/");
         files.push(PackageFileDigest {
             path: relative_path,
-            sha256: format!("{:x}", Sha256::digest(bytes)),
+            sha256: sha256_hex(&bytes),
         });
     }
     Ok(())
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut encoded = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        encoded.push_str(&format!("{byte:02x}"));
+    }
+    encoded
 }
 
 fn verify_signature_bytes(
@@ -2968,7 +2979,7 @@ fn running_connector_status(
                 return Err(ExtensionHostError::ConnectorRuntimeShutdownFailed {
                     instance_id: instance_id.to_owned(),
                     message: error.to_string(),
-                })
+                });
             }
         },
         None => None,
@@ -3026,7 +3037,7 @@ fn connector_process_exited(instance_id: &str) -> Result<bool, ExtensionHostErro
                 return Err(ExtensionHostError::ConnectorRuntimeShutdownFailed {
                     instance_id: instance_id.to_owned(),
                     message: error.to_string(),
-                })
+                });
             }
         },
         None => true,
@@ -3333,6 +3344,38 @@ mod tests {
         assert_eq!(
             invocation.headers.get("anthropic-beta").map(String::as_str),
             Some("tools-2024-04-04")
+        );
+    }
+
+    #[test]
+    fn provider_invocation_includes_standard_execution_context_headers() {
+        let request = CreateResponseRequest {
+            model: "gpt-4.1".to_owned(),
+            input: serde_json::Value::String("hello".to_owned()),
+            stream: None,
+        };
+        let options = ProviderRequestOptions::new()
+            .with_idempotency_key("idem-native")
+            .with_request_trace_id("trace-native");
+
+        let invocation = provider_invocation_from_request_with_options(
+            ProviderRequest::Responses(&request),
+            "sk-native",
+            "https://example.com/v1",
+            &options,
+        )
+        .expect("provider invocation");
+
+        assert_eq!(
+            invocation
+                .headers
+                .get("idempotency-key")
+                .map(String::as_str),
+            Some("idem-native")
+        );
+        assert_eq!(
+            invocation.headers.get("x-request-id").map(String::as_str),
+            Some("trace-native")
         );
     }
 }

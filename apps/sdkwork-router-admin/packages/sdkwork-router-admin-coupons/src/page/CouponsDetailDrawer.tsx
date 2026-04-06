@@ -11,25 +11,62 @@ import {
 } from '@sdkwork/ui-pc-react';
 import { Edit, Power, Trash2 } from 'lucide-react';
 import { useAdminI18n } from 'sdkwork-router-admin-core';
-import type { CouponRecord } from 'sdkwork-router-admin-types';
+import type {
+  CampaignBudgetRecord,
+  CampaignBudgetStatus,
+  CouponCodeRecord,
+  CouponCodeStatus,
+  CouponRecord,
+  CouponTemplateRecord,
+  CouponTemplateStatus,
+  MarketingCampaignRecord,
+  MarketingCampaignStatus,
+} from 'sdkwork-router-admin-types';
 
 import { CouponsDetailPanel } from './CouponsDetailPanel';
 import { quotaHealth } from './shared';
 
 type CouponsDetailDrawerProps = {
+  governance: {
+    template: CouponTemplateRecord | null;
+    campaign: MarketingCampaignRecord | null;
+    budget: CampaignBudgetRecord | null;
+    code: CouponCodeRecord | null;
+  };
   onDelete: () => void;
   onEdit: () => void;
   onOpenChange: (open: boolean) => void;
   onToggleStatus: () => void;
+  onUpdateMarketingCampaignBudgetStatus: (
+    campaignBudgetId: string,
+    status: CampaignBudgetStatus,
+  ) => void;
+  onUpdateMarketingCampaignStatus: (
+    marketingCampaignId: string,
+    status: MarketingCampaignStatus,
+  ) => void;
+  onUpdateMarketingCouponCodeStatus: (
+    couponCodeId: string,
+    status: CouponCodeStatus,
+  ) => void;
+  onUpdateMarketingCouponTemplateStatus: (
+    couponTemplateId: string,
+    status: CouponTemplateStatus,
+  ) => void;
   open: boolean;
   selectedCoupon: CouponRecord | null;
 };
 
 export function CouponsDetailDrawer({
+  governance,
   onDelete,
   onEdit,
   onOpenChange,
   onToggleStatus,
+  onUpdateMarketingCampaignBudgetStatus,
+  onUpdateMarketingCampaignStatus,
+  onUpdateMarketingCouponCodeStatus,
+  onUpdateMarketingCouponTemplateStatus,
   open,
   selectedCoupon,
 }: CouponsDetailDrawerProps) {
@@ -63,7 +100,14 @@ export function CouponsDetailDrawer({
             </DrawerHeader>
 
             <DrawerBody className="space-y-4">
-              <CouponsDetailPanel selectedCoupon={selectedCoupon} />
+              <CouponsDetailPanel
+                governance={governance}
+                onUpdateMarketingCampaignBudgetStatus={onUpdateMarketingCampaignBudgetStatus}
+                onUpdateMarketingCampaignStatus={onUpdateMarketingCampaignStatus}
+                onUpdateMarketingCouponCodeStatus={onUpdateMarketingCouponCodeStatus}
+                onUpdateMarketingCouponTemplateStatus={onUpdateMarketingCouponTemplateStatus}
+                selectedCoupon={selectedCoupon}
+              />
             </DrawerBody>
 
             <DrawerFooter className="flex flex-wrap items-center justify-between gap-3">

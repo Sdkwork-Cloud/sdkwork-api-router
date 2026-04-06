@@ -79,3 +79,31 @@ async fn admin_password_change_rejects_old_password_and_accepts_new_password() {
     .unwrap();
     assert_eq!(new_session.user.id, session.user.id);
 }
+
+#[tokio::test]
+async fn admin_password_change_rejects_weak_passwords() {
+    let store = memory_store().await;
+
+    let session = login_admin_user(
+        &store,
+        "admin@sdkwork.local",
+        "ChangeMe123!",
+        "admin-test-secret",
+    )
+    .await
+    .unwrap();
+
+    let error = change_admin_password(
+        &store,
+        &session.user.id,
+        "ChangeMe123!",
+        "password1234",
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        "password must include an uppercase letter"
+    );
+}

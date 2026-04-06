@@ -1,20 +1,30 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use sdkwork_api_domain_billing::{
-    AccountBenefitLotRecord, AccountHoldAllocationRecord, AccountHoldRecord,
-    AccountLedgerAllocationRecord, AccountLedgerEntryRecord, AccountRecord, AccountType,
-    BillingEventRecord, LedgerEntry, PricingPlanRecord, PricingRateRecord, QuotaPolicy,
-    RequestSettlementRecord,
+    AccountBenefitLotRecord, AccountCommerceReconciliationStateRecord, AccountHoldAllocationRecord,
+    AccountHoldRecord, AccountLedgerAllocationRecord, AccountLedgerEntryRecord, AccountRecord,
+    AccountType, BillingEventRecord, LedgerEntry, PricingPlanRecord, PricingRateRecord,
+    QuotaPolicy, RequestSettlementRecord,
 };
 use sdkwork_api_domain_catalog::{
     Channel, ChannelModelRecord, ModelCatalogEntry, ModelPriceRecord, ProxyProvider,
 };
-use sdkwork_api_domain_commerce::{CommerceOrderRecord, ProjectMembershipRecord};
+use sdkwork_api_domain_commerce::{
+    CommerceOrderRecord, CommercePaymentEventRecord, ProjectMembershipRecord,
+};
 use sdkwork_api_domain_coupon::CouponCampaign;
 use sdkwork_api_domain_credential::UpstreamCredential;
 use sdkwork_api_domain_identity::{
     AdminUserRecord, ApiKeyGroupRecord, CanonicalApiKeyRecord, GatewayApiKeyRecord,
     IdentityBindingRecord, IdentityUserRecord, PortalUserRecord,
+};
+use sdkwork_api_domain_jobs::{
+    AsyncJobAssetRecord, AsyncJobAttemptRecord, AsyncJobCallbackRecord, AsyncJobRecord,
+};
+use sdkwork_api_domain_marketing::{
+    CampaignBudgetRecord, CouponCodeRecord, CouponRedemptionRecord, CouponReservationRecord,
+    CouponRollbackRecord, CouponTemplateRecord, MarketingCampaignRecord,
+    MarketingOutboxEventRecord,
 };
 use sdkwork_api_domain_rate_limit::{
     RateLimitCheckResult, RateLimitPolicy, RateLimitWindowSnapshot,
@@ -28,6 +38,8 @@ use sdkwork_api_domain_usage::{RequestMeterFactRecord, RequestMeterMetricRecord,
 use sdkwork_api_extension_core::{ExtensionInstallation, ExtensionInstance};
 use sdkwork_api_secret_core::SecretEnvelope;
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, RwLock};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -56,6 +68,83 @@ pub trait StorageDriverFactory<T>: Send + Sync {
     fn driver_name(&self) -> &'static str;
 
     async fn build(&self, database_url: &str) -> Result<T>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AtomicCouponReservationCommand {
+    pub template_to_persist: Option<CouponTemplateRecord>,
+    pub campaign_to_persist: Option<MarketingCampaignRecord>,
+    pub expected_budget: CampaignBudgetRecord,
+    pub next_budget: CampaignBudgetRecord,
+    pub expected_code: CouponCodeRecord,
+    pub next_code: CouponCodeRecord,
+    pub reservation: CouponReservationRecord,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AtomicCouponReservationResult {
+    pub budget: CampaignBudgetRecord,
+    pub code: CouponCodeRecord,
+    pub reservation: CouponReservationRecord,
+    pub created: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AtomicCouponConfirmationCommand {
+    pub expected_budget: CampaignBudgetRecord,
+    pub next_budget: CampaignBudgetRecord,
+    pub expected_code: CouponCodeRecord,
+    pub next_code: CouponCodeRecord,
+    pub expected_reservation: CouponReservationRecord,
+    pub next_reservation: CouponReservationRecord,
+    pub redemption: CouponRedemptionRecord,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AtomicCouponConfirmationResult {
+    pub budget: CampaignBudgetRecord,
+    pub code: CouponCodeRecord,
+    pub reservation: CouponReservationRecord,
+    pub redemption: CouponRedemptionRecord,
+    pub created: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AtomicCouponReleaseCommand {
+    pub expected_budget: CampaignBudgetRecord,
+    pub next_budget: CampaignBudgetRecord,
+    pub expected_code: CouponCodeRecord,
+    pub next_code: CouponCodeRecord,
+    pub expected_reservation: CouponReservationRecord,
+    pub next_reservation: CouponReservationRecord,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AtomicCouponReleaseResult {
+    pub budget: CampaignBudgetRecord,
+    pub code: CouponCodeRecord,
+    pub reservation: CouponReservationRecord,
+    pub created: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AtomicCouponRollbackCommand {
+    pub expected_budget: CampaignBudgetRecord,
+    pub next_budget: CampaignBudgetRecord,
+    pub expected_code: CouponCodeRecord,
+    pub next_code: CouponCodeRecord,
+    pub expected_redemption: CouponRedemptionRecord,
+    pub next_redemption: CouponRedemptionRecord,
+    pub rollback: CouponRollbackRecord,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AtomicCouponRollbackResult {
+    pub budget: CampaignBudgetRecord,
+    pub code: CouponCodeRecord,
+    pub redemption: CouponRedemptionRecord,
+    pub rollback: CouponRollbackRecord,
+    pub created: bool,
 }
 
 pub struct StorageDriverRegistry<T> {
@@ -429,6 +518,21 @@ define_admin_store_facet!(BillingStore {
     async fn delete_coupon(&self, coupon_id: &str) -> bool;
     async fn insert_commerce_order(&self, order: &CommerceOrderRecord) -> CommerceOrderRecord;
     async fn list_commerce_orders(&self) -> Vec<CommerceOrderRecord>;
+    async fn upsert_commerce_payment_event(&self, event: &CommercePaymentEventRecord) -> CommercePaymentEventRecord;
+    async fn list_commerce_payment_events(&self) -> Vec<CommercePaymentEventRecord>;
+    async fn find_commerce_payment_event_by_dedupe_key(&self, dedupe_key: &str) -> Option<CommercePaymentEventRecord>;
+});
+
+define_admin_store_facet!(JobStore {
+    async fn insert_async_job(&self, record: &AsyncJobRecord) -> AsyncJobRecord;
+    async fn list_async_jobs(&self) -> Vec<AsyncJobRecord>;
+    async fn find_async_job(&self, job_id: &str) -> Option<AsyncJobRecord>;
+    async fn insert_async_job_attempt(&self, record: &AsyncJobAttemptRecord) -> AsyncJobAttemptRecord;
+    async fn list_async_job_attempts(&self, job_id: &str) -> Vec<AsyncJobAttemptRecord>;
+    async fn insert_async_job_asset(&self, record: &AsyncJobAssetRecord) -> AsyncJobAssetRecord;
+    async fn list_async_job_assets(&self, job_id: &str) -> Vec<AsyncJobAssetRecord>;
+    async fn insert_async_job_callback(&self, record: &AsyncJobCallbackRecord) -> AsyncJobCallbackRecord;
+    async fn list_async_job_callbacks(&self, job_id: &str) -> Vec<AsyncJobCallbackRecord>;
 });
 
 define_admin_store_facet!(ExtensionStore {
@@ -719,17 +823,292 @@ pub trait AdminStore: Send + Sync {
             .list_coupons()
             .await?
             .into_iter()
-            .filter(|coupon| coupon.active && coupon.remaining > 0)
+            .filter(CouponCampaign::is_compatibility_live)
             .collect())
     }
     async fn find_coupon(&self, coupon_id: &str) -> Result<Option<CouponCampaign>>;
     async fn delete_coupon(&self, coupon_id: &str) -> Result<bool>;
+
+    async fn insert_coupon_template_record(
+        &self,
+        _record: &CouponTemplateRecord,
+    ) -> Result<CouponTemplateRecord> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "insert_coupon_template_record",
+        ))
+    }
+    async fn list_coupon_template_records(&self) -> Result<Vec<CouponTemplateRecord>> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "list_coupon_template_records",
+        ))
+    }
+    async fn find_coupon_template_record(
+        &self,
+        _coupon_template_id: &str,
+    ) -> Result<Option<CouponTemplateRecord>> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "find_coupon_template_record",
+        ))
+    }
+    async fn find_coupon_template_record_by_template_key(
+        &self,
+        template_key: &str,
+    ) -> Result<Option<CouponTemplateRecord>> {
+        Ok(AdminStore::list_coupon_template_records(self)
+            .await?
+            .into_iter()
+            .find(|record| record.template_key == template_key))
+    }
+    async fn insert_marketing_campaign_record(
+        &self,
+        _record: &MarketingCampaignRecord,
+    ) -> Result<MarketingCampaignRecord> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "insert_marketing_campaign_record",
+        ))
+    }
+    async fn list_marketing_campaign_records(&self) -> Result<Vec<MarketingCampaignRecord>> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "list_marketing_campaign_records",
+        ))
+    }
+    async fn list_marketing_campaign_records_for_template(
+        &self,
+        coupon_template_id: &str,
+    ) -> Result<Vec<MarketingCampaignRecord>> {
+        Ok(AdminStore::list_marketing_campaign_records(self)
+            .await?
+            .into_iter()
+            .filter(|record| record.coupon_template_id == coupon_template_id)
+            .collect())
+    }
+    async fn insert_campaign_budget_record(
+        &self,
+        _record: &CampaignBudgetRecord,
+    ) -> Result<CampaignBudgetRecord> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "insert_campaign_budget_record",
+        ))
+    }
+    async fn list_campaign_budget_records(&self) -> Result<Vec<CampaignBudgetRecord>> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "list_campaign_budget_records",
+        ))
+    }
+    async fn list_campaign_budget_records_for_campaign(
+        &self,
+        marketing_campaign_id: &str,
+    ) -> Result<Vec<CampaignBudgetRecord>> {
+        Ok(AdminStore::list_campaign_budget_records(self)
+            .await?
+            .into_iter()
+            .filter(|record| record.marketing_campaign_id == marketing_campaign_id)
+            .collect())
+    }
+    async fn insert_coupon_code_record(
+        &self,
+        _record: &CouponCodeRecord,
+    ) -> Result<CouponCodeRecord> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "insert_coupon_code_record",
+        ))
+    }
+    async fn list_coupon_code_records(&self) -> Result<Vec<CouponCodeRecord>> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "list_coupon_code_records",
+        ))
+    }
+    async fn find_coupon_code_record(
+        &self,
+        _coupon_code_id: &str,
+    ) -> Result<Option<CouponCodeRecord>> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "find_coupon_code_record",
+        ))
+    }
+    async fn find_coupon_code_record_by_value(
+        &self,
+        code_value: &str,
+    ) -> Result<Option<CouponCodeRecord>> {
+        Ok(AdminStore::list_coupon_code_records(self)
+            .await?
+            .into_iter()
+            .find(|record| record.code_value == code_value))
+    }
+    async fn list_redeemable_coupon_code_records_at(
+        &self,
+        now_ms: u64,
+    ) -> Result<Vec<CouponCodeRecord>> {
+        Ok(AdminStore::list_coupon_code_records(self)
+            .await?
+            .into_iter()
+            .filter(|record| record.is_redeemable_at(now_ms))
+            .collect())
+    }
+    async fn insert_coupon_reservation_record(
+        &self,
+        _record: &CouponReservationRecord,
+    ) -> Result<CouponReservationRecord> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "insert_coupon_reservation_record",
+        ))
+    }
+    async fn list_coupon_reservation_records(&self) -> Result<Vec<CouponReservationRecord>> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "list_coupon_reservation_records",
+        ))
+    }
+    async fn find_coupon_reservation_record(
+        &self,
+        _coupon_reservation_id: &str,
+    ) -> Result<Option<CouponReservationRecord>> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "find_coupon_reservation_record",
+        ))
+    }
+    async fn list_active_coupon_reservation_records_at(
+        &self,
+        now_ms: u64,
+    ) -> Result<Vec<CouponReservationRecord>> {
+        Ok(AdminStore::list_coupon_reservation_records(self)
+            .await?
+            .into_iter()
+            .filter(|record| record.is_active_at(now_ms))
+            .collect())
+    }
+    async fn insert_coupon_redemption_record(
+        &self,
+        _record: &CouponRedemptionRecord,
+    ) -> Result<CouponRedemptionRecord> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "insert_coupon_redemption_record",
+        ))
+    }
+    async fn list_coupon_redemption_records(&self) -> Result<Vec<CouponRedemptionRecord>> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "list_coupon_redemption_records",
+        ))
+    }
+    async fn find_coupon_redemption_record(
+        &self,
+        _coupon_redemption_id: &str,
+    ) -> Result<Option<CouponRedemptionRecord>> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "find_coupon_redemption_record",
+        ))
+    }
+    async fn insert_coupon_rollback_record(
+        &self,
+        _record: &CouponRollbackRecord,
+    ) -> Result<CouponRollbackRecord> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "insert_coupon_rollback_record",
+        ))
+    }
+    async fn list_coupon_rollback_records(&self) -> Result<Vec<CouponRollbackRecord>> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "list_coupon_rollback_records",
+        ))
+    }
+    async fn insert_marketing_outbox_event_record(
+        &self,
+        _record: &MarketingOutboxEventRecord,
+    ) -> Result<MarketingOutboxEventRecord> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "insert_marketing_outbox_event_record",
+        ))
+    }
+    async fn list_marketing_outbox_event_records(&self) -> Result<Vec<MarketingOutboxEventRecord>> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "list_marketing_outbox_event_records",
+        ))
+    }
+    async fn reserve_coupon_redemption_atomic(
+        &self,
+        _command: &AtomicCouponReservationCommand,
+    ) -> Result<AtomicCouponReservationResult> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "reserve_coupon_redemption_atomic",
+        ))
+    }
+    async fn confirm_coupon_redemption_atomic(
+        &self,
+        _command: &AtomicCouponConfirmationCommand,
+    ) -> Result<AtomicCouponConfirmationResult> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "confirm_coupon_redemption_atomic",
+        ))
+    }
+    async fn release_coupon_reservation_atomic(
+        &self,
+        _command: &AtomicCouponReleaseCommand,
+    ) -> Result<AtomicCouponReleaseResult> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "release_coupon_reservation_atomic",
+        ))
+    }
+    async fn rollback_coupon_redemption_atomic(
+        &self,
+        _command: &AtomicCouponRollbackCommand,
+    ) -> Result<AtomicCouponRollbackResult> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "rollback_coupon_redemption_atomic",
+        ))
+    }
 
     async fn insert_commerce_order(
         &self,
         order: &CommerceOrderRecord,
     ) -> Result<CommerceOrderRecord>;
     async fn list_commerce_orders(&self) -> Result<Vec<CommerceOrderRecord>>;
+    async fn list_recent_commerce_orders(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<CommerceOrderRecord>> {
+        let mut orders = self.list_commerce_orders().await?;
+        orders.sort_by(|left, right| {
+            right
+                .updated_at_ms
+                .cmp(&left.updated_at_ms)
+                .then_with(|| right.created_at_ms.cmp(&left.created_at_ms))
+                .then_with(|| right.order_id.cmp(&left.order_id))
+        });
+        orders.truncate(limit);
+        Ok(orders)
+    }
+    async fn upsert_commerce_payment_event(
+        &self,
+        event: &CommercePaymentEventRecord,
+    ) -> Result<CommercePaymentEventRecord>;
+    async fn list_commerce_payment_events(&self) -> Result<Vec<CommercePaymentEventRecord>>;
+    async fn find_commerce_payment_event_by_dedupe_key(
+        &self,
+        dedupe_key: &str,
+    ) -> Result<Option<CommercePaymentEventRecord>>;
     async fn list_commerce_orders_for_project(
         &self,
         project_id: &str,
@@ -741,6 +1120,55 @@ pub trait AdminStore: Send + Sync {
             .filter(|order| order.project_id == project_id)
             .collect())
     }
+    async fn list_commerce_orders_for_project_after(
+        &self,
+        project_id: &str,
+        last_order_updated_at_ms: u64,
+        last_order_created_at_ms: u64,
+        last_order_id: &str,
+    ) -> Result<Vec<CommerceOrderRecord>> {
+        Ok(self
+            .list_commerce_orders_for_project(project_id)
+            .await?
+            .into_iter()
+            .filter(|order| {
+                order.updated_at_ms > last_order_updated_at_ms
+                    || (order.updated_at_ms == last_order_updated_at_ms
+                        && (order.created_at_ms > last_order_created_at_ms
+                            || (order.created_at_ms == last_order_created_at_ms
+                                && order.order_id.as_str() > last_order_id)))
+            })
+            .collect())
+    }
+    async fn list_commerce_payment_events_for_order(
+        &self,
+        order_id: &str,
+    ) -> Result<Vec<CommercePaymentEventRecord>> {
+        Ok(self
+            .list_commerce_payment_events()
+            .await?
+            .into_iter()
+            .filter(|event| event.order_id == order_id)
+            .collect())
+    }
+    async fn insert_async_job(&self, record: &AsyncJobRecord) -> Result<AsyncJobRecord>;
+    async fn list_async_jobs(&self) -> Result<Vec<AsyncJobRecord>>;
+    async fn find_async_job(&self, job_id: &str) -> Result<Option<AsyncJobRecord>>;
+    async fn insert_async_job_attempt(
+        &self,
+        record: &AsyncJobAttemptRecord,
+    ) -> Result<AsyncJobAttemptRecord>;
+    async fn list_async_job_attempts(&self, job_id: &str) -> Result<Vec<AsyncJobAttemptRecord>>;
+    async fn insert_async_job_asset(
+        &self,
+        record: &AsyncJobAssetRecord,
+    ) -> Result<AsyncJobAssetRecord>;
+    async fn list_async_job_assets(&self, job_id: &str) -> Result<Vec<AsyncJobAssetRecord>>;
+    async fn insert_async_job_callback(
+        &self,
+        record: &AsyncJobCallbackRecord,
+    ) -> Result<AsyncJobCallbackRecord>;
+    async fn list_async_job_callbacks(&self, job_id: &str) -> Result<Vec<AsyncJobCallbackRecord>>;
     async fn upsert_project_membership(
         &self,
         membership: &ProjectMembershipRecord,
@@ -867,6 +1295,14 @@ fn unsupported_account_kernel_method(dialect: StorageDialect, method: &str) -> a
 fn unsupported_identity_kernel_method(dialect: StorageDialect, method: &str) -> anyhow::Error {
     anyhow::anyhow!(
         "storage dialect {} does not implement canonical identity kernel method {} yet",
+        dialect.as_str(),
+        method
+    )
+}
+
+fn unsupported_marketing_kernel_method(dialect: StorageDialect, method: &str) -> anyhow::Error {
+    anyhow::anyhow!(
+        "storage dialect {} does not implement enterprise marketing kernel method {} yet",
         dialect.as_str(),
         method
     )
@@ -1059,6 +1495,27 @@ pub trait AccountKernelStore: AdminStore {
         ))
     }
 
+    async fn insert_account_commerce_reconciliation_state(
+        &self,
+        _record: &AccountCommerceReconciliationStateRecord,
+    ) -> Result<AccountCommerceReconciliationStateRecord> {
+        Err(unsupported_account_kernel_method(
+            self.dialect(),
+            "insert_account_commerce_reconciliation_state",
+        ))
+    }
+
+    async fn find_account_commerce_reconciliation_state(
+        &self,
+        _account_id: u64,
+        _project_id: &str,
+    ) -> Result<Option<AccountCommerceReconciliationStateRecord>> {
+        Err(unsupported_account_kernel_method(
+            self.dialect(),
+            "find_account_commerce_reconciliation_state",
+        ))
+    }
+
     async fn insert_request_meter_fact(
         &self,
         _record: &RequestMeterFactRecord,
@@ -1143,4 +1600,875 @@ pub trait AccountKernelStore: AdminStore {
             "list_request_settlement_records",
         ))
     }
+}
+
+#[async_trait]
+pub trait MarketingStore: AdminStore {
+    async fn insert_coupon_template_record(
+        &self,
+        _record: &CouponTemplateRecord,
+    ) -> Result<CouponTemplateRecord> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "insert_coupon_template_record",
+        ))
+    }
+
+    async fn list_coupon_template_records(&self) -> Result<Vec<CouponTemplateRecord>> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "list_coupon_template_records",
+        ))
+    }
+
+    async fn find_coupon_template_record(
+        &self,
+        _coupon_template_id: &str,
+    ) -> Result<Option<CouponTemplateRecord>> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "find_coupon_template_record",
+        ))
+    }
+
+    async fn find_coupon_template_record_by_template_key(
+        &self,
+        template_key: &str,
+    ) -> Result<Option<CouponTemplateRecord>> {
+        Ok(AdminStore::list_coupon_template_records(self)
+            .await?
+            .into_iter()
+            .find(|record| record.template_key == template_key))
+    }
+
+    async fn insert_marketing_campaign_record(
+        &self,
+        _record: &MarketingCampaignRecord,
+    ) -> Result<MarketingCampaignRecord> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "insert_marketing_campaign_record",
+        ))
+    }
+
+    async fn list_marketing_campaign_records(&self) -> Result<Vec<MarketingCampaignRecord>> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "list_marketing_campaign_records",
+        ))
+    }
+
+    async fn list_marketing_campaign_records_for_template(
+        &self,
+        coupon_template_id: &str,
+    ) -> Result<Vec<MarketingCampaignRecord>> {
+        Ok(AdminStore::list_marketing_campaign_records(self)
+            .await?
+            .into_iter()
+            .filter(|record| record.coupon_template_id == coupon_template_id)
+            .collect())
+    }
+
+    async fn insert_campaign_budget_record(
+        &self,
+        _record: &CampaignBudgetRecord,
+    ) -> Result<CampaignBudgetRecord> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "insert_campaign_budget_record",
+        ))
+    }
+
+    async fn list_campaign_budget_records(&self) -> Result<Vec<CampaignBudgetRecord>> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "list_campaign_budget_records",
+        ))
+    }
+
+    async fn list_campaign_budget_records_for_campaign(
+        &self,
+        marketing_campaign_id: &str,
+    ) -> Result<Vec<CampaignBudgetRecord>> {
+        Ok(AdminStore::list_campaign_budget_records(self)
+            .await?
+            .into_iter()
+            .filter(|record| record.marketing_campaign_id == marketing_campaign_id)
+            .collect())
+    }
+
+    async fn insert_coupon_code_record(
+        &self,
+        _record: &CouponCodeRecord,
+    ) -> Result<CouponCodeRecord> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "insert_coupon_code_record",
+        ))
+    }
+
+    async fn list_coupon_code_records(&self) -> Result<Vec<CouponCodeRecord>> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "list_coupon_code_records",
+        ))
+    }
+
+    async fn find_coupon_code_record(
+        &self,
+        _coupon_code_id: &str,
+    ) -> Result<Option<CouponCodeRecord>> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "find_coupon_code_record",
+        ))
+    }
+
+    async fn find_coupon_code_record_by_value(
+        &self,
+        code_value: &str,
+    ) -> Result<Option<CouponCodeRecord>> {
+        Ok(AdminStore::list_coupon_code_records(self)
+            .await?
+            .into_iter()
+            .find(|record| record.code_value == code_value))
+    }
+
+    async fn list_redeemable_coupon_code_records_at(
+        &self,
+        now_ms: u64,
+    ) -> Result<Vec<CouponCodeRecord>> {
+        Ok(AdminStore::list_coupon_code_records(self)
+            .await?
+            .into_iter()
+            .filter(|record| record.is_redeemable_at(now_ms))
+            .collect())
+    }
+
+    async fn insert_coupon_reservation_record(
+        &self,
+        _record: &CouponReservationRecord,
+    ) -> Result<CouponReservationRecord> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "insert_coupon_reservation_record",
+        ))
+    }
+
+    async fn list_coupon_reservation_records(&self) -> Result<Vec<CouponReservationRecord>> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "list_coupon_reservation_records",
+        ))
+    }
+
+    async fn find_coupon_reservation_record(
+        &self,
+        _coupon_reservation_id: &str,
+    ) -> Result<Option<CouponReservationRecord>> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "find_coupon_reservation_record",
+        ))
+    }
+
+    async fn list_active_coupon_reservation_records_at(
+        &self,
+        now_ms: u64,
+    ) -> Result<Vec<CouponReservationRecord>> {
+        Ok(AdminStore::list_coupon_reservation_records(self)
+            .await?
+            .into_iter()
+            .filter(|record| record.is_active_at(now_ms))
+            .collect())
+    }
+
+    async fn insert_coupon_redemption_record(
+        &self,
+        _record: &CouponRedemptionRecord,
+    ) -> Result<CouponRedemptionRecord> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "insert_coupon_redemption_record",
+        ))
+    }
+
+    async fn list_coupon_redemption_records(&self) -> Result<Vec<CouponRedemptionRecord>> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "list_coupon_redemption_records",
+        ))
+    }
+
+    async fn find_coupon_redemption_record(
+        &self,
+        _coupon_redemption_id: &str,
+    ) -> Result<Option<CouponRedemptionRecord>> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "find_coupon_redemption_record",
+        ))
+    }
+
+    async fn insert_coupon_rollback_record(
+        &self,
+        _record: &CouponRollbackRecord,
+    ) -> Result<CouponRollbackRecord> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "insert_coupon_rollback_record",
+        ))
+    }
+
+    async fn list_coupon_rollback_records(&self) -> Result<Vec<CouponRollbackRecord>> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "list_coupon_rollback_records",
+        ))
+    }
+
+    async fn insert_marketing_outbox_event_record(
+        &self,
+        _record: &MarketingOutboxEventRecord,
+    ) -> Result<MarketingOutboxEventRecord> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "insert_marketing_outbox_event_record",
+        ))
+    }
+
+    async fn list_marketing_outbox_event_records(&self) -> Result<Vec<MarketingOutboxEventRecord>> {
+        Err(unsupported_marketing_kernel_method(
+            self.dialect(),
+            "list_marketing_outbox_event_records",
+        ))
+    }
+}
+
+pub type MarketingKernelTransactionFuture<'a, T> =
+    Pin<Box<dyn Future<Output = Result<T>> + Send + 'a>>;
+
+#[async_trait]
+pub trait MarketingKernelTransaction: Send {
+    async fn upsert_coupon_template_record(
+        &mut self,
+        record: &CouponTemplateRecord,
+    ) -> Result<CouponTemplateRecord>;
+
+    async fn upsert_marketing_campaign_record(
+        &mut self,
+        record: &MarketingCampaignRecord,
+    ) -> Result<MarketingCampaignRecord>;
+
+    async fn find_coupon_reservation_record(
+        &mut self,
+        coupon_reservation_id: &str,
+    ) -> Result<Option<CouponReservationRecord>>;
+
+    async fn find_coupon_code_record(
+        &mut self,
+        coupon_code_id: &str,
+    ) -> Result<Option<CouponCodeRecord>>;
+
+    async fn find_campaign_budget_record(
+        &mut self,
+        campaign_budget_id: &str,
+    ) -> Result<Option<CampaignBudgetRecord>>;
+
+    async fn find_coupon_redemption_record(
+        &mut self,
+        coupon_redemption_id: &str,
+    ) -> Result<Option<CouponRedemptionRecord>>;
+
+    async fn find_coupon_rollback_record(
+        &mut self,
+        coupon_rollback_id: &str,
+    ) -> Result<Option<CouponRollbackRecord>>;
+
+    async fn list_marketing_campaign_records_for_template(
+        &mut self,
+        coupon_template_id: &str,
+    ) -> Result<Vec<MarketingCampaignRecord>>;
+
+    async fn list_campaign_budget_records_for_campaign(
+        &mut self,
+        marketing_campaign_id: &str,
+    ) -> Result<Vec<CampaignBudgetRecord>>;
+
+    async fn upsert_coupon_reservation_record(
+        &mut self,
+        record: &CouponReservationRecord,
+    ) -> Result<CouponReservationRecord>;
+
+    async fn upsert_coupon_code_record(
+        &mut self,
+        record: &CouponCodeRecord,
+    ) -> Result<CouponCodeRecord>;
+
+    async fn upsert_campaign_budget_record(
+        &mut self,
+        record: &CampaignBudgetRecord,
+    ) -> Result<CampaignBudgetRecord>;
+
+    async fn upsert_coupon_redemption_record(
+        &mut self,
+        record: &CouponRedemptionRecord,
+    ) -> Result<CouponRedemptionRecord>;
+
+    async fn upsert_coupon_rollback_record(
+        &mut self,
+        record: &CouponRollbackRecord,
+    ) -> Result<CouponRollbackRecord>;
+
+    async fn upsert_marketing_outbox_event_record(
+        &mut self,
+        record: &MarketingOutboxEventRecord,
+    ) -> Result<MarketingOutboxEventRecord>;
+}
+
+pub trait MarketingKernelTransactionExecutor: MarketingStore {
+    fn with_marketing_kernel_transaction<'a, T, F>(
+        &'a self,
+        operation: F,
+    ) -> MarketingKernelTransactionFuture<'a, T>
+    where
+        T: Send + 'a,
+        F: for<'tx> FnOnce(
+                &'tx mut dyn MarketingKernelTransaction,
+            ) -> MarketingKernelTransactionFuture<'tx, T>
+            + Send
+            + 'a;
+}
+
+pub async fn execute_atomic_coupon_reservation<E>(
+    store: &E,
+    command: &AtomicCouponReservationCommand,
+) -> Result<AtomicCouponReservationResult>
+where
+    E: MarketingKernelTransactionExecutor + ?Sized,
+{
+    let command = command.clone();
+    store
+        .with_marketing_kernel_transaction(move |tx| {
+            Box::pin(async move {
+                if let Some(existing_reservation) = tx
+                    .find_coupon_reservation_record(&command.reservation.coupon_reservation_id)
+                    .await?
+                {
+                    if existing_reservation != command.reservation {
+                        return Err(marketing_kernel_conflicting_replay(
+                            "coupon reservation",
+                            &command.reservation.coupon_reservation_id,
+                        ));
+                    }
+                    let budget =
+                        load_campaign_budget_snapshot(tx, &command.next_budget.campaign_budget_id)
+                            .await?;
+                    let code =
+                        load_coupon_code_snapshot(tx, &command.next_code.coupon_code_id).await?;
+                    ensure_marketing_record_matches(
+                        "campaign budget",
+                        &command.next_budget.campaign_budget_id,
+                        Some(budget.clone()),
+                        &command.next_budget,
+                    )?;
+                    ensure_marketing_record_matches(
+                        "coupon code",
+                        &command.next_code.coupon_code_id,
+                        Some(code.clone()),
+                        &command.next_code,
+                    )?;
+                    return Ok(AtomicCouponReservationResult {
+                        budget,
+                        code,
+                        reservation: existing_reservation,
+                        created: false,
+                    });
+                }
+
+                if let Some(template) = command.template_to_persist.as_ref() {
+                    tx.upsert_coupon_template_record(template).await?;
+                }
+                if let Some(campaign) = command.campaign_to_persist.as_ref() {
+                    tx.upsert_marketing_campaign_record(campaign).await?;
+                }
+                if command.template_to_persist.is_some() || command.campaign_to_persist.is_some() {
+                    if tx
+                        .find_campaign_budget_record(&command.expected_budget.campaign_budget_id)
+                        .await?
+                        .is_none()
+                    {
+                        tx.upsert_campaign_budget_record(&command.expected_budget)
+                            .await?;
+                    }
+                    if tx
+                        .find_coupon_code_record(&command.expected_code.coupon_code_id)
+                        .await?
+                        .is_none()
+                    {
+                        tx.upsert_coupon_code_record(&command.expected_code).await?;
+                    }
+                }
+
+                ensure_marketing_record_matches(
+                    "campaign budget",
+                    &command.expected_budget.campaign_budget_id,
+                    tx.find_campaign_budget_record(&command.expected_budget.campaign_budget_id)
+                        .await?,
+                    &command.expected_budget,
+                )?;
+                ensure_marketing_record_matches(
+                    "coupon code",
+                    &command.expected_code.coupon_code_id,
+                    tx.find_coupon_code_record(&command.expected_code.coupon_code_id)
+                        .await?,
+                    &command.expected_code,
+                )?;
+
+                let budget = tx
+                    .upsert_campaign_budget_record(&command.next_budget)
+                    .await?;
+                let code = tx.upsert_coupon_code_record(&command.next_code).await?;
+                let reservation = tx
+                    .upsert_coupon_reservation_record(&command.reservation)
+                    .await?;
+                Ok(AtomicCouponReservationResult {
+                    budget,
+                    code,
+                    reservation,
+                    created: true,
+                })
+            })
+        })
+        .await
+}
+
+pub async fn execute_atomic_coupon_confirmation<E>(
+    store: &E,
+    command: &AtomicCouponConfirmationCommand,
+) -> Result<AtomicCouponConfirmationResult>
+where
+    E: MarketingKernelTransactionExecutor + ?Sized,
+{
+    let command = command.clone();
+    store
+        .with_marketing_kernel_transaction(move |tx| {
+            Box::pin(async move {
+                if let Some(existing_redemption) = tx
+                    .find_coupon_redemption_record(&command.redemption.coupon_redemption_id)
+                    .await?
+                {
+                    if existing_redemption != command.redemption {
+                        return Err(marketing_kernel_conflicting_replay(
+                            "coupon redemption",
+                            &command.redemption.coupon_redemption_id,
+                        ));
+                    }
+                    let budget =
+                        load_campaign_budget_snapshot(tx, &command.next_budget.campaign_budget_id)
+                            .await?;
+                    let code =
+                        load_coupon_code_snapshot(tx, &command.next_code.coupon_code_id).await?;
+                    let reservation = load_coupon_reservation_snapshot(
+                        tx,
+                        &command.next_reservation.coupon_reservation_id,
+                    )
+                    .await?;
+                    ensure_marketing_record_matches(
+                        "campaign budget",
+                        &command.next_budget.campaign_budget_id,
+                        Some(budget.clone()),
+                        &command.next_budget,
+                    )?;
+                    ensure_marketing_record_matches(
+                        "coupon code",
+                        &command.next_code.coupon_code_id,
+                        Some(code.clone()),
+                        &command.next_code,
+                    )?;
+                    ensure_marketing_record_matches(
+                        "coupon reservation",
+                        &command.next_reservation.coupon_reservation_id,
+                        Some(reservation.clone()),
+                        &command.next_reservation,
+                    )?;
+                    return Ok(AtomicCouponConfirmationResult {
+                        budget,
+                        code,
+                        reservation,
+                        redemption: existing_redemption,
+                        created: false,
+                    });
+                }
+
+                ensure_marketing_record_matches(
+                    "campaign budget",
+                    &command.expected_budget.campaign_budget_id,
+                    tx.find_campaign_budget_record(&command.expected_budget.campaign_budget_id)
+                        .await?,
+                    &command.expected_budget,
+                )?;
+                ensure_marketing_record_matches(
+                    "coupon code",
+                    &command.expected_code.coupon_code_id,
+                    tx.find_coupon_code_record(&command.expected_code.coupon_code_id)
+                        .await?,
+                    &command.expected_code,
+                )?;
+                ensure_marketing_record_matches(
+                    "coupon reservation",
+                    &command.expected_reservation.coupon_reservation_id,
+                    tx.find_coupon_reservation_record(
+                        &command.expected_reservation.coupon_reservation_id,
+                    )
+                    .await?,
+                    &command.expected_reservation,
+                )?;
+
+                let budget = tx
+                    .upsert_campaign_budget_record(&command.next_budget)
+                    .await?;
+                let code = tx.upsert_coupon_code_record(&command.next_code).await?;
+                let reservation = tx
+                    .upsert_coupon_reservation_record(&command.next_reservation)
+                    .await?;
+                let redemption = tx
+                    .upsert_coupon_redemption_record(&command.redemption)
+                    .await?;
+                Ok(AtomicCouponConfirmationResult {
+                    budget,
+                    code,
+                    reservation,
+                    redemption,
+                    created: true,
+                })
+            })
+        })
+        .await
+}
+
+pub async fn execute_atomic_coupon_release<E>(
+    store: &E,
+    command: &AtomicCouponReleaseCommand,
+) -> Result<AtomicCouponReleaseResult>
+where
+    E: MarketingKernelTransactionExecutor + ?Sized,
+{
+    let command = command.clone();
+    store
+        .with_marketing_kernel_transaction(move |tx| {
+            Box::pin(async move {
+                let current_reservation = load_coupon_reservation_snapshot(
+                    tx,
+                    &command.expected_reservation.coupon_reservation_id,
+                )
+                .await?;
+                let budget =
+                    load_campaign_budget_snapshot(tx, &command.expected_budget.campaign_budget_id)
+                        .await?;
+                let code =
+                    load_coupon_code_snapshot(tx, &command.expected_code.coupon_code_id).await?;
+
+                if current_reservation == command.next_reservation
+                    && budget == command.next_budget
+                    && code == command.next_code
+                {
+                    return Ok(AtomicCouponReleaseResult {
+                        budget,
+                        code,
+                        reservation: current_reservation,
+                        created: false,
+                    });
+                }
+
+                ensure_marketing_record_matches(
+                    "coupon reservation",
+                    &command.expected_reservation.coupon_reservation_id,
+                    Some(current_reservation),
+                    &command.expected_reservation,
+                )?;
+                ensure_marketing_record_matches(
+                    "campaign budget",
+                    &command.expected_budget.campaign_budget_id,
+                    Some(budget),
+                    &command.expected_budget,
+                )?;
+                ensure_marketing_record_matches(
+                    "coupon code",
+                    &command.expected_code.coupon_code_id,
+                    Some(code),
+                    &command.expected_code,
+                )?;
+
+                let budget = tx
+                    .upsert_campaign_budget_record(&command.next_budget)
+                    .await?;
+                let code = tx.upsert_coupon_code_record(&command.next_code).await?;
+                let reservation = tx
+                    .upsert_coupon_reservation_record(&command.next_reservation)
+                    .await?;
+                Ok(AtomicCouponReleaseResult {
+                    budget,
+                    code,
+                    reservation,
+                    created: true,
+                })
+            })
+        })
+        .await
+}
+
+pub async fn execute_atomic_coupon_rollback<E>(
+    store: &E,
+    command: &AtomicCouponRollbackCommand,
+) -> Result<AtomicCouponRollbackResult>
+where
+    E: MarketingKernelTransactionExecutor + ?Sized,
+{
+    let command = command.clone();
+    store
+        .with_marketing_kernel_transaction(move |tx| {
+            Box::pin(async move {
+                if let Some(existing_rollback) = tx
+                    .find_coupon_rollback_record(&command.rollback.coupon_rollback_id)
+                    .await?
+                {
+                    if existing_rollback != command.rollback {
+                        return Err(marketing_kernel_conflicting_replay(
+                            "coupon rollback",
+                            &command.rollback.coupon_rollback_id,
+                        ));
+                    }
+                    let budget =
+                        load_campaign_budget_snapshot(tx, &command.next_budget.campaign_budget_id)
+                            .await?;
+                    let code =
+                        load_coupon_code_snapshot(tx, &command.next_code.coupon_code_id).await?;
+                    let redemption = load_coupon_redemption_snapshot(
+                        tx,
+                        &command.next_redemption.coupon_redemption_id,
+                    )
+                    .await?;
+                    ensure_marketing_record_matches(
+                        "campaign budget",
+                        &command.next_budget.campaign_budget_id,
+                        Some(budget.clone()),
+                        &command.next_budget,
+                    )?;
+                    ensure_marketing_record_matches(
+                        "coupon code",
+                        &command.next_code.coupon_code_id,
+                        Some(code.clone()),
+                        &command.next_code,
+                    )?;
+                    ensure_marketing_record_matches(
+                        "coupon redemption",
+                        &command.next_redemption.coupon_redemption_id,
+                        Some(redemption.clone()),
+                        &command.next_redemption,
+                    )?;
+                    return Ok(AtomicCouponRollbackResult {
+                        budget,
+                        code,
+                        redemption,
+                        rollback: existing_rollback,
+                        created: false,
+                    });
+                }
+
+                ensure_marketing_record_matches(
+                    "campaign budget",
+                    &command.expected_budget.campaign_budget_id,
+                    tx.find_campaign_budget_record(&command.expected_budget.campaign_budget_id)
+                        .await?,
+                    &command.expected_budget,
+                )?;
+                ensure_marketing_record_matches(
+                    "coupon code",
+                    &command.expected_code.coupon_code_id,
+                    tx.find_coupon_code_record(&command.expected_code.coupon_code_id)
+                        .await?,
+                    &command.expected_code,
+                )?;
+                ensure_marketing_record_matches(
+                    "coupon redemption",
+                    &command.expected_redemption.coupon_redemption_id,
+                    tx.find_coupon_redemption_record(
+                        &command.expected_redemption.coupon_redemption_id,
+                    )
+                    .await?,
+                    &command.expected_redemption,
+                )?;
+
+                let budget = tx
+                    .upsert_campaign_budget_record(&command.next_budget)
+                    .await?;
+                let code = tx.upsert_coupon_code_record(&command.next_code).await?;
+                let redemption = tx
+                    .upsert_coupon_redemption_record(&command.next_redemption)
+                    .await?;
+                let rollback = tx.upsert_coupon_rollback_record(&command.rollback).await?;
+                Ok(AtomicCouponRollbackResult {
+                    budget,
+                    code,
+                    redemption,
+                    rollback,
+                    created: true,
+                })
+            })
+        })
+        .await
+}
+
+async fn load_campaign_budget_snapshot(
+    tx: &mut dyn MarketingKernelTransaction,
+    campaign_budget_id: &str,
+) -> Result<CampaignBudgetRecord> {
+    tx.find_campaign_budget_record(campaign_budget_id)
+        .await?
+        .ok_or_else(|| marketing_kernel_missing_record("campaign budget", campaign_budget_id))
+}
+
+async fn load_coupon_code_snapshot(
+    tx: &mut dyn MarketingKernelTransaction,
+    coupon_code_id: &str,
+) -> Result<CouponCodeRecord> {
+    tx.find_coupon_code_record(coupon_code_id)
+        .await?
+        .ok_or_else(|| marketing_kernel_missing_record("coupon code", coupon_code_id))
+}
+
+async fn load_coupon_reservation_snapshot(
+    tx: &mut dyn MarketingKernelTransaction,
+    coupon_reservation_id: &str,
+) -> Result<CouponReservationRecord> {
+    tx.find_coupon_reservation_record(coupon_reservation_id)
+        .await?
+        .ok_or_else(|| marketing_kernel_missing_record("coupon reservation", coupon_reservation_id))
+}
+
+async fn load_coupon_redemption_snapshot(
+    tx: &mut dyn MarketingKernelTransaction,
+    coupon_redemption_id: &str,
+) -> Result<CouponRedemptionRecord> {
+    tx.find_coupon_redemption_record(coupon_redemption_id)
+        .await?
+        .ok_or_else(|| marketing_kernel_missing_record("coupon redemption", coupon_redemption_id))
+}
+
+fn ensure_marketing_record_matches<T: PartialEq>(
+    record_type: &str,
+    record_id: &str,
+    actual: Option<T>,
+    expected: &T,
+) -> Result<()> {
+    match actual {
+        Some(actual) if actual == *expected => Ok(()),
+        Some(_) => Err(marketing_kernel_snapshot_changed(record_type, record_id)),
+        None => Err(marketing_kernel_missing_record(record_type, record_id)),
+    }
+}
+
+fn marketing_kernel_snapshot_changed(record_type: &str, record_id: &str) -> anyhow::Error {
+    anyhow::anyhow!("{record_type} {record_id} changed concurrently")
+}
+
+fn marketing_kernel_missing_record(record_type: &str, record_id: &str) -> anyhow::Error {
+    anyhow::anyhow!("{record_type} {record_id} is missing")
+}
+
+fn marketing_kernel_conflicting_replay(record_type: &str, record_id: &str) -> anyhow::Error {
+    anyhow::anyhow!("{record_type} {record_id} already exists with different state")
+}
+
+pub type AccountKernelTransactionFuture<'a, T> =
+    Pin<Box<dyn Future<Output = Result<T>> + Send + 'a>>;
+
+#[async_trait]
+pub trait AccountKernelTransaction: Send {
+    async fn find_account_record(&mut self, account_id: u64) -> Result<Option<AccountRecord>>;
+
+    async fn find_account_benefit_lot(
+        &mut self,
+        lot_id: u64,
+    ) -> Result<Option<AccountBenefitLotRecord>>;
+
+    async fn list_account_benefit_lots_for_account(
+        &mut self,
+        account_id: u64,
+    ) -> Result<Vec<AccountBenefitLotRecord>>;
+
+    async fn find_account_hold_by_request_id(
+        &mut self,
+        request_id: u64,
+    ) -> Result<Option<AccountHoldRecord>>;
+
+    async fn list_account_hold_allocations_for_hold(
+        &mut self,
+        hold_id: u64,
+    ) -> Result<Vec<AccountHoldAllocationRecord>>;
+
+    async fn find_request_settlement_by_request_id(
+        &mut self,
+        request_id: u64,
+    ) -> Result<Option<RequestSettlementRecord>>;
+
+    async fn find_request_settlement_record(
+        &mut self,
+        request_settlement_id: u64,
+    ) -> Result<Option<RequestSettlementRecord>>;
+
+    async fn find_account_ledger_entry_record(
+        &mut self,
+        ledger_entry_id: u64,
+    ) -> Result<Option<AccountLedgerEntryRecord>>;
+
+    async fn list_account_ledger_allocations_for_entry(
+        &mut self,
+        ledger_entry_id: u64,
+    ) -> Result<Vec<AccountLedgerAllocationRecord>>;
+
+    async fn upsert_account_benefit_lot(
+        &mut self,
+        record: &AccountBenefitLotRecord,
+    ) -> Result<AccountBenefitLotRecord>;
+
+    async fn upsert_account_hold(
+        &mut self,
+        record: &AccountHoldRecord,
+    ) -> Result<AccountHoldRecord>;
+
+    async fn upsert_account_hold_allocation(
+        &mut self,
+        record: &AccountHoldAllocationRecord,
+    ) -> Result<AccountHoldAllocationRecord>;
+
+    async fn upsert_request_settlement_record(
+        &mut self,
+        record: &RequestSettlementRecord,
+    ) -> Result<RequestSettlementRecord>;
+
+    async fn upsert_account_ledger_entry_record(
+        &mut self,
+        record: &AccountLedgerEntryRecord,
+    ) -> Result<AccountLedgerEntryRecord>;
+
+    async fn upsert_account_ledger_allocation(
+        &mut self,
+        record: &AccountLedgerAllocationRecord,
+    ) -> Result<AccountLedgerAllocationRecord>;
+}
+
+pub trait AccountKernelTransactionExecutor: AccountKernelStore {
+    fn with_account_kernel_transaction<'a, T, F>(
+        &'a self,
+        operation: F,
+    ) -> AccountKernelTransactionFuture<'a, T>
+    where
+        T: Send + 'a,
+        F: for<'tx> FnOnce(
+                &'tx mut dyn AccountKernelTransaction,
+            ) -> AccountKernelTransactionFuture<'tx, T>
+            + Send
+            + 'a;
 }

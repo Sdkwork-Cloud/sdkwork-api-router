@@ -2,17 +2,44 @@ import type {
   ApiKeyGroupRecord,
   BillingEventRecord,
   BillingEventSummary,
+  CampaignBudgetRecord,
+  CommercialAccountHistorySnapshot,
+  CommercialAccountBalanceSnapshot,
+  CommercialAccountBenefitLotRecord,
+  CommercialAccountHoldRecord,
+  CommercialAccountSummary,
+  CommercialPricingPlanRecord,
+  CommercialPricingRateRecord,
+  CommercialRequestSettlementRecord,
+  CouponCodeRecord,
+  CouponRedemptionRecord,
+  CouponReservationRecord,
+  CouponRollbackRecord,
+  CouponTemplateRecord,
   CreatedGatewayApiKey,
   GatewayApiKeyRecord,
   LedgerEntry,
+  MarketingCampaignRecord,
   PortalCommerceCheckoutSession,
   PortalCommercePaymentEventRequest,
   PortalCommerceQuote,
   PortalCommerceOrder,
+  PortalCommerceOrderCenterResponse,
   PortalCommerceMembership,
   PortalCommerceQuoteRequest,
   PortalCommerceCatalog,
+  PortalCouponRedemptionConfirmRequest,
+  PortalCouponRedemptionConfirmResponse,
+  PortalCouponRedemptionRollbackRequest,
+  PortalCouponRedemptionRollbackResponse,
+  PortalCouponReservationRequest,
+  PortalCouponReservationResponse,
+  PortalCouponValidationRequest,
+  PortalCouponValidationResponse,
   PortalDesktopRuntimeSnapshot,
+  PortalMarketingCodesResponse,
+  PortalMarketingRedemptionsResponse,
+  PortalMarketingRewardHistoryItem,
   PortalRuntimeHealthSnapshot,
   PortalRuntimeServiceHealth,
   PortalAuthSession,
@@ -701,6 +728,75 @@ export function getPortalBillingSummary(token?: string): Promise<ProjectBillingS
   return getJson<ProjectBillingSummary>('/billing/summary', requiredPortalToken(token));
 }
 
+export function getPortalCommercialAccount(
+  token?: string,
+): Promise<CommercialAccountSummary> {
+  return getJson<CommercialAccountSummary>('/billing/account', requiredPortalToken(token));
+}
+
+export function getPortalCommercialAccountHistory(
+  token?: string,
+): Promise<CommercialAccountHistorySnapshot> {
+  return getJson<CommercialAccountHistorySnapshot>(
+    '/billing/account-history',
+    requiredPortalToken(token),
+  );
+}
+
+export function getPortalCommercialAccountBalance(
+  token?: string,
+): Promise<CommercialAccountBalanceSnapshot> {
+  return getJson<CommercialAccountBalanceSnapshot>(
+    '/billing/account/balance',
+    requiredPortalToken(token),
+  );
+}
+
+export function listPortalCommercialBenefitLots(
+  token?: string,
+): Promise<CommercialAccountBenefitLotRecord[]> {
+  return getJson<CommercialAccountBenefitLotRecord[]>(
+    '/billing/account/benefit-lots',
+    requiredPortalToken(token),
+  );
+}
+
+export function listPortalCommercialHolds(
+  token?: string,
+): Promise<CommercialAccountHoldRecord[]> {
+  return getJson<CommercialAccountHoldRecord[]>(
+    '/billing/account/holds',
+    requiredPortalToken(token),
+  );
+}
+
+export function listPortalCommercialRequestSettlements(
+  token?: string,
+): Promise<CommercialRequestSettlementRecord[]> {
+  return getJson<CommercialRequestSettlementRecord[]>(
+    '/billing/account/request-settlements',
+    requiredPortalToken(token),
+  );
+}
+
+export function listPortalCommercialPricingPlans(
+  token?: string,
+): Promise<CommercialPricingPlanRecord[]> {
+  return getJson<CommercialPricingPlanRecord[]>(
+    '/billing/pricing-plans',
+    requiredPortalToken(token),
+  );
+}
+
+export function listPortalCommercialPricingRates(
+  token?: string,
+): Promise<CommercialPricingRateRecord[]> {
+  return getJson<CommercialPricingRateRecord[]>(
+    '/billing/pricing-rates',
+    requiredPortalToken(token),
+  );
+}
+
 export function getPortalBillingEvents(token?: string): Promise<BillingEventRecord[]> {
   return getJson<BillingEventRecord[]>('/billing/events', requiredPortalToken(token));
 }
@@ -711,6 +807,92 @@ export function getPortalBillingEventSummary(token?: string): Promise<BillingEve
 
 export function listPortalBillingLedger(token?: string): Promise<LedgerEntry[]> {
   return getJson<LedgerEntry[]>('/billing/ledger', requiredPortalToken(token));
+}
+
+export function validatePortalCoupon(
+  input: PortalCouponValidationRequest,
+  token?: string,
+): Promise<PortalCouponValidationResponse> {
+  return postJson<PortalCouponValidationRequest, PortalCouponValidationResponse>(
+    '/marketing/coupon-validations',
+    input,
+    requiredPortalToken(token),
+  );
+}
+
+export function reservePortalCouponRedemption(
+  input: PortalCouponReservationRequest,
+  token?: string,
+): Promise<PortalCouponReservationResponse> {
+  return postJson<PortalCouponReservationRequest, PortalCouponReservationResponse>(
+    '/marketing/coupon-reservations',
+    input,
+    requiredPortalToken(token),
+  );
+}
+
+export function confirmPortalCouponRedemption(
+  input: PortalCouponRedemptionConfirmRequest,
+  token?: string,
+): Promise<PortalCouponRedemptionConfirmResponse> {
+  return postJson<
+    PortalCouponRedemptionConfirmRequest,
+    PortalCouponRedemptionConfirmResponse
+  >(
+    '/marketing/coupon-redemptions/confirm',
+    input,
+    requiredPortalToken(token),
+  );
+}
+
+export function rollbackPortalCouponRedemption(
+  input: PortalCouponRedemptionRollbackRequest,
+  token?: string,
+): Promise<PortalCouponRedemptionRollbackResponse> {
+  return postJson<
+    PortalCouponRedemptionRollbackRequest,
+    PortalCouponRedemptionRollbackResponse
+  >(
+    '/marketing/coupon-redemptions/rollback',
+    input,
+    requiredPortalToken(token),
+  );
+}
+
+export function listPortalMarketingMyCoupons(
+  token?: string,
+): Promise<PortalMarketingCodesResponse> {
+  return getJson<PortalMarketingCodesResponse>(
+    '/marketing/my-coupons',
+    requiredPortalToken(token),
+  );
+}
+
+export function listPortalMarketingRewardHistory(
+  token?: string,
+): Promise<PortalMarketingRewardHistoryItem[]> {
+  return getJson<PortalMarketingRewardHistoryItem[]>(
+    '/marketing/reward-history',
+    requiredPortalToken(token),
+  );
+}
+
+export function listPortalMarketingRedemptions(
+  token?: string,
+): Promise<PortalMarketingRedemptionsResponse> {
+  return getJson<PortalMarketingRedemptionsResponse>(
+    '/marketing/redemptions',
+    requiredPortalToken(token),
+  );
+}
+
+export function listPortalMarketingCodes(
+  token?: string,
+): Promise<PortalMarketingCodesResponse> {
+  return getJson<PortalMarketingCodesResponse>(
+    '/marketing/codes',
+    requiredPortalToken(token),
+  );
 }
 
 export function getPortalCommerceCatalog(token?: string): Promise<PortalCommerceCatalog> {
@@ -785,6 +967,15 @@ export function getPortalCommerceCheckoutSession(
 
 export function listPortalCommerceOrders(token?: string): Promise<PortalCommerceOrder[]> {
   return getJson<PortalCommerceOrder[]>('/commerce/orders', requiredPortalToken(token));
+}
+
+export function getPortalCommerceOrderCenter(
+  token?: string,
+): Promise<PortalCommerceOrderCenterResponse> {
+  return getJson<PortalCommerceOrderCenterResponse>(
+    '/commerce/order-center',
+    requiredPortalToken(token),
+  );
 }
 
 export function getPortalCommerceMembership(

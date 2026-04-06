@@ -32,6 +32,26 @@ async fn images_generation_route_returns_ok() {
 }
 
 #[tokio::test]
+async fn images_generation_route_returns_invalid_request_for_missing_model() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/images/generations")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"model\":\"\",\"prompt\":\"draw a lighthouse\"}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_invalid_image_generation_request(response).await;
+}
+
+#[tokio::test]
 async fn images_edit_route_accepts_multipart() {
     let app = sdkwork_api_interface_http::gateway_router();
     let boundary = "sdkwork-boundary-edit";
@@ -152,13 +172,15 @@ async fn stateless_images_routes_relay_to_openai_compatible_provider() {
     assert_eq!(edit_response.status(), StatusCode::OK);
     let edit_json = read_json(edit_response).await;
     assert_eq!(edit_json["data"][0]["b64_json"], "upstream-image");
-    assert!(upstream_state
-        .content_type
-        .lock()
-        .unwrap()
-        .as_deref()
-        .unwrap_or_default()
-        .starts_with("multipart/form-data; boundary="));
+    assert!(
+        upstream_state
+            .content_type
+            .lock()
+            .unwrap()
+            .as_deref()
+            .unwrap_or_default()
+            .starts_with("multipart/form-data; boundary=")
+    );
     let edit_body = upstream_state.raw_body.lock().unwrap().clone().unwrap();
     let edit_body = String::from_utf8_lossy(&edit_body);
     assert!(edit_body.contains("relay edit"));
@@ -270,6 +292,36 @@ async fn stateful_images_generation_route_requires_gateway_api_key() {
 }
 
 #[tokio::test]
+async fn stateful_images_generation_route_returns_invalid_request_for_missing_model_without_usage()
+{
+    let pool = memory_pool().await;
+    let api_key =
+        support::issue_gateway_api_key(&pool, "tenant-image-invalid", "project-image-invalid")
+            .await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool.clone());
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool);
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+
+    let response = gateway_app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/images/generations")
+                .header("authorization", format!("Bearer {api_key}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"model\":\"\",\"prompt\":\"draw a lighthouse\"}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_invalid_image_generation_request(response).await;
+    support::assert_no_usage_records(admin_app, &admin_token).await;
+}
+
+#[tokio::test]
 async fn stateful_images_edit_route_relays_multipart_to_openai_compatible_provider() {
     let upstream_state = UpstreamCaptureState::default();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -308,13 +360,15 @@ async fn stateful_images_edit_route_relays_multipart_to_openai_compatible_provid
         upstream_state.authorization.lock().unwrap().as_deref(),
         Some("Bearer sk-upstream-openai")
     );
-    assert!(upstream_state
-        .content_type
-        .lock()
-        .unwrap()
-        .as_deref()
-        .unwrap_or_default()
-        .starts_with("multipart/form-data; boundary="));
+    assert!(
+        upstream_state
+            .content_type
+            .lock()
+            .unwrap()
+            .as_deref()
+            .unwrap_or_default()
+            .starts_with("multipart/form-data; boundary=")
+    );
     let raw_body = upstream_state.raw_body.lock().unwrap().clone().unwrap();
     let body = String::from_utf8_lossy(&raw_body);
     assert!(body.contains("relay edit"));
@@ -361,13 +415,15 @@ async fn stateful_images_variation_route_relays_multipart_to_openai_compatible_p
         upstream_state.authorization.lock().unwrap().as_deref(),
         Some("Bearer sk-upstream-openai")
     );
-    assert!(upstream_state
-        .content_type
-        .lock()
-        .unwrap()
-        .as_deref()
-        .unwrap_or_default()
-        .starts_with("multipart/form-data; boundary="));
+    assert!(
+        upstream_state
+            .content_type
+            .lock()
+            .unwrap()
+            .as_deref()
+            .unwrap_or_default()
+            .starts_with("multipart/form-data; boundary=")
+    );
     let raw_body = upstream_state.raw_body.lock().unwrap().clone().unwrap();
     let body = String::from_utf8_lossy(&raw_body);
     assert!(body.contains("source.png"));
@@ -535,4 +591,15 @@ async fn upstream_images_multipart_handler(
             "data":[{"b64_json":"upstream-image"}]
         })),
     )
+}
+
+async fn assert_invalid_image_generation_request(response: axum::response::Response) {
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let json = read_json(response).await;
+    assert_eq!(
+        json["error"]["message"],
+        "Image generation model is required."
+    );
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "invalid_model");
 }

@@ -26,6 +26,9 @@ const PortalAuthPage = lazy(async () => ({
 const PortalConsoleRoute = lazy(async () => ({
   default: (await import('sdkwork-router-portal-console')).PortalConsoleRoute,
 }));
+const PortalApiReferencePage = lazy(async () => ({
+  default: (await import('sdkwork-router-portal-api-reference')).PortalApiReferencePage,
+}));
 const PortalDocsPage = lazy(async () => ({
   default: (await import('sdkwork-router-portal-docs')).PortalDocsPage,
 }));
@@ -89,6 +92,7 @@ function isPublicPortalPath(pathname: string): boolean {
   return (
     pathname === PORTAL_ROUTE_PATHS.home ||
     pathname === PORTAL_ROUTE_PATHS.models ||
+    pathname === PORTAL_ROUTE_PATHS['api-reference'] ||
     pathname === PORTAL_ROUTE_PATHS.docs ||
     pathname === PORTAL_ROUTE_PATHS.downloads
   );
@@ -132,6 +136,7 @@ export function AppRoutes({
       case 'credits':
       case 'recharge':
       case 'billing':
+      case 'settlements':
       case 'account':
         return (
           <PortalConsoleRoute
@@ -168,6 +173,14 @@ export function AppRoutes({
             </PortalSiteLayout>
           }
           path={toRouteElementPath(PORTAL_ROUTE_PATHS.models)}
+        />
+        <Route
+          element={
+            <PortalSiteLayout>
+              <PortalApiReferencePage />
+            </PortalSiteLayout>
+          }
+          path={toRouteElementPath(PORTAL_ROUTE_PATHS['api-reference'])}
         />
         <Route
           element={
@@ -251,6 +264,7 @@ export function AppRoutes({
             'credits',
             'recharge',
             'billing',
+            'settlements',
             'account',
           ] as PortalRouteKey[]
         ).map((routeKey) => (

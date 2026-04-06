@@ -11,6 +11,7 @@ const topNavItems: TopNavItem[] = [
   { key: 'home', href: '/', labelKey: 'Home' },
   { key: 'console', href: '/console/dashboard', labelKey: 'Console' },
   { key: 'models', href: '/models', labelKey: 'Models' },
+  { key: 'api-reference', href: '/api-reference', labelKey: 'API Reference' },
   { key: 'docs', href: '/docs', labelKey: 'Docs' },
   { key: 'downloads', href: '/downloads', labelKey: 'Download Center' },
 ];

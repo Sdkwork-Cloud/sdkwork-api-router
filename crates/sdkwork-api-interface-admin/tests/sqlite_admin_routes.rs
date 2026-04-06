@@ -2009,7 +2009,7 @@ async fn create_and_list_routing_policies() {
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    "{\"policy_id\":\"policy-gpt-4-1\",\"capability\":\"chat_completion\",\"model_pattern\":\"gpt-4.1\",\"enabled\":true,\"priority\":100,\"strategy\":\"slo_aware\",\"ordered_provider_ids\":[\"provider-openrouter\",\"provider-openai-official\"],\"default_provider_id\":\"provider-openai-official\",\"max_cost\":0.25,\"max_latency_ms\":200,\"require_healthy\":true}",
+                    "{\"policy_id\":\"policy-gpt-4-1\",\"capability\":\"chat_completion\",\"model_pattern\":\"gpt-4.1\",\"enabled\":true,\"priority\":100,\"strategy\":\"slo_aware\",\"ordered_provider_ids\":[\"provider-openrouter\",\"provider-openai-official\"],\"default_provider_id\":\"provider-openai-official\",\"max_cost\":0.25,\"max_latency_ms\":200,\"require_healthy\":true,\"execution_failover_enabled\":false,\"upstream_retry_max_attempts\":1,\"upstream_retry_base_delay_ms\":125,\"upstream_retry_max_delay_ms\":2500}",
                 ))
                 .unwrap(),
         )
@@ -2024,6 +2024,10 @@ async fn create_and_list_routing_policies() {
     assert_eq!(created_json["max_cost"], 0.25);
     assert_eq!(created_json["max_latency_ms"], 200);
     assert_eq!(created_json["require_healthy"], true);
+    assert_eq!(created_json["execution_failover_enabled"], false);
+    assert_eq!(created_json["upstream_retry_max_attempts"], 1);
+    assert_eq!(created_json["upstream_retry_base_delay_ms"], 125);
+    assert_eq!(created_json["upstream_retry_max_delay_ms"], 2500);
 
     let list = app
         .oneshot(
@@ -2052,6 +2056,10 @@ async fn create_and_list_routing_policies() {
     assert_eq!(list_json[0]["max_cost"], 0.25);
     assert_eq!(list_json[0]["max_latency_ms"], 200);
     assert_eq!(list_json[0]["require_healthy"], true);
+    assert_eq!(list_json[0]["execution_failover_enabled"], false);
+    assert_eq!(list_json[0]["upstream_retry_max_attempts"], 1);
+    assert_eq!(list_json[0]["upstream_retry_base_delay_ms"], 125);
+    assert_eq!(list_json[0]["upstream_retry_max_delay_ms"], 2500);
 }
 
 #[serial(extension_env)]
@@ -3642,12 +3650,7 @@ async fn billing_events_from_admin_api_report_group_and_capability_aggregates() 
             )
             .with_api_key_group_id("group-blue")
             .with_operation("responses.create", "text")
-            .with_request_facts(
-                Some("key-live"),
-                Some("openai"),
-                Some("resp_1"),
-                Some(650),
-            )
+            .with_request_facts(Some("key-live"), Some("openai"), Some("resp_1"), Some(650))
             .with_units(240)
             .with_token_usage(120, 80, 200)
             .with_financials(0.42, 0.89)
@@ -3670,12 +3673,7 @@ async fn billing_events_from_admin_api_report_group_and_capability_aggregates() 
             )
             .with_api_key_group_id("group-blue")
             .with_operation("images.generate", "image")
-            .with_request_facts(
-                Some("key-live"),
-                Some("openai"),
-                Some("img_1"),
-                Some(900),
-            )
+            .with_request_facts(Some("key-live"), Some("openai"), Some("img_1"), Some(900))
             .with_units(40)
             .with_request_count(1)
             .with_media_usage(2, 0.0, 0.0, 0.0)
@@ -3702,12 +3700,7 @@ async fn billing_events_from_admin_api_report_group_and_capability_aggregates() 
                 300,
             )
             .with_operation("audio.transcriptions.create", "audio")
-            .with_request_facts(
-                Some("key-byok"),
-                Some("openai"),
-                Some("aud_1"),
-                Some(1200),
-            )
+            .with_request_facts(Some("key-byok"), Some("openai"), Some("aud_1"), Some(1200))
             .with_units(60)
             .with_request_count(2)
             .with_media_usage(0, 35.0, 0.0, 0.0)
@@ -3767,8 +3760,14 @@ async fn billing_events_from_admin_api_report_group_and_capability_aggregates() 
     assert_eq!(summary_json["capabilities"][0]["capability"], "audio");
     assert_eq!(summary_json["capabilities"][1]["capability"], "images");
     assert_eq!(summary_json["capabilities"][2]["capability"], "responses");
-    assert_eq!(summary_json["accounting_modes"][0]["accounting_mode"], "platform_credit");
-    assert_eq!(summary_json["accounting_modes"][1]["accounting_mode"], "byok");
+    assert_eq!(
+        summary_json["accounting_modes"][0]["accounting_mode"],
+        "platform_credit"
+    );
+    assert_eq!(
+        summary_json["accounting_modes"][1]["accounting_mode"],
+        "byok"
+    );
 }
 
 #[serial(extension_env)]

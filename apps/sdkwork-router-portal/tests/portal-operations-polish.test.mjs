@@ -84,6 +84,7 @@ test('usage page stays focused on a compact request log workbench', () => {
 test('user page exposes a professional user center with profile, binding, privacy, and security controls', () => {
   const userPage = read('packages/sdkwork-router-portal-user/src/pages/index.tsx');
 
+  assert.match(userPage, /data-slot="portal-user-toolbar"/);
   assert.match(userPage, /User details/);
   assert.match(userPage, /Profile overview/);
   assert.match(userPage, /Phone binding/);
@@ -134,6 +135,10 @@ test('account page exposes revenue windows and a tabbed finance history workbenc
   assert.doesNotMatch(accountPage, /Quota health/);
   assert.match(accountPage, /Ledger snapshot/);
   assert.match(accountPage, /Expense/);
+  assert.match(accountPage, /t\(titleCaseToken\(viewModel\.commercial_posture\.account_status\)\)/);
+  assert.match(accountPage, /benefitType: t\(titleCaseToken\(lot\.benefit_type\)\)/);
+  assert.match(accountPage, /t\(titleCaseToken\(lot\.source_type\)\)/);
+  assert.match(accountPage, /t\(titleCaseToken\(lot\.status\)\)/);
   assert.doesNotMatch(accountPage, /Financial posture/);
   assert.doesNotMatch(accountPage, /Membership posture/);
   assert.doesNotMatch(accountPage, /Remaining units:/);

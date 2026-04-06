@@ -78,13 +78,28 @@ async fn sqlite_store_round_trips_canonical_account_kernel_records() {
     let plan = PricingPlanRecord::new(9101, 1001, 2002, "default-retail", 3)
         .with_display_name("Default Retail v3")
         .with_status("active")
+        .with_effective_from_ms(38)
+        .with_effective_to_ms(Some(138))
         .with_created_at_ms(38)
         .with_updated_at_ms(38);
     let rate = PricingRateRecord::new(9201, 1001, 2002, 9101, "token.input")
         .with_model_code(Some("gpt-4.1".to_owned()))
         .with_provider_code(Some("provider-openai-official".to_owned()))
+        .with_capability_code(Some("responses".to_owned()))
+        .with_charge_unit("input_token")
+        .with_pricing_method("per_unit")
         .with_unit_price(0.0025)
-        .with_created_at_ms(39);
+        .with_display_price_unit("USD / 1M input tokens")
+        .with_minimum_billable_quantity(0.0)
+        .with_minimum_charge(0.0)
+        .with_rounding_increment(1.0)
+        .with_rounding_mode("ceil")
+        .with_included_quantity(0.0)
+        .with_priority(100)
+        .with_notes(Some("Retail input pricing".to_owned()))
+        .with_status("active")
+        .with_created_at_ms(39)
+        .with_updated_at_ms(40);
     let settlement = RequestSettlementRecord::new(8301, 1001, 2002, 6001, 7001, 9001)
         .with_hold_id(Some(8101))
         .with_estimated_credit_hold(42.5)
@@ -144,8 +159,8 @@ async fn sqlite_store_round_trips_canonical_account_kernel_records() {
     );
     assert_eq!(store.list_request_meter_facts().await.unwrap().len(), 1);
     assert_eq!(store.list_request_meter_metrics().await.unwrap().len(), 1);
-    assert_eq!(store.list_pricing_plan_records().await.unwrap().len(), 1);
-    assert_eq!(store.list_pricing_rate_records().await.unwrap().len(), 1);
+    assert_eq!(store.list_pricing_plan_records().await.unwrap(), vec![plan]);
+    assert_eq!(store.list_pricing_rate_records().await.unwrap(), vec![rate]);
     assert_eq!(
         store.list_request_settlement_records().await.unwrap().len(),
         1

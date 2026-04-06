@@ -65,6 +65,92 @@ async fn adapter_posts_authorized_json_to_openai_compatible_upstream() {
 }
 
 #[tokio::test]
+async fn adapter_surfaces_retry_after_seconds_on_rate_limited_error() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+
+    let app = Router::new().route(
+        "/v1/chat/completions",
+        post(capture_chat_request_rate_limited_with_retry_after),
+    );
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let adapter =
+        sdkwork_api_provider_openai::OpenAiProviderAdapter::new(format!("http://{address}"));
+    let request = sdkwork_api_contract_openai::chat_completions::CreateChatCompletionRequest {
+        model: "gpt-4.1".to_owned(),
+        messages: vec![
+            sdkwork_api_contract_openai::chat_completions::ChatMessageInput {
+                role: "user".to_owned(),
+                content: Value::String("hello".to_owned()),
+                extra: serde_json::Map::new(),
+            },
+        ],
+        stream: Some(false),
+        extra: serde_json::Map::new(),
+    };
+
+    let error = adapter
+        .chat_completions("sk-upstream-openai", &request)
+        .await
+        .expect_err("429 response should surface as error");
+    let http_error = error
+        .downcast_ref::<sdkwork_api_provider_core::ProviderHttpError>()
+        .expect("provider http error");
+
+    assert_eq!(http_error.status(), Some(reqwest::StatusCode::TOO_MANY_REQUESTS));
+    assert_eq!(http_error.retry_after_secs(), Some(1));
+}
+
+#[tokio::test]
+async fn adapter_surfaces_retry_after_http_date_on_rate_limited_error() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+
+    let app = Router::new().route(
+        "/v1/chat/completions",
+        post(capture_chat_request_rate_limited_with_http_date_retry_after),
+    );
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let adapter =
+        sdkwork_api_provider_openai::OpenAiProviderAdapter::new(format!("http://{address}"));
+    let request = sdkwork_api_contract_openai::chat_completions::CreateChatCompletionRequest {
+        model: "gpt-4.1".to_owned(),
+        messages: vec![
+            sdkwork_api_contract_openai::chat_completions::ChatMessageInput {
+                role: "user".to_owned(),
+                content: Value::String("hello".to_owned()),
+                extra: serde_json::Map::new(),
+            },
+        ],
+        stream: Some(false),
+        extra: serde_json::Map::new(),
+    };
+
+    let error = adapter
+        .chat_completions("sk-upstream-openai", &request)
+        .await
+        .expect_err("429 response should surface as error");
+    let http_error = error
+        .downcast_ref::<sdkwork_api_provider_core::ProviderHttpError>()
+        .expect("provider http error");
+
+    assert_eq!(http_error.status(), Some(reqwest::StatusCode::TOO_MANY_REQUESTS));
+    assert!(
+        http_error.retry_after_secs().unwrap_or_default() > 60 * 60 * 24,
+        "expected http-date retry-after to parse into a large positive delay, got {:?}",
+        http_error.retry_after_secs()
+    );
+}
+
+#[tokio::test]
 async fn adapter_lists_chat_completions_from_openai_compatible_upstream() {
     let state = CaptureState::default();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -2583,6 +2669,34 @@ async fn capture_chat_request(
             "object":"chat.completion",
             "model":"gpt-4.1",
             "choices":[]
+        })),
+    )
+}
+
+async fn capture_chat_request_rate_limited_with_retry_after() -> impl IntoResponse {
+    (
+        StatusCode::TOO_MANY_REQUESTS,
+        [("retry-after", "1")],
+        Json(json!({
+            "error":{
+                "message":"rate limited by upstream",
+                "type":"rate_limit_error",
+                "code":"too_many_requests"
+            }
+        })),
+    )
+}
+
+async fn capture_chat_request_rate_limited_with_http_date_retry_after() -> impl IntoResponse {
+    (
+        StatusCode::TOO_MANY_REQUESTS,
+        [("retry-after", "Thu, 01 Jan 2099 00:00:00 GMT")],
+        Json(json!({
+            "error":{
+                "message":"rate limited by upstream with http-date retry-after",
+                "type":"rate_limit_error",
+                "code":"too_many_requests"
+            }
         })),
     )
 }

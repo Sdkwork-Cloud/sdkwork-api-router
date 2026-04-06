@@ -19,6 +19,7 @@ use sdkwork_api_app_runtime::{
     StandaloneServiceReloadHandles,
 };
 use sdkwork_api_config::{CacheBackendKind, StandaloneConfigLoader};
+use sdkwork_api_domain_billing::{PricingPlanRecord, PricingRateRecord};
 use sdkwork_api_domain_catalog::{Channel, ModelCatalogEntry, ProxyProvider};
 use sdkwork_api_ext_provider_native_mock::FIXTURE_EXTENSION_ID;
 use sdkwork_api_extension_core::{
@@ -27,9 +28,9 @@ use sdkwork_api_extension_core::{
 };
 use sdkwork_api_extension_host::shutdown_all_native_dynamic_runtimes;
 use sdkwork_api_storage_core::{
-    AdminStore, ExtensionRuntimeRolloutParticipantRecord, ExtensionRuntimeRolloutRecord,
-    Reloadable, ServiceRuntimeNodeRecord, StandaloneConfigRolloutParticipantRecord,
-    StandaloneConfigRolloutRecord,
+    AccountKernelStore, AdminStore, ExtensionRuntimeRolloutParticipantRecord,
+    ExtensionRuntimeRolloutRecord, Reloadable, ServiceRuntimeNodeRecord,
+    StandaloneConfigRolloutParticipantRecord, StandaloneConfigRolloutRecord,
 };
 use sdkwork_api_storage_sqlite::{run_migrations, SqliteAdminStore};
 use serial_test::serial;
@@ -292,6 +293,122 @@ async fn standalone_runtime_supervision_continues_heartbeat_in_reloaded_database
 
 #[serial(runtime_config_env)]
 #[tokio::test]
+async fn standalone_runtime_supervision_auto_activates_due_planned_pricing_versions_in_background() {
+    let config_root = temp_root("runtime-pricing-lifecycle-activation");
+    let database_path = config_root.join("pricing.db");
+    let database_url = sqlite_url_for_path(&database_path);
+    write_admin_pricing_runtime_config(&config_root, &database_url, "admin-secret-initial", 1);
+
+    let (loader, initial_config) = StandaloneConfigLoader::from_local_root_and_pairs(
+        &config_root,
+        std::iter::empty::<(&str, &str)>(),
+    )
+    .unwrap();
+    initial_config.apply_to_process_env();
+
+    let pool = run_migrations(&database_url).await.unwrap();
+    let store = Arc::new(SqliteAdminStore::new(pool));
+
+    let active_plan = PricingPlanRecord::new(9101, 1001, 2002, "retail-pro", 1)
+        .with_display_name("Retail Pro")
+        .with_currency_code("USD")
+        .with_credit_unit_code("credit")
+        .with_status("active")
+        .with_effective_from_ms(1)
+        .with_created_at_ms(15)
+        .with_updated_at_ms(15);
+    let due_planned_plan = PricingPlanRecord::new(9102, 1001, 2002, "retail-pro", 2)
+        .with_display_name("Retail Pro v2")
+        .with_currency_code("USD")
+        .with_credit_unit_code("credit")
+        .with_status("planned")
+        .with_effective_from_ms(2)
+        .with_created_at_ms(16)
+        .with_updated_at_ms(16);
+    let future_planned_plan = PricingPlanRecord::new(9103, 1001, 2002, "retail-pro", 3)
+        .with_display_name("Retail Pro Future")
+        .with_currency_code("USD")
+        .with_credit_unit_code("credit")
+        .with_status("planned")
+        .with_effective_from_ms(4_102_444_800_000)
+        .with_created_at_ms(17)
+        .with_updated_at_ms(17);
+    let active_rate = PricingRateRecord::new(9201, 1001, 2002, 9101, "token.input")
+        .with_charge_unit("input_token")
+        .with_pricing_method("per_unit")
+        .with_quantity_step(1000000.0)
+        .with_unit_price(2.5)
+        .with_display_price_unit("USD / 1M input tokens")
+        .with_rounding_increment(1.0)
+        .with_rounding_mode("ceil")
+        .with_status("active")
+        .with_created_at_ms(18)
+        .with_updated_at_ms(18);
+    let due_planned_rate = PricingRateRecord::new(9202, 1001, 2002, 9102, "token.input")
+        .with_charge_unit("input_token")
+        .with_pricing_method("per_unit")
+        .with_quantity_step(1000000.0)
+        .with_unit_price(2.8)
+        .with_display_price_unit("USD / 1M input tokens")
+        .with_rounding_increment(1.0)
+        .with_rounding_mode("ceil")
+        .with_status("planned")
+        .with_created_at_ms(19)
+        .with_updated_at_ms(19);
+    let future_planned_rate = PricingRateRecord::new(9203, 1001, 2002, 9103, "token.input")
+        .with_charge_unit("input_token")
+        .with_pricing_method("per_unit")
+        .with_quantity_step(1000000.0)
+        .with_unit_price(3.1)
+        .with_display_price_unit("USD / 1M input tokens")
+        .with_rounding_increment(1.0)
+        .with_rounding_mode("ceil")
+        .with_status("planned")
+        .with_created_at_ms(20)
+        .with_updated_at_ms(20);
+
+    store.insert_pricing_plan_record(&active_plan).await.unwrap();
+    store.insert_pricing_plan_record(&due_planned_plan).await.unwrap();
+    store
+        .insert_pricing_plan_record(&future_planned_plan)
+        .await
+        .unwrap();
+    store.insert_pricing_rate_record(&active_rate).await.unwrap();
+    store
+        .insert_pricing_rate_record(&due_planned_rate)
+        .await
+        .unwrap();
+    store
+        .insert_pricing_rate_record(&future_planned_rate)
+        .await
+        .unwrap();
+
+    let live_store = Reloadable::new(store.clone() as Arc<dyn AdminStore>);
+    let live_commercial_billing = Reloadable::new(
+        store.clone() as Arc<dyn sdkwork_api_app_billing::CommercialBillingAdminKernel>
+    );
+    let live_admin_jwt = Reloadable::new("admin-secret-initial".to_owned());
+    let supervision = start_standalone_runtime_supervision(
+        StandaloneServiceKind::Admin,
+        loader,
+        initial_config,
+        StandaloneServiceReloadHandles::admin(live_store, live_admin_jwt)
+            .with_live_commercial_billing(live_commercial_billing),
+    );
+
+    wait_for_pricing_plan_status(store.as_ref(), 9101, "archived").await;
+    wait_for_pricing_plan_status(store.as_ref(), 9102, "active").await;
+    wait_for_pricing_plan_status(store.as_ref(), 9103, "planned").await;
+    wait_for_pricing_rate_status(store.as_ref(), 9201, "archived").await;
+    wait_for_pricing_rate_status(store.as_ref(), 9202, "active").await;
+    wait_for_pricing_rate_status(store.as_ref(), 9203, "planned").await;
+
+    drop(supervision);
+    cleanup_dir(&config_root);
+}
+
+#[serial(runtime_config_env)]
+#[tokio::test]
 async fn standalone_runtime_supervision_reloads_secret_manager_after_config_file_change() {
     let config_root = temp_root("runtime-secret-manager-reload");
     let initial_secret_file = config_root.join("secrets-initial.json");
@@ -358,6 +475,79 @@ async fn standalone_runtime_supervision_reloads_secret_manager_after_config_file
 
     drop(supervision);
     cleanup_dir(&config_root);
+}
+
+#[serial(runtime_config_env)]
+#[tokio::test]
+async fn cluster_standalone_config_rollout_rejects_insecure_dev_defaults_on_non_loopback_bind() {
+    let shared_store = empty_store().await;
+    let gateway_root = temp_root("cluster-config-rollout-gateway-security-posture");
+    let gateway_bind = available_bind().replacen("127.0.0.1", "0.0.0.0", 1);
+
+    write_gateway_security_posture_runtime_config(
+        &gateway_root,
+        &gateway_bind,
+        "admin-secret-initial",
+        "portal-secret-initial",
+        "gateway-master-key-initial",
+        false,
+    );
+
+    let (gateway_loader, gateway_initial_config) = StandaloneConfigLoader::from_local_root_and_pairs(
+        &gateway_root,
+        std::iter::empty::<(&str, &str)>(),
+    )
+    .unwrap();
+
+    let gateway_live_store = Reloadable::new(empty_store().await);
+    let gateway_supervision = start_standalone_runtime_supervision(
+        StandaloneServiceKind::Gateway,
+        gateway_loader,
+        gateway_initial_config,
+        StandaloneServiceReloadHandles::gateway(gateway_live_store)
+            .with_coordination_store(shared_store.clone())
+            .with_node_id("gateway-node-security-posture"),
+    );
+
+    wait_for_service_runtime_node(shared_store.as_ref(), "gateway-node-security-posture").await;
+
+    write_gateway_security_posture_runtime_config(
+        &gateway_root,
+        &gateway_bind,
+        "local-dev-admin-jwt-secret",
+        "local-dev-portal-jwt-secret",
+        "local-dev-master-key",
+        false,
+    );
+
+    let rollout = create_standalone_config_rollout(
+        shared_store.as_ref(),
+        "admin-user",
+        CreateStandaloneConfigRolloutRequest::new(Some("gateway".to_owned()), 30),
+    )
+    .await
+    .unwrap();
+
+    wait_for_standalone_config_rollout_status(shared_store.as_ref(), &rollout.rollout_id, "failed")
+        .await;
+
+    let rollout = find_standalone_config_rollout(shared_store.as_ref(), &rollout.rollout_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(rollout.participant_count, 1);
+    assert_eq!(rollout.participants.len(), 1);
+    assert_eq!(rollout.participants[0].status, "failed");
+    let message = rollout.participants[0]
+        .message
+        .as_deref()
+        .unwrap_or_default();
+    assert!(message.contains("admin_jwt_signing_secret"));
+    assert!(message.contains("portal_jwt_signing_secret"));
+    assert!(message.contains("credential_master_key"));
+
+    drop(gateway_supervision);
+    cleanup_dir(&gateway_root);
 }
 
 #[serial(extension_env)]
@@ -858,6 +1048,34 @@ extension_hot_reload_interval_secs: 0
     .unwrap();
 }
 
+fn write_gateway_security_posture_runtime_config(
+    root: &Path,
+    gateway_bind: &str,
+    admin_jwt_signing_secret: &str,
+    portal_jwt_signing_secret: &str,
+    credential_master_key: &str,
+    allow_insecure_dev_defaults: bool,
+) {
+    fs::write(
+        root.join("config.yaml"),
+        format!(
+            r#"
+gateway_bind: "{gateway_bind}"
+database_url: "sqlite://sdkwork-api-server.db"
+admin_jwt_signing_secret: "{admin_jwt_signing_secret}"
+portal_jwt_signing_secret: "{portal_jwt_signing_secret}"
+credential_master_key: "{credential_master_key}"
+allow_insecure_dev_defaults: {allow_insecure_dev_defaults}
+enable_connector_extensions: false
+enable_native_dynamic_extensions: false
+runtime_snapshot_interval_secs: 0
+extension_hot_reload_interval_secs: 0
+"#,
+        ),
+    )
+    .unwrap();
+}
+
 fn temp_root(suffix: &str) -> PathBuf {
     let mut path = std::env::temp_dir();
     let millis = SystemTime::now()
@@ -1028,6 +1246,50 @@ async fn wait_for_reloadable_string(live_value: &Reloadable<String>, expected: &
     panic!("reloadable string did not reach expected value");
 }
 
+async fn wait_for_pricing_plan_status(
+    store: &SqliteAdminStore,
+    pricing_plan_id: u64,
+    expected_status: &str,
+) {
+    for _ in 0..200 {
+        if store
+            .list_pricing_plan_records()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|plan| plan.pricing_plan_id == pricing_plan_id)
+            .is_some_and(|plan| plan.status == expected_status)
+        {
+            return;
+        }
+        sleep(Duration::from_millis(25)).await;
+    }
+
+    panic!("pricing plan did not reach expected status");
+}
+
+async fn wait_for_pricing_rate_status(
+    store: &SqliteAdminStore,
+    pricing_rate_id: u64,
+    expected_status: &str,
+) {
+    for _ in 0..200 {
+        if store
+            .list_pricing_rate_records()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|rate| rate.pricing_rate_id == pricing_rate_id)
+            .is_some_and(|rate| rate.status == expected_status)
+        {
+            return;
+        }
+        sleep(Duration::from_millis(25)).await;
+    }
+
+    panic!("pricing rate did not reach expected status");
+}
+
 async fn wait_for_secret_manager_master_key(
     live_secret_manager: &Reloadable<CredentialSecretManager>,
     expected_master_key: &str,
@@ -1182,6 +1444,27 @@ fn write_portal_runtime_config(root: &Path, database_url: &str, jwt_secret: &str
             r#"
 database_url: "{database_url}"
 portal_jwt_signing_secret: "{jwt_secret}"
+runtime_snapshot_interval_secs: 0
+extension_hot_reload_interval_secs: 0
+"#,
+        ),
+    )
+    .unwrap();
+}
+
+fn write_admin_pricing_runtime_config(
+    root: &Path,
+    database_url: &str,
+    jwt_secret: &str,
+    pricing_lifecycle_sync_interval_secs: u64,
+) {
+    fs::write(
+        root.join("config.yaml"),
+        format!(
+            r#"
+database_url: "{database_url}"
+admin_jwt_signing_secret: "{jwt_secret}"
+pricing_lifecycle_sync_interval_secs: {pricing_lifecycle_sync_interval_secs}
 runtime_snapshot_interval_secs: 0
 extension_hot_reload_interval_secs: 0
 "#,

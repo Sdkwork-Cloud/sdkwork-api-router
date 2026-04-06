@@ -4,8 +4,19 @@ import type {
   BillingEventGroupSummary,
   BillingEventRecord,
   BillingEventSummary,
+  CommercialAccountBalanceSnapshot,
+  CommercialAccountBenefitLotRecord,
+  CommercialAccountHoldRecord,
+  CommercialAccountSummary,
+  CommercialPricingPlanRecord,
+  CommercialPricingRateRecord,
+  CommercialRequestSettlementRecord,
+  PortalCommerceCheckoutSessionStatus,
   PortalCommerceMembership,
+  PortalCommerceReconciliationSummary,
   PortalCommerceOrder,
+  PortalCommercePaymentEventProcessingStatus,
+  PortalCommercePaymentEventType,
   PortalCommerceQuote,
   PortalRouteKey,
   ProjectBillingSummary,
@@ -39,6 +50,32 @@ export interface BillingRecommendation {
   bundle: BillingBundleRecommendation;
 }
 
+export type BillingPaymentHistoryRowKind =
+  | 'payment_event'
+  | 'refunded_order_state';
+
+export interface BillingPaymentHistoryRow {
+  row_kind: BillingPaymentHistoryRowKind;
+  id: string;
+  order_id: string;
+  target_name: string;
+  target_kind: PortalCommerceOrder['target_kind'];
+  payable_price_label: string;
+  order_status: PortalCommerceOrder['status'];
+  order_status_after?: PortalCommerceOrder['status'] | null;
+  provider: string;
+  event_type: PortalCommercePaymentEventType;
+  payment_event_id?: string | null;
+  provider_event_id?: string | null;
+  processing_status?: PortalCommercePaymentEventProcessingStatus | null;
+  processing_message?: string | null;
+  checkout_reference?: string | null;
+  checkout_session_status?: PortalCommerceCheckoutSessionStatus | null;
+  guidance?: string | null;
+  received_at_ms: number;
+  processed_at_ms?: number | null;
+}
+
 export interface BillingPageData {
   summary: ProjectBillingSummary;
   usage_records: UsageRecord[];
@@ -47,7 +84,17 @@ export interface BillingPageData {
   plans: SubscriptionPlan[];
   packs: RechargePack[];
   orders: PortalCommerceOrder[];
+  payment_history: BillingPaymentHistoryRow[];
+  refund_history: BillingPaymentHistoryRow[];
   membership: PortalCommerceMembership | null;
+  commercial_reconciliation: PortalCommerceReconciliationSummary | null;
+  commercial_account: CommercialAccountSummary | null;
+  commercial_balance: CommercialAccountBalanceSnapshot | null;
+  commercial_benefit_lots: CommercialAccountBenefitLotRecord[];
+  commercial_holds: CommercialAccountHoldRecord[];
+  commercial_request_settlements: CommercialRequestSettlementRecord[];
+  commercial_pricing_plans: CommercialPricingPlanRecord[];
+  commercial_pricing_rates: CommercialPricingRateRecord[];
 }
 
 export interface BillingEventAnalyticsTotals {

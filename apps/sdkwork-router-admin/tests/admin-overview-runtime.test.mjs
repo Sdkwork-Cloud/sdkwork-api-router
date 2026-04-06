@@ -65,6 +65,9 @@ test('admin overview view model tolerates missing snapshot collections from live
   assert.deepEqual(viewModel.snapshot.usageRecords, []);
   assert.deepEqual(viewModel.snapshot.usageSummary.projects, []);
   assert.deepEqual(viewModel.snapshot.billingSummary.projects, []);
+  assert.deepEqual(viewModel.snapshot.commerceOrders, []);
+  assert.deepEqual(viewModel.snapshot.commercePaymentEvents, []);
+  assert.deepEqual(viewModel.snapshot.commercialAccountLedger, []);
   assert.deepEqual(viewModel.metrics, []);
   assert.deepEqual(viewModel.alerts, []);
   assert.deepEqual(viewModel.rankedUsers, []);

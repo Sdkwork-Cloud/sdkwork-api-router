@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateRunRequest {
     pub assistant_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -31,7 +32,7 @@ impl CreateRunRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateThreadAndRunRequest {
     pub assistant_id: String,
     pub thread: Value,
@@ -58,7 +59,7 @@ impl CreateThreadAndRunRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, ToSchema)]
 pub struct UpdateRunRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Value>,
@@ -72,7 +73,7 @@ impl UpdateRunRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RunToolOutput {
     pub tool_call_id: String,
     pub output: String,
@@ -87,7 +88,7 @@ impl RunToolOutput {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SubmitToolOutputsRunRequest {
     pub tool_outputs: Vec<RunToolOutput>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -103,7 +104,7 @@ impl SubmitToolOutputsRunRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct RunObject {
     pub id: String,
     pub object: &'static str,
@@ -176,7 +177,7 @@ impl RunObject {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ListRunsResponse {
     pub object: &'static str,
     pub data: Vec<RunObject>,
@@ -197,7 +198,7 @@ impl ListRunsResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct RunStepObject {
     pub id: String,
     pub object: &'static str,
@@ -238,7 +239,7 @@ impl RunStepObject {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ListRunStepsResponse {
     pub object: &'static str,
     pub data: Vec<RunStepObject>,

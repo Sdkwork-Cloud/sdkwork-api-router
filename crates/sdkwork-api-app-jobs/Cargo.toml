@@ -1,0 +1,24 @@
+[package]
+name = "sdkwork-api-app-jobs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+sdkwork-api-domain-marketing = { path = "../sdkwork-api-domain-marketing" }
+sdkwork-api-domain-jobs = { path = "../sdkwork-api-domain-jobs" }
+sdkwork-api-observability = { path = "../sdkwork-api-observability" }
+sdkwork-api-storage-core = { path = "../sdkwork-api-storage-core" }
+serde_json.workspace = true
+
+[dev-dependencies]
+sdkwork-api-domain-marketing = { path = "../sdkwork-api-domain-marketing" }
+sdkwork-api-observability = { path = "../sdkwork-api-observability" }
+sdkwork-api-storage-core = { path = "../sdkwork-api-storage-core" }
+sdkwork-api-storage-sqlite = { path = "../sdkwork-api-storage-sqlite" }
+tokio.workspace = true
+
+[lib]
+path = "src/lib.rs"

@@ -18,11 +18,11 @@
 - Modify: `crates/sdkwork-api-storage-postgres/src/lib.rs`
 - Create: `crates/sdkwork-api-app-billing/tests/account_kernel_mutations.rs`
 
-- [ ] **Step 1: Add a storage-core transaction abstraction dedicated to account-kernel command execution**
-- [ ] **Step 2: Write failing mutation tests for hold creation, release, and settlement idempotency**
-- [ ] **Step 3: Implement SQLite transaction-backed execution for account-kernel commands**
-- [ ] **Step 4: Implement PostgreSQL transaction-backed execution for the same contract**
-- [ ] **Step 5: Run `cargo test -p sdkwork-api-app-billing --test account_kernel_mutations -- --nocapture`**
+- [x] **Step 1: Add a storage-core transaction abstraction dedicated to account-kernel command execution**
+- [x] **Step 2: Write failing mutation tests for hold creation, release, and settlement idempotency**
+- [x] **Step 3: Implement SQLite transaction-backed execution for account-kernel commands**
+- [x] **Step 4: Implement PostgreSQL transaction-backed execution for the same contract**
+- [x] **Step 5: Run `cargo test -p sdkwork-api-app-billing --test account_kernel_mutations -- --nocapture`**
 
 ### Task 2: Implement canonical hold, ledger, and settlement orchestration
 
@@ -33,11 +33,11 @@
 - Modify: `crates/sdkwork-api-storage-sqlite/tests/account_kernel_roundtrip.rs`
 - Modify: `crates/sdkwork-api-storage-postgres/tests/integration_postgres.rs`
 
-- [ ] **Step 1: Add app-billing command APIs for create hold, capture hold, and release hold**
+- [x] **Step 1: Add app-billing command APIs for create hold, capture hold, and release hold**
 - [ ] **Step 2: Persist hold allocations, ledger allocations, request facts, and request settlements through the transaction seam**
-- [ ] **Step 3: Add idempotency anchors for repeated request settlement attempts**
+- [x] **Step 3: Add idempotency anchors for repeated request settlement attempts**
 - [ ] **Step 4: Add regression tests for insufficient balance, retry, duplicate settlement, and late correction**
-- [ ] **Step 5: Run `cargo test -p sdkwork-api-app-billing -- --nocapture`**
+- [x] **Step 5: Run `cargo test -p sdkwork-api-app-billing -- --nocapture`**
 
 ### Task 3: Cut the HTTP gateway from legacy quota admission to canonical settlement admission
 
@@ -47,11 +47,14 @@
 - Modify: `crates/sdkwork-api-interface-http/tests/gateway_auth_context.rs`
 - Create: `crates/sdkwork-api-interface-http/tests/canonical_account_admission.rs`
 
-- [ ] **Step 1: Add a failing gateway test that authenticates a canonical API key and resolves its payable account**
+- [x] **Step 1: Add a failing gateway test that authenticates a canonical API key and resolves its payable account**
 - [ ] **Step 2: Replace legacy quota-only admission on the commercial path with canonical subject resolution, account resolution, hold planning, and settlement orchestration**
 - [ ] **Step 3: Keep compatibility-era quota helpers only where the canonical account kernel is intentionally not in scope**
 - [ ] **Step 4: Re-run gateway auth and admission tests**
 - [ ] **Step 5: Run `cargo test -p sdkwork-api-interface-http -- --nocapture`**
+
+Progress note:
+Stateful `/v1/chat/completions` and `/v1/responses` now create canonical holds and request settlements when a platform-credit payable account exists, while preserving legacy quota fallback for paths that have not been cut over yet.
 
 ### Task 4: Expose canonical commercial control-plane APIs
 
@@ -63,11 +66,14 @@
 - Modify: `docs/api-reference/admin-api.md`
 - Modify: `docs/api-reference/portal-api.md`
 
-- [ ] **Step 1: Add failing admin and portal route tests for account balances, holds, benefit lots, pricing plans, pricing rates, and settlements**
-- [ ] **Step 2: Implement admin routes for commercial governance and operator investigation**
-- [ ] **Step 3: Implement portal routes for tenant-facing account, recharge, settlement, and pricing posture**
-- [ ] **Step 4: Re-run the new admin and portal route tests**
-- [ ] **Step 5: Update API reference docs**
+- [x] **Step 1: Add failing admin and portal route tests for account balances, holds, benefit lots, pricing plans, pricing rates, and settlements**
+- [x] **Step 2: Implement admin routes for commercial governance and operator investigation**
+- [x] **Step 3: Implement portal routes for tenant-facing account, recharge, settlement, and pricing posture**
+- [x] **Step 4: Re-run the new admin and portal route tests**
+- [x] **Step 5: Update API reference docs**
+
+Progress note:
+Admin and portal now expose canonical commercial account, balance, benefit-lot, hold, settlement, and pricing read APIs through a shared object-safe billing seam, with SQLite-backed constructors injecting the canonical account kernel by default and API reference docs updated to match.
 
 ### Task 5: Cut admin and portal packages onto the canonical backend surfaces
 
@@ -153,15 +159,35 @@
 - [ ] **Step 4: Add policy attachment points for abuse, residency, and compliance plugins**
 - [ ] **Step 5: Re-run commercial billing and control-plane verification suites**
 
-### Task 10: Rebaseline the platform and freeze the commercial v1 target
+### Task 10: Add performance, resilience, and SLO verification
+
+**Files:**
+- Create: `crates/sdkwork-api-interface-http/tests/commercial_resilience.rs`
+- Modify: `crates/sdkwork-api-interface-http/tests/runtime_execution.rs`
+- Modify: `crates/sdkwork-api-interface-http/tests/stateless_runtime.rs`
+- Modify: `crates/sdkwork-api-interface-admin/src/lib.rs`
+- Modify: `apps/sdkwork-router-admin/packages/sdkwork-router-admin-overview/src/index.tsx`
+- Modify: `apps/sdkwork-router-admin/packages/sdkwork-router-admin-operations/src/index.tsx`
+- Modify: `apps/sdkwork-router-portal/packages/sdkwork-router-portal-dashboard/src/pages/index.tsx`
+- Create: `docs/superpowers/specs/2026-04-03-commercial-v1-launch-gates.md`
+
+- [ ] **Step 1: Add failing resilience tests for duplicate settlement attempts, provider timeout recovery, callback replay suppression, and degraded runtime visibility**
+- [ ] **Step 2: Surface operator and tenant-facing SLO posture for latency, error rate, job backlog, and settlement drift**
+- [ ] **Step 3: Define explicit commercial-v1 launch gates for correctness, resilience, and operational visibility**
+- [ ] **Step 4: Run targeted backend plus control-plane verification for the new launch gates**
+- [ ] **Step 5: Freeze alert thresholds and degraded-mode behavior in the launch-gate spec**
+
+### Task 11: Rebaseline the platform and freeze the commercial v1 target
 
 **Files:**
 - Modify: `docs/superpowers/specs/2026-04-03-router-implementation-audit-and-upgrade-plan.md`
 - Modify: `docs/superpowers/specs/2026-04-03-commercial-system-gap-assessment-and-target-solution.md`
+- Modify: `docs/superpowers/specs/2026-04-03-advanced-commercial-system-readiness-review.md`
+- Modify: `docs/superpowers/specs/2026-04-03-commercial-v1-launch-gates.md`
 - Create: `docs/superpowers/specs/2026-04-03-commercial-v1-readiness-scorecard.md`
 
 - [ ] **Step 1: Update the audit baseline after each major phase**
 - [ ] **Step 2: Add a readiness scorecard covering correctness, control plane, multimodal jobs, plugin governance, and dialect parity**
 - [ ] **Step 3: Define the exact commercial-v1 exit criteria**
-- [ ] **Step 4: Run the final verification matrix across backend, admin, and portal**
+- [ ] **Step 4: Run the final verification matrix across backend, admin, portal, resilience, and launch-gate evidence**
 - [ ] **Step 5: Commit each phase separately so rollback and review remain clean**

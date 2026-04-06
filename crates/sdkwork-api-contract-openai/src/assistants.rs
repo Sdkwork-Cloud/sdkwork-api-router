@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateAssistantRequest {
     pub name: String,
     pub model: String,
@@ -15,7 +16,7 @@ impl CreateAssistantRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct UpdateAssistantRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -32,7 +33,7 @@ impl UpdateAssistantRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct AssistantObject {
     pub id: String,
     pub object: &'static str,
@@ -51,7 +52,7 @@ impl AssistantObject {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ListAssistantsResponse {
     pub object: &'static str,
     pub data: Vec<AssistantObject>,
@@ -72,7 +73,7 @@ impl ListAssistantsResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct DeleteAssistantResponse {
     pub id: String,
     pub object: &'static str,

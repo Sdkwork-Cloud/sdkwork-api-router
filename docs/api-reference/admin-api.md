@@ -118,11 +118,12 @@ Fresh databases now create only `ai_*` physical tables. Legacy names such as `id
 | provider catalog | `GET/POST /channels`, `DELETE /channels/{channel_id}`, `GET/POST /providers`, `DELETE /providers/{provider_id}`, `GET/POST /credentials`, `DELETE /credentials/{tenant_id}/providers/{provider_id}/keys/{key_reference}` | channel, provider, and credential management |
 | channel models | `GET/POST /channel-models`, `DELETE /channel-models/{channel_id}/models/{model_id}` | channel-to-model mapping management |
 | model pricing | `GET/POST /model-prices`, `DELETE /model-prices/{channel_id}/models/{model_id}/providers/{proxy_provider_id}` | per-channel-model, per-provider pricing control |
+| marketing workbench | `GET/POST /marketing/coupon-templates`, `POST /marketing/coupon-templates/{coupon_template_id}/status`, `GET/POST /marketing/campaigns`, `POST /marketing/campaigns/{marketing_campaign_id}/status`, `GET/POST /marketing/budgets`, `POST /marketing/budgets/{campaign_budget_id}/status`, `GET/POST /marketing/codes`, `POST /marketing/codes/{coupon_code_id}/status`, `GET /marketing/reservations`, `GET /marketing/redemptions`, `GET /marketing/rollbacks`, `GET/POST /coupons`, `DELETE /coupons/{coupon_id}` | canonical coupon governance plus legacy `/admin/coupons` compatibility |
 | compatibility model routes | `GET/POST /models`, `DELETE /models/{external_name}/providers/{provider_id}` | legacy provider-scoped model compatibility routes backed by canonical catalog tables |
 | extensions | `GET/POST /extensions/installations`, `GET /extensions/packages`, `GET/POST /extensions/instances`, `GET /extensions/runtime-statuses`, `POST /extensions/runtime-reloads` | extension runtime management |
 | extension rollouts | `GET/POST /extensions/runtime-rollouts`, `GET /extensions/runtime-rollouts/{rollout_id}` | coordinated extension rollout control |
 | runtime config rollouts | `GET/POST /runtime-config/rollouts`, `GET /runtime-config/rollouts/{rollout_id}` | coordinated config reload control |
-| usage and billing | `GET /usage/records`, `GET /usage/summary`, `GET /billing/events`, `GET /billing/events/summary`, `GET /billing/ledger`, `GET /billing/summary`, `GET/POST /billing/quota-policies` | operator observability, billing-event inspection, and quota enforcement |
+| usage and billing | `GET /usage/records`, `GET /usage/summary`, `GET /billing/events`, `GET /billing/events/summary`, `GET /billing/ledger`, `GET /billing/summary`, `GET /billing/accounts`, `GET /billing/accounts/{account_id}/balance`, `GET /billing/accounts/{account_id}/benefit-lots`, `GET /billing/account-holds`, `GET /billing/request-settlements`, `POST /billing/pricing-lifecycle/synchronize`, `GET/POST /billing/pricing-plans`, `PUT /billing/pricing-plans/{pricing_plan_id}`, `POST /billing/pricing-plans/{pricing_plan_id}/clone`, `POST /billing/pricing-plans/{pricing_plan_id}/schedule`, `POST /billing/pricing-plans/{pricing_plan_id}/publish`, `POST /billing/pricing-plans/{pricing_plan_id}/retire`, `GET/POST /billing/pricing-rates`, `PUT /billing/pricing-rates/{pricing_rate_id}`, `GET/POST /billing/quota-policies` | operator observability, legacy quota posture, and canonical commercial account investigation |
 | routing | `GET/POST /routing/policies`, `GET/POST /routing/profiles`, `GET /routing/snapshots`, `GET /routing/health-snapshots`, `GET /routing/decision-logs`, `POST /routing/simulations` | dispatch policy, reusable routing profiles, compiled route state, and diagnostics |
 
 ## What The Admin API Owns
@@ -137,6 +138,14 @@ The admin API is the system-of-record surface for:
 - quota controls
 
 If you need to operate the gateway, this is the API that changes the underlying behavior.
+
+## Marketing Workbench Notes
+
+- `POST /admin/marketing/coupon-templates/{coupon_template_id}/status` updates the lifecycle state of the canonical coupon template without forcing operators to rewrite the rest of the record.
+- `POST /admin/marketing/campaigns/{marketing_campaign_id}/status` controls campaign activation and pause workflows for the attached template.
+- `POST /admin/marketing/budgets/{campaign_budget_id}/status` closes or re-activates a canonical budget while preserving consumed and reserved counters for auditability.
+- `POST /admin/marketing/codes/{coupon_code_id}/status` disables or re-enables a canonical coupon code without deleting redemption history.
+- `GET/POST /admin/coupons` remains a compatibility surface; new governance operations should target the canonical `/admin/marketing/*` resources.
 
 ## API Key Group Notes
 
@@ -190,6 +199,26 @@ If you need to operate the gateway, this is the API that changes the underlying 
   - legacy usage records
   - legacy billing ledger entries
   - canonical billing events
+
+## Canonical Commercial Account Notes
+
+- `GET /admin/billing/accounts` lists canonical payable accounts together with summarized available, held, consumed, and granted balance posture
+- `GET /admin/billing/accounts/{account_id}/balance` returns the full computed balance snapshot, including active spendable lots
+- `GET /admin/billing/accounts/{account_id}/benefit-lots` exposes all canonical lots for operator investigation, including expired or exhausted lots that do not appear in the active balance snapshot
+- `GET /admin/billing/account-holds` exposes canonical request admission holds
+- `GET /admin/billing/request-settlements` exposes canonical request settlement outcomes
+- `GET /admin/billing/pricing-plans` and `GET /admin/billing/pricing-rates` expose the pricing posture that commercial account settlement will consume as the router moves further off legacy quota mode
+- admin pricing reads now synchronize due `planned` versions before returning data, so once a staged plan reaches `effective_from_ms` the latest due version becomes `active` and replaced active siblings are archived automatically
+- `POST /admin/billing/pricing-lifecycle/synchronize` exposes the same lifecycle convergence as an explicit control-plane operation and returns due-group, activated, archived, skipped, and timestamp counters for operator review or automation
+- `POST /admin/billing/pricing-plans` creates canonical pricing-plan headers with plan code, version, currency, credit unit, lifecycle status, and effective window metadata via `effective_from_ms` and optional `effective_to_ms`
+- `PUT /admin/billing/pricing-plans/{pricing_plan_id}` fully replaces an existing canonical pricing-plan header so operators can advance plan versions, lifecycle state, and effective windows without recreating identities in the UI
+- `POST /admin/billing/pricing-plans/{pricing_plan_id}/clone` creates the next draft version of an existing pricing plan and clones all attached pricing-rate rows onto the new plan identity
+- `POST /admin/billing/pricing-plans/{pricing_plan_id}/schedule` marks a future-dated pricing plan as `planned` and stages its attached pricing-rate rows with the same lifecycle status while leaving the currently active sibling version untouched
+- `POST /admin/billing/pricing-plans/{pricing_plan_id}/publish` promotes a pricing plan to `active`, activates its attached pricing-rate rows, and archives previously active sibling versions for the same tenant, organization, and plan code; only currently effective plans can be published immediately
+- `POST /admin/billing/pricing-plans/{pricing_plan_id}/retire` archives the target pricing plan and all attached pricing-rate rows without deleting the commercial pricing history
+- `POST /admin/billing/pricing-rates` creates canonical pricing-rate rows with explicit `charge_unit`, `pricing_method`, display unit, rounding metadata, minimums, and optional capability or provider or model scope
+- `PUT /admin/billing/pricing-rates/{pricing_rate_id}` fully replaces an existing canonical pricing-rate row so settlement-facing pricing semantics stay editable after first publication
+- canonical pricing rates now support professional commercial units such as input tokens, requests, images, audio seconds, video minutes, and music tracks without overloading the catalog market-price model
 
 ## Browser App
 

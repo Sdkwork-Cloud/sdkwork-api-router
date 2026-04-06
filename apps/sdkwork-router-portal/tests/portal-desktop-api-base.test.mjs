@@ -342,6 +342,16 @@ test('browser portal api gets commerce checkout sessions through the relative pr
           detail: 'Use the portal settle action in local or lab mode.',
           action: 'settle_order',
           availability: 'available',
+          provider: 'manual_lab',
+          channel: 'operator_settlement',
+          session_kind: 'operator_action',
+          session_reference: 'MANUAL-ORDER-1',
+          qr_code_payload: null,
+          webhook_verification: 'manual',
+          supports_refund: true,
+          supports_partial_refund: false,
+          recommended: false,
+          supports_webhook: false,
         },
       ],
     });
@@ -391,7 +401,11 @@ test('browser portal api sends commerce payment events through the relative prox
   try {
     await portalApi.sendPortalCommercePaymentEvent(
       'commerce-order-1',
-      { event_type: 'failed' },
+      {
+        event_type: 'failed',
+        provider: 'stripe',
+        checkout_method_id: 'stripe_checkout',
+      },
       'portal-session',
     );
   } finally {
@@ -405,6 +419,8 @@ test('browser portal api sends commerce payment events through the relative prox
       method: 'POST',
       body: JSON.stringify({
         event_type: 'failed',
+        provider: 'stripe',
+        checkout_method_id: 'stripe_checkout',
       }),
     },
   ]);

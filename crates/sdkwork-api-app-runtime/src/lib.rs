@@ -8,6 +8,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use sdkwork_api_app_billing::{
+    synchronize_due_pricing_plan_lifecycle_with_report, CommercialBillingAdminKernel,
+};
 use sdkwork_api_app_credential::{resolve_credential_secret_with_manager, CredentialSecretManager};
 use sdkwork_api_app_extension::{
     start_provider_health_snapshot_supervision, ExtensionDiscoveryPolicy,
@@ -26,7 +29,7 @@ use sdkwork_api_config::{
 use sdkwork_api_storage_core::{
     AdminStore, ExtensionRuntimeRolloutParticipantRecord, ExtensionRuntimeRolloutRecord,
     Reloadable, ServiceRuntimeNodeRecord, StandaloneConfigRolloutParticipantRecord,
-    StandaloneConfigRolloutRecord, StorageDialect, StorageDriverFactory, StorageDriverRegistry,
+    StandaloneConfigRolloutRecord, StorageDialect,
 };
 use sdkwork_api_storage_postgres::{run_migrations as run_postgres_migrations, PostgresAdminStore};
 use sdkwork_api_storage_sqlite::{run_migrations as run_sqlite_migrations, SqliteAdminStore};
@@ -302,10 +305,15 @@ impl StandaloneServiceKind {
     fn supports_runtime_dynamic(self) -> bool {
         matches!(self, Self::Gateway | Self::Admin)
     }
+
+    fn supports_pricing_lifecycle_supervision(self) -> bool {
+        matches!(self, Self::Admin)
+    }
 }
 
 pub struct StandaloneServiceReloadHandles {
     store: Reloadable<Arc<dyn AdminStore>>,
+    commercial_billing: Option<Reloadable<Arc<dyn CommercialBillingAdminKernel>>>,
     coordination_store: Option<Reloadable<Arc<dyn AdminStore>>>,
     secret_manager: Option<Reloadable<CredentialSecretManager>>,
     admin_jwt_signing_secret: Option<Reloadable<String>>,
@@ -318,6 +326,7 @@ impl StandaloneServiceReloadHandles {
     pub fn gateway(store: Reloadable<Arc<dyn AdminStore>>) -> Self {
         Self {
             store,
+            commercial_billing: None,
             coordination_store: None,
             secret_manager: None,
             admin_jwt_signing_secret: None,
@@ -333,6 +342,7 @@ impl StandaloneServiceReloadHandles {
     ) -> Self {
         Self {
             store,
+            commercial_billing: None,
             coordination_store: None,
             secret_manager: None,
             admin_jwt_signing_secret: Some(admin_jwt_signing_secret),
@@ -348,6 +358,7 @@ impl StandaloneServiceReloadHandles {
     ) -> Self {
         Self {
             store,
+            commercial_billing: None,
             coordination_store: None,
             secret_manager: None,
             admin_jwt_signing_secret: None,
@@ -355,6 +366,14 @@ impl StandaloneServiceReloadHandles {
             listener: None,
             node_id: None,
         }
+    }
+
+    pub fn with_live_commercial_billing(
+        mut self,
+        commercial_billing: Reloadable<Arc<dyn CommercialBillingAdminKernel>>,
+    ) -> Self {
+        self.commercial_billing = Some(commercial_billing);
+        self
     }
 
     pub fn with_coordination_store(mut self, coordination_store: Arc<dyn AdminStore>) -> Self {
@@ -387,6 +406,7 @@ struct StandaloneRuntimeState {
     current_store: Arc<dyn AdminStore>,
     snapshot_supervision: AbortOnDropHandle,
     extension_hot_reload_supervision: AbortOnDropHandle,
+    pricing_lifecycle_supervision: AbortOnDropHandle,
     previous_watch_state: Option<StandaloneConfigWatchState>,
     pending_restart_required: Option<PendingStandaloneRuntimeRestartRequired>,
 }
@@ -395,42 +415,6 @@ struct StandaloneRuntimeState {
 struct PendingStandaloneRuntimeRestartRequired {
     watch_state: StandaloneConfigWatchState,
     message: String,
-}
-
-struct SqliteAdminStoreFactory;
-
-#[async_trait]
-impl StorageDriverFactory<Arc<dyn AdminStore>> for SqliteAdminStoreFactory {
-    fn dialect(&self) -> StorageDialect {
-        StorageDialect::Sqlite
-    }
-
-    fn driver_name(&self) -> &'static str {
-        "sqlite-admin-store"
-    }
-
-    async fn build(&self, database_url: &str) -> Result<Arc<dyn AdminStore>> {
-        let pool = run_sqlite_migrations(database_url).await?;
-        Ok(Arc::new(SqliteAdminStore::new(pool)))
-    }
-}
-
-struct PostgresAdminStoreFactory;
-
-#[async_trait]
-impl StorageDriverFactory<Arc<dyn AdminStore>> for PostgresAdminStoreFactory {
-    fn dialect(&self) -> StorageDialect {
-        StorageDialect::Postgres
-    }
-
-    fn driver_name(&self) -> &'static str {
-        "postgres-admin-store"
-    }
-
-    async fn build(&self, database_url: &str) -> Result<Arc<dyn AdminStore>> {
-        let pool = run_postgres_migrations(database_url).await?;
-        Ok(Arc::new(PostgresAdminStore::new(pool)))
-    }
 }
 
 struct MemoryCacheStoreFactory;
@@ -473,12 +457,6 @@ impl CacheDriverFactory for RedisCacheStoreFactory {
 const STANDALONE_SUPPORTED_STORAGE_DIALECTS: [StorageDialect; 2] =
     [StorageDialect::Sqlite, StorageDialect::Postgres];
 
-fn standalone_admin_store_registry() -> StorageDriverRegistry<Arc<dyn AdminStore>> {
-    StorageDriverRegistry::new()
-        .with_factory(SqliteAdminStoreFactory)
-        .with_factory(PostgresAdminStoreFactory)
-}
-
 fn supported_storage_dialects_summary() -> String {
     STANDALONE_SUPPORTED_STORAGE_DIALECTS
         .iter()
@@ -496,6 +474,13 @@ fn standalone_cache_driver_registry() -> CacheDriverRegistry {
 pub async fn build_admin_store_from_config(
     config: &StandaloneConfig,
 ) -> Result<Arc<dyn AdminStore>> {
+    let (store, _) = build_admin_store_and_commercial_billing_from_config(config).await?;
+    Ok(store)
+}
+
+pub async fn build_admin_store_and_commercial_billing_from_config(
+    config: &StandaloneConfig,
+) -> Result<(Arc<dyn AdminStore>, Arc<dyn CommercialBillingAdminKernel>)> {
     let supported_dialects = supported_storage_dialects_summary();
     let Some(dialect) = config.storage_dialect() else {
         anyhow::bail!(
@@ -505,19 +490,37 @@ pub async fn build_admin_store_from_config(
         );
     };
 
-    let registry = standalone_admin_store_registry();
-    let Some(driver) = registry.resolve(dialect) else {
-        anyhow::bail!(
+    match dialect {
+        StorageDialect::Sqlite => {
+            let pool = run_sqlite_migrations(&config.database_url).await?;
+            let store = Arc::new(SqliteAdminStore::new(pool));
+            let admin_store: Arc<dyn AdminStore> = store.clone();
+            let commercial_billing: Arc<dyn CommercialBillingAdminKernel> = store;
+            Ok::<
+                (Arc<dyn AdminStore>, Arc<dyn CommercialBillingAdminKernel>),
+                anyhow::Error,
+            >((admin_store, commercial_billing))
+        }
+        StorageDialect::Postgres => {
+            let pool = run_postgres_migrations(&config.database_url).await?;
+            let store = Arc::new(PostgresAdminStore::new(pool));
+            let admin_store: Arc<dyn AdminStore> = store.clone();
+            let commercial_billing: Arc<dyn CommercialBillingAdminKernel> = store;
+            Ok::<
+                (Arc<dyn AdminStore>, Arc<dyn CommercialBillingAdminKernel>),
+                anyhow::Error,
+            >((admin_store, commercial_billing))
+        }
+        other => anyhow::bail!(
             "standalone runtime supervision does not yet support storage dialect: {} (supported dialects: {})",
-            dialect.as_str(),
+            other.as_str(),
             supported_dialects
-        );
-    };
-
-    driver.build(&config.database_url).await.with_context(|| {
+        ),
+    }
+    .with_context(|| {
         format!(
-            "failed to initialize standalone admin store with driver {}",
-            driver.driver_name()
+            "failed to initialize standalone admin store with database {}",
+            config.database_url
         )
     })
 }
@@ -1122,6 +1125,7 @@ async fn reload_standalone_runtime_config_pass(
     }
 
     let next_config = config_loader.reload()?;
+    next_config.validate_security_posture()?;
     let restart_required_changes =
         restart_required_changed_fields(service_kind, &state.current_config, &next_config);
     let restart_required_message = (!restart_required_changes.is_empty())
@@ -1137,8 +1141,14 @@ async fn reload_standalone_runtime_config_pass(
         && state.current_config.portal_jwt_signing_secret != next_config.portal_jwt_signing_secret;
     let secret_manager_changed = service_kind != StandaloneServiceKind::Portal
         && secret_manager_config_changed(&state.current_config, &next_config);
-    let dynamic_changed =
-        service_kind.supports_runtime_dynamic() && next_dynamic != state.current_dynamic;
+    let dynamic_changed = service_runtime_dynamic_changed(
+        service_kind,
+        &state.current_dynamic,
+        &next_dynamic,
+    );
+    let pricing_lifecycle_sync_interval_changed = service_kind.supports_pricing_lifecycle_supervision()
+        && state.current_dynamic.pricing_lifecycle_sync_interval_secs
+            != next_dynamic.pricing_lifecycle_sync_interval_secs;
 
     if !database_changed
         && !admin_jwt_changed
@@ -1159,8 +1169,8 @@ async fn reload_standalone_runtime_config_pass(
         });
     }
 
-    let prepared_store = if database_changed {
-        Some(build_admin_store_from_config(&next_config).await?)
+    let prepared_store_bundle = if database_changed {
+        Some(build_admin_store_and_commercial_billing_from_config(&next_config).await?)
     } else {
         None
     };
@@ -1190,9 +1200,9 @@ async fn reload_standalone_runtime_config_pass(
         })?;
 
         let next_secret_manager = build_secret_manager_from_config(&next_config);
-        let validation_store = prepared_store
+        let validation_store = prepared_store_bundle
             .as_ref()
-            .map(Arc::as_ref)
+            .map(|(store, _)| store.as_ref())
             .unwrap_or(state.current_store.as_ref());
         validate_secret_manager_for_store(validation_store, &next_secret_manager).await?;
         Some(next_secret_manager)
@@ -1211,9 +1221,12 @@ async fn reload_standalone_runtime_config_pass(
         next_dynamic.apply_to_process_env();
     }
 
-    if let Some(next_store) = prepared_store {
+    if let Some((next_store, next_commercial_billing)) = prepared_store_bundle {
         state.current_store = next_store.clone();
         reload_handles.store.replace(next_store);
+        if let Some(live_commercial_billing) = reload_handles.commercial_billing.as_ref() {
+            live_commercial_billing.replace(next_commercial_billing);
+        }
     }
 
     if admin_jwt_changed {
@@ -1263,8 +1276,18 @@ async fn reload_standalone_runtime_config_pass(
         );
     }
 
+    if pricing_lifecycle_sync_interval_changed {
+        state.pricing_lifecycle_supervision.replace(
+            start_service_pricing_lifecycle_supervision(
+                service_kind,
+                reload_handles.commercial_billing.clone(),
+                next_dynamic.pricing_lifecycle_sync_interval_secs,
+            ),
+        );
+    }
+
     eprintln!(
-        "runtime config reload applied: service={} bind_changed={} database_changed={} admin_jwt_changed={} portal_jwt_changed={} secret_manager_changed={} extension_policy_changed={} runtime_snapshot_interval_secs={} extension_hot_reload_interval_secs={} native_dynamic_shutdown_drain_timeout_ms={}",
+        "runtime config reload applied: service={} bind_changed={} database_changed={} admin_jwt_changed={} portal_jwt_changed={} secret_manager_changed={} extension_policy_changed={} pricing_lifecycle_sync_interval_secs={} runtime_snapshot_interval_secs={} extension_hot_reload_interval_secs={} native_dynamic_shutdown_drain_timeout_ms={}",
         service_kind.as_str(),
         bind_changed,
         database_changed,
@@ -1272,13 +1295,14 @@ async fn reload_standalone_runtime_config_pass(
         portal_jwt_changed,
         secret_manager_changed,
         extension_policy_changed,
+        next_dynamic.pricing_lifecycle_sync_interval_secs,
         next_dynamic.runtime_snapshot_interval_secs,
         next_dynamic.extension_hot_reload_interval_secs,
         next_dynamic.native_dynamic_shutdown_drain_timeout_ms
     );
 
     let applied_message = format!(
-        "runtime config reload applied: bind_changed={bind_changed} database_changed={database_changed} admin_jwt_changed={admin_jwt_changed} portal_jwt_changed={portal_jwt_changed} secret_manager_changed={secret_manager_changed} extension_policy_changed={extension_policy_changed}"
+        "runtime config reload applied: bind_changed={bind_changed} database_changed={database_changed} admin_jwt_changed={admin_jwt_changed} portal_jwt_changed={portal_jwt_changed} secret_manager_changed={secret_manager_changed} extension_policy_changed={extension_policy_changed} pricing_lifecycle_sync_interval_changed={pricing_lifecycle_sync_interval_changed}"
     );
     let applied_config =
         merge_applied_service_config(service_kind, &state.current_config, &next_config);
@@ -1586,12 +1610,20 @@ pub fn start_standalone_runtime_supervision(
                 } else {
                     None
                 });
+            let pricing_lifecycle_supervision = AbortOnDropHandle::new(
+                start_service_pricing_lifecycle_supervision(
+                    service_kind,
+                    reload_handles.commercial_billing.clone(),
+                    current_dynamic.pricing_lifecycle_sync_interval_secs,
+                ),
+            );
             let mut state = StandaloneRuntimeState {
                 current_config: initial_config,
                 current_dynamic,
                 current_store,
                 snapshot_supervision,
                 extension_hot_reload_supervision,
+                pricing_lifecycle_supervision,
                 previous_watch_state: initial_watch_state,
                 pending_restart_required: None,
             };
@@ -1682,6 +1714,72 @@ impl Drop for AbortOnDropHandle {
     }
 }
 
+fn start_service_pricing_lifecycle_supervision(
+    service_kind: StandaloneServiceKind,
+    live_commercial_billing: Option<Reloadable<Arc<dyn CommercialBillingAdminKernel>>>,
+    interval_secs: u64,
+) -> Option<JoinHandle<()>> {
+    if !service_kind.supports_pricing_lifecycle_supervision() || interval_secs == 0 {
+        return None;
+    }
+
+    let Some(live_commercial_billing) = live_commercial_billing else {
+        eprintln!(
+            "pricing lifecycle supervision disabled because no commercial billing handle is configured: service={} interval_secs={interval_secs}",
+            service_kind.as_str(),
+        );
+        return None;
+    };
+
+    start_pricing_lifecycle_supervision(live_commercial_billing, interval_secs)
+}
+
+fn start_pricing_lifecycle_supervision(
+    live_commercial_billing: Reloadable<Arc<dyn CommercialBillingAdminKernel>>,
+    interval_secs: u64,
+) -> Option<JoinHandle<()>> {
+    if interval_secs == 0 {
+        return None;
+    }
+
+    Some(tokio::spawn(async move {
+        let synchronize_once = |billing: Arc<dyn CommercialBillingAdminKernel>, stage: &'static str| async move {
+            let report = synchronize_due_pricing_plan_lifecycle_with_report(
+                billing.as_ref(),
+                unix_timestamp_ms(),
+            )
+            .await;
+            match report {
+                Ok(report) if report.changed => {
+                    eprintln!(
+                        "pricing lifecycle synchronization applied: stage={} activated_plans={} archived_plans={} activated_rates={} archived_rates={}",
+                        stage,
+                        report.activated_plan_count,
+                        report.archived_plan_count,
+                        report.activated_rate_count,
+                        report.archived_rate_count,
+                    );
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    eprintln!("pricing lifecycle synchronization failed: stage={} error={error}", stage);
+                }
+            }
+        };
+
+        synchronize_once(live_commercial_billing.snapshot(), "startup").await;
+
+        let mut interval = tokio::time::interval(Duration::from_secs(interval_secs));
+        interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        interval.tick().await;
+
+        loop {
+            interval.tick().await;
+            synchronize_once(live_commercial_billing.snapshot(), "tick").await;
+        }
+    }))
+}
+
 fn restart_required_changed_fields(
     service_kind: StandaloneServiceKind,
     current: &StandaloneConfig,
@@ -1704,6 +1802,11 @@ fn service_relevant_field(service_kind: StandaloneServiceKind, field: &str) -> b
         "cache_backend" | "cache_url" => service_kind != StandaloneServiceKind::Portal,
         "admin_jwt_signing_secret" => service_kind == StandaloneServiceKind::Admin,
         "portal_jwt_signing_secret" => service_kind == StandaloneServiceKind::Portal,
+        "metrics_bearer_token" => true,
+        "browser_allowed_origins" => service_kind != StandaloneServiceKind::Admin,
+        "pricing_lifecycle_sync_interval_secs" => {
+            service_kind.supports_pricing_lifecycle_supervision()
+        }
         "secret_backend"
         | "credential_master_key"
         | "credential_legacy_master_keys"
@@ -1721,6 +1824,9 @@ fn service_reloadable_field(service_kind: StandaloneServiceKind, field: &str) ->
         "database_url" => true,
         "admin_jwt_signing_secret" => service_kind == StandaloneServiceKind::Admin,
         "portal_jwt_signing_secret" => service_kind == StandaloneServiceKind::Portal,
+        "pricing_lifecycle_sync_interval_secs" => {
+            service_kind.supports_pricing_lifecycle_supervision()
+        }
         "secret_backend"
         | "credential_master_key"
         | "credential_legacy_master_keys"
@@ -1728,6 +1834,31 @@ fn service_reloadable_field(service_kind: StandaloneServiceKind, field: &str) ->
         | "secret_keyring_service" => service_kind != StandaloneServiceKind::Portal,
         _ => false,
     }
+}
+
+fn service_runtime_dynamic_changed(
+    service_kind: StandaloneServiceKind,
+    current: &StandaloneRuntimeDynamicConfig,
+    next: &StandaloneRuntimeDynamicConfig,
+) -> bool {
+    if !service_kind.supports_runtime_dynamic() {
+        return false;
+    }
+
+    current.extension_paths != next.extension_paths
+        || current.enable_connector_extensions != next.enable_connector_extensions
+        || current.enable_native_dynamic_extensions != next.enable_native_dynamic_extensions
+        || current.extension_hot_reload_interval_secs != next.extension_hot_reload_interval_secs
+        || current.extension_trusted_signers != next.extension_trusted_signers
+        || current.require_signed_connector_extensions != next.require_signed_connector_extensions
+        || current.require_signed_native_dynamic_extensions
+            != next.require_signed_native_dynamic_extensions
+        || current.native_dynamic_shutdown_drain_timeout_ms
+            != next.native_dynamic_shutdown_drain_timeout_ms
+        || current.runtime_snapshot_interval_secs != next.runtime_snapshot_interval_secs
+        || (service_kind.supports_pricing_lifecycle_supervision()
+            && current.pricing_lifecycle_sync_interval_secs
+                != next.pricing_lifecycle_sync_interval_secs)
 }
 
 fn secret_manager_config_changed(current: &StandaloneConfig, next: &StandaloneConfig) -> bool {
@@ -1781,6 +1912,10 @@ fn merge_applied_service_config(
         applied.native_dynamic_shutdown_drain_timeout_ms =
             next.native_dynamic_shutdown_drain_timeout_ms;
         applied.runtime_snapshot_interval_secs = next.runtime_snapshot_interval_secs;
+    }
+
+    if service_kind.supports_pricing_lifecycle_supervision() {
+        applied.pricing_lifecycle_sync_interval_secs = next.pricing_lifecycle_sync_interval_secs;
     }
 
     if service_kind != StandaloneServiceKind::Portal {

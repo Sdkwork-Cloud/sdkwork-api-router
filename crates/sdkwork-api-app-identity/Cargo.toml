@@ -7,17 +7,20 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 argon2.workspace = true
+hmac.workspace = true
 jsonwebtoken.workspace = true
 rand_core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+sha2_010 = { package = "sha2", version = "0.10.9" }
 sdkwork-api-domain-billing = { path = "../sdkwork-api-domain-billing" }
 sdkwork-api-domain-identity = { path = "../sdkwork-api-domain-identity" }
 sdkwork-api-domain-routing = { path = "../sdkwork-api-domain-routing" }
 sdkwork-api-domain-tenant = { path = "../sdkwork-api-domain-tenant" }
 sdkwork-api-storage-core = { path = "../sdkwork-api-storage-core" }
 sdkwork-api-storage-sqlite = { path = "../sdkwork-api-storage-sqlite" }
+utoipa.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true

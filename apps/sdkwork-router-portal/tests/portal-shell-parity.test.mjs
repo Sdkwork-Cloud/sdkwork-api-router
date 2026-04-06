@@ -106,8 +106,8 @@ test('portal sidebar owns grouped claw-style navigation, collapse affordances, a
   assert.match(navigationRail, /data-slot="sidebar-edge-control"/);
   assert.match(navigationRail, /data-slot="sidebar-resize-handle"/);
   assert.match(navigationRail, /data-slot="sidebar-user-control"/);
-  assert.match(navigationRail, /sidebar-group-badge/);
-  assert.match(navigationRail, /portal-nav-item-indicator/);
+  assert.match(navigationRail, /data-slot="sidebar-nav-list"/);
+  assert.match(navigationRail, /data-slot="sidebar-nav-item"/);
   assert.match(navigationRail, /startSidebarResize/);
   assert.match(navigationRail, /scheduleSidebarRoutePrefetch/);
   assert.match(navigationRail, /prefetchSidebarRoute/);
@@ -116,6 +116,9 @@ test('portal sidebar owns grouped claw-style navigation, collapse affordances, a
   assert.match(navigationRail, /User details/);
   assert.match(navigationRail, /Sign out|Logout/);
   assert.match(navigationRail, /border-zinc-900\/90 bg-zinc-950 \[background:var\(--portal-sidebar-background\)\]/);
+  assert.doesNotMatch(navigationRail, /sidebar-group-badge/);
+  assert.doesNotMatch(navigationRail, /portal-nav-item-indicator/);
+  assert.doesNotMatch(navigationRail, /data-slot="sidebar-active-route-panel"/);
   assert.doesNotMatch(navigationRail, /linear-gradient/);
   assert.doesNotMatch(navigationRail, /radial-gradient/);
   assert.match(routes, /Dashboard/);

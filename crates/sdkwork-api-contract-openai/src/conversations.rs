@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, ToSchema)]
 pub struct CreateConversationRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Value>,
@@ -18,7 +19,7 @@ impl CreateConversationRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, ToSchema)]
 pub struct UpdateConversationRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Value>,
@@ -35,7 +36,7 @@ impl UpdateConversationRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateConversationItemsRequest {
     pub items: Vec<Value>,
 }
@@ -46,7 +47,7 @@ impl CreateConversationItemsRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ConversationObject {
     pub id: String,
     pub object: &'static str,
@@ -70,7 +71,7 @@ impl ConversationObject {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ListConversationsResponse {
     pub object: &'static str,
     pub data: Vec<ConversationObject>,
@@ -85,7 +86,7 @@ impl ListConversationsResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct DeleteConversationResponse {
     pub id: String,
     pub object: &'static str,
@@ -102,7 +103,7 @@ impl DeleteConversationResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ConversationItemObject {
     pub id: String,
     pub object: &'static str,
@@ -132,7 +133,7 @@ impl ConversationItemObject {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ListConversationItemsResponse {
     pub object: &'static str,
     pub data: Vec<ConversationItemObject>,
@@ -147,7 +148,7 @@ impl ListConversationItemsResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct DeleteConversationItemResponse {
     pub id: String,
     pub object: &'static str,

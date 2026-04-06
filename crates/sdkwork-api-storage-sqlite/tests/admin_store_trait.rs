@@ -1,11 +1,12 @@
 use sdkwork_api_domain_billing::{BillingAccountingMode, BillingEventRecord};
 use sdkwork_api_domain_catalog::{Channel, ProxyProvider};
+use sdkwork_api_domain_commerce::CommerceOrderRecord;
 use sdkwork_api_domain_routing::{RoutingDecisionLog, RoutingDecisionSource};
 use sdkwork_api_domain_usage::UsageRecord;
 use sdkwork_api_storage_core::{
     AdminStore, BillingStore, CatalogStore, CredentialStore,
     ExtensionRuntimeRolloutParticipantRecord, ExtensionRuntimeRolloutRecord, ExtensionStore,
-    IdentityStore, RoutingStore, ServiceRuntimeNodeRecord,
+    IdentityStore, MarketingStore, RoutingStore, ServiceRuntimeNodeRecord,
     StandaloneConfigRolloutParticipantRecord, StandaloneConfigRolloutRecord, StorageDialect,
     TenantStore, UsageStore,
 };
@@ -24,6 +25,7 @@ async fn sqlite_store_implements_admin_store_trait() {
     let usage_store: &dyn UsageStore = &store;
     let billing_store: &dyn BillingStore = &store;
     let extension_store: &dyn ExtensionStore = &store;
+    let marketing_store: &dyn MarketingStore = &store;
 
     assert_eq!(trait_store.dialect(), StorageDialect::Sqlite);
     let channels = trait_store.list_channels().await.unwrap();
@@ -58,6 +60,12 @@ async fn sqlite_store_implements_admin_store_trait() {
         .await
         .unwrap()
         .is_empty());
+    assert!(
+        MarketingStore::list_coupon_template_records(marketing_store)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[tokio::test]
@@ -357,4 +365,157 @@ async fn sqlite_store_lists_providers_for_model_without_full_scan() {
     let providers = store.list_providers_for_model("a-model").await.unwrap();
     assert_eq!(providers.len(), 1);
     assert_eq!(providers[0].id, "provider-openai-official");
+}
+
+#[tokio::test]
+async fn sqlite_store_lists_commerce_orders_for_project_after_checkpoint() {
+    let pool = run_migrations("sqlite::memory:").await.unwrap();
+    let store = SqliteAdminStore::new(pool);
+
+    let older_order = CommerceOrderRecord::new(
+        "order-old",
+        "project-1",
+        "user-1",
+        "recharge_pack",
+        "pack-100k",
+        "Boost 100k",
+        4_000,
+        4_000,
+        "$40.00",
+        "$40.00",
+        100_000,
+        0,
+        "fulfilled",
+        "workspace_seed",
+        100,
+    )
+    .with_updated_at_ms(120);
+    let same_timestamp_order = CommerceOrderRecord::new(
+        "order-same-ts",
+        "project-1",
+        "user-1",
+        "coupon_redemption",
+        "TEAMREADY",
+        "TEAMREADY",
+        0,
+        0,
+        "$0.00",
+        "$0.00",
+        0,
+        25_000,
+        "fulfilled",
+        "workspace_seed",
+        120,
+    )
+    .with_updated_at_ms(120);
+    let newer_order = CommerceOrderRecord::new(
+        "order-new",
+        "project-1",
+        "user-1",
+        "custom_recharge",
+        "custom-50",
+        "Custom Recharge",
+        5_000,
+        5_000,
+        "$50.00",
+        "$50.00",
+        140_000,
+        0,
+        "pending_payment",
+        "workspace_seed",
+        130,
+    )
+    .with_updated_at_ms(150);
+
+    store.insert_commerce_order(&older_order).await.unwrap();
+    store
+        .insert_commerce_order(&same_timestamp_order)
+        .await
+        .unwrap();
+    store.insert_commerce_order(&newer_order).await.unwrap();
+
+    let orders = store
+        .list_commerce_orders_for_project_after("project-1", 120, 100, "order-old")
+        .await
+        .unwrap();
+
+    assert_eq!(orders.len(), 2);
+    assert_eq!(orders[0].order_id, "order-new");
+    assert_eq!(orders[1].order_id, "order-same-ts");
+}
+
+#[tokio::test]
+async fn sqlite_store_lists_recent_commerce_orders_with_limit() {
+    let pool = run_migrations("sqlite::memory:").await.unwrap();
+    let store = SqliteAdminStore::new(pool);
+
+    let older_order = CommerceOrderRecord::new(
+        "order-old",
+        "project-1",
+        "user-1",
+        "recharge_pack",
+        "pack-100k",
+        "Boost 100k",
+        4_000,
+        4_000,
+        "$40.00",
+        "$40.00",
+        100_000,
+        0,
+        "fulfilled",
+        "workspace_seed",
+        100,
+    )
+    .with_updated_at_ms(120);
+    let same_timestamp_order = CommerceOrderRecord::new(
+        "order-same-ts",
+        "project-2",
+        "user-2",
+        "coupon_redemption",
+        "TEAMREADY",
+        "TEAMREADY",
+        0,
+        0,
+        "$0.00",
+        "$0.00",
+        0,
+        25_000,
+        "fulfilled",
+        "workspace_seed",
+        120,
+    )
+    .with_updated_at_ms(120);
+    let newer_order = CommerceOrderRecord::new(
+        "order-new",
+        "project-3",
+        "user-3",
+        "custom_recharge",
+        "custom-50",
+        "Custom Recharge",
+        5_000,
+        5_000,
+        "$50.00",
+        "$50.00",
+        140_000,
+        0,
+        "pending_payment",
+        "workspace_seed",
+        130,
+    )
+    .with_updated_at_ms(150);
+
+    store.insert_commerce_order(&older_order).await.unwrap();
+    store
+        .insert_commerce_order(&same_timestamp_order)
+        .await
+        .unwrap();
+    store.insert_commerce_order(&newer_order).await.unwrap();
+
+    let orders = AdminStore::list_recent_commerce_orders(&store, 2)
+        .await
+        .unwrap();
+
+    assert_eq!(orders.len(), 2);
+    assert_eq!(orders[0].order_id, "order-new");
+    assert_eq!(orders[1].order_id, "order-same-ts");
 }

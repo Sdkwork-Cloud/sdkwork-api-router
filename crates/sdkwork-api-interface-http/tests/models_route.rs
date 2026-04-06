@@ -3,10 +3,10 @@ use axum::extract::State;
 use axum::http::{Request, StatusCode};
 use axum::routing::get;
 use axum::{Json, Router};
+use sdkwork_api_app_credential::CredentialSecretManager;
 use sdkwork_api_app_gateway::{
     clear_capability_catalog_cache_store, configure_capability_catalog_cache_store,
 };
-use sdkwork_api_app_credential::CredentialSecretManager;
 use sdkwork_api_app_identity::hash_gateway_api_key;
 use sdkwork_api_cache_core::CacheStore;
 use sdkwork_api_cache_memory::MemoryCacheStore;
@@ -15,8 +15,8 @@ use sdkwork_api_domain_catalog::{Channel, ModelCatalogEntry, ProxyProvider};
 use sdkwork_api_domain_identity::GatewayApiKeyRecord;
 use sdkwork_api_storage_core::{AdminStore, Reloadable};
 use sdkwork_api_storage_sqlite::SqliteAdminStore;
-use serial_test::serial;
 use serde_json::Value;
+use serial_test::serial;
 use sqlx::SqlitePool;
 use std::sync::{Arc, Mutex};
 use tower::ServiceExt;
@@ -69,6 +69,26 @@ async fn model_retrieve_route_returns_ok() {
 }
 
 #[tokio::test]
+async fn model_retrieve_route_returns_not_found_for_unknown_model() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/models/gpt-missing")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["message"], "Requested model was not found.");
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+}
+
+#[tokio::test]
 async fn model_delete_route_returns_ok() {
     let app = sdkwork_api_interface_http::gateway_router();
     let response = app
@@ -83,6 +103,27 @@ async fn model_delete_route_returns_ok() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn model_delete_route_returns_not_found_for_unknown_model() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/v1/models/ft:gpt-missing:sdkwork")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["message"], "Requested model was not found.");
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
 }
 
 #[derive(Clone, Default)]
@@ -316,12 +357,8 @@ async fn models_route_refreshes_after_admin_catalog_mutation_invalidates_capabil
 
     let pool = memory_pool().await;
     seed_openai_provider(&SqliteAdminStore::new(pool.clone())).await;
-    let api_key = support::issue_gateway_api_key(
-        &pool,
-        "tenant-cache-memory",
-        "project-cache-memory",
-    )
-    .await;
+    let api_key =
+        support::issue_gateway_api_key(&pool, "tenant-cache-memory", "project-cache-memory").await;
     let app = sdkwork_api_interface_http::gateway_router_with_pool(pool.clone());
 
     let initial_response = app
@@ -377,8 +414,8 @@ async fn models_route_refreshes_after_admin_catalog_mutation_invalidates_capabil
 
 #[tokio::test]
 #[serial]
-async fn models_route_refreshes_after_admin_catalog_mutation_invalidates_shared_redis_capability_cache(
-) {
+async fn models_route_refreshes_after_admin_catalog_mutation_invalidates_shared_redis_capability_cache()
+ {
     let _cache_guard = capability_catalog_cache_reset_guard();
     let redis_server = support::FakeRedisServer::start();
     let redis_url = redis_server.url_with_db(7);
@@ -388,12 +425,8 @@ async fn models_route_refreshes_after_admin_catalog_mutation_invalidates_shared_
 
     let pool = memory_pool().await;
     seed_openai_provider(&SqliteAdminStore::new(pool.clone())).await;
-    let api_key = support::issue_gateway_api_key(
-        &pool,
-        "tenant-cache-redis",
-        "project-cache-redis",
-    )
-    .await;
+    let api_key =
+        support::issue_gateway_api_key(&pool, "tenant-cache-redis", "project-cache-redis").await;
     let app = sdkwork_api_interface_http::gateway_router_with_pool(pool.clone());
 
     let initial_response = app

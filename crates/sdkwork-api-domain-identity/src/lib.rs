@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GatewayApiKey {
@@ -35,7 +36,7 @@ pub trait GatewayApiKeyRepository: Send + Sync {
     fn save(&self, key: &GatewayApiKey) -> Result<(), String>;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct GatewayApiKeyRecord {
     pub tenant_id: String,
     pub project_id: String,
@@ -140,7 +141,7 @@ impl GatewayApiKeyRecord {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct ApiKeyGroupRecord {
     pub group_id: String,
     pub tenant_id: String,
@@ -348,7 +349,7 @@ impl AdminUserRecord {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct PortalUserProfile {
     pub id: String,
     pub email: String,
@@ -373,7 +374,7 @@ impl From<&PortalUserRecord> for PortalUserProfile {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct AdminUserProfile {
     pub id: String,
     pub email: String,

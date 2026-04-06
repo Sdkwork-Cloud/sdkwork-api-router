@@ -22,11 +22,6 @@ import {
   WorkspacePanel,
 } from 'sdkwork-router-portal-commons/framework/workspace';
 import { portalErrorMessage } from 'sdkwork-router-portal-portal-api';
-import type {
-  BillingAccountingMode,
-  BillingEventAccountingModeSummary,
-  BillingEventCapabilitySummary,
-} from 'sdkwork-router-portal-types';
 
 import {
   DashboardDistributionRingChart,
@@ -106,96 +101,6 @@ function buildMetricBreakdowns(
     { label: t('7 days'), value: trailing7d },
     { label: t('This month'), value: currentMonth },
   ];
-}
-
-function titleCaseToken(value: string): string {
-  return value
-    .split(/[-_\s]+/g)
-    .filter(Boolean)
-    .map((segment) =>
-      segment.length <= 3
-        ? segment.toUpperCase()
-        : `${segment.slice(0, 1).toUpperCase()}${segment.slice(1)}`,
-    )
-    .join(' ');
-}
-
-function accountingModeLabel(
-  mode: BillingAccountingMode | null | undefined,
-  t: TranslateFn,
-): string {
-  switch (mode) {
-    case 'platform_credit':
-      return t('Platform credit');
-    case 'byok':
-      return t('BYOK');
-    case 'passthrough':
-      return t('Passthrough');
-    default:
-      return t('Accounting mode');
-  }
-}
-
-function capabilityLabel(
-  capability: string | null | undefined,
-  t: TranslateFn,
-): string {
-  switch (capability?.trim().toLowerCase()) {
-    case 'responses':
-      return t('Responses');
-    case 'images':
-      return t('Images');
-    case 'audio':
-      return t('Audio');
-    case 'video':
-      return t('Video');
-    case 'music':
-      return t('Music');
-    default:
-      return capability?.trim() ? titleCaseToken(capability) : t('Capability');
-  }
-}
-
-function accountingModeDetail(
-  summary: BillingEventAccountingModeSummary | null,
-  t: TranslateFn,
-): string {
-  if (!summary) {
-    return t('Billing event evidence will appear here after routed traffic starts recording chargeback activity.');
-  }
-
-  return t('{requests} requests / {events} events', {
-    requests: formatUnits(summary.request_count),
-    events: formatUnits(summary.event_count),
-  });
-}
-
-function capabilityDetail(
-  summary: BillingEventCapabilitySummary | null,
-  t: TranslateFn,
-): string {
-  if (!summary) {
-    return t('Billing event evidence will appear here after routed traffic starts recording chargeback activity.');
-  }
-
-  const facts: string[] = [];
-  if (summary.total_tokens > 0) {
-    facts.push(t('{count} tokens', { count: formatUnits(summary.total_tokens) }));
-  }
-  if (summary.image_count > 0) {
-    facts.push(t('{count} images', { count: formatUnits(summary.image_count) }));
-  }
-  if (summary.audio_seconds > 0) {
-    facts.push(t('{count} audio sec', { count: formatUnits(summary.audio_seconds) }));
-  }
-  if (summary.video_seconds > 0) {
-    facts.push(t('{count} video sec', { count: formatUnits(summary.video_seconds) }));
-  }
-  if (summary.music_seconds > 0) {
-    facts.push(t('{count} music sec', { count: formatUnits(summary.music_seconds) }));
-  }
-  facts.push(t('{count} requests', { count: formatUnits(summary.request_count) }));
-  return facts.join(' / ');
 }
 
 function DashboardAnalyticsPanel({
@@ -314,7 +219,6 @@ export function PortalDashboardPage({
             snapshotBundle.usage_records,
             snapshotBundle.membership,
             Date.now(),
-            snapshotBundle.billing_event_summary,
           ),
         );
         setError(null);
@@ -675,87 +579,6 @@ export function PortalDashboardPage({
               value={formatAverageSpend(totals.average_booked_spend, totals.request_count, t)}
             />
           </div>
-
-          <DashboardAnalyticsPanel
-            description={t('Commercial highlights bring accounting mode mix, top capability demand, and multimodal workload shape into the workspace overview.')}
-            title={t('Commercial highlights')}
-          >
-            <div
-              className="grid gap-4 xl:grid-cols-[1fr_1fr_1.15fr]"
-              data-slot="portal-dashboard-commercial-highlights"
-            >
-              <div className="rounded-3xl border border-zinc-200 bg-zinc-50/80 p-4 dark:border-zinc-800 dark:bg-zinc-900/60">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400">
-                  {t('Leading accounting mode')}
-                </span>
-                <strong className="mt-2 block text-xl font-semibold text-zinc-950 dark:text-zinc-50">
-                  {accountingModeLabel(viewModel?.commercial_highlights.leading_accounting_mode?.accounting_mode ?? null, t)}
-                </strong>
-                <p className="mt-2 text-sm leading-6 text-zinc-500 dark:text-zinc-400">
-                  {accountingModeDetail(viewModel?.commercial_highlights.leading_accounting_mode ?? null, t)}
-                </p>
-                <div className="mt-4 rounded-2xl border border-zinc-200 bg-white px-3 py-3 dark:border-zinc-800 dark:bg-zinc-950">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
-                    {t('Customer charge')}
-                  </span>
-                  <strong className="mt-2 block text-sm font-semibold text-zinc-950 dark:text-zinc-50">
-                    {formatCurrency(viewModel?.commercial_highlights.leading_accounting_mode?.total_customer_charge ?? 0)}
-                  </strong>
-                </div>
-              </div>
-
-              <div className="rounded-3xl border border-zinc-200 bg-zinc-50/80 p-4 dark:border-zinc-800 dark:bg-zinc-900/60">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400">
-                  {t('Leading capability')}
-                </span>
-                <strong className="mt-2 block text-xl font-semibold text-zinc-950 dark:text-zinc-50">
-                  {capabilityLabel(viewModel?.commercial_highlights.leading_capability?.capability ?? null, t)}
-                </strong>
-                <p className="mt-2 text-sm leading-6 text-zinc-500 dark:text-zinc-400">
-                  {capabilityDetail(viewModel?.commercial_highlights.leading_capability ?? null, t)}
-                </p>
-                <div className="mt-4 rounded-2xl border border-zinc-200 bg-white px-3 py-3 dark:border-zinc-800 dark:bg-zinc-950">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
-                    {t('Customer charge')}
-                  </span>
-                  <strong className="mt-2 block text-sm font-semibold text-zinc-950 dark:text-zinc-50">
-                    {formatCurrency(viewModel?.commercial_highlights.leading_capability?.total_customer_charge ?? 0)}
-                  </strong>
-                </div>
-              </div>
-
-              <div className="rounded-3xl border border-zinc-200 bg-zinc-50/80 p-4 dark:border-zinc-800 dark:bg-zinc-900/60">
-                <div className="space-y-1">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-500 dark:text-zinc-400">
-                    {t('Multimodal demand')}
-                  </span>
-                  <p className="text-sm leading-6 text-zinc-500 dark:text-zinc-400">
-                    {t('Multimodal demand keeps image, audio, video, and music traffic visible inside the workspace overview.')}
-                  </p>
-                </div>
-                <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                  {[
-                    { label: t('Images'), value: formatUnits(viewModel?.commercial_highlights.multimodal_totals.image_count ?? 0) },
-                    { label: t('Audio'), value: formatUnits(viewModel?.commercial_highlights.multimodal_totals.audio_seconds ?? 0) },
-                    { label: t('Video'), value: formatUnits(viewModel?.commercial_highlights.multimodal_totals.video_seconds ?? 0) },
-                    { label: t('Music'), value: formatUnits(viewModel?.commercial_highlights.multimodal_totals.music_seconds ?? 0) },
-                  ].map((item) => (
-                    <div
-                      className="rounded-2xl border border-zinc-200 bg-white px-3 py-3 dark:border-zinc-800 dark:bg-zinc-950"
-                      key={item.label}
-                    >
-                      <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
-                        {item.label}
-                      </span>
-                      <strong className="mt-2 block text-sm font-semibold text-zinc-950 dark:text-zinc-50">
-                        {item.value}
-                      </strong>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </DashboardAnalyticsPanel>
 
           <div className="grid gap-6 xl:grid-cols-[1.35fr_0.95fr]">
             <DashboardAnalyticsPanel

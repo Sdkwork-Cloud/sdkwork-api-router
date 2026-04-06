@@ -2,9 +2,13 @@ import type {
   BillingEventAccountingModeSummary,
   BillingEventCapabilitySummary,
   BillingEventSummary,
+  PortalCouponValidationResponse,
   PortalCommerceCoupon,
   PortalCommerceOrder,
   PortalCommerceQuote,
+  PortalMarketingCodesResponse,
+  PortalMarketingRedemptionsResponse,
+  PortalMarketingRewardHistoryItem,
   PortalRouteKey,
   PortalWorkspaceSummary,
   ProjectBillingSummary,
@@ -53,9 +57,11 @@ export interface RedeemInviteRow {
 
 export interface CreditsPageData {
   summary: ProjectBillingSummary;
-  coupons: PortalCommerceCoupon[];
   orders: PortalCommerceOrder[];
   billing_event_summary: BillingEventSummary;
+  marketing_codes: PortalMarketingCodesResponse;
+  marketing_reward_history: PortalMarketingRewardHistoryItem[];
+  marketing_redemptions: PortalMarketingRedemptionsResponse;
 }
 
 export interface PortalCreditsMultimodalTotals {
@@ -77,4 +83,10 @@ export interface PortalCreditsFinanceProjection {
   leading_accounting_mode: BillingEventAccountingModeSummary | null;
   leading_capability: BillingEventCapabilitySummary | null;
   multimodal_totals: PortalCreditsMultimodalTotals;
+}
+
+export interface PortalCouponSelfServiceDecision {
+  flow: 'grant_self_service' | 'checkout_only' | 'blocked';
+  message: string;
+  validation: PortalCouponValidationResponse;
 }

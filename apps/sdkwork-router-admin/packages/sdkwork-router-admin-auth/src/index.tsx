@@ -1,4 +1,4 @@
-import { ArrowRight, Chrome, Github, Lock, Mail, QrCode, Smartphone, User } from 'lucide-react';
+import { ArrowRight, GitBranch, Globe, Lock, Mail, QrCode, Smartphone, User } from 'lucide-react';
 import {
   useEffect,
   useState,
@@ -379,7 +379,7 @@ export function AdminLoginPage({
                     type="button"
                     variant="outline"
                   >
-                    <Github className="h-5 w-5" />
+                    <GitBranch className="h-5 w-5" />
                     {t('GitHub')}
                   </Button>
                   <Button
@@ -388,7 +388,7 @@ export function AdminLoginPage({
                     type="button"
                     variant="outline"
                   >
-                    <Chrome className="h-5 w-5" />
+                    <Globe className="h-5 w-5" />
                     {t('Google')}
                   </Button>
                 </div>

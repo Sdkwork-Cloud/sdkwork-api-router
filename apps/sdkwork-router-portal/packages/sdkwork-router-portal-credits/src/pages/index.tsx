@@ -27,17 +27,25 @@ import type {
   BillingEventAccountingModeSummary,
   BillingEventCapabilitySummary,
   BillingEventSummary,
-  PortalCommerceCoupon,
+  CouponCodeStatus,
+  CouponRedemptionStatus,
+  CouponReservationStatus,
   PortalCommerceOrder,
   PortalCommerceOrderStatus,
+  PortalMarketingCodeItem,
+  PortalMarketingCodesResponse,
+  PortalMarketingRedemptionsResponse,
+  PortalMarketingRewardHistoryItem,
   ProjectBillingSummary,
 } from 'sdkwork-router-portal-types';
 
 import {
-  createCreditsCouponRedemption,
   loadCreditsPageData,
+  redeemCreditsCouponCode,
+  validateCreditsCouponCode,
 } from '../repository';
 import {
+  buildPortalCouponSelfServiceDecision,
   buildPortalCreditsFinanceProjection,
   buildRedeemInviteProgram,
 } from '../services';
@@ -210,6 +218,143 @@ function buildFinanceProjection(
   });
 }
 
+function emptyMarketingCodesResponse(): PortalMarketingCodesResponse {
+  return {
+    summary: {
+      total_count: 0,
+      available_count: 0,
+      reserved_count: 0,
+      redeemed_count: 0,
+      disabled_count: 0,
+      expired_count: 0,
+    },
+    items: [],
+  };
+}
+
+function emptyMarketingRedemptionsResponse(): PortalMarketingRedemptionsResponse {
+  return {
+    summary: {
+      total_count: 0,
+      redeemed_count: 0,
+      partially_rolled_back_count: 0,
+      rolled_back_count: 0,
+      failed_count: 0,
+    },
+    items: [],
+  };
+}
+
+function couponCodeStatusLabel(status: CouponCodeStatus, t: TranslateFn): string {
+  switch (status) {
+    case 'available':
+      return t('Available');
+    case 'reserved':
+      return t('Reserved');
+    case 'redeemed':
+      return t('Redeemed');
+    case 'expired':
+      return t('Expired');
+    case 'disabled':
+      return t('Disabled');
+    default:
+      return t('Status');
+  }
+}
+
+function couponCodeStatusVariant(
+  status: CouponCodeStatus,
+): 'secondary' | 'success' | 'warning' {
+  switch (status) {
+    case 'available':
+      return 'success';
+    case 'reserved':
+      return 'warning';
+    default:
+      return 'secondary';
+  }
+}
+
+function reservationStatusLabel(
+  status: CouponReservationStatus | null | undefined,
+  t: TranslateFn,
+): string {
+  switch (status) {
+    case 'reserved':
+      return t('Reserved');
+    case 'released':
+      return t('Released');
+    case 'confirmed':
+      return t('Confirmed');
+    case 'expired':
+      return t('Expired');
+    default:
+      return t('None');
+  }
+}
+
+function reservationStatusVariant(
+  status: CouponReservationStatus | null | undefined,
+): 'secondary' | 'success' | 'warning' {
+  switch (status) {
+    case 'reserved':
+      return 'warning';
+    case 'confirmed':
+      return 'success';
+    default:
+      return 'secondary';
+  }
+}
+
+function redemptionStatusLabel(
+  status: CouponRedemptionStatus | null | undefined,
+  t: TranslateFn,
+): string {
+  switch (status) {
+    case 'pending':
+      return t('Pending');
+    case 'redeemed':
+      return t('Redeemed');
+    case 'partially_rolled_back':
+      return t('Partially rolled back');
+    case 'rolled_back':
+      return t('Rolled back');
+    case 'failed':
+      return t('Failed');
+    default:
+      return t('None');
+  }
+}
+
+function redemptionStatusVariant(
+  status: CouponRedemptionStatus | null | undefined,
+): 'secondary' | 'success' | 'warning' {
+  switch (status) {
+    case 'redeemed':
+      return 'success';
+    case 'pending':
+    case 'partially_rolled_back':
+      return 'warning';
+    default:
+      return 'secondary';
+  }
+}
+
+function rewardHistoryRollbackDetail(
+  item: PortalMarketingRewardHistoryItem,
+  t: TranslateFn,
+): string {
+  if (!item.rollbacks.length) {
+    return t('None');
+  }
+
+  const latest = item.rollbacks[item.rollbacks.length - 1];
+  return t('{count} rollback(s) / {type}', {
+    count: item.rollbacks.length,
+    type: titleCaseToken(latest.rollback_type),
+  });
+}
+
 function redemptionCoverageHeadline(
   projection: PortalCreditsFinanceProjection | null,
   t: TranslateFn,
@@ -261,12 +406,19 @@ export function PortalCreditsPage({ workspace }: PortalCreditsPageProps) {
   const { t } = usePortalI18n();
   const loadingStatus = t('Loading redeem workspace...');
   const syncedStatus = t('Redeem history is synced with the latest workspace posture.');
-  const defaultRedeemStatus = t('Redeem the current workspace with one valid coupon code.');
+  const defaultRedeemStatus = t(
+    'Redeem one grant-style coupon code for the current workspace. Apply during checkout for discount-only promotions.',
+  );
   const defaultInviteStatus = t('Copy the workspace invite code or direct link to share rewards.');
   const [summary, setSummary] = useState<ProjectBillingSummary | null>(null);
   const [billingEventSummary, setBillingEventSummary] = useState<BillingEventSummary | null>(null);
-  const [coupons, setCoupons] = useState<PortalCommerceCoupon[]>([]);
   const [orders, setOrders] = useState<PortalCommerceOrder[]>([]);
+  const [marketingCodes, setMarketingCodes] = useState<PortalMarketingCodesResponse>(
+    emptyMarketingCodesResponse,
+  );
+  const [marketingRedemptions, setMarketingRedemptions] =
+    useState<PortalMarketingRedemptionsResponse>(emptyMarketingRedemptionsResponse);
+  const [rewardHistory, setRewardHistory] = useState<PortalMarketingRewardHistoryItem[]>([]);
   const [status, setStatus] = useState(loadingStatus);
   const [redeemStatus, setRedeemStatus] = useState(defaultRedeemStatus);
   const [inviteStatus, setInviteStatus] = useState(defaultInviteStatus);
@@ -286,8 +438,10 @@ export function PortalCreditsPage({ workspace }: PortalCreditsPageProps) {
 
       setSummary(data.summary);
       setBillingEventSummary(data.billing_event_summary);
-      setCoupons(data.coupons);
       setOrders(data.orders);
+      setMarketingCodes(data.marketing_codes);
+      setMarketingRedemptions(data.marketing_redemptions);
+      setRewardHistory(data.marketing_reward_history);
       setStatus(syncedStatus);
     } catch (error) {
       if (!options?.cancelled?.()) {
@@ -308,22 +462,33 @@ export function PortalCreditsPage({ workspace }: PortalCreditsPageProps) {
     };
   }, [loadingStatus, syncedStatus]);
 
-  const redeemOrders = useMemo(
+  const rewardHistoryRows = useMemo(
     () =>
-      orders
-        .filter((order) => order.target_kind === 'coupon_redemption')
+      rewardHistory
         .slice()
-        .sort((left, right) => right.created_at_ms - left.created_at_ms),
-    [orders],
+        .sort((left, right) => right.redemption.redeemed_at_ms - left.redemption.redeemed_at_ms),
+    [rewardHistory],
   );
 
-  const totalItems = redeemOrders.length;
+  const walletItems = useMemo(
+    () =>
+      marketingCodes.items
+        .slice()
+        .sort(
+          (left, right) =>
+            Number(right.code.status === 'available') - Number(left.code.status === 'available')
+            || left.code.code_value.localeCompare(right.code.code_value),
+        ),
+    [marketingCodes.items],
+  );
+
+  const totalItems = rewardHistoryRows.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / PAGE_SIZE));
   const currentPage = clampPage(page, totalPages);
-  const paginatedOrders = useMemo(() => {
+  const paginatedRewardHistory = useMemo(() => {
     const start = (currentPage - 1) * PAGE_SIZE;
-    return redeemOrders.slice(start, start + PAGE_SIZE);
-  }, [currentPage, redeemOrders]);
+    return rewardHistoryRows.slice(start, start + PAGE_SIZE);
+  }, [currentPage, rewardHistoryRows]);
 
   useEffect(() => {
     setPage((current) => clampPage(current, totalPages));
@@ -332,7 +497,8 @@ export function PortalCreditsPage({ workspace }: PortalCreditsPageProps) {
   const pageStatus = status !== syncedStatus ? status : '';
   const showingStart = totalItems === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1;
   const showingEnd = totalItems === 0 ? 0 : Math.min(currentPage * PAGE_SIZE, totalItems);
-  const eligibleOfferCount = coupons.filter((coupon) => coupon.active).length;
+  const availableCouponCount = marketingCodes.summary.available_count;
+  const redeemedRewardCount = marketingRedemptions.summary.redeemed_count;
   const financeProjection = useMemo(
     () => buildFinanceProjection(summary, orders, billingEventSummary),
     [summary, orders, billingEventSummary],
@@ -356,24 +522,32 @@ export function PortalCreditsPage({ workspace }: PortalCreditsPageProps) {
   async function handleRedeemSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     const normalizedCode = couponCode.trim().toUpperCase();
-    const offer = coupons.find((coupon) => coupon.active && coupon.code === normalizedCode);
-
-    if (!offer) {
-      setRedeemStatus(t('Coupon code not recognized in the current workspace catalog.'));
+    if (!normalizedCode) {
+      setRedeemStatus(defaultRedeemStatus);
       return;
     }
 
     setRedeemLoading(true);
-    setRedeemStatus(t('Redeeming {code} for this workspace...', { code: offer.code }));
+    setRedeemStatus(t('Checking {code} against marketing policy...', { code: normalizedCode }));
 
     try {
-      await createCreditsCouponRedemption({
-        target_id: offer.code,
+      const validation = await validateCreditsCouponCode({
+        coupon_code: normalizedCode,
+      });
+      const selfServiceDecision = buildPortalCouponSelfServiceDecision(validation);
+      setRedeemStatus(selfServiceDecision.message);
+
+      if (selfServiceDecision.flow !== 'grant_self_service') {
+        return;
+      }
+
+      await redeemCreditsCouponCode({
+        coupon_code: normalizedCode,
       });
       setCouponCode('');
       setRedeemStatus(
-        t('{code} was redeemed and the workspace balance was refreshed.', {
-          code: offer.code,
+        t('{code} was redeemed and the reward history was refreshed.', {
+          code: normalizedCode,
         }),
       );
       setPage(1);
@@ -411,7 +585,7 @@ export function PortalCreditsPage({ workspace }: PortalCreditsPageProps) {
                 </div>
               </div>
 
-              <div className="grid gap-3 sm:grid-cols-2 xl:min-w-[18rem] xl:grid-cols-1">
+              <div className="grid gap-3 sm:grid-cols-3 xl:min-w-[18rem] xl:grid-cols-1">
                 <div className="rounded-[24px] border border-primary-500/15 bg-primary-500/6 px-4 py-4 dark:border-primary-500/20 dark:bg-primary-500/8">
                   <span className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
                     {t('Balance')}
@@ -422,10 +596,18 @@ export function PortalCreditsPage({ workspace }: PortalCreditsPageProps) {
                 </div>
                 <div className="rounded-[24px] border border-primary-500/15 bg-primary-500/6 px-4 py-4 dark:border-primary-500/20 dark:bg-primary-500/8">
                   <span className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
-                    {t('Eligible offers')}
+                    {t('Available coupons')}
                   </span>
                   <strong className="mt-2 block text-2xl font-semibold text-zinc-950 dark:text-zinc-50">
-                    {formatUnits(eligibleOfferCount)}
+                    {formatUnits(availableCouponCount)}
+                  </strong>
+                </div>
+                <div className="rounded-[24px] border border-primary-500/15 bg-primary-500/6 px-4 py-4 dark:border-primary-500/20 dark:bg-primary-500/8">
+                  <span className="text-xs font-semibold uppercase tracking-[0.16em] text-zinc-500 dark:text-zinc-400">
+                    {t('Redeemed rewards')}
+                  </span>
+                  <strong className="mt-2 block text-2xl font-semibold text-zinc-950 dark:text-zinc-50">
+                    {formatUnits(redeemedRewardCount)}
                   </strong>
                 </div>
               </div>
@@ -451,10 +633,13 @@ export function PortalCreditsPage({ workspace }: PortalCreditsPageProps) {
                     className="h-12 min-w-[10.5rem] rounded-2xl px-5 text-sm font-semibold shadow-sm"
                     disabled={redeemLoading || !couponCode.trim()}
                     type="submit"
-                  >
+                    >
                     {redeemLoading ? t('Redeeming...') : t('Redeem')}
                   </Button>
                 </div>
+                <p className="text-xs leading-5 text-zinc-500 dark:text-zinc-400">
+                  {t('Apply during checkout if the code discounts a plan or recharge purchase.')}
+                </p>
               </div>
             </form>
           </CardContent>
@@ -638,109 +823,207 @@ export function PortalCreditsPage({ workspace }: PortalCreditsPageProps) {
         </div>
       ) : null}
 
-      <div className="space-y-1">
-        <h2 className="text-lg font-semibold text-zinc-950 dark:text-zinc-50">
-          {t('Redeem history')}
-        </h2>
-        <p className="text-sm text-zinc-500 dark:text-zinc-400">
-          {t('Redeem history is synced with the latest workspace posture.')}
-        </p>
-      </div>
-
-      <DataTable
-        className="rounded-[28px] border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950"
-        columns={[
-          {
-            id: 'recorded',
-            header: t('Recorded'),
-            cell: (row) => formatDateTime(row.created_at_ms),
-          },
-          {
-            id: 'code',
-            header: t('Redeem code'),
-            cell: (row) => <strong>{resolveRedeemCode(row)}</strong>,
-          },
-          {
-            id: 'offer',
-            header: t('Offer'),
-            cell: (row) => resolveRedeemOfferLabel(row, t),
-          },
-          {
-            id: 'granted',
-            header: t('Granted units'),
-            cell: (row) => formatUnits(row.granted_units),
-          },
-          {
-            id: 'bonus',
-            header: t('Bonus units'),
-            cell: (row) => formatUnits(row.bonus_units),
-          },
-          {
-            id: 'status',
-            header: t('Status'),
-            cell: (row) => (
-              <Badge variant={orderStatusVariant(row.status)}>
-                {orderStatusLabel(row.status, t)}
-              </Badge>
-            ),
-          },
-        ]}
-        data-slot="portal-redeem-history-table"
-        emptyState={(
-          <div className="mx-auto flex max-w-[32rem] flex-col items-center gap-2 text-center">
-            <strong className="text-base font-semibold text-zinc-950 dark:text-zinc-50">
-              {t('No redemption history yet')}
-            </strong>
+      <div className="grid gap-4 xl:grid-cols-[0.92fr_1.08fr]">
+        <div className="space-y-3">
+          <div className="space-y-1">
+            <h2 className="text-lg font-semibold text-zinc-950 dark:text-zinc-50">
+              {t('My coupons')}
+            </h2>
             <p className="text-sm text-zinc-500 dark:text-zinc-400">
-              {t('No coupon redemptions have been applied to this workspace yet.')}
+              {t('Wallet inventory shows which codes are still available for self-service redemption and which have already moved into reservation or redemption states.')}
             </p>
           </div>
-        )}
-        footer={(
-          <div
-            className="flex flex-col gap-3 rounded-2xl border border-zinc-200 bg-zinc-50/80 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900/50 lg:flex-row lg:items-center lg:justify-between"
-            data-slot="portal-redeem-pagination"
-          >
-            <div className="text-sm text-zinc-600 dark:text-zinc-300">
-              {t('Showing {start}-{end} of {total} records', {
-                end: showingEnd,
-                start: showingStart,
-                total: totalItems,
-              })}
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <Button
-                disabled={currentPage <= 1}
-                onClick={() =>
-                  startTransition(() => {
-                    setPage((current) => clampPage(current - 1, totalPages));
-                  })}
-                variant="secondary"
-              >
-                {t('Previous page')}
-              </Button>
-              <span className="min-w-[8rem] text-center text-sm font-medium text-zinc-600 dark:text-zinc-300">
-                {t('Page {page} of {total}', {
-                  page: currentPage,
-                  total: totalPages,
-                })}
-              </span>
-              <Button
-                disabled={currentPage >= totalPages}
-                onClick={() =>
-                  startTransition(() => {
-                    setPage((current) => clampPage(current + 1, totalPages));
-                  })}
-                variant="secondary"
-              >
-                {t('Next page')}
-              </Button>
-            </div>
+
+          <DataTable
+            className="rounded-[28px] border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950"
+            columns={[
+              {
+                id: 'code',
+                header: t('Coupon'),
+                cell: (row: PortalMarketingCodeItem) => <strong>{row.code.code_value}</strong>,
+              },
+              {
+                id: 'status',
+                header: t('Status'),
+                cell: (row: PortalMarketingCodeItem) => (
+                  <Badge variant={couponCodeStatusVariant(row.code.status)}>
+                    {couponCodeStatusLabel(row.code.status, t)}
+                  </Badge>
+                ),
+              },
+              {
+                id: 'reservation',
+                header: t('Reservation'),
+                cell: (row: PortalMarketingCodeItem) => (
+                  <Badge
+                    variant={reservationStatusVariant(
+                      row.latest_reservation?.reservation_status ?? null,
+                    )}
+                  >
+                    {reservationStatusLabel(
+                      row.latest_reservation?.reservation_status ?? null,
+                      t,
+                    )}
+                  </Badge>
+                ),
+              },
+              {
+                id: 'redemption',
+                header: t('Reward'),
+                cell: (row: PortalMarketingCodeItem) => (
+                  <Badge
+                    variant={redemptionStatusVariant(
+                      row.latest_redemption?.redemption_status ?? null,
+                    )}
+                  >
+                    {redemptionStatusLabel(
+                      row.latest_redemption?.redemption_status ?? null,
+                      t,
+                    )}
+                  </Badge>
+                ),
+              },
+              {
+                id: 'expires',
+                header: t('Expires'),
+                cell: (row: PortalMarketingCodeItem) =>
+                  row.code.expires_at_ms ? formatDateTime(row.code.expires_at_ms) : t('No expiry'),
+              },
+            ]}
+            data-slot="portal-redeem-wallet-table"
+            emptyState={(
+              <div className="mx-auto flex max-w-[28rem] flex-col items-center gap-2 text-center">
+                <strong className="text-base font-semibold text-zinc-950 dark:text-zinc-50">
+                  {t('No wallet coupons yet')}
+                </strong>
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                  {t('Claimed and reserved marketing codes will appear here as soon as they are issued to the current portal identity.')}
+                </p>
+              </div>
+            )}
+            footer={(
+              <div className="grid gap-3 rounded-2xl border border-zinc-200 bg-zinc-50/80 px-4 py-3 text-sm text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/50 dark:text-zinc-300 sm:grid-cols-3">
+                <span>{t('Available: {count}', { count: marketingCodes.summary.available_count })}</span>
+                <span>{t('Reserved: {count}', { count: marketingCodes.summary.reserved_count })}</span>
+                <span>{t('Redeemed: {count}', { count: marketingCodes.summary.redeemed_count })}</span>
+              </div>
+            )}
+            getRowId={(row: PortalMarketingCodeItem) => row.code.coupon_code_id}
+            rows={walletItems}
+          />
+        </div>
+
+        <div className="space-y-3">
+          <div className="space-y-1">
+            <h2 className="text-lg font-semibold text-zinc-950 dark:text-zinc-50">
+              {t('Reward history')}
+            </h2>
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              {t(
+                'Reward history is synced with the latest workspace posture. {redeemed} redeemed / {rolledBack} rolled back.',
+                {
+                  redeemed: marketingRedemptions.summary.redeemed_count,
+                  rolledBack: marketingRedemptions.summary.rolled_back_count,
+                },
+              )}
+            </p>
           </div>
-        )}
-        getRowId={(row) => row.order_id}
-        rows={paginatedOrders}
-      />
+
+          <DataTable
+            className="rounded-[28px] border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950"
+            columns={[
+              {
+                id: 'recorded',
+                header: t('Recorded'),
+                cell: (row: PortalMarketingRewardHistoryItem) =>
+                  formatDateTime(row.redemption.redeemed_at_ms),
+              },
+              {
+                id: 'code',
+                header: t('Coupon'),
+                cell: (row: PortalMarketingRewardHistoryItem) => <strong>{row.code.code_value}</strong>,
+              },
+              {
+                id: 'status',
+                header: t('Status'),
+                cell: (row: PortalMarketingRewardHistoryItem) => (
+                  <Badge variant={redemptionStatusVariant(row.redemption.redemption_status)}>
+                    {redemptionStatusLabel(row.redemption.redemption_status, t)}
+                  </Badge>
+                ),
+              },
+              {
+                id: 'rollback',
+                header: t('Rollback'),
+                cell: (row: PortalMarketingRewardHistoryItem) => rewardHistoryRollbackDetail(row, t),
+              },
+              {
+                id: 'evidence',
+                header: t('Evidence'),
+                cell: (row: PortalMarketingRewardHistoryItem) =>
+                  row.redemption.order_id?.trim()
+                  || row.redemption.payment_event_id?.trim()
+                  || row.redemption.coupon_redemption_id,
+              },
+            ]}
+            data-slot="portal-redeem-reward-history-table"
+            emptyState={(
+              <div className="mx-auto flex max-w-[32rem] flex-col items-center gap-2 text-center">
+                <strong className="text-base font-semibold text-zinc-950 dark:text-zinc-50">
+                  {t('No reward history yet')}
+                </strong>
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                  {t('Confirmed coupon rewards and rollbacks will appear here after the first successful marketing redemption closes the loop.')}
+                </p>
+              </div>
+            )}
+            footer={(
+              <div
+                className="flex flex-col gap-3 rounded-2xl border border-zinc-200 bg-zinc-50/80 px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900/50 lg:flex-row lg:items-center lg:justify-between"
+                data-slot="portal-redeem-pagination"
+              >
+                <div className="text-sm text-zinc-600 dark:text-zinc-300">
+                  {t('Showing {start}-{end} of {total} records', {
+                    end: showingEnd,
+                    start: showingStart,
+                    total: totalItems,
+                  })}
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    disabled={currentPage <= 1}
+                    onClick={() =>
+                      startTransition(() => {
+                        setPage((current) => clampPage(current - 1, totalPages));
+                      })}
+                    variant="secondary"
+                  >
+                    {t('Previous page')}
+                  </Button>
+                  <span className="min-w-[8rem] text-center text-sm font-medium text-zinc-600 dark:text-zinc-300">
+                    {t('Page {page} of {total}', {
+                      page: currentPage,
+                      total: totalPages,
+                    })}
+                  </span>
+                  <Button
+                    disabled={currentPage >= totalPages}
+                    onClick={() =>
+                      startTransition(() => {
+                        setPage((current) => clampPage(current + 1, totalPages));
+                      })}
+                    variant="secondary"
+                  >
+                    {t('Next page')}
+                  </Button>
+                </div>
+              </div>
+            )}
+            getRowId={(row: PortalMarketingRewardHistoryItem) => row.redemption.coupon_redemption_id}
+            rows={paginatedRewardHistory}
+          />
+        </div>
+      </div>
     </div>
   );
 }

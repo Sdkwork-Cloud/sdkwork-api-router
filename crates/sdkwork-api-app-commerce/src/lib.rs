@@ -1,17 +1,44 @@
 use async_trait::async_trait;
 use sdkwork_api_app_coupon::list_active_coupons;
+use sdkwork_api_app_marketing::{
+    confirm_coupon_redemption, project_legacy_coupon_campaign, reserve_coupon_redemption,
+    rollback_coupon_redemption, validate_coupon_stack, CouponValidationDecision,
+};
 use sdkwork_api_domain_billing::QuotaPolicy;
-use sdkwork_api_domain_commerce::{CommerceOrderRecord, ProjectMembershipRecord};
-use sdkwork_api_domain_coupon::CouponCampaign;
+use sdkwork_api_domain_commerce::{
+    CommerceOrderRecord, CommercePaymentEventProcessingStatus, CommercePaymentEventRecord,
+    ProjectMembershipRecord,
+};
+use sdkwork_api_domain_marketing::{
+    CampaignBudgetRecord, CampaignBudgetStatus, CouponBenefitSpec, CouponCodeRecord,
+    CouponCodeStatus, CouponDistributionKind, CouponRedemptionStatus, CouponReservationStatus,
+    CouponRollbackType, CouponTemplateRecord, CouponTemplateStatus, MarketingBenefitKind,
+    MarketingCampaignRecord, MarketingSubjectScope,
+};
 use sdkwork_api_storage_core::AdminStore;
+use sdkwork_api_storage_core::{
+    AtomicCouponConfirmationCommand, AtomicCouponReleaseCommand, AtomicCouponReservationCommand,
+    AtomicCouponRollbackCommand,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
+use utoipa::ToSchema;
 
 pub use sdkwork_api_domain_commerce::CommerceOrderRecord as PortalCommerceOrderRecord;
+pub use sdkwork_api_domain_commerce::CommercePaymentEventRecord as PortalCommercePaymentEventRecord;
 pub use sdkwork_api_domain_commerce::ProjectMembershipRecord as PortalProjectMembershipRecord;
 
 type CommerceResult<T> = std::result::Result<T, CommerceError>;
+const DEFAULT_COUPON_RESERVATION_TTL_MS: u64 = 15 * 60 * 1_000;
+const COMMERCE_PAYMENT_PROVIDER_MANUAL_LAB: &str = "manual_lab";
+const COMMERCE_PAYMENT_PROVIDER_STRIPE: &str = "stripe";
+const COMMERCE_PAYMENT_PROVIDER_ALIPAY: &str = "alipay";
+const COMMERCE_PAYMENT_PROVIDER_WECHAT_PAY: &str = "wechat_pay";
+const COMMERCE_PAYMENT_PROVIDER_NO_PAYMENT_REQUIRED: &str = "no_payment_required";
+const COMMERCE_PAYMENT_CHANNEL_OPERATOR_SETTLEMENT: &str = "operator_settlement";
+const COMMERCE_PAYMENT_CHANNEL_HOSTED_CHECKOUT: &str = "hosted_checkout";
+const COMMERCE_PAYMENT_CHANNEL_SCAN_QR: &str = "scan_qr";
 
 #[derive(Debug)]
 pub enum CommerceError {
@@ -47,7 +74,19 @@ impl From<anyhow::Error> for CommerceError {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+fn commerce_atomic_coupon_error(error: anyhow::Error) -> CommerceError {
+    let message = error.to_string();
+    if message.contains("changed concurrently")
+        || message.contains("already exists with different state")
+        || message.contains(" is missing")
+    {
+        CommerceError::Conflict(message)
+    } else {
+        CommerceError::Storage(error)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct PortalSubscriptionPlan {
     pub id: String,
     pub name: String,
@@ -60,7 +99,7 @@ pub struct PortalSubscriptionPlan {
     pub source: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct PortalRechargePack {
     pub id: String,
     pub label: String,
@@ -70,7 +109,7 @@ pub struct PortalRechargePack {
     pub source: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct PortalRechargeOption {
     pub id: String,
     pub label: String,
@@ -83,7 +122,7 @@ pub struct PortalRechargeOption {
     pub source: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct PortalCustomRechargeRule {
     pub id: String,
     pub label: String,
@@ -94,7 +133,7 @@ pub struct PortalCustomRechargeRule {
     pub note: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct PortalCustomRechargePolicy {
     pub enabled: bool,
     pub min_amount_cents: u64,
@@ -105,7 +144,7 @@ pub struct PortalCustomRechargePolicy {
     pub source: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct PortalCommerceCoupon {
     pub id: String,
     pub code: String,
@@ -122,7 +161,7 @@ pub struct PortalCommerceCoupon {
     pub bonus_units: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct PortalCommerceCatalog {
     pub plans: Vec<PortalSubscriptionPlan>,
     pub packs: Vec<PortalRechargePack>,
@@ -132,7 +171,7 @@ pub struct PortalCommerceCatalog {
     pub coupons: Vec<PortalCommerceCoupon>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct PortalCommerceQuoteRequest {
     pub target_kind: String,
     pub target_id: String,
@@ -144,7 +183,7 @@ pub struct PortalCommerceQuoteRequest {
     pub custom_amount_cents: Option<u64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct PortalAppliedCoupon {
     pub code: String,
     pub discount_label: String,
@@ -155,7 +194,7 @@ pub struct PortalAppliedCoupon {
     pub bonus_units: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct PortalCommerceQuote {
     pub target_kind: String,
     pub target_id: String,
@@ -179,16 +218,27 @@ pub struct PortalCommerceQuote {
     pub source: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct PortalCommerceCheckoutSessionMethod {
     pub id: String,
     pub label: String,
     pub detail: String,
     pub action: String,
     pub availability: String,
+    pub provider: String,
+    pub channel: String,
+    pub session_kind: String,
+    pub session_reference: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub qr_code_payload: Option<String>,
+    pub webhook_verification: String,
+    pub supports_refund: bool,
+    pub supports_partial_refund: bool,
+    pub recommended: bool,
+    pub supports_webhook: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct PortalCommerceCheckoutSession {
     pub order_id: String,
     pub order_status: String,
@@ -201,9 +251,15 @@ pub struct PortalCommerceCheckoutSession {
     pub methods: Vec<PortalCommerceCheckoutSessionMethod>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct PortalCommercePaymentEventRequest {
     pub event_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_event_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkout_method_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -216,6 +272,28 @@ struct CommerceCouponBenefit {
 struct CommerceCouponDefinition {
     coupon: PortalCommerceCoupon,
     benefit: CommerceCouponBenefit,
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedCouponDefinition {
+    definition: CommerceCouponDefinition,
+    marketing: Option<MarketingCouponContext>,
+}
+
+#[derive(Debug, Clone)]
+struct MarketingCouponContext {
+    template: CouponTemplateRecord,
+    campaign: MarketingCampaignRecord,
+    budget: CampaignBudgetRecord,
+    code: CouponCodeRecord,
+    source: String,
+}
+
+#[derive(Debug, Clone)]
+struct ReservedMarketingCouponState {
+    coupon_reservation_id: String,
+    marketing_campaign_id: String,
+    subsidy_amount_minor: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -288,6 +366,15 @@ pub async fn preview_portal_commerce_quote(
     store: &dyn AdminStore,
     request: &PortalCommerceQuoteRequest,
 ) -> CommerceResult<PortalCommerceQuote> {
+    Ok(preview_portal_commerce_quote_internal(store, request)
+        .await?
+        .0)
+}
+
+async fn preview_portal_commerce_quote_internal(
+    store: &dyn AdminStore,
+    request: &PortalCommerceQuoteRequest,
+) -> CommerceResult<(PortalCommerceQuote, Option<ResolvedCouponDefinition>)> {
     let target_kind = request.target_kind.trim();
     let target_id = request.target_id.trim();
 
@@ -308,9 +395,14 @@ pub async fn preview_portal_commerce_quote(
                 .into_iter()
                 .find(|candidate| candidate.id.eq_ignore_ascii_case(target_id))
                 .ok_or_else(|| CommerceError::NotFound("subscription plan not found".to_owned()))?;
-            let applied_coupon =
-                load_optional_applied_coupon(store, request.coupon_code.as_deref()).await?;
-            Ok(build_priced_quote(
+            let applied_coupon = load_optional_applied_coupon(
+                store,
+                request.coupon_code.as_deref(),
+                target_kind,
+                plan.price_cents,
+            )
+            .await?;
+            let quote = build_priced_quote(
                 "subscription_plan",
                 plan.id,
                 plan.name,
@@ -318,17 +410,23 @@ pub async fn preview_portal_commerce_quote(
                 plan.included_units,
                 "workspace_seed",
                 request.current_remaining_units,
-                applied_coupon,
-            ))
+                applied_coupon.as_ref().map(|item| item.definition.clone()),
+            );
+            Ok((quote, applied_coupon))
         }
         "recharge_pack" => {
             let pack = recharge_pack_seeds()
                 .into_iter()
                 .find(|candidate| candidate.id.eq_ignore_ascii_case(target_id))
                 .ok_or_else(|| CommerceError::NotFound("recharge pack not found".to_owned()))?;
-            let applied_coupon =
-                load_optional_applied_coupon(store, request.coupon_code.as_deref()).await?;
-            Ok(build_priced_quote(
+            let applied_coupon = load_optional_applied_coupon(
+                store,
+                request.coupon_code.as_deref(),
+                target_kind,
+                pack.price_cents,
+            )
+            .await?;
+            let quote = build_priced_quote(
                 "recharge_pack",
                 pack.id,
                 pack.label,
@@ -336,32 +434,38 @@ pub async fn preview_portal_commerce_quote(
                 pack.points,
                 "workspace_seed",
                 request.current_remaining_units,
-                applied_coupon,
-            ))
+                applied_coupon.as_ref().map(|item| item.definition.clone()),
+            );
+            Ok((quote, applied_coupon))
         }
         "custom_recharge" => {
             let custom_amount_cents =
                 resolve_custom_recharge_amount_cents(target_id, request.custom_amount_cents)?;
-            let applied_coupon =
-                load_optional_applied_coupon(store, request.coupon_code.as_deref()).await?;
-            build_custom_recharge_quote(
+            let applied_coupon = load_optional_applied_coupon(
+                store,
+                request.coupon_code.as_deref(),
+                target_kind,
+                custom_amount_cents,
+            )
+            .await?;
+            let quote = build_custom_recharge_quote(
                 custom_amount_cents,
                 request.current_remaining_units,
-                applied_coupon,
-            )
+                applied_coupon.as_ref().map(|item| item.definition.clone()),
+            )?;
+            Ok((quote, applied_coupon))
         }
         "coupon_redemption" => {
-            let coupon = find_coupon_definition(store, target_id).await?;
-            if coupon.benefit.bonus_units == 0 {
+            let coupon = find_resolved_coupon_definition(store, target_id).await?;
+            if coupon.definition.benefit.bonus_units == 0 {
                 return Err(CommerceError::InvalidInput(format!(
                     "coupon {} does not grant redeemable bonus units",
-                    coupon.coupon.code
+                    coupon.definition.coupon.code
                 )));
             }
-            Ok(build_redemption_quote(
-                coupon,
-                request.current_remaining_units,
-            ))
+            let quote =
+                build_redemption_quote(coupon.definition.clone(), request.current_remaining_units);
+            Ok((quote, Some(coupon)))
         }
         _ => Err(CommerceError::InvalidInput(format!(
             "unsupported target_kind: {target_kind}"
@@ -388,23 +492,20 @@ pub async fn submit_portal_commerce_order(
         ));
     }
 
-    let quote = preview_portal_commerce_quote(store, request).await?;
+    let (quote, resolved_coupon) = preview_portal_commerce_quote_internal(store, request).await?;
     let status = initial_order_status(&quote);
+    let order_id = generate_entity_id("commerce_order")?;
+    let reserved_coupon = reserve_order_coupon_if_needed(
+        store,
+        &order_id,
+        normalized_project_id,
+        &quote,
+        resolved_coupon.as_ref(),
+    )
+    .await?;
 
-    if should_fulfill_on_order_create(&quote) {
-        apply_quote_to_project_quota(store, normalized_project_id, &quote).await?;
-        consume_live_coupon_if_needed(store, quote.applied_coupon.as_ref()).await?;
-        activate_project_membership_if_needed(
-            store,
-            normalized_user_id,
-            normalized_project_id,
-            &quote,
-        )
-        .await?;
-    }
-
-    let order = CommerceOrderRecord::new(
-        generate_entity_id("commerce_order")?,
+    let mut order = CommerceOrderRecord::new(
+        order_id,
         normalized_project_id,
         normalized_user_id,
         quote.target_kind.clone(),
@@ -425,12 +526,59 @@ pub async fn submit_portal_commerce_order(
             .applied_coupon
             .as_ref()
             .map(|coupon| coupon.code.clone()),
+    )
+    .with_coupon_reservation_id_option(
+        reserved_coupon
+            .as_ref()
+            .map(|coupon| coupon.coupon_reservation_id.clone()),
+    )
+    .with_marketing_campaign_id_option(
+        reserved_coupon
+            .as_ref()
+            .map(|coupon| coupon.marketing_campaign_id.clone()),
+    )
+    .with_subsidy_amount_minor(
+        reserved_coupon
+            .as_ref()
+            .map(|coupon| coupon.subsidy_amount_minor)
+            .unwrap_or(0),
     );
 
-    store
+    if should_fulfill_on_order_create(&quote) {
+        if let Err(error) = fulfill_order_on_create(
+            store,
+            normalized_user_id,
+            normalized_project_id,
+            &quote,
+            &mut order,
+        )
+        .await
+        {
+            let _ = release_order_coupon_reservation_if_needed(store, &mut order).await;
+            return Err(error);
+        }
+    }
+
+    match store
         .insert_commerce_order(&order)
         .await
         .map_err(CommerceError::from)
+    {
+        Ok(order) => Ok(order),
+        Err(error) => {
+            if order.coupon_redemption_id.is_some() {
+                let _ = rollback_order_coupon_redemption_if_needed(
+                    store,
+                    &mut order,
+                    CouponRollbackType::Manual,
+                )
+                .await;
+            } else {
+                let _ = release_order_coupon_reservation_if_needed(store, &mut order).await;
+            }
+            Err(error)
+        }
+    }
 }
 
 pub async fn settle_portal_commerce_order(
@@ -438,6 +586,17 @@ pub async fn settle_portal_commerce_order(
     user_id: &str,
     project_id: &str,
     order_id: &str,
+) -> CommerceResult<CommerceOrderRecord> {
+    settle_portal_commerce_order_with_payment_event(store, user_id, project_id, order_id, None)
+        .await
+}
+
+async fn settle_portal_commerce_order_with_payment_event(
+    store: &dyn AdminStore,
+    user_id: &str,
+    project_id: &str,
+    order_id: &str,
+    payment_event_id: Option<&str>,
 ) -> CommerceResult<CommerceOrderRecord> {
     let normalized_user_id = user_id.trim();
     let normalized_project_id = project_id.trim();
@@ -479,7 +638,6 @@ pub async fn settle_portal_commerce_order(
 
     let settlement_quote = load_order_settlement_quote(store, &order).await?;
     apply_quote_to_project_quota(store, normalized_project_id, &settlement_quote).await?;
-    consume_live_coupon_if_needed(store, settlement_quote.applied_coupon.as_ref()).await?;
     activate_project_membership_if_needed(
         store,
         normalized_user_id,
@@ -487,8 +645,10 @@ pub async fn settle_portal_commerce_order(
         &settlement_quote,
     )
     .await?;
+    confirm_order_coupon_if_needed(store, &mut order, payment_event_id).await?;
 
     order.status = "fulfilled".to_owned();
+    order.updated_at_ms = current_time_ms()?;
     store
         .insert_commerce_order(&order)
         .await
@@ -539,7 +699,77 @@ pub async fn cancel_portal_commerce_order(
         }
     }
 
+    release_order_coupon_reservation_if_needed(store, &mut order).await?;
     order.status = "canceled".to_owned();
+    order.updated_at_ms = current_time_ms()?;
+    store
+        .insert_commerce_order(&order)
+        .await
+        .map_err(CommerceError::from)
+}
+
+async fn refund_portal_commerce_order<T>(
+    store: &T,
+    user_id: &str,
+    project_id: &str,
+    order_id: &str,
+    refund_provider: &str,
+) -> CommerceResult<CommerceOrderRecord>
+where
+    T: AdminStore + CommerceQuotaStore + ?Sized,
+{
+    let normalized_user_id = user_id.trim();
+    let normalized_project_id = project_id.trim();
+    let normalized_order_id = order_id.trim();
+
+    if normalized_user_id.is_empty() {
+        return Err(CommerceError::InvalidInput(
+            "user_id is required".to_owned(),
+        ));
+    }
+    if normalized_project_id.is_empty() {
+        return Err(CommerceError::InvalidInput(
+            "project_id is required".to_owned(),
+        ));
+    }
+    if normalized_order_id.is_empty() {
+        return Err(CommerceError::InvalidInput(
+            "order_id is required".to_owned(),
+        ));
+    }
+
+    let mut order = load_project_commerce_order(
+        store,
+        normalized_user_id,
+        normalized_project_id,
+        normalized_order_id,
+    )
+    .await?;
+    ensure_refund_provider_matches_order_settlement(store, &order, refund_provider).await?;
+
+    if !supports_safe_order_refund(&order) {
+        return Err(CommerceError::Conflict(format!(
+            "order {normalized_order_id} target_kind {} cannot be refunded safely",
+            order.target_kind
+        )));
+    }
+
+    match order.status.as_str() {
+        "refunded" => return Ok(order),
+        "fulfilled" => {}
+        other => {
+            return Err(CommerceError::Conflict(format!(
+                "order {normalized_order_id} cannot be refunded from status {other}"
+            )))
+        }
+    }
+
+    reverse_order_quota_effect(store, normalized_project_id, &order).await?;
+    rollback_order_coupon_redemption_if_needed(store, &mut order, CouponRollbackType::Refund)
+        .await?;
+
+    order.status = "refunded".to_owned();
+    order.updated_at_ms = current_time_ms()?;
     store
         .insert_commerce_order(&order)
         .await
@@ -560,14 +790,202 @@ pub async fn apply_portal_commerce_payment_event(
         ));
     }
 
-    match event_type {
-        "settled" => settle_portal_commerce_order(store, user_id, project_id, order_id).await,
-        "canceled" => cancel_portal_commerce_order(store, user_id, project_id, order_id).await,
-        "failed" => fail_portal_commerce_order(store, user_id, project_id, order_id).await,
-        other => Err(CommerceError::InvalidInput(format!(
-            "unsupported payment event_type: {other}"
-        ))),
+    if !matches!(event_type, "settled" | "canceled" | "failed" | "refunded") {
+        return Err(CommerceError::InvalidInput(format!(
+            "unsupported payment event_type: {event_type}"
+        )));
     }
+
+    let normalized_user_id = user_id.trim();
+    let normalized_project_id = project_id.trim();
+    let normalized_order_id = order_id.trim();
+
+    if normalized_user_id.is_empty() {
+        return Err(CommerceError::InvalidInput(
+            "user_id is required".to_owned(),
+        ));
+    }
+    if normalized_project_id.is_empty() {
+        return Err(CommerceError::InvalidInput(
+            "project_id is required".to_owned(),
+        ));
+    }
+    if normalized_order_id.is_empty() {
+        return Err(CommerceError::InvalidInput(
+            "order_id is required".to_owned(),
+        ));
+    }
+
+    let current_order = load_project_commerce_order(
+        store,
+        normalized_user_id,
+        normalized_project_id,
+        normalized_order_id,
+    )
+    .await?;
+    let checkout_method = resolve_checkout_method_for_payment_event(&current_order, request)?;
+    let (provider, provider_event_id, dedupe_key) =
+        resolve_commerce_payment_event_identity(&current_order.order_id, request, checkout_method)?;
+
+    let existing_event = store
+        .find_commerce_payment_event_by_dedupe_key(&dedupe_key)
+        .await
+        .map_err(CommerceError::from)?;
+    if let Some(existing_event) = existing_event.as_ref() {
+        if existing_event.order_id != current_order.order_id {
+            return Err(CommerceError::Conflict(format!(
+                "payment event {dedupe_key} already belongs to order {}",
+                existing_event.order_id
+            )));
+        }
+        if matches!(
+            existing_event.processing_status,
+            CommercePaymentEventProcessingStatus::Processed
+                | CommercePaymentEventProcessingStatus::Ignored
+        ) {
+            return load_project_commerce_order(
+                store,
+                normalized_user_id,
+                normalized_project_id,
+                normalized_order_id,
+            )
+            .await;
+        }
+    }
+
+    let received_at_ms = current_time_ms()?;
+    let mut payment_event = build_commerce_payment_event_record(
+        &current_order,
+        request,
+        provider,
+        provider_event_id,
+        dedupe_key.clone(),
+        received_at_ms,
+        existing_event
+            .as_ref()
+            .map(|event| event.payment_event_id.as_str()),
+    )?;
+    payment_event = persist_commerce_payment_event(store, payment_event).await?;
+
+    let order_result = match event_type {
+        "settled" => {
+            settle_portal_commerce_order_with_payment_event(
+                store,
+                normalized_user_id,
+                normalized_project_id,
+                normalized_order_id,
+                Some(payment_event.payment_event_id.as_str()),
+            )
+            .await
+        }
+        "canceled" => {
+            cancel_portal_commerce_order(
+                store,
+                normalized_user_id,
+                normalized_project_id,
+                normalized_order_id,
+            )
+            .await
+        }
+        "failed" => {
+            fail_portal_commerce_order(
+                store,
+                normalized_user_id,
+                normalized_project_id,
+                normalized_order_id,
+            )
+            .await
+        }
+        "refunded" => {
+            refund_portal_commerce_order(
+                store,
+                normalized_user_id,
+                normalized_project_id,
+                normalized_order_id,
+                payment_event.provider.as_str(),
+            )
+            .await
+        }
+        _ => unreachable!(),
+    };
+
+    match order_result {
+        Ok(order) => {
+            let _ = persist_commerce_payment_event(
+                store,
+                finalize_commerce_payment_event(
+                    payment_event,
+                    CommercePaymentEventProcessingStatus::Processed,
+                    None,
+                    Some(order.status.clone()),
+                    Some(current_time_ms()?),
+                ),
+            )
+            .await;
+            Ok(order)
+        }
+        Err(error) => {
+            let rejection_status = commerce_payment_event_status_for_error(&error);
+            let _ = persist_commerce_payment_event(
+                store,
+                finalize_commerce_payment_event(
+                    payment_event,
+                    rejection_status,
+                    Some(error.to_string()),
+                    Some(current_order.status.clone()),
+                    Some(current_time_ms()?),
+                ),
+            )
+            .await;
+            Err(error)
+        }
+    }
+}
+
+pub async fn list_order_commerce_payment_events(
+    store: &dyn AdminStore,
+    user_id: &str,
+    project_id: &str,
+    order_id: &str,
+) -> CommerceResult<Vec<CommercePaymentEventRecord>> {
+    let normalized_user_id = user_id.trim();
+    let normalized_project_id = project_id.trim();
+    let normalized_order_id = order_id.trim();
+
+    if normalized_user_id.is_empty() {
+        return Err(CommerceError::InvalidInput(
+            "user_id is required".to_owned(),
+        ));
+    }
+    if normalized_project_id.is_empty() {
+        return Err(CommerceError::InvalidInput(
+            "project_id is required".to_owned(),
+        ));
+    }
+    if normalized_order_id.is_empty() {
+        return Err(CommerceError::InvalidInput(
+            "order_id is required".to_owned(),
+        ));
+    }
+
+    let order = load_project_commerce_order(
+        store,
+        normalized_user_id,
+        normalized_project_id,
+        normalized_order_id,
+    )
+    .await?;
+    let mut events = store
+        .list_commerce_payment_events_for_order(&order.order_id)
+        .await
+        .map_err(CommerceError::from)?;
+    events.sort_by(|left, right| {
+        right
+            .received_at_ms
+            .cmp(&left.received_at_ms)
+            .then_with(|| right.payment_event_id.cmp(&left.payment_event_id))
+    });
+    Ok(events)
 }
 
 pub async fn load_portal_commerce_checkout_session(
@@ -597,8 +1015,9 @@ pub async fn list_project_commerce_orders(
         .map_err(CommerceError::from)?;
     orders.sort_by(|left, right| {
         right
-            .created_at_ms
-            .cmp(&left.created_at_ms)
+            .updated_at_ms
+            .cmp(&left.updated_at_ms)
+            .then_with(|| right.created_at_ms.cmp(&left.created_at_ms))
             .then_with(|| right.order_id.cmp(&left.order_id))
     });
     Ok(orders)
@@ -713,6 +1132,7 @@ async fn load_coupon_definitions(
         .into_iter()
         .map(|definition| (normalize_coupon_code(&definition.coupon.code), definition))
         .collect::<BTreeMap<_, _>>();
+    let now_ms = current_time_ms()?;
 
     for coupon in list_active_coupons(store).await? {
         let code = normalize_coupon_code(&coupon.code);
@@ -744,29 +1164,922 @@ async fn load_coupon_definitions(
         );
     }
 
+    for definition in load_marketing_coupon_definitions(store, now_ms).await? {
+        definitions.insert(normalize_coupon_code(&definition.coupon.code), definition);
+    }
+
     Ok(definitions.into_values().collect())
 }
 
-async fn find_coupon_definition(
+async fn find_resolved_coupon_definition(
     store: &dyn AdminStore,
     code: &str,
-) -> CommerceResult<CommerceCouponDefinition> {
+) -> CommerceResult<ResolvedCouponDefinition> {
     let normalized = normalize_coupon_code(code);
+    let now_ms = current_time_ms()?;
+    if let Some(context) =
+        load_marketing_coupon_context_by_value(store, &normalized, now_ms).await?
+    {
+        if !coupon_context_is_catalog_visible(&context, now_ms) {
+            return Err(CommerceError::NotFound(format!(
+                "coupon {normalized} not found"
+            )));
+        }
+        return Ok(ResolvedCouponDefinition {
+            definition: marketing_context_to_definition(&context, now_ms),
+            marketing: Some(context),
+        });
+    }
+
     load_coupon_definitions(store)
         .await?
         .into_iter()
         .find(|definition| definition.coupon.code == normalized)
+        .map(|definition| ResolvedCouponDefinition {
+            definition,
+            marketing: None,
+        })
         .ok_or_else(|| CommerceError::NotFound(format!("coupon {normalized} not found")))
 }
 
 async fn load_optional_applied_coupon(
     store: &dyn AdminStore,
     coupon_code: Option<&str>,
-) -> CommerceResult<Option<CommerceCouponDefinition>> {
+    target_kind: &str,
+    order_amount_cents: u64,
+) -> CommerceResult<Option<ResolvedCouponDefinition>> {
     match coupon_code.map(str::trim).filter(|value| !value.is_empty()) {
-        Some(code) => find_coupon_definition(store, code).await.map(Some),
+        Some(code) => {
+            let resolved = find_resolved_coupon_definition(store, code).await?;
+            if let Some(context) = resolved.marketing.as_ref() {
+                let reserve_amount_minor = compute_coupon_reserve_amount_minor(
+                    order_amount_cents,
+                    &context.template.benefit,
+                );
+                let decision = validate_marketing_coupon_context(
+                    context,
+                    target_kind,
+                    current_time_ms()?,
+                    order_amount_cents,
+                    reserve_amount_minor,
+                );
+                if !decision.eligible {
+                    return Err(CommerceError::InvalidInput(format!(
+                        "coupon {} is not eligible: {}",
+                        resolved.definition.coupon.code,
+                        decision
+                            .rejection_reason
+                            .unwrap_or_else(|| "validation_failed".to_owned())
+                    )));
+                }
+            }
+            Ok(Some(resolved))
+        }
         None => Ok(None),
     }
+}
+
+async fn load_marketing_coupon_definitions(
+    store: &dyn AdminStore,
+    now_ms: u64,
+) -> CommerceResult<Vec<CommerceCouponDefinition>> {
+    let mut definitions = Vec::new();
+    for code_record in store
+        .list_coupon_code_records()
+        .await
+        .map_err(CommerceError::from)?
+    {
+        if let Some(context) =
+            load_marketing_coupon_context_from_code_record(store, code_record, now_ms).await?
+        {
+            if coupon_context_is_catalog_visible(&context, now_ms) {
+                definitions.push(marketing_context_to_definition(&context, now_ms));
+            }
+        }
+    }
+    Ok(definitions)
+}
+
+async fn load_marketing_coupon_context_by_value(
+    store: &dyn AdminStore,
+    code: &str,
+    now_ms: u64,
+) -> CommerceResult<Option<MarketingCouponContext>> {
+    let normalized = normalize_coupon_code(code);
+    if let Some(code_record) = store
+        .find_coupon_code_record_by_value(&normalized)
+        .await
+        .map_err(CommerceError::from)?
+    {
+        if let Some(context) =
+            load_marketing_coupon_context_from_code_record(store, code_record, now_ms).await?
+        {
+            return Ok(Some(context));
+        }
+    }
+
+    load_compatibility_marketing_coupon_context(store, &normalized).await
+}
+
+async fn load_marketing_coupon_context_from_code_record(
+    store: &dyn AdminStore,
+    code: CouponCodeRecord,
+    now_ms: u64,
+) -> CommerceResult<Option<MarketingCouponContext>> {
+    let Some(template) = store
+        .find_coupon_template_record(&code.coupon_template_id)
+        .await
+        .map_err(CommerceError::from)?
+    else {
+        return Ok(None);
+    };
+
+    let Some(campaign) = select_effective_marketing_campaign(
+        store
+            .list_marketing_campaign_records_for_template(&template.coupon_template_id)
+            .await
+            .map_err(CommerceError::from)?,
+        now_ms,
+    ) else {
+        return Ok(None);
+    };
+
+    let Some(budget) = select_campaign_budget_record(
+        store
+            .list_campaign_budget_records_for_campaign(&campaign.marketing_campaign_id)
+            .await
+            .map_err(CommerceError::from)?,
+    ) else {
+        return Ok(None);
+    };
+
+    Ok(Some(MarketingCouponContext {
+        template,
+        campaign,
+        budget,
+        code,
+        source: "marketing".to_owned(),
+    }))
+}
+
+async fn load_compatibility_marketing_coupon_context<T>(
+    store: &T,
+    code: &str,
+) -> CommerceResult<Option<MarketingCouponContext>>
+where
+    T: AdminStore + ?Sized,
+{
+    Ok(store
+        .list_active_coupons()
+        .await
+        .map_err(CommerceError::from)?
+        .into_iter()
+        .find(|coupon| normalize_coupon_code(&coupon.code) == code)
+        .map(|coupon| {
+            let (template, campaign, budget, code_record) = project_legacy_coupon_campaign(&coupon);
+            MarketingCouponContext {
+                template,
+                campaign,
+                budget,
+                code: code_record,
+                source: "live".to_owned(),
+            }
+        }))
+}
+
+fn select_effective_marketing_campaign(
+    campaigns: Vec<MarketingCampaignRecord>,
+    now_ms: u64,
+) -> Option<MarketingCampaignRecord> {
+    campaigns
+        .into_iter()
+        .filter(|campaign| campaign.is_effective_at(now_ms))
+        .max_by(|left, right| {
+            left.updated_at_ms
+                .cmp(&right.updated_at_ms)
+                .then_with(|| left.marketing_campaign_id.cmp(&right.marketing_campaign_id))
+        })
+}
+
+fn select_campaign_budget_record(
+    budgets: Vec<CampaignBudgetRecord>,
+) -> Option<CampaignBudgetRecord> {
+    budgets.into_iter().max_by(|left, right| {
+        left.updated_at_ms
+            .cmp(&right.updated_at_ms)
+            .then_with(|| left.campaign_budget_id.cmp(&right.campaign_budget_id))
+    })
+}
+
+fn coupon_context_is_catalog_visible(context: &MarketingCouponContext, now_ms: u64) -> bool {
+    context.template.status == CouponTemplateStatus::Active
+        && context.campaign.is_effective_at(now_ms)
+        && context.budget.available_budget_minor() > 0
+        && coupon_code_is_available_for_template(&context.template, &context.code, now_ms)
+}
+
+fn coupon_code_is_available_for_template(
+    template: &CouponTemplateRecord,
+    code: &CouponCodeRecord,
+    now_ms: u64,
+) -> bool {
+    match template.distribution_kind {
+        CouponDistributionKind::SharedCode => {
+            !matches!(
+                code.status,
+                CouponCodeStatus::Disabled | CouponCodeStatus::Expired
+            ) && code.expires_at_ms.is_none_or(|value| now_ms <= value)
+        }
+        CouponDistributionKind::UniqueCode | CouponDistributionKind::AutoClaim => {
+            code.is_redeemable_at(now_ms)
+        }
+    }
+}
+
+fn marketing_context_to_definition(
+    context: &MarketingCouponContext,
+    now_ms: u64,
+) -> CommerceCouponDefinition {
+    let benefit = CommerceCouponBenefit {
+        discount_percent: context.template.benefit.discount_percent,
+        bonus_units: context.template.benefit.grant_units.unwrap_or(0),
+    };
+    let remaining = match context.template.distribution_kind {
+        CouponDistributionKind::SharedCode => context.budget.available_budget_minor(),
+        CouponDistributionKind::UniqueCode | CouponDistributionKind::AutoClaim => {
+            if coupon_code_is_available_for_template(&context.template, &context.code, now_ms) {
+                1
+            } else {
+                0
+            }
+        }
+    };
+    CommerceCouponDefinition {
+        coupon: PortalCommerceCoupon {
+            id: context.code.coupon_code_id.clone(),
+            code: normalize_coupon_code(&context.code.code_value),
+            discount_label: format_marketing_discount_label(&context.template.benefit),
+            audience: format!("{:?}", context.template.restriction.subject_scope)
+                .to_ascii_lowercase(),
+            remaining,
+            active: coupon_context_is_catalog_visible(context, now_ms),
+            note: if context.template.display_name.trim().is_empty() {
+                context.campaign.display_name.clone()
+            } else {
+                context.template.display_name.clone()
+            },
+            expires_on: format_marketing_expires_on(context),
+            source: context.source.clone(),
+            discount_percent: benefit.discount_percent,
+            bonus_units: benefit.bonus_units,
+        },
+        benefit,
+    }
+}
+
+fn format_marketing_discount_label(benefit: &CouponBenefitSpec) -> String {
+    match benefit.benefit_kind {
+        MarketingBenefitKind::PercentageOff => benefit
+            .discount_percent
+            .map(|percent| format!("{percent}% off"))
+            .unwrap_or_else(|| "percentage off".to_owned()),
+        MarketingBenefitKind::FixedAmountOff => benefit
+            .discount_amount_minor
+            .map(format_quote_price_label)
+            .map(|label| format!("{label} off"))
+            .unwrap_or_else(|| "fixed amount off".to_owned()),
+        MarketingBenefitKind::GrantUnits => benefit
+            .grant_units
+            .map(|units| format!("+{} bonus units", format_integer_with_commas(units)))
+            .unwrap_or_else(|| "bonus units".to_owned()),
+    }
+}
+
+fn format_marketing_expires_on(context: &MarketingCouponContext) -> String {
+    context
+        .code
+        .expires_at_ms
+        .or(context.campaign.end_at_ms)
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "rolling".to_owned())
+}
+
+fn compute_coupon_subsidy_minor(list_price_cents: u64, benefit: &CouponBenefitSpec) -> u64 {
+    let subsidy = match benefit.benefit_kind {
+        MarketingBenefitKind::PercentageOff => benefit
+            .discount_percent
+            .map(|percent| list_price_cents.saturating_mul(percent as u64) / 100)
+            .unwrap_or(0),
+        MarketingBenefitKind::FixedAmountOff => benefit.discount_amount_minor.unwrap_or(0),
+        MarketingBenefitKind::GrantUnits => 0,
+    };
+
+    subsidy
+        .min(benefit.max_discount_minor.unwrap_or(u64::MAX))
+        .min(list_price_cents)
+}
+
+fn compute_coupon_reserve_amount_minor(list_price_cents: u64, benefit: &CouponBenefitSpec) -> u64 {
+    let subsidy_amount_minor = compute_coupon_subsidy_minor(list_price_cents, benefit);
+    if subsidy_amount_minor > 0 {
+        subsidy_amount_minor
+    } else if matches!(benefit.benefit_kind, MarketingBenefitKind::GrantUnits) {
+        1
+    } else {
+        0
+    }
+}
+
+fn validate_marketing_coupon_context(
+    context: &MarketingCouponContext,
+    target_kind: &str,
+    now_ms: u64,
+    order_amount_minor: u64,
+    reserve_amount_minor: u64,
+) -> CouponValidationDecision {
+    let decision = validate_coupon_stack(
+        &context.template,
+        &context.campaign,
+        &context.budget,
+        &context.code,
+        now_ms,
+        order_amount_minor,
+        reserve_amount_minor,
+    );
+    if !decision.eligible {
+        return decision;
+    }
+
+    if marketing_coupon_target_kind_allowed(&context.template, target_kind) {
+        decision
+    } else {
+        CouponValidationDecision::rejected("target_kind_not_eligible")
+    }
+}
+
+fn marketing_coupon_target_kind_allowed(
+    template: &CouponTemplateRecord,
+    target_kind: &str,
+) -> bool {
+    template.restriction.eligible_target_kinds.is_empty()
+        || template
+            .restriction
+            .eligible_target_kinds
+            .iter()
+            .any(|eligible| eligible == target_kind)
+}
+
+async fn reserve_order_coupon_if_needed<T>(
+    store: &T,
+    order_id: &str,
+    project_id: &str,
+    quote: &PortalCommerceQuote,
+    resolved_coupon: Option<&ResolvedCouponDefinition>,
+) -> CommerceResult<Option<ReservedMarketingCouponState>>
+where
+    T: AdminStore + ?Sized,
+{
+    let Some(resolved_coupon) = resolved_coupon else {
+        return Ok(None);
+    };
+    let Some(context) = resolved_coupon.marketing.as_ref() else {
+        return Ok(None);
+    };
+
+    let now_ms = current_time_ms()?;
+    let reserve_amount_minor =
+        compute_coupon_reserve_amount_minor(quote.list_price_cents, &context.template.benefit);
+    let decision = validate_marketing_coupon_context(
+        context,
+        quote.target_kind.as_str(),
+        now_ms,
+        quote.list_price_cents,
+        reserve_amount_minor,
+    );
+    if !decision.eligible {
+        return Err(CommerceError::InvalidInput(format!(
+            "coupon {} is not eligible: {}",
+            resolved_coupon.definition.coupon.code,
+            decision
+                .rejection_reason
+                .unwrap_or_else(|| "validation_failed".to_owned())
+        )));
+    }
+
+    let coupon_reservation_id = format!("coupon_reservation_{order_id}");
+    let (reserved_code, reservation) = reserve_coupon_redemption(
+        &context.code,
+        coupon_reservation_id.clone(),
+        MarketingSubjectScope::Project,
+        project_id.to_owned(),
+        decision.reservable_budget_minor,
+        now_ms,
+        DEFAULT_COUPON_RESERVATION_TTL_MS,
+    )
+    .map_err(|error| CommerceError::Conflict(error.to_string()))?;
+    store
+        .reserve_coupon_redemption_atomic(&AtomicCouponReservationCommand {
+            template_to_persist: (context.source != "marketing")
+                .then_some(context.template.clone()),
+            campaign_to_persist: (context.source != "marketing")
+                .then_some(context.campaign.clone()),
+            expected_budget: context.budget.clone(),
+            next_budget: reserve_campaign_budget(
+                &context.budget,
+                decision.reservable_budget_minor,
+                now_ms,
+            ),
+            expected_code: context.code.clone(),
+            next_code: code_after_reservation(
+                &context.template,
+                &context.code,
+                &reserved_code,
+                now_ms,
+            ),
+            reservation,
+        })
+        .await
+        .map_err(commerce_atomic_coupon_error)?;
+
+    Ok(Some(ReservedMarketingCouponState {
+        coupon_reservation_id,
+        marketing_campaign_id: context.campaign.marketing_campaign_id.clone(),
+        subsidy_amount_minor: compute_coupon_subsidy_minor(
+            quote.list_price_cents,
+            &context.template.benefit,
+        ),
+    }))
+}
+
+async fn confirm_order_coupon_if_needed<T>(
+    store: &T,
+    order: &mut CommerceOrderRecord,
+    payment_event_id: Option<&str>,
+) -> CommerceResult<()>
+where
+    T: AdminStore + ?Sized,
+{
+    let Some(coupon_reservation_id) = order.coupon_reservation_id.clone() else {
+        return Ok(());
+    };
+    if order.coupon_redemption_id.is_some() {
+        return Ok(());
+    }
+
+    let coupon_redemption_id = format!("coupon_redemption_{}", order.order_id);
+    let reservation = store
+        .find_coupon_reservation_record(&coupon_reservation_id)
+        .await
+        .map_err(CommerceError::from)?
+        .ok_or_else(|| {
+            CommerceError::Conflict(format!(
+                "coupon reservation {} not found for order {}",
+                coupon_reservation_id, order.order_id
+            ))
+        })?;
+    let now_ms = current_time_ms()?;
+    let context = load_order_marketing_context(store, order, now_ms).await?;
+    let (confirmed_reservation, redemption) = confirm_coupon_redemption(
+        &reservation,
+        coupon_redemption_id.clone(),
+        context.code.coupon_code_id.clone(),
+        context.template.coupon_template_id.clone(),
+        order.subsidy_amount_minor,
+        Some(order.order_id.clone()),
+        payment_event_id.map(str::to_owned),
+        now_ms,
+    )
+    .map_err(|error| CommerceError::Conflict(error.to_string()))?;
+    store
+        .confirm_coupon_redemption_atomic(&AtomicCouponConfirmationCommand {
+            expected_budget: context.budget.clone(),
+            next_budget: confirm_campaign_budget(
+                &context.budget,
+                reservation.budget_reserved_minor,
+                now_ms,
+            ),
+            expected_code: context.code.clone(),
+            next_code: code_after_confirmation(&context.template, &context.code, now_ms),
+            expected_reservation: reservation,
+            next_reservation: confirmed_reservation,
+            redemption,
+        })
+        .await
+        .map_err(commerce_atomic_coupon_error)?;
+    order.coupon_redemption_id = Some(coupon_redemption_id);
+    Ok(())
+}
+
+async fn release_order_coupon_reservation_if_needed<T>(
+    store: &T,
+    order: &mut CommerceOrderRecord,
+) -> CommerceResult<()>
+where
+    T: AdminStore + ?Sized,
+{
+    if order.coupon_redemption_id.is_some() {
+        return Ok(());
+    }
+    let Some(coupon_reservation_id) = order.coupon_reservation_id.clone() else {
+        return Ok(());
+    };
+
+    let Some(reservation) = store
+        .find_coupon_reservation_record(&coupon_reservation_id)
+        .await
+        .map_err(CommerceError::from)?
+    else {
+        return Ok(());
+    };
+    if reservation.reservation_status != CouponReservationStatus::Reserved {
+        return Ok(());
+    }
+
+    let now_ms = current_time_ms()?;
+    let context = load_order_marketing_context(store, order, now_ms).await?;
+    store
+        .release_coupon_reservation_atomic(&AtomicCouponReleaseCommand {
+            expected_budget: context.budget.clone(),
+            next_budget: release_campaign_budget(
+                &context.budget,
+                reservation.budget_reserved_minor,
+                now_ms,
+            ),
+            expected_code: context.code.clone(),
+            next_code: code_after_release(&context.template, &context.code, now_ms),
+            expected_reservation: reservation.clone(),
+            next_reservation: reservation
+                .with_status(CouponReservationStatus::Released)
+                .with_updated_at_ms(now_ms),
+        })
+        .await
+        .map_err(commerce_atomic_coupon_error)?;
+    Ok(())
+}
+
+async fn rollback_order_coupon_redemption_if_needed<T>(
+    store: &T,
+    order: &mut CommerceOrderRecord,
+    rollback_type: CouponRollbackType,
+) -> CommerceResult<()>
+where
+    T: AdminStore + ?Sized,
+{
+    let Some(coupon_redemption_id) = order.coupon_redemption_id.clone() else {
+        return Ok(());
+    };
+    let Some(redemption) = store
+        .find_coupon_redemption_record(&coupon_redemption_id)
+        .await
+        .map_err(CommerceError::from)?
+    else {
+        return Ok(());
+    };
+    if matches!(
+        redemption.redemption_status,
+        CouponRedemptionStatus::RolledBack | CouponRedemptionStatus::PartiallyRolledBack
+    ) {
+        return Ok(());
+    }
+
+    let reservation = store
+        .find_coupon_reservation_record(&redemption.coupon_reservation_id)
+        .await
+        .map_err(CommerceError::from)?;
+    let restored_budget_minor = reservation
+        .as_ref()
+        .map(|item| item.budget_reserved_minor)
+        .unwrap_or(redemption.subsidy_amount_minor);
+    let now_ms = current_time_ms()?;
+    let context = load_order_marketing_context(store, order, now_ms).await?;
+    let rollback_id = format!(
+        "coupon_rollback_{}_{}",
+        order.order_id,
+        match rollback_type {
+            CouponRollbackType::Cancel => "cancel",
+            CouponRollbackType::Refund => "refund",
+            CouponRollbackType::PartialRefund => "partial_refund",
+            CouponRollbackType::Manual => "manual",
+        }
+    );
+    let (rolled_back_redemption, rollback) = rollback_coupon_redemption(
+        &redemption,
+        rollback_id,
+        rollback_type,
+        restored_budget_minor,
+        if coupon_code_is_exclusive(&context.template) {
+            1
+        } else {
+            0
+        },
+        now_ms,
+    )
+    .map_err(|error| CommerceError::Conflict(error.to_string()))?;
+    store
+        .rollback_coupon_redemption_atomic(&AtomicCouponRollbackCommand {
+            expected_budget: context.budget.clone(),
+            next_budget: rollback_campaign_budget(&context.budget, restored_budget_minor, now_ms),
+            expected_code: context.code.clone(),
+            next_code: code_after_rollback(&context.template, &context.code, now_ms),
+            expected_redemption: redemption,
+            next_redemption: rolled_back_redemption,
+            rollback,
+        })
+        .await
+        .map_err(commerce_atomic_coupon_error)?;
+    Ok(())
+}
+
+async fn load_order_marketing_context<T>(
+    store: &T,
+    order: &CommerceOrderRecord,
+    now_ms: u64,
+) -> CommerceResult<MarketingCouponContext>
+where
+    T: AdminStore + ?Sized,
+{
+    let code_value = order
+        .applied_coupon_code
+        .as_deref()
+        .or_else(|| (order.target_kind == "coupon_redemption").then_some(order.target_id.as_str()))
+        .ok_or_else(|| {
+            CommerceError::Conflict(format!(
+                "order {} does not reference a marketing coupon",
+                order.order_id
+            ))
+        })?;
+    let normalized_code = normalize_coupon_code(code_value);
+    if let Some(code_record) = store
+        .find_coupon_code_record_by_value(&normalized_code)
+        .await
+        .map_err(CommerceError::from)?
+    {
+        let template = store
+            .find_coupon_template_record(&code_record.coupon_template_id)
+            .await
+            .map_err(CommerceError::from)?
+            .ok_or_else(|| {
+                CommerceError::Conflict(format!(
+                    "coupon template {} not found for order {}",
+                    code_record.coupon_template_id, order.order_id
+                ))
+            })?;
+        let campaigns = store
+            .list_marketing_campaign_records_for_template(&template.coupon_template_id)
+            .await
+            .map_err(CommerceError::from)?;
+        let campaign = order
+            .marketing_campaign_id
+            .as_deref()
+            .and_then(|marketing_campaign_id| {
+                campaigns
+                    .iter()
+                    .find(|record| record.marketing_campaign_id == marketing_campaign_id)
+                    .cloned()
+            })
+            .or_else(|| select_effective_marketing_campaign(campaigns.clone(), now_ms))
+            .or_else(|| {
+                campaigns.into_iter().max_by(|left, right| {
+                    left.updated_at_ms
+                        .cmp(&right.updated_at_ms)
+                        .then_with(|| left.marketing_campaign_id.cmp(&right.marketing_campaign_id))
+                })
+            })
+            .ok_or_else(|| {
+                CommerceError::Conflict(format!(
+                    "marketing campaign not found for order {}",
+                    order.order_id
+                ))
+            })?;
+        let budget = select_campaign_budget_record(
+            store
+                .list_campaign_budget_records_for_campaign(&campaign.marketing_campaign_id)
+                .await
+                .map_err(CommerceError::from)?,
+        )
+        .ok_or_else(|| {
+            CommerceError::Conflict(format!(
+                "campaign budget not found for order {}",
+                order.order_id
+            ))
+        })?;
+        return Ok(MarketingCouponContext {
+            template,
+            campaign,
+            budget,
+            code: code_record,
+            source: "marketing".to_owned(),
+        });
+    }
+
+    load_compatibility_marketing_coupon_context(store, &normalized_code)
+        .await?
+        .ok_or_else(|| {
+            CommerceError::Conflict(format!(
+                "coupon {} no longer resolves to a marketing context",
+                code_value
+            ))
+        })
+}
+
+fn coupon_code_is_exclusive(template: &CouponTemplateRecord) -> bool {
+    !matches!(
+        template.distribution_kind,
+        CouponDistributionKind::SharedCode
+    )
+}
+
+fn code_after_reservation(
+    template: &CouponTemplateRecord,
+    original_code: &CouponCodeRecord,
+    reserved_code: &CouponCodeRecord,
+    now_ms: u64,
+) -> CouponCodeRecord {
+    if coupon_code_is_exclusive(template) {
+        reserved_code.clone()
+    } else {
+        original_code.clone().with_updated_at_ms(now_ms)
+    }
+}
+
+fn code_after_confirmation(
+    template: &CouponTemplateRecord,
+    original_code: &CouponCodeRecord,
+    now_ms: u64,
+) -> CouponCodeRecord {
+    if coupon_code_is_exclusive(template) {
+        original_code
+            .clone()
+            .with_status(CouponCodeStatus::Redeemed)
+            .with_updated_at_ms(now_ms)
+    } else {
+        original_code.clone().with_updated_at_ms(now_ms)
+    }
+}
+
+fn code_after_release(
+    template: &CouponTemplateRecord,
+    original_code: &CouponCodeRecord,
+    now_ms: u64,
+) -> CouponCodeRecord {
+    if coupon_code_is_exclusive(template) {
+        restore_coupon_code_availability(original_code, now_ms)
+    } else {
+        original_code.clone().with_updated_at_ms(now_ms)
+    }
+}
+
+fn code_after_rollback(
+    template: &CouponTemplateRecord,
+    original_code: &CouponCodeRecord,
+    now_ms: u64,
+) -> CouponCodeRecord {
+    if coupon_code_is_exclusive(template) {
+        restore_coupon_code_availability(original_code, now_ms)
+    } else {
+        original_code.clone().with_updated_at_ms(now_ms)
+    }
+}
+
+fn restore_coupon_code_availability(
+    original_code: &CouponCodeRecord,
+    now_ms: u64,
+) -> CouponCodeRecord {
+    let next_status = if original_code
+        .expires_at_ms
+        .is_some_and(|value| now_ms > value)
+    {
+        CouponCodeStatus::Expired
+    } else {
+        CouponCodeStatus::Available
+    };
+    original_code
+        .clone()
+        .with_status(next_status)
+        .with_updated_at_ms(now_ms)
+}
+
+fn reserve_campaign_budget(
+    budget: &CampaignBudgetRecord,
+    reserved_amount_minor: u64,
+    now_ms: u64,
+) -> CampaignBudgetRecord {
+    let next_reserved = budget
+        .reserved_budget_minor
+        .saturating_add(reserved_amount_minor);
+    budget
+        .clone()
+        .with_reserved_budget_minor(next_reserved)
+        .with_status(campaign_budget_status_after_mutation(
+            budget.total_budget_minor,
+            next_reserved,
+            budget.consumed_budget_minor,
+            budget.status,
+        ))
+        .with_updated_at_ms(now_ms)
+}
+
+fn release_campaign_budget(
+    budget: &CampaignBudgetRecord,
+    released_amount_minor: u64,
+    now_ms: u64,
+) -> CampaignBudgetRecord {
+    let next_reserved = budget
+        .reserved_budget_minor
+        .saturating_sub(released_amount_minor);
+    budget
+        .clone()
+        .with_reserved_budget_minor(next_reserved)
+        .with_status(campaign_budget_status_after_mutation(
+            budget.total_budget_minor,
+            next_reserved,
+            budget.consumed_budget_minor,
+            budget.status,
+        ))
+        .with_updated_at_ms(now_ms)
+}
+
+fn confirm_campaign_budget(
+    budget: &CampaignBudgetRecord,
+    consumed_amount_minor: u64,
+    now_ms: u64,
+) -> CampaignBudgetRecord {
+    let next_reserved = budget
+        .reserved_budget_minor
+        .saturating_sub(consumed_amount_minor);
+    let next_consumed = budget
+        .consumed_budget_minor
+        .saturating_add(consumed_amount_minor);
+    budget
+        .clone()
+        .with_reserved_budget_minor(next_reserved)
+        .with_consumed_budget_minor(next_consumed)
+        .with_status(campaign_budget_status_after_mutation(
+            budget.total_budget_minor,
+            next_reserved,
+            next_consumed,
+            budget.status,
+        ))
+        .with_updated_at_ms(now_ms)
+}
+
+fn rollback_campaign_budget(
+    budget: &CampaignBudgetRecord,
+    restored_amount_minor: u64,
+    now_ms: u64,
+) -> CampaignBudgetRecord {
+    let next_consumed = budget
+        .consumed_budget_minor
+        .saturating_sub(restored_amount_minor);
+    budget
+        .clone()
+        .with_consumed_budget_minor(next_consumed)
+        .with_status(campaign_budget_status_after_mutation(
+            budget.total_budget_minor,
+            budget.reserved_budget_minor,
+            next_consumed,
+            budget.status,
+        ))
+        .with_updated_at_ms(now_ms)
+}
+
+fn campaign_budget_status_after_mutation(
+    total_budget_minor: u64,
+    reserved_budget_minor: u64,
+    consumed_budget_minor: u64,
+    prior_status: CampaignBudgetStatus,
+) -> CampaignBudgetStatus {
+    if matches!(
+        prior_status,
+        CampaignBudgetStatus::Closed | CampaignBudgetStatus::Draft
+    ) {
+        return prior_status;
+    }
+
+    let available_budget_minor = total_budget_minor
+        .saturating_sub(reserved_budget_minor)
+        .saturating_sub(consumed_budget_minor);
+    if available_budget_minor == 0 {
+        CampaignBudgetStatus::Exhausted
+    } else {
+        CampaignBudgetStatus::Active
+    }
+}
+
+async fn fulfill_order_on_create<T>(
+    store: &T,
+    normalized_user_id: &str,
+    normalized_project_id: &str,
+    quote: &PortalCommerceQuote,
+    order: &mut CommerceOrderRecord,
+) -> CommerceResult<()>
+where
+    T: AdminStore + CommerceQuotaStore + ?Sized,
+{
+    apply_quote_to_project_quota(store, normalized_project_id, quote).await?;
+    activate_project_membership_if_needed(store, normalized_user_id, normalized_project_id, quote)
+        .await?;
+    confirm_order_coupon_if_needed(store, order, None).await
 }
 
 async fn apply_quote_to_project_quota<T>(
@@ -811,6 +2124,75 @@ where
     Ok(())
 }
 
+async fn reverse_order_quota_effect<T>(
+    store: &T,
+    project_id: &str,
+    order: &CommerceOrderRecord,
+) -> CommerceResult<()>
+where
+    T: AdminStore + CommerceQuotaStore + ?Sized,
+{
+    let target_units = order.granted_units.saturating_add(order.bonus_units);
+    if target_units == 0 {
+        return Ok(());
+    }
+
+    if let Some(membership) = store
+        .find_project_membership(project_id)
+        .await
+        .map_err(CommerceError::from)?
+    {
+        if membership.updated_at_ms > order.created_at_ms {
+            return Err(CommerceError::Conflict(format!(
+                "order {} cannot be refunded safely after subscription changes",
+                order.order_id
+            )));
+        }
+    }
+
+    let effective_policy = load_effective_quota_policy(store, project_id)
+        .await?
+        .ok_or_else(|| {
+            CommerceError::Conflict(format!(
+                "order {} cannot be refunded because no active quota policy exists",
+                order.order_id
+            ))
+        })?;
+
+    if effective_policy.max_units < target_units {
+        return Err(CommerceError::Conflict(format!(
+            "order {} cannot be refunded because quota baseline drifted",
+            order.order_id
+        )));
+    }
+
+    let used_units = store
+        .list_ledger_entries_for_project(project_id)
+        .await
+        .map_err(CommerceError::from)?
+        .into_iter()
+        .map(|entry| entry.units)
+        .sum::<u64>();
+    let remaining_units = effective_policy.max_units.saturating_sub(used_units);
+    if remaining_units < target_units {
+        return Err(CommerceError::Conflict(format!(
+            "order {} cannot be refunded because recharge headroom has already been consumed",
+            order.order_id
+        )));
+    }
+
+    let next_policy = QuotaPolicy::new(
+        effective_policy.policy_id,
+        project_id.to_owned(),
+        effective_policy.max_units.saturating_sub(target_units),
+    );
+    store
+        .insert_quota_policy(&next_policy)
+        .await
+        .map_err(CommerceError::from)?;
+    Ok(())
+}
+
 async fn load_effective_quota_policy<T>(
     store: &T,
     project_id: &str,
@@ -831,65 +2213,15 @@ where
         }))
 }
 
-async fn consume_live_coupon_if_needed(
-    store: &dyn AdminStore,
-    coupon: Option<&PortalAppliedCoupon>,
-) -> CommerceResult<()> {
-    let Some(coupon) = coupon else {
-        return Ok(());
-    };
-    if coupon.source != "live" {
-        return Ok(());
-    }
-
-    let definition = find_coupon_definition(store, &coupon.code).await?;
-    if definition.coupon.source != "live" {
-        return Ok(());
-    }
-    if definition.coupon.remaining == 0 {
-        return Err(CommerceError::InvalidInput(format!(
-            "coupon {} is no longer available",
-            definition.coupon.code
-        )));
-    }
-
-    let persisted_coupon = store
-        .find_coupon(&definition.coupon.id)
-        .await
-        .map_err(CommerceError::from)?
-        .ok_or_else(|| {
-            CommerceError::NotFound(format!("coupon {} not found", definition.coupon.code))
-        })?;
-    if persisted_coupon.remaining == 0 {
-        return Err(CommerceError::InvalidInput(format!(
-            "coupon {} is no longer available",
-            persisted_coupon.code
-        )));
-    }
-
-    store
-        .insert_coupon(&CouponCampaign {
-            id: persisted_coupon.id,
-            code: persisted_coupon.code,
-            discount_label: persisted_coupon.discount_label,
-            audience: persisted_coupon.audience,
-            remaining: persisted_coupon.remaining.saturating_sub(1),
-            active: persisted_coupon.active,
-            note: persisted_coupon.note,
-            expires_on: persisted_coupon.expires_on,
-            created_at_ms: persisted_coupon.created_at_ms,
-        })
-        .await
-        .map_err(CommerceError::from)?;
-    Ok(())
-}
-
-async fn activate_project_membership_if_needed(
-    store: &dyn AdminStore,
+async fn activate_project_membership_if_needed<T>(
+    store: &T,
     user_id: &str,
     project_id: &str,
     quote: &PortalCommerceQuote,
-) -> CommerceResult<()> {
+) -> CommerceResult<()>
+where
+    T: AdminStore + ?Sized,
+{
     if quote.target_kind != "subscription_plan" {
         return Ok(());
     }
@@ -925,6 +2257,13 @@ fn should_fulfill_on_order_create(quote: &PortalCommerceQuote) -> bool {
     quote.target_kind == "coupon_redemption"
 }
 
+fn supports_safe_order_refund(order: &CommerceOrderRecord) -> bool {
+    matches!(
+        order.target_kind.as_str(),
+        "recharge_pack" | "custom_recharge"
+    ) && order.payable_price_cents > 0
+}
+
 fn initial_order_status(quote: &PortalCommerceQuote) -> &'static str {
     if should_fulfill_on_order_create(quote) {
         "fulfilled"
@@ -933,14 +2272,19 @@ fn initial_order_status(quote: &PortalCommerceQuote) -> &'static str {
     }
 }
 
-async fn load_project_commerce_order(
-    store: &dyn AdminStore,
+async fn load_project_commerce_order<T>(
+    store: &T,
     user_id: &str,
     project_id: &str,
     order_id: &str,
-) -> CommerceResult<CommerceOrderRecord> {
-    let order = list_project_commerce_orders(store, project_id)
-        .await?
+) -> CommerceResult<CommerceOrderRecord>
+where
+    T: AdminStore + ?Sized,
+{
+    let order = store
+        .list_commerce_orders_for_project(project_id)
+        .await
+        .map_err(CommerceError::from)?
         .into_iter()
         .find(|candidate| candidate.order_id == order_id)
         .ok_or_else(|| CommerceError::NotFound(format!("order {order_id} not found")))?;
@@ -952,6 +2296,253 @@ async fn load_project_commerce_order(
     }
 
     Ok(order)
+}
+
+fn resolve_checkout_method_for_payment_event(
+    order: &CommerceOrderRecord,
+    request: &PortalCommercePaymentEventRequest,
+) -> CommerceResult<Option<PortalCommerceCheckoutSessionMethod>> {
+    let Some(checkout_method_id) = request
+        .checkout_method_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+
+    build_supported_checkout_methods(order)
+        .into_iter()
+        .find(|candidate| candidate.id == checkout_method_id)
+        .map(Some)
+        .ok_or_else(|| {
+            CommerceError::InvalidInput(format!(
+                "checkout_method_id {checkout_method_id} is not available for order {}",
+                order.order_id
+            ))
+        })
+}
+
+fn resolve_commerce_payment_event_identity(
+    order_id: &str,
+    request: &PortalCommercePaymentEventRequest,
+    checkout_method: Option<PortalCommerceCheckoutSessionMethod>,
+) -> CommerceResult<(String, Option<String>, String)> {
+    let event_type = request.event_type.trim();
+    let provider = request
+        .provider
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(normalize_commerce_payment_provider)
+        .transpose()?;
+    let provider_event_id = request
+        .provider_event_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+    let checkout_method_provider = checkout_method
+        .as_ref()
+        .map(|method| method.provider.clone());
+
+    if checkout_method
+        .as_ref()
+        .is_some_and(|method| method.supports_webhook)
+        && provider_event_id.is_none()
+    {
+        return Err(CommerceError::InvalidInput(
+            "provider_event_id is required for webhook-backed checkout methods".to_owned(),
+        ));
+    }
+
+    let provider = match (provider, checkout_method_provider) {
+        (Some(provider), Some(method_provider)) => {
+            if provider != method_provider {
+                return Err(CommerceError::InvalidInput(format!(
+                    "checkout_method_id belongs to provider {method_provider}, but request provider is {provider}"
+                )));
+            }
+            Some(provider)
+        }
+        (Some(provider), None) => Some(provider),
+        (None, Some(method_provider)) => Some(method_provider),
+        (None, None) => None,
+    };
+
+    if provider.as_ref().is_some_and(|provider| {
+        provider != COMMERCE_PAYMENT_PROVIDER_MANUAL_LAB
+            && provider != COMMERCE_PAYMENT_PROVIDER_NO_PAYMENT_REQUIRED
+    }) && provider_event_id.is_none()
+    {
+        return Err(CommerceError::InvalidInput(
+            "provider_event_id is required for provider-backed payment events".to_owned(),
+        ));
+    }
+
+    match (provider, provider_event_id) {
+        (Some(provider), Some(provider_event_id)) => Ok((
+            provider.clone(),
+            Some(provider_event_id.clone()),
+            format!("{provider}:{provider_event_id}"),
+        )),
+        (Some(provider), None) => Ok((
+            provider.clone(),
+            None,
+            format!("{provider}:{order_id}:{event_type}"),
+        )),
+        (None, Some(_)) => Err(CommerceError::InvalidInput(
+            "provider is required when provider_event_id is set".to_owned(),
+        )),
+        (None, None) => Ok((
+            COMMERCE_PAYMENT_PROVIDER_MANUAL_LAB.to_owned(),
+            None,
+            format!("{COMMERCE_PAYMENT_PROVIDER_MANUAL_LAB}:{order_id}:{event_type}"),
+        )),
+    }
+}
+
+fn normalize_commerce_payment_provider(value: &str) -> CommerceResult<String> {
+    let provider = match value.trim().to_ascii_lowercase().as_str() {
+        "manual" | "manual_lab" | "operator_settlement" => COMMERCE_PAYMENT_PROVIDER_MANUAL_LAB,
+        "stripe" | "stripe_checkout" | "stripe_hosted" => COMMERCE_PAYMENT_PROVIDER_STRIPE,
+        "alipay" | "alipay_qr" | "alipay_scan" => COMMERCE_PAYMENT_PROVIDER_ALIPAY,
+        "wechat" | "wechat_pay" | "wechatpay" | "wxpay" | "wechat_qr" | "wechat_pay_qr" => {
+            COMMERCE_PAYMENT_PROVIDER_WECHAT_PAY
+        }
+        _ => {
+            return Err(CommerceError::InvalidInput(format!(
+                "unsupported commerce payment provider: {value}"
+            )));
+        }
+    };
+
+    Ok(provider.to_owned())
+}
+
+async fn ensure_refund_provider_matches_order_settlement<T>(
+    store: &T,
+    order: &CommerceOrderRecord,
+    refund_provider: &str,
+) -> CommerceResult<()>
+where
+    T: AdminStore + ?Sized,
+{
+    let settled_provider = resolve_processed_settlement_provider_for_order(store, order).await?;
+    if refund_provider != settled_provider {
+        return Err(CommerceError::Conflict(format!(
+            "refund provider {refund_provider} does not match settled provider {settled_provider} for order {}",
+            order.order_id
+        )));
+    }
+
+    Ok(())
+}
+
+async fn resolve_processed_settlement_provider_for_order<T>(
+    store: &T,
+    order: &CommerceOrderRecord,
+) -> CommerceResult<String>
+where
+    T: AdminStore + ?Sized,
+{
+    let settled_provider = store
+        .list_commerce_payment_events_for_order(&order.order_id)
+        .await
+        .map_err(CommerceError::from)?
+        .into_iter()
+        .filter(|event| {
+            event.event_type == "settled"
+                && matches!(
+                    event.processing_status,
+                    CommercePaymentEventProcessingStatus::Processed
+                )
+                && event.order_status_after.as_deref() == Some("fulfilled")
+        })
+        .max_by_key(|event| event.processed_at_ms.unwrap_or(event.received_at_ms))
+        .map(|event| event.provider)
+        .unwrap_or_else(|| COMMERCE_PAYMENT_PROVIDER_MANUAL_LAB.to_owned());
+
+    Ok(settled_provider)
+}
+
+fn build_commerce_payment_event_record(
+    order: &CommerceOrderRecord,
+    request: &PortalCommercePaymentEventRequest,
+    provider: String,
+    provider_event_id: Option<String>,
+    dedupe_key: String,
+    received_at_ms: u64,
+    existing_payment_event_id: Option<&str>,
+) -> CommerceResult<CommercePaymentEventRecord> {
+    let payment_event_id = match existing_payment_event_id {
+        Some(payment_event_id) => payment_event_id.to_owned(),
+        None => generate_entity_id("commerce_payment_event")?,
+    };
+    let payload_json =
+        serde_json::to_string(request).map_err(|error| CommerceError::Storage(error.into()))?;
+
+    Ok(CommercePaymentEventRecord::new(
+        payment_event_id,
+        order.order_id.clone(),
+        order.project_id.clone(),
+        order.user_id.clone(),
+        provider,
+        dedupe_key,
+        request.event_type.trim(),
+        payload_json,
+        received_at_ms,
+    )
+    .with_provider_event_id(provider_event_id))
+}
+
+fn finalize_commerce_payment_event(
+    event: CommercePaymentEventRecord,
+    processing_status: CommercePaymentEventProcessingStatus,
+    processing_message: Option<String>,
+    order_status_after: Option<String>,
+    processed_at_ms: Option<u64>,
+) -> CommercePaymentEventRecord {
+    event
+        .with_processing_status(processing_status)
+        .with_processing_message(processing_message)
+        .with_order_status_after(order_status_after)
+        .with_processed_at_ms(processed_at_ms)
+}
+
+fn commerce_payment_event_status_for_error(
+    error: &CommerceError,
+) -> CommercePaymentEventProcessingStatus {
+    match error {
+        CommerceError::Storage(_) => CommercePaymentEventProcessingStatus::Failed,
+        CommerceError::InvalidInput(_)
+        | CommerceError::NotFound(_)
+        | CommerceError::Conflict(_) => CommercePaymentEventProcessingStatus::Rejected,
+    }
+}
+
+async fn persist_commerce_payment_event(
+    store: &dyn AdminStore,
+    payment_event: CommercePaymentEventRecord,
+) -> CommerceResult<CommercePaymentEventRecord> {
+    match store.upsert_commerce_payment_event(&payment_event).await {
+        Ok(event) => Ok(event),
+        Err(error) => {
+            if let Some(existing_event) = store
+                .find_commerce_payment_event_by_dedupe_key(&payment_event.dedupe_key)
+                .await
+                .map_err(CommerceError::from)?
+            {
+                if existing_event.order_id != payment_event.order_id {
+                    return Err(CommerceError::Conflict(format!(
+                        "payment event {} already belongs to order {}",
+                        payment_event.dedupe_key, existing_event.order_id
+                    )));
+                }
+            }
+            Err(CommerceError::Storage(error))
+        }
+    }
 }
 
 async fn fail_portal_commerce_order(
@@ -998,7 +2589,9 @@ async fn fail_portal_commerce_order(
         }
     }
 
+    release_order_coupon_reservation_if_needed(store, &mut order).await?;
     order.status = "failed".to_owned();
+    order.updated_at_ms = current_time_ms()?;
     store
         .insert_commerce_order(&order)
         .await
@@ -1006,21 +2599,9 @@ async fn fail_portal_commerce_order(
 }
 
 async fn load_order_settlement_quote(
-    store: &dyn AdminStore,
+    _store: &dyn AdminStore,
     order: &CommerceOrderRecord,
 ) -> CommerceResult<PortalCommerceQuote> {
-    let settlement_preview = preview_portal_commerce_quote(
-        store,
-        &PortalCommerceQuoteRequest {
-            target_kind: order.target_kind.clone(),
-            target_id: order.target_id.clone(),
-            coupon_code: order.applied_coupon_code.clone(),
-            current_remaining_units: None,
-            custom_amount_cents: None,
-        },
-    )
-    .await?;
-
     Ok(PortalCommerceQuote {
         target_kind: order.target_kind.clone(),
         target_id: order.target_id.clone(),
@@ -1031,11 +2612,36 @@ async fn load_order_settlement_quote(
         payable_price_label: order.payable_price_label.clone(),
         granted_units: order.granted_units,
         bonus_units: order.bonus_units,
-        amount_cents: settlement_preview.amount_cents,
+        amount_cents: if order.target_kind == "custom_recharge" {
+            Some(order.list_price_cents)
+        } else {
+            None
+        },
         projected_remaining_units: None,
-        applied_coupon: settlement_preview.applied_coupon,
-        pricing_rule_label: settlement_preview.pricing_rule_label,
-        effective_ratio_label: settlement_preview.effective_ratio_label,
+        applied_coupon: order
+            .applied_coupon_code
+            .as_ref()
+            .map(|code| PortalAppliedCoupon {
+                code: code.clone(),
+                discount_label: code.clone(),
+                source: "order_snapshot".to_owned(),
+                discount_percent: None,
+                bonus_units: order.bonus_units,
+            }),
+        pricing_rule_label: if order.target_kind == "custom_recharge" {
+            Some("Tiered custom recharge".to_owned())
+        } else {
+            None
+        },
+        effective_ratio_label: if order.target_kind == "custom_recharge"
+            && order.list_price_cents > 0
+        {
+            Some(format_effective_ratio_label(
+                order.granted_units / order.list_price_cents.max(1),
+            ))
+        } else {
+            None
+        },
         source: order.source.clone(),
     })
 }
@@ -1062,30 +2668,34 @@ fn build_checkout_session(order: &CommerceOrderRecord) -> PortalCommerceCheckout
             "This checkout session is closed because the order was canceled before settlement."
         }
         (_, "failed") => "This checkout session is closed because the payment flow failed.",
+        (_, "refunded") => {
+            "This checkout session is closed because the order was refunded and quota side effects were rolled back."
+        }
         _ => "This checkout session describes how the current order can move through the payment rail.",
     };
 
     let (session_status, provider, mode, methods) = match order.status.as_str() {
         "pending_payment" => (
             "open",
-            "manual_lab",
-            "operator_settlement",
-            build_open_checkout_methods(order),
+            COMMERCE_PAYMENT_PROVIDER_MANUAL_LAB,
+            COMMERCE_PAYMENT_CHANNEL_OPERATOR_SETTLEMENT,
+            build_supported_checkout_methods(order),
         ),
         "fulfilled"
             if order.target_kind == "coupon_redemption" || order.payable_price_cents == 0 =>
         {
             (
                 "not_required",
-                "no_payment_required",
+                COMMERCE_PAYMENT_PROVIDER_NO_PAYMENT_REQUIRED,
                 "instant_fulfillment",
                 Vec::new(),
             )
         }
-        "fulfilled" => ("settled", "manual_lab", "closed", Vec::new()),
-        "canceled" => ("canceled", "manual_lab", "closed", Vec::new()),
-        "failed" => ("failed", "manual_lab", "closed", Vec::new()),
-        _ => ("closed", "manual_lab", "closed", Vec::new()),
+        "fulfilled" => ("settled", COMMERCE_PAYMENT_PROVIDER_MANUAL_LAB, "closed", Vec::new()),
+        "canceled" => ("canceled", COMMERCE_PAYMENT_PROVIDER_MANUAL_LAB, "closed", Vec::new()),
+        "failed" => ("failed", COMMERCE_PAYMENT_PROVIDER_MANUAL_LAB, "closed", Vec::new()),
+        "refunded" => ("refunded", COMMERCE_PAYMENT_PROVIDER_MANUAL_LAB, "closed", Vec::new()),
+        _ => ("closed", COMMERCE_PAYMENT_PROVIDER_MANUAL_LAB, "closed", Vec::new()),
     };
 
     PortalCommerceCheckoutSession {
@@ -1101,40 +2711,159 @@ fn build_checkout_session(order: &CommerceOrderRecord) -> PortalCommerceCheckout
     }
 }
 
-fn build_open_checkout_methods(
+fn build_supported_checkout_methods(
     order: &CommerceOrderRecord,
 ) -> Vec<PortalCommerceCheckoutSessionMethod> {
     let mut methods = vec![
-        PortalCommerceCheckoutSessionMethod {
-            id: "manual_settlement".to_owned(),
-            label: "Manual settlement".to_owned(),
-            detail:
-                "Use the portal settlement action in desktop or lab mode to finalize the order."
-                    .to_owned(),
-            action: "settle_order".to_owned(),
-            availability: "available".to_owned(),
-        },
-        PortalCommerceCheckoutSessionMethod {
-            id: "cancel_order".to_owned(),
-            label: "Cancel checkout".to_owned(),
-            detail: "Close the pending order without applying quota or membership side effects."
-                .to_owned(),
-            action: "cancel_order".to_owned(),
-            availability: "available".to_owned(),
-        },
+        build_checkout_session_method(
+            order,
+            "manual_settlement",
+            "Manual settlement",
+            "Use the portal settlement action in desktop or lab mode to finalize the order.",
+            "settle_order",
+            "available",
+            COMMERCE_PAYMENT_PROVIDER_MANUAL_LAB,
+            COMMERCE_PAYMENT_CHANNEL_OPERATOR_SETTLEMENT,
+            "operator_action",
+            "MANUAL",
+            None,
+            "manual",
+            true,
+            false,
+            false,
+            false,
+        ),
+        build_checkout_session_method(
+            order,
+            "cancel_order",
+            "Cancel checkout",
+            "Close the pending order without applying quota or membership side effects.",
+            "cancel_order",
+            "available",
+            COMMERCE_PAYMENT_PROVIDER_MANUAL_LAB,
+            COMMERCE_PAYMENT_CHANNEL_OPERATOR_SETTLEMENT,
+            "operator_action",
+            "CANCEL",
+            None,
+            "manual",
+            false,
+            false,
+            false,
+            false,
+        ),
     ];
 
     if order.payable_price_cents > 0 {
-        methods.push(PortalCommerceCheckoutSessionMethod {
-            id: "provider_handoff".to_owned(),
-            label: "Provider handoff".to_owned(),
-            detail: "Reserved seam for Stripe, Alipay, WeChat Pay, or other hosted payment providers in server mode.".to_owned(),
-            action: "provider_handoff".to_owned(),
-            availability: "planned".to_owned(),
-        });
+        methods.extend([
+            build_checkout_session_method(
+                order,
+                "stripe_checkout",
+                "Stripe checkout",
+                "Hosted card and wallet checkout rail for global business payments, subscriptions, and webhook-driven settlement.",
+                "provider_handoff",
+                "planned",
+                COMMERCE_PAYMENT_PROVIDER_STRIPE,
+                COMMERCE_PAYMENT_CHANNEL_HOSTED_CHECKOUT,
+                "hosted_checkout",
+                "STRIPE",
+                None,
+                "stripe_signature",
+                true,
+                true,
+                true,
+                true,
+            ),
+            build_checkout_session_method(
+                order,
+                "alipay_qr",
+                "Alipay QR",
+                "Mainland China scan-to-pay rail for consumer and enterprise Alipay settlement with callback confirmation.",
+                "provider_handoff",
+                "planned",
+                COMMERCE_PAYMENT_PROVIDER_ALIPAY,
+                COMMERCE_PAYMENT_CHANNEL_SCAN_QR,
+                "qr_code",
+                "ALIPAY",
+                Some(build_checkout_qr_payload("alipay_qr", &order.order_id)),
+                "alipay_rsa_sha256",
+                true,
+                false,
+                false,
+                true,
+            ),
+            build_checkout_session_method(
+                order,
+                "wechat_pay_qr",
+                "WeChat Pay QR",
+                "Native WeChat Pay scan rail for real-time QR settlement, webhook confirmation, and refund lifecycle callbacks.",
+                "provider_handoff",
+                "planned",
+                COMMERCE_PAYMENT_PROVIDER_WECHAT_PAY,
+                COMMERCE_PAYMENT_CHANNEL_SCAN_QR,
+                "qr_code",
+                "WECHAT",
+                Some(build_checkout_qr_payload("wechat_pay_qr", &order.order_id)),
+                "wechatpay_rsa_sha256",
+                true,
+                false,
+                false,
+                true,
+            ),
+        ]);
     }
 
     methods
+}
+
+fn build_checkout_session_method(
+    order: &CommerceOrderRecord,
+    id: &str,
+    label: &str,
+    detail: &str,
+    action: &str,
+    availability: &str,
+    provider: &str,
+    channel: &str,
+    session_kind: &str,
+    session_reference_prefix: &str,
+    qr_code_payload: Option<String>,
+    webhook_verification: &str,
+    supports_refund: bool,
+    supports_partial_refund: bool,
+    recommended: bool,
+    supports_webhook: bool,
+) -> PortalCommerceCheckoutSessionMethod {
+    PortalCommerceCheckoutSessionMethod {
+        id: id.to_owned(),
+        label: label.to_owned(),
+        detail: detail.to_owned(),
+        action: action.to_owned(),
+        availability: availability.to_owned(),
+        provider: provider.to_owned(),
+        channel: channel.to_owned(),
+        session_kind: session_kind.to_owned(),
+        session_reference: build_checkout_session_reference(
+            session_reference_prefix,
+            &order.order_id,
+        ),
+        qr_code_payload,
+        webhook_verification: webhook_verification.to_owned(),
+        supports_refund,
+        supports_partial_refund,
+        recommended,
+        supports_webhook,
+    }
+}
+
+fn build_checkout_session_reference(prefix: &str, order_id: &str) -> String {
+    format!("{prefix}-{}", normalize_payment_reference(order_id))
+}
+
+fn build_checkout_qr_payload(method_id: &str, order_id: &str) -> String {
+    format!(
+        "sdkworkpay://{method_id}/{}",
+        normalize_payment_reference(order_id)
+    )
 }
 
 fn normalize_payment_reference(order_id: &str) -> String {
@@ -1350,13 +3079,11 @@ fn resolve_custom_recharge_amount_cents(
         }
     }
 
-    let amount_cents = request_amount_cents
-        .or(amount_from_target)
-        .ok_or_else(|| {
-            CommerceError::InvalidInput(
-                "custom_amount_cents is required for custom_recharge".to_owned(),
-            )
-        })?;
+    let amount_cents = request_amount_cents.or(amount_from_target).ok_or_else(|| {
+        CommerceError::InvalidInput(
+            "custom_amount_cents is required for custom_recharge".to_owned(),
+        )
+    })?;
 
     validate_custom_recharge_amount_cents(amount_cents)?;
     Ok(amount_cents)
@@ -1529,7 +3256,8 @@ fn custom_recharge_rule_seeds() -> Vec<CustomRechargeRuleSeed> {
             min_amount_cents: 1_000,
             max_amount_cents: 4_500,
             units_per_cent: 25,
-            note: "Entry custom recharges restore balance quickly while preserving the starter ratio.",
+            note:
+                "Entry custom recharges restore balance quickly while preserving the starter ratio.",
         },
         CustomRechargeRuleSeed {
             id: "tier-growth",

@@ -35,6 +35,30 @@ async fn chat_stream_route_accepts_requests() {
     assert_eq!(response.status(), StatusCode::OK);
 }
 
+#[serial(extension_env)]
+#[tokio::test]
+async fn chat_stream_route_returns_invalid_request_for_missing_model() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/chat/completions")
+                .header("content-type", "application/json")
+                .body(Body::from("{\"model\":\"\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"stream\":true}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = read_body(response).await;
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(json["error"]["message"], "Chat completion model is required.");
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "invalid_model");
+}
+
 async fn read_body(response: axum::response::Response) -> String {
     let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
@@ -51,6 +75,40 @@ async fn memory_pool() -> SqlitePool {
 #[derive(Clone, Default)]
 struct UpstreamCaptureState {
     authorization: Arc<Mutex<Option<String>>>,
+}
+
+#[serial(extension_env)]
+#[tokio::test]
+async fn stateful_chat_stream_route_returns_invalid_request_for_missing_model_without_usage() {
+    let pool = memory_pool().await;
+    let api_key = support::issue_gateway_api_key(&pool, "tenant-chat-stream-invalid", "project-chat-stream-invalid").await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+
+    let response = gateway_app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/chat/completions")
+                .header("authorization", format!("Bearer {api_key}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"model\":\"\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"stream\":true}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = read_body(response).await;
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(json["error"]["message"], "Chat completion model is required.");
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "invalid_model");
+
+    support::assert_no_usage_records(admin_app, &admin_token).await;
 }
 
 #[serial(extension_env)]
@@ -604,7 +662,6 @@ fn sign_native_dynamic_package(
     signing_key: &SigningKey,
 ) -> String {
     use ed25519_dalek::Signer;
-    use sha2::{Digest, Sha256};
 
     #[derive(serde::Serialize)]
     struct PackageSignaturePayload<'a> {
@@ -631,7 +688,7 @@ fn sign_native_dynamic_package(
                 .unwrap()
                 .to_string_lossy()
                 .replace('\\', "/"),
-            sha256: format!("{:x}", Sha256::digest(std::fs::read(&path).unwrap())),
+            sha256: support::sha256_hex_path(&path),
         })
         .collect::<Vec<_>>();
 

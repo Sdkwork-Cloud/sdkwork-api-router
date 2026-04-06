@@ -71,6 +71,25 @@ async fn container_retrieve_route_returns_ok() {
 
 #[serial(extension_env)]
 #[tokio::test]
+async fn container_retrieve_route_returns_not_found_for_unknown_container() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/containers/container_missing")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested container was not found.").await;
+}
+
+#[serial(extension_env)]
+#[tokio::test]
 async fn container_delete_route_returns_ok() {
     let app = sdkwork_api_interface_http::gateway_router();
     let response = app
@@ -86,6 +105,25 @@ async fn container_delete_route_returns_ok() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[serial(extension_env)]
+#[tokio::test]
+async fn container_delete_route_returns_not_found_for_unknown_container() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/v1/containers/container_missing")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested container was not found.").await;
 }
 
 #[serial(extension_env)]
@@ -110,6 +148,26 @@ async fn container_file_create_route_returns_ok() {
 
 #[serial(extension_env)]
 #[tokio::test]
+async fn container_file_create_route_returns_not_found_for_unknown_container() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/containers/container_missing/files")
+                .header("content-type", "application/json")
+                .body(Body::from("{\"file_id\":\"file_1\"}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested container was not found.").await;
+}
+
+#[serial(extension_env)]
+#[tokio::test]
 async fn container_files_list_route_returns_ok() {
     let app = sdkwork_api_interface_http::gateway_router();
     let response = app
@@ -125,6 +183,25 @@ async fn container_files_list_route_returns_ok() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[serial(extension_env)]
+#[tokio::test]
+async fn container_files_list_route_returns_not_found_for_unknown_container() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/containers/container_missing/files")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested container was not found.").await;
 }
 
 #[serial(extension_env)]
@@ -148,6 +225,25 @@ async fn container_file_retrieve_route_returns_ok() {
 
 #[serial(extension_env)]
 #[tokio::test]
+async fn container_file_retrieve_route_returns_not_found_for_unknown_file() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/containers/container_1/files/file_missing")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested container file was not found.").await;
+}
+
+#[serial(extension_env)]
+#[tokio::test]
 async fn container_file_delete_route_returns_ok() {
     let app = sdkwork_api_interface_http::gateway_router();
     let response = app
@@ -167,6 +263,25 @@ async fn container_file_delete_route_returns_ok() {
 
 #[serial(extension_env)]
 #[tokio::test]
+async fn container_file_delete_route_returns_not_found_for_unknown_file() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/v1/containers/container_1/files/file_missing")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested container file was not found.").await;
+}
+
+#[serial(extension_env)]
+#[tokio::test]
 async fn container_file_content_route_returns_ok() {
     let app = sdkwork_api_interface_http::gateway_router();
     let response = app
@@ -182,6 +297,32 @@ async fn container_file_content_route_returns_ok() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[serial(extension_env)]
+#[tokio::test]
+async fn container_file_content_route_returns_not_found_error_for_unknown_file() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/containers/container_1/files/file_missing/content")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(
+        json["error"]["message"],
+        "Requested container file was not found."
+    );
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
 }
 
 #[serial(extension_env)]
@@ -1252,11 +1393,209 @@ async fn stateful_container_file_create_usage_uses_created_container_file_id_for
     );
 }
 
+#[serial(extension_env)]
+#[tokio::test]
+async fn stateful_container_retrieve_route_returns_not_found_without_usage() {
+    let ctx = local_containers_test_context(
+        "tenant-container-retrieve-missing",
+        "project-container-retrieve-missing",
+    )
+    .await;
+
+    let response = ctx
+        .gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/containers/container_missing")
+                .header("authorization", format!("Bearer {}", ctx.api_key))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested container was not found.").await;
+    support::assert_no_usage_records(ctx.admin_app, &ctx.admin_token).await;
+}
+
+#[serial(extension_env)]
+#[tokio::test]
+async fn stateful_container_delete_route_returns_not_found_without_usage() {
+    let ctx = local_containers_test_context(
+        "tenant-container-delete-missing",
+        "project-container-delete-missing",
+    )
+    .await;
+
+    let response = ctx
+        .gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/v1/containers/container_missing")
+                .header("authorization", format!("Bearer {}", ctx.api_key))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested container was not found.").await;
+    support::assert_no_usage_records(ctx.admin_app, &ctx.admin_token).await;
+}
+
+#[serial(extension_env)]
+#[tokio::test]
+async fn stateful_container_file_create_route_returns_not_found_without_usage() {
+    let ctx = local_containers_test_context(
+        "tenant-container-file-create-missing",
+        "project-container-file-create-missing",
+    )
+    .await;
+
+    let response = ctx
+        .gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/containers/container_missing/files")
+                .header("authorization", format!("Bearer {}", ctx.api_key))
+                .header("content-type", "application/json")
+                .body(Body::from("{\"file_id\":\"file_1\"}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested container was not found.").await;
+    support::assert_no_usage_records(ctx.admin_app, &ctx.admin_token).await;
+}
+
+#[serial(extension_env)]
+#[tokio::test]
+async fn stateful_container_files_list_route_returns_not_found_without_usage() {
+    let ctx = local_containers_test_context(
+        "tenant-container-files-list-missing",
+        "project-container-files-list-missing",
+    )
+    .await;
+
+    let response = ctx
+        .gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/containers/container_missing/files")
+                .header("authorization", format!("Bearer {}", ctx.api_key))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested container was not found.").await;
+    support::assert_no_usage_records(ctx.admin_app, &ctx.admin_token).await;
+}
+
+#[serial(extension_env)]
+#[tokio::test]
+async fn stateful_container_file_retrieve_route_returns_not_found_without_usage() {
+    let ctx = local_containers_test_context(
+        "tenant-container-file-retrieve-missing",
+        "project-container-file-retrieve-missing",
+    )
+    .await;
+
+    let response = ctx
+        .gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/containers/container_1/files/file_missing")
+                .header("authorization", format!("Bearer {}", ctx.api_key))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested container file was not found.").await;
+    support::assert_no_usage_records(ctx.admin_app, &ctx.admin_token).await;
+}
+
+#[serial(extension_env)]
+#[tokio::test]
+async fn stateful_container_file_delete_route_returns_not_found_without_usage() {
+    let ctx = local_containers_test_context(
+        "tenant-container-file-delete-missing",
+        "project-container-file-delete-missing",
+    )
+    .await;
+
+    let response = ctx
+        .gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/v1/containers/container_1/files/file_missing")
+                .header("authorization", format!("Bearer {}", ctx.api_key))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested container file was not found.").await;
+    support::assert_no_usage_records(ctx.admin_app, &ctx.admin_token).await;
+}
+
+#[serial(extension_env)]
+#[tokio::test]
+async fn stateful_container_file_content_route_returns_not_found_without_usage() {
+    let ctx = local_containers_test_context(
+        "tenant-container-file-content-missing",
+        "project-container-file-content-missing",
+    )
+    .await;
+
+    let response = ctx
+        .gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/containers/container_1/files/file_missing/content")
+                .header("authorization", format!("Bearer {}", ctx.api_key))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested container file was not found.").await;
+    support::assert_no_usage_records(ctx.admin_app, &ctx.admin_token).await;
+}
+
 async fn read_json(response: axum::response::Response) -> Value {
     let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
         .unwrap();
     serde_json::from_slice(&bytes).unwrap()
+}
+
+async fn assert_openai_not_found(response: axum::response::Response, message: &str) {
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["message"], message);
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
 }
 
 async fn read_bytes(response: axum::response::Response) -> Vec<u8> {
@@ -1270,6 +1609,31 @@ async fn memory_pool() -> SqlitePool {
     sdkwork_api_storage_sqlite::run_migrations("sqlite::memory:")
         .await
         .unwrap()
+}
+
+struct LocalContainersTestContext {
+    admin_app: Router,
+    admin_token: String,
+    api_key: String,
+    gateway_app: Router,
+}
+
+async fn local_containers_test_context(
+    tenant_id: &str,
+    project_id: &str,
+) -> LocalContainersTestContext {
+    let pool = memory_pool().await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let api_key = support::issue_gateway_api_key(&pool, tenant_id, project_id).await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+
+    LocalContainersTestContext {
+        admin_app,
+        admin_token,
+        api_key,
+        gateway_app,
+    }
 }
 
 #[derive(Clone, Default)]

@@ -68,6 +68,24 @@ async fn eval_retrieve_route_returns_ok() {
 }
 
 #[tokio::test]
+async fn eval_retrieve_route_returns_not_found_for_unknown_eval() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/evals/eval_missing")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested eval was not found.").await;
+}
+
+#[tokio::test]
 async fn eval_update_route_returns_ok() {
     let app = sdkwork_api_interface_http::gateway_router();
     let response = app
@@ -84,6 +102,25 @@ async fn eval_update_route_returns_ok() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn eval_update_route_returns_not_found_for_unknown_eval() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/evals/eval_missing")
+                .header("content-type", "application/json")
+                .body(Body::from("{\"name\":\"qa-benchmark-updated\"}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested eval was not found.").await;
 }
 
 #[tokio::test]
@@ -105,6 +142,24 @@ async fn eval_delete_route_returns_ok() {
 }
 
 #[tokio::test]
+async fn eval_delete_route_returns_not_found_for_unknown_eval() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/v1/evals/eval_missing")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested eval was not found.").await;
+}
+
+#[tokio::test]
 async fn eval_runs_list_route_returns_ok() {
     let app = sdkwork_api_interface_http::gateway_router();
     let response = app
@@ -120,6 +175,24 @@ async fn eval_runs_list_route_returns_ok() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn eval_runs_list_route_returns_not_found_for_unknown_eval() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/evals/eval_missing/runs")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested eval was not found.").await;
 }
 
 #[tokio::test]
@@ -142,6 +215,25 @@ async fn eval_runs_create_route_returns_ok() {
 }
 
 #[tokio::test]
+async fn eval_runs_create_route_returns_not_found_for_unknown_eval() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/evals/eval_missing/runs")
+                .header("content-type", "application/json")
+                .body(Body::from("{\"name\":\"daily-regression\"}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested eval was not found.").await;
+}
+
+#[tokio::test]
 async fn eval_run_retrieve_route_returns_ok() {
     let app = sdkwork_api_interface_http::gateway_router();
     let response = app
@@ -157,6 +249,24 @@ async fn eval_run_retrieve_route_returns_ok() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn eval_run_retrieve_route_returns_not_found_for_unknown_run() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/evals/eval_1/runs/run_missing")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested eval run was not found.").await;
 }
 
 #[tokio::test]
@@ -178,6 +288,24 @@ async fn eval_run_delete_route_returns_ok() {
 }
 
 #[tokio::test]
+async fn eval_run_delete_route_returns_not_found_for_unknown_run() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/v1/evals/eval_1/runs/run_missing")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested eval run was not found.").await;
+}
+
+#[tokio::test]
 async fn eval_run_cancel_route_returns_ok() {
     let app = sdkwork_api_interface_http::gateway_router();
     let response = app
@@ -193,6 +321,24 @@ async fn eval_run_cancel_route_returns_ok() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn eval_run_cancel_route_returns_not_found_for_unknown_run() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/evals/eval_1/runs/run_missing/cancel")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested eval run was not found.").await;
 }
 
 #[tokio::test]
@@ -214,6 +360,24 @@ async fn eval_run_output_items_list_route_returns_ok() {
 }
 
 #[tokio::test]
+async fn eval_run_output_items_list_route_returns_not_found_for_unknown_run() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/evals/eval_1/runs/run_missing/output_items")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested eval run was not found.").await;
+}
+
+#[tokio::test]
 async fn eval_run_output_item_retrieve_route_returns_ok() {
     let app = sdkwork_api_interface_http::gateway_router();
     let response = app
@@ -229,6 +393,24 @@ async fn eval_run_output_item_retrieve_route_returns_ok() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn eval_run_output_item_retrieve_route_returns_not_found_for_unknown_output_item() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/evals/eval_1/runs/run_1/output_items/output_item_missing")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested eval run output item was not found.").await;
 }
 
 #[tokio::test]
@@ -408,10 +590,40 @@ async fn read_json(response: axum::response::Response) -> Value {
     serde_json::from_slice(&bytes).unwrap()
 }
 
+async fn assert_openai_not_found(response: axum::response::Response, message: &str) {
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["message"], message);
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+}
+
 async fn memory_pool() -> SqlitePool {
     sdkwork_api_storage_sqlite::run_migrations("sqlite::memory:")
         .await
         .unwrap()
+}
+
+struct LocalEvalsTestContext {
+    admin_app: Router,
+    admin_token: String,
+    api_key: String,
+    gateway_app: Router,
+}
+
+async fn local_evals_test_context(tenant_id: &str, project_id: &str) -> LocalEvalsTestContext {
+    let pool = memory_pool().await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let api_key = support::issue_gateway_api_key(&pool, tenant_id, project_id).await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+
+    LocalEvalsTestContext {
+        admin_app,
+        admin_token,
+        api_key,
+        gateway_app,
+    }
 }
 
 #[derive(Clone, Default)]
@@ -1213,12 +1425,16 @@ async fn stateful_evals_routes_record_usage_and_billing_for_non_create_operation
     let usage_json = read_json(usage).await;
     let usage_records = usage_json.as_array().unwrap();
     assert_eq!(usage_records.len(), 11);
-    assert!(usage_records
-        .iter()
-        .all(|entry| entry["project_id"] == project_id));
-    assert!(usage_records
-        .iter()
-        .all(|entry| entry["provider"] == "provider-openai-official"));
+    assert!(
+        usage_records
+            .iter()
+            .all(|entry| entry["project_id"] == project_id)
+    );
+    assert!(
+        usage_records
+            .iter()
+            .all(|entry| entry["provider"] == "provider-openai-official")
+    );
 
     let ledger = admin_app
         .oneshot(
@@ -1633,6 +1849,262 @@ async fn stateful_eval_run_create_usage_uses_eval_route_key_for_provider_selecti
     assert_eq!(logs_json.as_array().unwrap().len(), 1);
     assert_eq!(logs_json[0]["route_key"], "eval_1");
     assert_eq!(logs_json[0]["selected_provider_id"], "provider-eval-create");
+}
+
+#[tokio::test]
+async fn stateful_eval_retrieve_route_returns_not_found_without_usage() {
+    let ctx = local_evals_test_context(
+        "tenant-eval-retrieve-missing",
+        "project-eval-retrieve-missing",
+    )
+    .await;
+
+    let response = ctx
+        .gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/evals/eval_missing")
+                .header("authorization", format!("Bearer {}", ctx.api_key))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested eval was not found.").await;
+    support::assert_no_usage_records(ctx.admin_app, &ctx.admin_token).await;
+}
+
+#[tokio::test]
+async fn stateful_eval_update_route_returns_not_found_without_usage() {
+    let ctx =
+        local_evals_test_context("tenant-eval-update-missing", "project-eval-update-missing").await;
+
+    let response = ctx
+        .gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/evals/eval_missing")
+                .header("authorization", format!("Bearer {}", ctx.api_key))
+                .header("content-type", "application/json")
+                .body(Body::from("{\"name\":\"qa-benchmark-updated\"}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested eval was not found.").await;
+    support::assert_no_usage_records(ctx.admin_app, &ctx.admin_token).await;
+}
+
+#[tokio::test]
+async fn stateful_eval_delete_route_returns_not_found_without_usage() {
+    let ctx =
+        local_evals_test_context("tenant-eval-delete-missing", "project-eval-delete-missing").await;
+
+    let response = ctx
+        .gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/v1/evals/eval_missing")
+                .header("authorization", format!("Bearer {}", ctx.api_key))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested eval was not found.").await;
+    support::assert_no_usage_records(ctx.admin_app, &ctx.admin_token).await;
+}
+
+#[tokio::test]
+async fn stateful_eval_runs_list_route_returns_not_found_without_usage() {
+    let ctx = local_evals_test_context(
+        "tenant-eval-runs-list-missing",
+        "project-eval-runs-list-missing",
+    )
+    .await;
+
+    let response = ctx
+        .gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/evals/eval_missing/runs")
+                .header("authorization", format!("Bearer {}", ctx.api_key))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested eval was not found.").await;
+    support::assert_no_usage_records(ctx.admin_app, &ctx.admin_token).await;
+}
+
+#[tokio::test]
+async fn stateful_eval_runs_create_route_returns_not_found_without_usage() {
+    let ctx = local_evals_test_context(
+        "tenant-eval-runs-create-missing",
+        "project-eval-runs-create-missing",
+    )
+    .await;
+
+    let response = ctx
+        .gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/evals/eval_missing/runs")
+                .header("authorization", format!("Bearer {}", ctx.api_key))
+                .header("content-type", "application/json")
+                .body(Body::from("{\"name\":\"daily-regression\"}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested eval was not found.").await;
+    support::assert_no_usage_records(ctx.admin_app, &ctx.admin_token).await;
+}
+
+#[tokio::test]
+async fn stateful_eval_run_retrieve_route_returns_not_found_without_usage() {
+    let ctx = local_evals_test_context(
+        "tenant-eval-run-retrieve-missing",
+        "project-eval-run-retrieve-missing",
+    )
+    .await;
+
+    let response = ctx
+        .gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/evals/eval_1/runs/run_missing")
+                .header("authorization", format!("Bearer {}", ctx.api_key))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested eval run was not found.").await;
+    support::assert_no_usage_records(ctx.admin_app, &ctx.admin_token).await;
+}
+
+#[tokio::test]
+async fn stateful_eval_run_delete_route_returns_not_found_without_usage() {
+    let ctx = local_evals_test_context(
+        "tenant-eval-run-delete-missing",
+        "project-eval-run-delete-missing",
+    )
+    .await;
+
+    let response = ctx
+        .gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/v1/evals/eval_1/runs/run_missing")
+                .header("authorization", format!("Bearer {}", ctx.api_key))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested eval run was not found.").await;
+    support::assert_no_usage_records(ctx.admin_app, &ctx.admin_token).await;
+}
+
+#[tokio::test]
+async fn stateful_eval_run_cancel_route_returns_not_found_without_usage() {
+    let ctx = local_evals_test_context(
+        "tenant-eval-run-cancel-missing",
+        "project-eval-run-cancel-missing",
+    )
+    .await;
+
+    let response = ctx
+        .gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/evals/eval_1/runs/run_missing/cancel")
+                .header("authorization", format!("Bearer {}", ctx.api_key))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested eval run was not found.").await;
+    support::assert_no_usage_records(ctx.admin_app, &ctx.admin_token).await;
+}
+
+#[tokio::test]
+async fn stateful_eval_run_output_items_list_route_returns_not_found_without_usage() {
+    let ctx = local_evals_test_context(
+        "tenant-eval-run-output-items-missing",
+        "project-eval-run-output-items-missing",
+    )
+    .await;
+
+    let response = ctx
+        .gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/evals/eval_1/runs/run_missing/output_items")
+                .header("authorization", format!("Bearer {}", ctx.api_key))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested eval run was not found.").await;
+    support::assert_no_usage_records(ctx.admin_app, &ctx.admin_token).await;
+}
+
+#[tokio::test]
+async fn stateful_eval_run_output_item_retrieve_route_returns_not_found_without_usage() {
+    let ctx = local_evals_test_context(
+        "tenant-eval-run-output-item-missing",
+        "project-eval-run-output-item-missing",
+    )
+    .await;
+
+    let response = ctx
+        .gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/evals/eval_1/runs/run_1/output_items/output_item_missing")
+                .header("authorization", format!("Bearer {}", ctx.api_key))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested eval run output item was not found.").await;
+    support::assert_no_usage_records(ctx.admin_app, &ctx.admin_token).await;
 }
 
 async fn upstream_evals_handler(

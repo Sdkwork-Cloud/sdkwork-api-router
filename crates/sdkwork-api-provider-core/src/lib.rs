@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::error::Error;
+use std::fmt;
 use std::io;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -6,8 +8,8 @@ use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
 use bytes::Bytes;
-use futures_util::stream::Stream;
 use futures_util::StreamExt;
+use futures_util::stream::Stream;
 use sdkwork_api_contract_openai::assistants::{CreateAssistantRequest, UpdateAssistantRequest};
 use sdkwork_api_contract_openai::audio::{
     CreateSpeechRequest, CreateTranscriptionRequest, CreateTranslationRequest,
@@ -65,10 +67,96 @@ pub enum CapabilitySupport {
     Unsupported,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderRetryAfterSource {
+    Seconds,
+    HttpDate,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderHttpError {
+    status: Option<reqwest::StatusCode>,
+    retry_after_secs: Option<u64>,
+    retry_after_source: Option<ProviderRetryAfterSource>,
+    body_excerpt: Option<String>,
+}
+
+impl ProviderHttpError {
+    pub fn new(
+        status: Option<reqwest::StatusCode>,
+        retry_after_secs: Option<u64>,
+        retry_after_source: Option<ProviderRetryAfterSource>,
+        body_excerpt: Option<String>,
+    ) -> Self {
+        Self {
+            status,
+            retry_after_secs,
+            retry_after_source,
+            body_excerpt,
+        }
+    }
+
+    pub fn status(&self) -> Option<reqwest::StatusCode> {
+        self.status
+    }
+
+    pub fn retry_after_secs(&self) -> Option<u64> {
+        self.retry_after_secs
+    }
+
+    pub fn retry_after_source(&self) -> Option<ProviderRetryAfterSource> {
+        self.retry_after_source
+    }
+
+    pub fn body_excerpt(&self) -> Option<&str> {
+        self.body_excerpt.as_deref()
+    }
+}
+
+impl fmt::Display for ProviderHttpError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match (
+            self.status,
+            self.retry_after_secs,
+            self.body_excerpt.as_deref(),
+        ) {
+            (Some(status), Some(retry_after_secs), Some(body_excerpt)) => write!(
+                f,
+                "provider upstream returned HTTP {} with retry-after {}s: {}",
+                status.as_u16(),
+                retry_after_secs,
+                body_excerpt
+            ),
+            (Some(status), Some(retry_after_secs), None) => write!(
+                f,
+                "provider upstream returned HTTP {} with retry-after {}s",
+                status.as_u16(),
+                retry_after_secs
+            ),
+            (Some(status), None, Some(body_excerpt)) => write!(
+                f,
+                "provider upstream returned HTTP {}: {}",
+                status.as_u16(),
+                body_excerpt
+            ),
+            (Some(status), None, None) => {
+                write!(f, "provider upstream returned HTTP {}", status.as_u16())
+            }
+            (None, _, Some(body_excerpt)) => {
+                write!(f, "provider upstream request failed: {body_excerpt}")
+            }
+            (None, _, None) => write!(f, "provider upstream request failed"),
+        }
+    }
+}
+
+impl Error for ProviderHttpError {}
+
 pub trait ProviderAdapter {
     fn id(&self) -> &'static str;
 }
 
+#[derive(Clone, Copy)]
 pub enum ProviderRequest<'a> {
     ModelsList,
     ModelsRetrieve(&'a str),
@@ -223,9 +311,98 @@ pub enum ProviderOutput {
     Stream(ProviderStreamOutput),
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum OpenRouterDataCollectionPolicy {
+    #[default]
+    Allow,
+    Deny,
+}
+
+impl OpenRouterDataCollectionPolicy {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Allow => "allow",
+            Self::Deny => "deny",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OpenRouterProviderPreferences {
+    order: Vec<String>,
+    allow_fallbacks: Option<bool>,
+    require_parameters: Option<bool>,
+    data_collection: Option<OpenRouterDataCollectionPolicy>,
+    zero_data_retention: Option<bool>,
+}
+
+impl OpenRouterProviderPreferences {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_order(mut self, order: Vec<String>) -> Self {
+        self.order = order;
+        self
+    }
+
+    pub fn with_allow_fallbacks(mut self, allow_fallbacks: bool) -> Self {
+        self.allow_fallbacks = Some(allow_fallbacks);
+        self
+    }
+
+    pub fn with_require_parameters(mut self, require_parameters: bool) -> Self {
+        self.require_parameters = Some(require_parameters);
+        self
+    }
+
+    pub fn with_data_collection(mut self, data_collection: OpenRouterDataCollectionPolicy) -> Self {
+        self.data_collection = Some(data_collection);
+        self
+    }
+
+    pub fn with_zero_data_retention(mut self, zero_data_retention: bool) -> Self {
+        self.zero_data_retention = Some(zero_data_retention);
+        self
+    }
+
+    pub fn order(&self) -> &[String] {
+        &self.order
+    }
+
+    pub fn allow_fallbacks(&self) -> Option<bool> {
+        self.allow_fallbacks
+    }
+
+    pub fn require_parameters(&self) -> Option<bool> {
+        self.require_parameters
+    }
+
+    pub fn data_collection(&self) -> Option<OpenRouterDataCollectionPolicy> {
+        self.data_collection
+    }
+
+    pub fn zero_data_retention(&self) -> Option<bool> {
+        self.zero_data_retention
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.order.is_empty()
+            && self.allow_fallbacks.is_none()
+            && self.require_parameters.is_none()
+            && self.data_collection.is_none()
+            && self.zero_data_retention.is_none()
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProviderRequestOptions {
     headers: HashMap<String, String>,
+    request_timeout_ms: Option<u64>,
+    deadline_at_ms: Option<u64>,
+    idempotency_key: Option<String>,
+    request_trace_id: Option<String>,
+    openrouter_provider_preferences: Option<OpenRouterProviderPreferences>,
 }
 
 impl ProviderRequestOptions {
@@ -242,8 +419,92 @@ impl ProviderRequestOptions {
         &self.headers
     }
 
+    pub fn with_request_timeout_ms(mut self, request_timeout_ms: u64) -> Self {
+        self.request_timeout_ms = Some(request_timeout_ms);
+        self
+    }
+
+    pub fn request_timeout_ms(&self) -> Option<u64> {
+        self.request_timeout_ms
+    }
+
+    pub fn with_deadline_at_ms(mut self, deadline_at_ms: u64) -> Self {
+        self.deadline_at_ms = Some(deadline_at_ms);
+        self
+    }
+
+    pub fn deadline_at_ms(&self) -> Option<u64> {
+        self.deadline_at_ms
+    }
+
+    pub fn with_idempotency_key(mut self, idempotency_key: impl Into<String>) -> Self {
+        self.idempotency_key = Some(idempotency_key.into());
+        self
+    }
+
+    pub fn idempotency_key(&self) -> Option<&str> {
+        self.idempotency_key.as_deref()
+    }
+
+    pub fn with_request_trace_id(mut self, request_trace_id: impl Into<String>) -> Self {
+        self.request_trace_id = Some(request_trace_id.into());
+        self
+    }
+
+    pub fn request_trace_id(&self) -> Option<&str> {
+        self.request_trace_id.as_deref()
+    }
+
+    pub fn with_openrouter_provider_preferences(
+        mut self,
+        preferences: OpenRouterProviderPreferences,
+    ) -> Self {
+        self.openrouter_provider_preferences = Some(preferences);
+        self
+    }
+
+    pub fn openrouter_provider_preferences(&self) -> Option<&OpenRouterProviderPreferences> {
+        self.openrouter_provider_preferences.as_ref()
+    }
+
+    pub fn resolved_headers(&self) -> HashMap<String, String> {
+        let mut headers = self.headers.clone();
+        if let Some(idempotency_key) = self.idempotency_key() {
+            headers.insert("idempotency-key".to_owned(), idempotency_key.to_owned());
+        }
+        if let Some(request_trace_id) = self.request_trace_id() {
+            headers.insert("x-request-id".to_owned(), request_trace_id.to_owned());
+        }
+        headers
+    }
+
+    pub fn effective_timeout_ms(&self, now_ms: u64) -> Option<u64> {
+        match (self.request_timeout_ms, self.deadline_at_ms) {
+            (Some(request_timeout_ms), Some(deadline_at_ms)) => {
+                Some(request_timeout_ms.min(deadline_at_ms.saturating_sub(now_ms)))
+            }
+            (Some(request_timeout_ms), None) => Some(request_timeout_ms),
+            (None, Some(deadline_at_ms)) => Some(deadline_at_ms.saturating_sub(now_ms)),
+            (None, None) => None,
+        }
+    }
+
+    pub fn deadline_expired(&self, now_ms: u64) -> bool {
+        self.deadline_at_ms
+            .is_some_and(|deadline_at_ms| deadline_at_ms <= now_ms)
+    }
+
     pub fn is_empty(&self) -> bool {
+        let openrouter_preferences_empty = match &self.openrouter_provider_preferences {
+            Some(preferences) => preferences.is_empty(),
+            None => true,
+        };
         self.headers.is_empty()
+            && self.request_timeout_ms.is_none()
+            && self.deadline_at_ms.is_none()
+            && self.idempotency_key.is_none()
+            && self.request_trace_id.is_none()
+            && openrouter_preferences_empty
     }
 }
 

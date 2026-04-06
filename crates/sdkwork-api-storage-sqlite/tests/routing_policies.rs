@@ -51,6 +51,29 @@ async fn sqlite_store_round_trips_slo_policy_fields() {
 }
 
 #[tokio::test]
+async fn sqlite_store_round_trips_execution_policy_fields() {
+    let pool = run_migrations("sqlite::memory:").await.unwrap();
+    let store = SqliteAdminStore::new(pool);
+
+    let policy = RoutingPolicy::new("policy-execution", "chat_completion", "gpt-4.1")
+        .with_execution_failover_enabled(false)
+        .with_upstream_retry_max_attempts(1)
+        .with_upstream_retry_base_delay_ms(125)
+        .with_upstream_retry_max_delay_ms(2_500)
+        .with_ordered_provider_ids(vec!["provider-a".to_owned()])
+        .with_default_provider_id("provider-a");
+
+    store.insert_routing_policy(&policy).await.unwrap();
+
+    let policies = store.list_routing_policies().await.unwrap();
+    assert_eq!(policies, vec![policy]);
+    assert!(!policies[0].execution_failover_enabled);
+    assert_eq!(policies[0].upstream_retry_max_attempts, Some(1));
+    assert_eq!(policies[0].upstream_retry_base_delay_ms, Some(125));
+    assert_eq!(policies[0].upstream_retry_max_delay_ms, Some(2_500));
+}
+
+#[tokio::test]
 async fn sqlite_store_persists_routing_profiles_with_provider_order() {
     let pool = run_migrations("sqlite::memory:").await.unwrap();
     let store = SqliteAdminStore::new(pool);
@@ -300,14 +323,16 @@ async fn sqlite_store_round_trips_default_accounting_mode_in_api_key_groups() {
 }
 
 #[tokio::test]
-async fn sqlite_store_persists_provider_health_snapshots_newest_first() {
+async fn sqlite_store_persists_provider_health_snapshots_newest_first_for_distinct_instances() {
     let pool = run_migrations("sqlite::memory:").await.unwrap();
     let store = SqliteAdminStore::new(pool);
 
     let older = ProviderHealthSnapshot::new("provider-a", "sdkwork.provider.a", "builtin", 100)
+        .with_instance_id("instance-a")
         .with_healthy(false)
         .with_running(true);
     let newer = ProviderHealthSnapshot::new("provider-a", "sdkwork.provider.a", "builtin", 200)
+        .with_instance_id("instance-b")
         .with_healthy(true)
         .with_running(true)
         .with_message("recovered");
@@ -318,5 +343,8 @@ async fn sqlite_store_persists_provider_health_snapshots_newest_first() {
     let snapshots = store.list_provider_health_snapshots().await.unwrap();
     assert_eq!(snapshots.len(), 2);
     assert_eq!(snapshots[0].observed_at_ms, 200);
+    assert_eq!(snapshots[0].instance_id.as_deref(), Some("instance-b"));
     assert_eq!(snapshots[0].message.as_deref(), Some("recovered"));
+    assert_eq!(snapshots[1].observed_at_ms, 100);
+    assert_eq!(snapshots[1].instance_id.as_deref(), Some("instance-a"));
 }

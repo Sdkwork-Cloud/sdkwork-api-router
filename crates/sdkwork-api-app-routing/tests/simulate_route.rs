@@ -11,8 +11,10 @@ use sdkwork_api_app_routing::RouteSelectionContext;
 use sdkwork_api_app_routing::{
     persist_routing_policy, select_route_with_store, select_route_with_store_context,
     simulate_route, simulate_route_with_store, simulate_route_with_store_context,
-    simulate_route_with_store_seeded,
+    simulate_route_with_store_seeded, simulate_route_with_store_selection_context,
 };
+use sdkwork_api_cache_core::DistributedLockStore;
+use sdkwork_api_cache_memory::MemoryCacheStore;
 use sdkwork_api_domain_catalog::{Channel, ModelCatalogEntry, ProxyProvider};
 use sdkwork_api_domain_identity::ApiKeyGroupRecord;
 use sdkwork_api_domain_routing::{
@@ -22,13 +24,19 @@ use sdkwork_api_domain_routing::{
 use sdkwork_api_extension_core::{ExtensionInstallation, ExtensionInstance, ExtensionRuntime};
 #[cfg(windows)]
 use sdkwork_api_extension_host::{
-    ensure_connector_runtime_started, load_native_dynamic_provider_adapter, ExtensionLoadPlan,
+    ExtensionLoadPlan, ensure_connector_runtime_started, load_native_dynamic_provider_adapter,
 };
 use sdkwork_api_extension_host::{
     shutdown_all_connector_runtimes, shutdown_all_native_dynamic_runtimes,
 };
-use sdkwork_api_storage_sqlite::{run_migrations, SqliteAdminStore};
+use sdkwork_api_storage_sqlite::{SqliteAdminStore, run_migrations};
 use serial_test::serial;
+
+const PROVIDER_HEALTH_TTL_ENV: &str = "SDKWORK_ROUTING_PROVIDER_HEALTH_FRESHNESS_TTL_MS";
+const PROVIDER_HEALTH_RECOVERY_PROBE_PERCENT_ENV: &str =
+    "SDKWORK_ROUTING_PROVIDER_HEALTH_RECOVERY_PROBE_PERCENT";
+const PROVIDER_HEALTH_RECOVERY_PROBE_LOCK_TTL_ENV: &str =
+    "SDKWORK_ROUTING_PROVIDER_HEALTH_RECOVERY_PROBE_LOCK_TTL_MS";
 
 async fn create_store_with_openai_channel() -> SqliteAdminStore {
     let pool = run_migrations("sqlite::memory:").await.unwrap();
@@ -53,6 +61,36 @@ async fn insert_openai_provider(
         )
         .await
         .unwrap();
+}
+
+fn observed_at_now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64
+}
+
+struct ScopedEnvVar {
+    key: &'static str,
+    previous: Option<String>,
+}
+
+impl ScopedEnvVar {
+    fn set(key: &'static str, value: &str) -> Self {
+        let previous = std::env::var(key).ok();
+        std::env::set_var(key, value);
+        Self { key, previous }
+    }
+}
+
+impl Drop for ScopedEnvVar {
+    fn drop(&mut self) {
+        if let Some(previous) = self.previous.as_deref() {
+            std::env::set_var(self.key, previous);
+        } else {
+            std::env::remove_var(self.key);
+        }
+    }
 }
 
 #[test]
@@ -746,20 +784,26 @@ async fn route_simulation_geo_affinity_degrades_to_top_ranked_candidate_when_no_
     assert_eq!(decision.selected_provider_id, "provider-primary");
     assert_eq!(decision.requested_region.as_deref(), Some("us-east"));
     assert_eq!(decision.strategy.as_deref(), Some("geo_affinity"));
-    assert!(decision
-        .selection_reason
-        .as_deref()
-        .unwrap()
-        .contains("no candidate matched"));
-    assert!(decision
-        .fallback_reason
-        .as_deref()
-        .unwrap()
-        .contains("no candidate matched requested region us-east"));
-    assert!(decision
-        .assessments
-        .iter()
-        .all(|assessment| assessment.region_match == Some(false)));
+    assert!(
+        decision
+            .selection_reason
+            .as_deref()
+            .unwrap()
+            .contains("no candidate matched")
+    );
+    assert!(
+        decision
+            .fallback_reason
+            .as_deref()
+            .unwrap()
+            .contains("no candidate matched requested region us-east")
+    );
+    assert!(
+        decision
+            .assessments
+            .iter()
+            .all(|assessment| assessment.region_match == Some(false))
+    );
 }
 
 #[serial(routing_runtime)]
@@ -815,13 +859,14 @@ async fn route_simulation_geo_affinity_keeps_health_precedence_over_matching_unh
         ))
         .await
         .unwrap();
+    let observed_at_ms = observed_at_now_ms();
     store
         .insert_provider_health_snapshot(
             &ProviderHealthSnapshot::new(
                 "provider-match-unhealthy",
                 "sdkwork.provider.snapshot.match",
                 "builtin",
-                100,
+                observed_at_ms.saturating_sub(1_000),
             )
             .with_running(true)
             .with_healthy(false),
@@ -834,7 +879,7 @@ async fn route_simulation_geo_affinity_keeps_health_precedence_over_matching_unh
                 "provider-healthy-backup",
                 "sdkwork.provider.snapshot.backup",
                 "builtin",
-                200,
+                observed_at_ms,
             )
             .with_running(true)
             .with_healthy(true),
@@ -911,10 +956,12 @@ async fn route_simulation_geo_affinity_keeps_health_precedence_over_matching_unh
         "provider-match-unhealthy"
     );
     assert_eq!(decision.assessments[1].region_match, Some(true));
-    assert!(decision.assessments[1]
-        .reasons
-        .iter()
-        .any(|reason| reason.contains("healthy candidate is available")));
+    assert!(
+        decision.assessments[1]
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("healthy candidate is available"))
+    );
 }
 
 #[serial(routing_runtime)]
@@ -1030,11 +1077,13 @@ async fn route_simulation_slo_aware_prefers_eligible_candidate_over_cheaper_viol
 
     assert_eq!(decision.selected_provider_id, "provider-compliant");
     assert_eq!(decision.strategy.as_deref(), Some("slo_aware"));
-    assert!(decision
-        .selection_reason
-        .as_deref()
-        .unwrap()
-        .contains("SLO-compliant"));
+    assert!(
+        decision
+            .selection_reason
+            .as_deref()
+            .unwrap()
+            .contains("SLO-compliant")
+    );
     assert_eq!(decision.assessments.len(), 2);
     assert_eq!(
         decision.assessments[0].provider_id,
@@ -1154,15 +1203,19 @@ async fn route_simulation_slo_aware_degrades_to_top_ranked_candidate_when_no_can
 
     assert_eq!(decision.selected_provider_id, "provider-top-ranked");
     assert_eq!(decision.strategy.as_deref(), Some("slo_aware"));
-    assert!(decision
-        .selection_reason
-        .as_deref()
-        .unwrap()
-        .contains("degraded"));
-    assert!(decision
-        .assessments
-        .iter()
-        .all(|assessment| assessment.slo_eligible == Some(false)));
+    assert!(
+        decision
+            .selection_reason
+            .as_deref()
+            .unwrap()
+            .contains("degraded")
+    );
+    assert!(
+        decision
+            .assessments
+            .iter()
+            .all(|assessment| assessment.slo_eligible == Some(false))
+    );
 }
 
 #[serial(routing_runtime)]
@@ -1564,13 +1617,14 @@ async fn route_simulation_falls_back_to_persisted_provider_health_snapshot() {
         ))
         .await
         .unwrap();
+    let observed_at_ms = observed_at_now_ms();
     store
         .insert_provider_health_snapshot(
             &ProviderHealthSnapshot::new(
                 "provider-unhealthy-snapshot",
                 "sdkwork.provider.snapshot.unhealthy",
                 "builtin",
-                100,
+                observed_at_ms.saturating_sub(1_000),
             )
             .with_running(true)
             .with_healthy(false)
@@ -1584,7 +1638,7 @@ async fn route_simulation_falls_back_to_persisted_provider_health_snapshot() {
                 "provider-healthy-snapshot",
                 "sdkwork.provider.snapshot.healthy",
                 "builtin",
-                200,
+                observed_at_ms,
             )
             .with_running(true)
             .with_healthy(true)
@@ -1613,6 +1667,943 @@ async fn route_simulation_falls_back_to_persisted_provider_health_snapshot() {
     assert_eq!(
         decision.assessments[0].health,
         sdkwork_api_domain_routing::RoutingCandidateHealth::Healthy
+    );
+}
+
+#[serial(routing_runtime)]
+#[tokio::test]
+async fn route_simulation_ignores_stale_persisted_provider_health_snapshot() {
+    shutdown_all_connector_runtimes().unwrap();
+    shutdown_all_native_dynamic_runtimes().unwrap();
+
+    let pool = run_migrations("sqlite::memory:").await.unwrap();
+    let store = SqliteAdminStore::new(pool);
+
+    store
+        .insert_channel(&Channel::new("openai", "OpenAI"))
+        .await
+        .unwrap();
+    store
+        .insert_provider(
+            &ProxyProvider::new(
+                "provider-stale-unhealthy",
+                "openai",
+                "openai",
+                "https://stale-unhealthy.example/v1",
+                "Stale Unhealthy Provider",
+            )
+            .with_extension_id("sdkwork.provider.snapshot.stale"),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_provider(
+            &ProxyProvider::new(
+                "provider-fresh-backup",
+                "openai",
+                "openai",
+                "https://fresh-backup.example/v1",
+                "Fresh Backup Provider",
+            )
+            .with_extension_id("sdkwork.provider.snapshot.fresh"),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_model(&ModelCatalogEntry::new(
+            "gpt-4.1",
+            "provider-stale-unhealthy",
+        ))
+        .await
+        .unwrap();
+    store
+        .insert_model(&ModelCatalogEntry::new("gpt-4.1", "provider-fresh-backup"))
+        .await
+        .unwrap();
+
+    let observed_at_ms = observed_at_now_ms();
+    store
+        .insert_provider_health_snapshot(
+            &ProviderHealthSnapshot::new(
+                "provider-stale-unhealthy",
+                "sdkwork.provider.snapshot.stale",
+                "builtin",
+                observed_at_ms.saturating_sub(300_000),
+            )
+            .with_running(true)
+            .with_healthy(false)
+            .with_message("stale unhealthy"),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_provider_health_snapshot(
+            &ProviderHealthSnapshot::new(
+                "provider-fresh-backup",
+                "sdkwork.provider.snapshot.fresh",
+                "builtin",
+                observed_at_ms.saturating_sub(300_000),
+            )
+            .with_running(true)
+            .with_healthy(true)
+            .with_message("stale healthy"),
+        )
+        .await
+        .unwrap();
+
+    let policy = RoutingPolicy::new("policy-stale-snapshot", "chat_completion", "gpt-4.1")
+        .with_priority(100)
+        .with_ordered_provider_ids(vec![
+            "provider-stale-unhealthy".to_owned(),
+            "provider-fresh-backup".to_owned(),
+        ]);
+    persist_routing_policy(&store, &policy).await.unwrap();
+
+    let decision = simulate_route_with_store(&store, "chat_completion", "gpt-4.1")
+        .await
+        .unwrap();
+
+    assert_eq!(decision.selected_provider_id, "provider-stale-unhealthy");
+    assert_eq!(
+        decision.assessments[0].provider_id,
+        "provider-stale-unhealthy"
+    );
+    assert_eq!(
+        decision.assessments[0].health,
+        sdkwork_api_domain_routing::RoutingCandidateHealth::Unknown
+    );
+}
+
+#[serial(routing_runtime)]
+#[tokio::test]
+async fn route_simulation_uses_configured_provider_health_ttl_to_keep_older_snapshot_fresh() {
+    shutdown_all_connector_runtimes().unwrap();
+    shutdown_all_native_dynamic_runtimes().unwrap();
+    let _ttl = ScopedEnvVar::set(PROVIDER_HEALTH_TTL_ENV, "600000");
+
+    let pool = run_migrations("sqlite::memory:").await.unwrap();
+    let store = SqliteAdminStore::new(pool);
+
+    store
+        .insert_channel(&Channel::new("openai", "OpenAI"))
+        .await
+        .unwrap();
+    store
+        .insert_provider(
+            &ProxyProvider::new(
+                "provider-config-unhealthy",
+                "openai",
+                "openai",
+                "https://config-unhealthy.example/v1",
+                "Config Unhealthy Provider",
+            )
+            .with_extension_id("sdkwork.provider.snapshot.config.unhealthy"),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_provider(
+            &ProxyProvider::new(
+                "provider-config-healthy",
+                "openai",
+                "openai",
+                "https://config-healthy.example/v1",
+                "Config Healthy Provider",
+            )
+            .with_extension_id("sdkwork.provider.snapshot.config.healthy"),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_model(&ModelCatalogEntry::new(
+            "gpt-4.1",
+            "provider-config-unhealthy",
+        ))
+        .await
+        .unwrap();
+    store
+        .insert_model(&ModelCatalogEntry::new(
+            "gpt-4.1",
+            "provider-config-healthy",
+        ))
+        .await
+        .unwrap();
+
+    let observed_at_ms = observed_at_now_ms();
+    store
+        .insert_provider_health_snapshot(
+            &ProviderHealthSnapshot::new(
+                "provider-config-unhealthy",
+                "sdkwork.provider.snapshot.config.unhealthy",
+                "builtin",
+                observed_at_ms.saturating_sub(300_000),
+            )
+            .with_running(true)
+            .with_healthy(false)
+            .with_message("configured ttl still considers this unhealthy"),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_provider_health_snapshot(
+            &ProviderHealthSnapshot::new(
+                "provider-config-healthy",
+                "sdkwork.provider.snapshot.config.healthy",
+                "builtin",
+                observed_at_ms.saturating_sub(300_000),
+            )
+            .with_running(true)
+            .with_healthy(true)
+            .with_message("configured ttl still considers this healthy"),
+        )
+        .await
+        .unwrap();
+
+    let policy = RoutingPolicy::new("policy-config-fresh", "chat_completion", "gpt-4.1")
+        .with_priority(100)
+        .with_ordered_provider_ids(vec![
+            "provider-config-unhealthy".to_owned(),
+            "provider-config-healthy".to_owned(),
+        ]);
+    persist_routing_policy(&store, &policy).await.unwrap();
+
+    let decision = simulate_route_with_store(&store, "chat_completion", "gpt-4.1")
+        .await
+        .unwrap();
+
+    assert_eq!(decision.selected_provider_id, "provider-config-healthy");
+    assert_eq!(
+        decision.assessments[0].provider_id,
+        "provider-config-healthy"
+    );
+    assert_eq!(
+        decision.assessments[0].health,
+        sdkwork_api_domain_routing::RoutingCandidateHealth::Healthy
+    );
+}
+
+#[serial(routing_runtime)]
+#[tokio::test]
+async fn route_simulation_uses_configured_provider_health_ttl_to_expire_recent_snapshot() {
+    shutdown_all_connector_runtimes().unwrap();
+    shutdown_all_native_dynamic_runtimes().unwrap();
+    let _ttl = ScopedEnvVar::set(PROVIDER_HEALTH_TTL_ENV, "100");
+
+    let pool = run_migrations("sqlite::memory:").await.unwrap();
+    let store = SqliteAdminStore::new(pool);
+
+    store
+        .insert_channel(&Channel::new("openai", "OpenAI"))
+        .await
+        .unwrap();
+    store
+        .insert_provider(
+            &ProxyProvider::new(
+                "provider-short-ttl-primary",
+                "openai",
+                "openai",
+                "https://short-ttl-primary.example/v1",
+                "Short TTL Primary",
+            )
+            .with_extension_id("sdkwork.provider.snapshot.short.primary"),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_provider(
+            &ProxyProvider::new(
+                "provider-short-ttl-backup",
+                "openai",
+                "openai",
+                "https://short-ttl-backup.example/v1",
+                "Short TTL Backup",
+            )
+            .with_extension_id("sdkwork.provider.snapshot.short.backup"),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_model(&ModelCatalogEntry::new(
+            "gpt-4.1",
+            "provider-short-ttl-primary",
+        ))
+        .await
+        .unwrap();
+    store
+        .insert_model(&ModelCatalogEntry::new(
+            "gpt-4.1",
+            "provider-short-ttl-backup",
+        ))
+        .await
+        .unwrap();
+
+    let observed_at_ms = observed_at_now_ms();
+    store
+        .insert_provider_health_snapshot(
+            &ProviderHealthSnapshot::new(
+                "provider-short-ttl-primary",
+                "sdkwork.provider.snapshot.short.primary",
+                "builtin",
+                observed_at_ms.saturating_sub(1_000),
+            )
+            .with_running(true)
+            .with_healthy(false)
+            .with_message("short ttl should expire this unhealthy snapshot"),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_provider_health_snapshot(
+            &ProviderHealthSnapshot::new(
+                "provider-short-ttl-backup",
+                "sdkwork.provider.snapshot.short.backup",
+                "builtin",
+                observed_at_ms.saturating_sub(1_000),
+            )
+            .with_running(true)
+            .with_healthy(true)
+            .with_message("short ttl should expire this healthy snapshot"),
+        )
+        .await
+        .unwrap();
+
+    let policy = RoutingPolicy::new("policy-short-ttl", "chat_completion", "gpt-4.1")
+        .with_priority(100)
+        .with_ordered_provider_ids(vec![
+            "provider-short-ttl-primary".to_owned(),
+            "provider-short-ttl-backup".to_owned(),
+        ]);
+    persist_routing_policy(&store, &policy).await.unwrap();
+
+    let decision = simulate_route_with_store(&store, "chat_completion", "gpt-4.1")
+        .await
+        .unwrap();
+
+    assert_eq!(decision.selected_provider_id, "provider-short-ttl-primary");
+    assert_eq!(
+        decision.assessments[0].provider_id,
+        "provider-short-ttl-primary"
+    );
+    assert_eq!(
+        decision.assessments[0].health,
+        sdkwork_api_domain_routing::RoutingCandidateHealth::Unknown
+    );
+}
+
+#[serial(routing_runtime)]
+#[tokio::test]
+async fn route_simulation_selects_stale_primary_for_recovery_probe_by_default() {
+    shutdown_all_connector_runtimes().unwrap();
+    shutdown_all_native_dynamic_runtimes().unwrap();
+    let _ttl = ScopedEnvVar::set(PROVIDER_HEALTH_TTL_ENV, "60000");
+    let _probe = ScopedEnvVar::set(PROVIDER_HEALTH_RECOVERY_PROBE_PERCENT_ENV, "");
+
+    let pool = run_migrations("sqlite::memory:").await.unwrap();
+    let store = SqliteAdminStore::new(pool);
+
+    store
+        .insert_channel(&Channel::new("openai", "OpenAI"))
+        .await
+        .unwrap();
+    store
+        .insert_provider(
+            &ProxyProvider::new(
+                "provider-default-recovery-primary",
+                "openai",
+                "openai",
+                "https://default-recovery-primary.example/v1",
+                "Default Recovery Primary",
+            )
+            .with_extension_id("sdkwork.provider.snapshot.default.recovery.primary"),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_provider(
+            &ProxyProvider::new(
+                "provider-default-recovery-backup",
+                "openai",
+                "openai",
+                "https://default-recovery-backup.example/v1",
+                "Default Recovery Backup",
+            )
+            .with_extension_id("sdkwork.provider.snapshot.default.recovery.backup"),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_model(&ModelCatalogEntry::new(
+            "gpt-4.1",
+            "provider-default-recovery-primary",
+        ))
+        .await
+        .unwrap();
+    store
+        .insert_model(&ModelCatalogEntry::new(
+            "gpt-4.1",
+            "provider-default-recovery-backup",
+        ))
+        .await
+        .unwrap();
+
+    let observed_at_ms = observed_at_now_ms();
+    store
+        .insert_provider_health_snapshot(
+            &ProviderHealthSnapshot::new(
+                "provider-default-recovery-primary",
+                "sdkwork.provider.snapshot.default.recovery.primary",
+                "builtin",
+                observed_at_ms.saturating_sub(300_000),
+            )
+            .with_running(true)
+            .with_healthy(false)
+            .with_message("primary is stale unhealthy"),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_provider_health_snapshot(
+            &ProviderHealthSnapshot::new(
+                "provider-default-recovery-backup",
+                "sdkwork.provider.snapshot.default.recovery.backup",
+                "builtin",
+                observed_at_ms,
+            )
+            .with_running(true)
+            .with_healthy(true)
+            .with_message("backup is healthy"),
+        )
+        .await
+        .unwrap();
+
+    let policy = RoutingPolicy::new(
+        "policy-default-recovery-probe",
+        "chat_completion",
+        "gpt-4.1",
+    )
+    .with_priority(100)
+    .with_ordered_provider_ids(vec![
+        "provider-default-recovery-primary".to_owned(),
+        "provider-default-recovery-backup".to_owned(),
+    ]);
+    persist_routing_policy(&store, &policy).await.unwrap();
+
+    let decision = simulate_route_with_store_seeded(&store, "chat_completion", "gpt-4.1", 3)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        decision.selected_provider_id,
+        "provider-default-recovery-primary"
+    );
+    assert_eq!(
+        decision.fallback_reason.as_deref(),
+        Some("provider_health_recovery_probe")
+    );
+}
+
+#[serial(routing_runtime)]
+#[tokio::test]
+async fn route_simulation_selects_stale_primary_for_recovery_probe_when_probe_cohort_enabled() {
+    shutdown_all_connector_runtimes().unwrap();
+    shutdown_all_native_dynamic_runtimes().unwrap();
+    let _ttl = ScopedEnvVar::set(PROVIDER_HEALTH_TTL_ENV, "60000");
+    let _probe = ScopedEnvVar::set(PROVIDER_HEALTH_RECOVERY_PROBE_PERCENT_ENV, "100");
+
+    let pool = run_migrations("sqlite::memory:").await.unwrap();
+    let store = SqliteAdminStore::new(pool);
+
+    store
+        .insert_channel(&Channel::new("openai", "OpenAI"))
+        .await
+        .unwrap();
+    store
+        .insert_provider(
+            &ProxyProvider::new(
+                "provider-recovery-primary",
+                "openai",
+                "openai",
+                "https://recovery-primary.example/v1",
+                "Recovery Primary",
+            )
+            .with_extension_id("sdkwork.provider.snapshot.recovery.primary"),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_provider(
+            &ProxyProvider::new(
+                "provider-recovery-backup",
+                "openai",
+                "openai",
+                "https://recovery-backup.example/v1",
+                "Recovery Backup",
+            )
+            .with_extension_id("sdkwork.provider.snapshot.recovery.backup"),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_model(&ModelCatalogEntry::new(
+            "gpt-4.1",
+            "provider-recovery-primary",
+        ))
+        .await
+        .unwrap();
+    store
+        .insert_model(&ModelCatalogEntry::new(
+            "gpt-4.1",
+            "provider-recovery-backup",
+        ))
+        .await
+        .unwrap();
+
+    let observed_at_ms = observed_at_now_ms();
+    store
+        .insert_provider_health_snapshot(
+            &ProviderHealthSnapshot::new(
+                "provider-recovery-primary",
+                "sdkwork.provider.snapshot.recovery.primary",
+                "builtin",
+                observed_at_ms.saturating_sub(300_000),
+            )
+            .with_running(true)
+            .with_healthy(false)
+            .with_message("primary was unhealthy but snapshot is now stale"),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_provider_health_snapshot(
+            &ProviderHealthSnapshot::new(
+                "provider-recovery-backup",
+                "sdkwork.provider.snapshot.recovery.backup",
+                "builtin",
+                observed_at_ms,
+            )
+            .with_running(true)
+            .with_healthy(true)
+            .with_message("backup remains healthy"),
+        )
+        .await
+        .unwrap();
+
+    let policy = RoutingPolicy::new("policy-recovery-probe", "chat_completion", "gpt-4.1")
+        .with_priority(100)
+        .with_ordered_provider_ids(vec![
+            "provider-recovery-primary".to_owned(),
+            "provider-recovery-backup".to_owned(),
+        ]);
+    persist_routing_policy(&store, &policy).await.unwrap();
+
+    let decision = simulate_route_with_store_seeded(&store, "chat_completion", "gpt-4.1", 42)
+        .await
+        .unwrap();
+
+    assert_eq!(decision.selected_provider_id, "provider-recovery-primary");
+    assert_eq!(decision.selection_seed, Some(42));
+    assert_eq!(
+        decision.fallback_reason.as_deref(),
+        Some("provider_health_recovery_probe")
+    );
+    assert!(
+        decision
+            .selection_reason
+            .as_deref()
+            .unwrap()
+            .contains("recovery probe")
+    );
+}
+
+#[serial(routing_runtime)]
+#[tokio::test]
+async fn route_simulation_keeps_backup_when_request_is_outside_recovery_probe_cohort() {
+    shutdown_all_connector_runtimes().unwrap();
+    shutdown_all_native_dynamic_runtimes().unwrap();
+    let _ttl = ScopedEnvVar::set(PROVIDER_HEALTH_TTL_ENV, "60000");
+    let _probe = ScopedEnvVar::set(PROVIDER_HEALTH_RECOVERY_PROBE_PERCENT_ENV, "10");
+
+    let pool = run_migrations("sqlite::memory:").await.unwrap();
+    let store = SqliteAdminStore::new(pool);
+
+    store
+        .insert_channel(&Channel::new("openai", "OpenAI"))
+        .await
+        .unwrap();
+    store
+        .insert_provider(
+            &ProxyProvider::new(
+                "provider-recovery-gated-primary",
+                "openai",
+                "openai",
+                "https://recovery-gated-primary.example/v1",
+                "Recovery Gated Primary",
+            )
+            .with_extension_id("sdkwork.provider.snapshot.recovery.gated.primary"),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_provider(
+            &ProxyProvider::new(
+                "provider-recovery-gated-backup",
+                "openai",
+                "openai",
+                "https://recovery-gated-backup.example/v1",
+                "Recovery Gated Backup",
+            )
+            .with_extension_id("sdkwork.provider.snapshot.recovery.gated.backup"),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_model(&ModelCatalogEntry::new(
+            "gpt-4.1",
+            "provider-recovery-gated-primary",
+        ))
+        .await
+        .unwrap();
+    store
+        .insert_model(&ModelCatalogEntry::new(
+            "gpt-4.1",
+            "provider-recovery-gated-backup",
+        ))
+        .await
+        .unwrap();
+
+    let observed_at_ms = observed_at_now_ms();
+    store
+        .insert_provider_health_snapshot(
+            &ProviderHealthSnapshot::new(
+                "provider-recovery-gated-primary",
+                "sdkwork.provider.snapshot.recovery.gated.primary",
+                "builtin",
+                observed_at_ms.saturating_sub(300_000),
+            )
+            .with_running(true)
+            .with_healthy(false)
+            .with_message("primary is stale unhealthy"),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_provider_health_snapshot(
+            &ProviderHealthSnapshot::new(
+                "provider-recovery-gated-backup",
+                "sdkwork.provider.snapshot.recovery.gated.backup",
+                "builtin",
+                observed_at_ms,
+            )
+            .with_running(true)
+            .with_healthy(true)
+            .with_message("backup is healthy"),
+        )
+        .await
+        .unwrap();
+
+    let policy = RoutingPolicy::new("policy-recovery-probe-gated", "chat_completion", "gpt-4.1")
+        .with_priority(100)
+        .with_ordered_provider_ids(vec![
+            "provider-recovery-gated-primary".to_owned(),
+            "provider-recovery-gated-backup".to_owned(),
+        ]);
+    persist_routing_policy(&store, &policy).await.unwrap();
+
+    let decision = simulate_route_with_store_seeded(&store, "chat_completion", "gpt-4.1", 50)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        decision.selected_provider_id,
+        "provider-recovery-gated-backup"
+    );
+    assert_ne!(
+        decision.fallback_reason.as_deref(),
+        Some("provider_health_recovery_probe")
+    );
+}
+
+#[serial(routing_runtime)]
+#[tokio::test]
+async fn route_simulation_selects_stale_primary_for_recovery_probe_when_probe_lease_is_available() {
+    shutdown_all_connector_runtimes().unwrap();
+    shutdown_all_native_dynamic_runtimes().unwrap();
+    let _ttl = ScopedEnvVar::set(PROVIDER_HEALTH_TTL_ENV, "60000");
+    let _probe = ScopedEnvVar::set(PROVIDER_HEALTH_RECOVERY_PROBE_PERCENT_ENV, "100");
+    let _lease_ttl = ScopedEnvVar::set(PROVIDER_HEALTH_RECOVERY_PROBE_LOCK_TTL_ENV, "30000");
+
+    let pool = run_migrations("sqlite::memory:").await.unwrap();
+    let store = SqliteAdminStore::new(pool);
+
+    store
+        .insert_channel(&Channel::new("openai", "OpenAI"))
+        .await
+        .unwrap();
+    store
+        .insert_provider(
+            &ProxyProvider::new(
+                "provider-recovery-lease-primary",
+                "openai",
+                "openai",
+                "https://recovery-lease-primary.example/v1",
+                "Recovery Lease Primary",
+            )
+            .with_extension_id("sdkwork.provider.snapshot.recovery.lease.primary"),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_provider(
+            &ProxyProvider::new(
+                "provider-recovery-lease-backup",
+                "openai",
+                "openai",
+                "https://recovery-lease-backup.example/v1",
+                "Recovery Lease Backup",
+            )
+            .with_extension_id("sdkwork.provider.snapshot.recovery.lease.backup"),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_model(&ModelCatalogEntry::new(
+            "gpt-4.1",
+            "provider-recovery-lease-primary",
+        ))
+        .await
+        .unwrap();
+    store
+        .insert_model(&ModelCatalogEntry::new(
+            "gpt-4.1",
+            "provider-recovery-lease-backup",
+        ))
+        .await
+        .unwrap();
+
+    let observed_at_ms = observed_at_now_ms();
+    store
+        .insert_provider_health_snapshot(
+            &ProviderHealthSnapshot::new(
+                "provider-recovery-lease-primary",
+                "sdkwork.provider.snapshot.recovery.lease.primary",
+                "builtin",
+                observed_at_ms.saturating_sub(300_000),
+            )
+            .with_running(true)
+            .with_healthy(false)
+            .with_message("primary is stale unhealthy and needs a controlled probe"),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_provider_health_snapshot(
+            &ProviderHealthSnapshot::new(
+                "provider-recovery-lease-backup",
+                "sdkwork.provider.snapshot.recovery.lease.backup",
+                "builtin",
+                observed_at_ms,
+            )
+            .with_running(true)
+            .with_healthy(true)
+            .with_message("backup is healthy"),
+        )
+        .await
+        .unwrap();
+
+    let policy = RoutingPolicy::new("policy-recovery-probe-lease", "chat_completion", "gpt-4.1")
+        .with_priority(100)
+        .with_ordered_provider_ids(vec![
+            "provider-recovery-lease-primary".to_owned(),
+            "provider-recovery-lease-backup".to_owned(),
+        ]);
+    persist_routing_policy(&store, &policy).await.unwrap();
+
+    let lease_store = MemoryCacheStore::default();
+    let decision = simulate_route_with_store_selection_context(
+        &store,
+        "chat_completion",
+        "gpt-4.1",
+        RouteSelectionContext::new(RoutingDecisionSource::Gateway)
+            .with_selection_seed_option(Some(42))
+            .with_recovery_probe_lock_store_option(Some(&lease_store)),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        decision.selected_provider_id,
+        "provider-recovery-lease-primary"
+    );
+    assert_eq!(decision.selection_seed, Some(42));
+    assert_eq!(
+        decision.fallback_reason.as_deref(),
+        Some("provider_health_recovery_probe")
+    );
+    assert_eq!(
+        decision
+            .provider_health_recovery_probe
+            .as_ref()
+            .map(|probe| (probe.provider_id.as_str(), probe.outcome.as_str())),
+        Some(("provider-recovery-lease-primary", "selected"))
+    );
+    assert!(
+        !lease_store
+            .try_acquire_lock(
+                "provider-health-recovery-probe:provider-recovery-lease-primary",
+                "second-owner",
+                30_000,
+            )
+            .await
+            .unwrap()
+    );
+}
+
+#[serial(routing_runtime)]
+#[tokio::test]
+async fn route_simulation_keeps_backup_when_recovery_probe_lease_is_already_held() {
+    shutdown_all_connector_runtimes().unwrap();
+    shutdown_all_native_dynamic_runtimes().unwrap();
+    let _ttl = ScopedEnvVar::set(PROVIDER_HEALTH_TTL_ENV, "60000");
+    let _probe = ScopedEnvVar::set(PROVIDER_HEALTH_RECOVERY_PROBE_PERCENT_ENV, "100");
+    let _lease_ttl = ScopedEnvVar::set(PROVIDER_HEALTH_RECOVERY_PROBE_LOCK_TTL_ENV, "30000");
+
+    let pool = run_migrations("sqlite::memory:").await.unwrap();
+    let store = SqliteAdminStore::new(pool);
+
+    store
+        .insert_channel(&Channel::new("openai", "OpenAI"))
+        .await
+        .unwrap();
+    store
+        .insert_provider(
+            &ProxyProvider::new(
+                "provider-recovery-held-primary",
+                "openai",
+                "openai",
+                "https://recovery-held-primary.example/v1",
+                "Recovery Held Primary",
+            )
+            .with_extension_id("sdkwork.provider.snapshot.recovery.held.primary"),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_provider(
+            &ProxyProvider::new(
+                "provider-recovery-held-backup",
+                "openai",
+                "openai",
+                "https://recovery-held-backup.example/v1",
+                "Recovery Held Backup",
+            )
+            .with_extension_id("sdkwork.provider.snapshot.recovery.held.backup"),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_model(&ModelCatalogEntry::new(
+            "gpt-4.1",
+            "provider-recovery-held-primary",
+        ))
+        .await
+        .unwrap();
+    store
+        .insert_model(&ModelCatalogEntry::new(
+            "gpt-4.1",
+            "provider-recovery-held-backup",
+        ))
+        .await
+        .unwrap();
+
+    let observed_at_ms = observed_at_now_ms();
+    store
+        .insert_provider_health_snapshot(
+            &ProviderHealthSnapshot::new(
+                "provider-recovery-held-primary",
+                "sdkwork.provider.snapshot.recovery.held.primary",
+                "builtin",
+                observed_at_ms.saturating_sub(300_000),
+            )
+            .with_running(true)
+            .with_healthy(false)
+            .with_message("primary is stale unhealthy"),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_provider_health_snapshot(
+            &ProviderHealthSnapshot::new(
+                "provider-recovery-held-backup",
+                "sdkwork.provider.snapshot.recovery.held.backup",
+                "builtin",
+                observed_at_ms,
+            )
+            .with_running(true)
+            .with_healthy(true)
+            .with_message("backup is healthy"),
+        )
+        .await
+        .unwrap();
+
+    let policy = RoutingPolicy::new(
+        "policy-recovery-probe-lease-held",
+        "chat_completion",
+        "gpt-4.1",
+    )
+    .with_priority(100)
+    .with_ordered_provider_ids(vec![
+        "provider-recovery-held-primary".to_owned(),
+        "provider-recovery-held-backup".to_owned(),
+    ]);
+    persist_routing_policy(&store, &policy).await.unwrap();
+
+    let lease_store = MemoryCacheStore::default();
+    assert!(
+        lease_store
+            .try_acquire_lock(
+                "provider-health-recovery-probe:provider-recovery-held-primary",
+                "existing-owner",
+                30_000,
+            )
+            .await
+            .unwrap()
+    );
+
+    let decision = simulate_route_with_store_selection_context(
+        &store,
+        "chat_completion",
+        "gpt-4.1",
+        RouteSelectionContext::new(RoutingDecisionSource::Gateway)
+            .with_selection_seed_option(Some(42))
+            .with_recovery_probe_lock_store_option(Some(&lease_store)),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        decision.selected_provider_id,
+        "provider-recovery-held-backup"
+    );
+    assert_ne!(
+        decision.fallback_reason.as_deref(),
+        Some("provider_health_recovery_probe")
+    );
+    assert_eq!(
+        decision
+            .provider_health_recovery_probe
+            .as_ref()
+            .map(|probe| (probe.provider_id.as_str(), probe.outcome.as_str())),
+        Some(("provider-recovery-held-primary", "lease_contended"))
+    );
+    assert!(
+        decision
+            .assessments
+            .iter()
+            .find(|assessment| assessment.provider_id == "provider-recovery-held-primary")
+            .unwrap()
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("lease"))
     );
 }
 

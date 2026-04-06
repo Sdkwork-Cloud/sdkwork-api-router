@@ -182,12 +182,52 @@ export default defineConfig({
         replacement: path.resolve(configDir, './packages/sdkwork-router-portal-console/src/index.tsx'),
       },
       {
+        find: /^sdkwork-router-portal-account$/,
+        replacement: path.resolve(configDir, './packages/sdkwork-router-portal-account/src/index.tsx'),
+      },
+      {
+        find: /^sdkwork-router-portal-api-keys$/,
+        replacement: path.resolve(configDir, './packages/sdkwork-router-portal-api-keys/src/index.tsx'),
+      },
+      {
+        find: /^sdkwork-router-portal-api-reference$/,
+        replacement: path.resolve(configDir, './packages/sdkwork-router-portal-api-reference/src/index.tsx'),
+      },
+      {
+        find: /^sdkwork-router-portal-auth$/,
+        replacement: path.resolve(configDir, './packages/sdkwork-router-portal-auth/src/index.tsx'),
+      },
+      {
+        find: /^sdkwork-router-portal-billing$/,
+        replacement: path.resolve(configDir, './packages/sdkwork-router-portal-billing/src/index.tsx'),
+      },
+      {
+        find: /^sdkwork-router-portal-commons$/,
+        replacement: path.resolve(configDir, './packages/sdkwork-router-portal-commons/src/index.tsx'),
+      },
+      {
+        find: /^sdkwork-router-portal-core$/,
+        replacement: path.resolve(configDir, './packages/sdkwork-router-portal-core/src/index.tsx'),
+      },
+      {
+        find: /^sdkwork-router-portal-credits$/,
+        replacement: path.resolve(configDir, './packages/sdkwork-router-portal-credits/src/index.tsx'),
+      },
+      {
+        find: /^sdkwork-router-portal-dashboard$/,
+        replacement: path.resolve(configDir, './packages/sdkwork-router-portal-dashboard/src/index.tsx'),
+      },
+      {
         find: /^sdkwork-router-portal-docs$/,
         replacement: path.resolve(configDir, './packages/sdkwork-router-portal-docs/src/index.tsx'),
       },
       {
         find: /^sdkwork-router-portal-downloads$/,
         replacement: path.resolve(configDir, './packages/sdkwork-router-portal-downloads/src/index.tsx'),
+      },
+      {
+        find: /^sdkwork-router-portal-gateway$/,
+        replacement: path.resolve(configDir, './packages/sdkwork-router-portal-gateway/src/index.tsx'),
       },
       {
         find: /^sdkwork-router-portal-home$/,
@@ -198,8 +238,32 @@ export default defineConfig({
         replacement: path.resolve(configDir, './packages/sdkwork-router-portal-models/src/index.tsx'),
       },
       {
+        find: /^sdkwork-router-portal-portal-api$/,
+        replacement: path.resolve(configDir, './packages/sdkwork-router-portal-portal-api/src/index.ts'),
+      },
+      {
         find: /^sdkwork-router-portal-recharge$/,
         replacement: path.resolve(configDir, './packages/sdkwork-router-portal-recharge/src/index.tsx'),
+      },
+      {
+        find: /^sdkwork-router-portal-routing$/,
+        replacement: path.resolve(configDir, './packages/sdkwork-router-portal-routing/src/index.tsx'),
+      },
+      {
+        find: /^sdkwork-router-portal-settlements$/,
+        replacement: path.resolve(configDir, './packages/sdkwork-router-portal-settlements/src/index.tsx'),
+      },
+      {
+        find: /^sdkwork-router-portal-types$/,
+        replacement: path.resolve(configDir, './packages/sdkwork-router-portal-types/src/index.ts'),
+      },
+      {
+        find: /^sdkwork-router-portal-usage$/,
+        replacement: path.resolve(configDir, './packages/sdkwork-router-portal-usage/src/index.tsx'),
+      },
+      {
+        find: /^sdkwork-router-portal-user$/,
+        replacement: path.resolve(configDir, './packages/sdkwork-router-portal-user/src/index.tsx'),
       },
     ],
   },

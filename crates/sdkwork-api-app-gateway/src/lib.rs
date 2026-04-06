@@ -1,8 +1,10 @@
-use anyhow::{bail, Context, Result};
-use base64::{engine::general_purpose::STANDARD, Engine as _};
-use sdkwork_api_app_credential::{resolve_provider_secret_with_manager, CredentialSecretManager};
-use sdkwork_api_app_routing::{select_route_with_store_context, RouteSelectionContext};
-use sdkwork_api_cache_core::{cache_get_or_insert_with, CacheStore, CacheTag};
+use anyhow::{Context, Result, bail};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
+use sdkwork_api_app_credential::{CredentialSecretManager, resolve_provider_secret_with_manager};
+use sdkwork_api_app_routing::{RouteSelectionContext, select_route_with_store_context};
+use sdkwork_api_cache_core::{
+    CacheStore, CacheTag, DistributedLockStore, cache_get_or_insert_with,
+};
 use sdkwork_api_cache_memory::MemoryCacheStore;
 use sdkwork_api_contract_openai::assistants::{
     AssistantObject, CreateAssistantRequest, DeleteAssistantResponse, ListAssistantsResponse,
@@ -94,28 +96,38 @@ use sdkwork_api_contract_openai::webhooks::{
     WebhookObject,
 };
 use sdkwork_api_domain_catalog::ProxyProvider;
-use sdkwork_api_domain_routing::{RoutingDecision, RoutingDecisionSource};
+use sdkwork_api_domain_routing::{
+    ProviderHealthSnapshot, RoutingDecision, RoutingDecisionLog, RoutingDecisionSource,
+    RoutingPolicy,
+};
 use sdkwork_api_extension_core::{
     ExtensionKind, ExtensionManifest, ExtensionModality, ExtensionProtocol, ExtensionRuntime,
 };
 use sdkwork_api_extension_host::{
-    discover_extension_packages, ensure_connector_runtime_started, shutdown_all_connector_runtimes,
-    shutdown_all_native_dynamic_runtimes, shutdown_connector_runtime,
-    shutdown_connector_runtimes_for_extension, shutdown_native_dynamic_runtimes_for_extension,
-    verify_discovered_extension_package_trust, BuiltinProviderExtensionFactory,
-    DiscoveredExtensionPackage, ExtensionDiscoveryPolicy, ExtensionHost,
+    BuiltinProviderExtensionFactory, DiscoveredExtensionPackage, ExtensionDiscoveryPolicy,
+    ExtensionHost, discover_extension_packages, ensure_connector_runtime_started,
+    shutdown_all_connector_runtimes, shutdown_all_native_dynamic_runtimes,
+    shutdown_connector_runtime, shutdown_connector_runtimes_for_extension,
+    shutdown_native_dynamic_runtimes_for_extension, verify_discovered_extension_package_trust,
 };
-use sdkwork_api_provider_core::{ProviderRequest, ProviderRequestOptions, ProviderStreamOutput};
+use sdkwork_api_observability::HttpMetricsRegistry;
+use sdkwork_api_provider_core::{
+    ProviderExecutionAdapter, ProviderHttpError, ProviderOutput, ProviderRequest,
+    ProviderRequestOptions, ProviderRetryAfterSource, ProviderStreamOutput,
+};
 use sdkwork_api_provider_ollama::OllamaProviderAdapter;
 use sdkwork_api_provider_openai::OpenAiProviderAdapter;
 use sdkwork_api_provider_openrouter::OpenRouterProviderAdapter;
 use sdkwork_api_storage_core::{AdminStore, Reloadable};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
+use std::fmt;
 use std::fs;
 use std::future::Future;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, UNIX_EPOCH};
 use tokio::task::JoinHandle;
@@ -141,6 +153,20 @@ pub struct PlannedExecutionUsageContext {
     pub fallback_reason: Option<String>,
     pub latency_ms: Option<u64>,
     pub reference_amount: Option<f64>,
+}
+
+pub struct GatewayExecutionResult<T> {
+    pub response: Option<T>,
+    pub usage_context: Option<PlannedExecutionUsageContext>,
+}
+
+impl<T> GatewayExecutionResult<T> {
+    fn new(response: Option<T>, usage_context: Option<PlannedExecutionUsageContext>) -> Self {
+        Self {
+            response,
+            usage_context,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -218,7 +244,24 @@ pub fn list_models(_tenant_id: &str, _project_id: &str) -> Result<ListModelsResp
     )]))
 }
 
+fn ensure_local_model_exists(model_id: &str) -> Result<()> {
+    if model_id != "gpt-4.1" {
+        bail!("model not found");
+    }
+
+    Ok(())
+}
+
+fn ensure_local_deletable_model_exists(model_id: &str) -> Result<()> {
+    if model_id != "ft:gpt-4.1:sdkwork" {
+        bail!("model not found");
+    }
+
+    Ok(())
+}
+
 pub fn get_model(_tenant_id: &str, _project_id: &str, model_id: &str) -> Result<ModelObject> {
+    ensure_local_model_exists(model_id)?;
     Ok(ModelObject::new(model_id, "sdkwork"))
 }
 
@@ -227,6 +270,7 @@ pub fn delete_model(
     _project_id: &str,
     model_id: &str,
 ) -> Result<DeleteModelResponse> {
+    ensure_local_deletable_model_exists(model_id)?;
     Ok(DeleteModelResponse::deleted(model_id))
 }
 
@@ -294,12 +338,14 @@ pub async fn get_model_from_store(
             CacheTag::new(format!("model:{model_id}")),
         ],
         || async {
-            let cached = store.find_model(model_id).await?.map(|entry| {
-                CachedCapabilityCatalogModel {
-                    id: entry.external_name,
-                    owned_by: entry.provider_id,
-                }
-            });
+            let cached =
+                store
+                    .find_model(model_id)
+                    .await?
+                    .map(|entry| CachedCapabilityCatalogModel {
+                        id: entry.external_name,
+                        owned_by: entry.provider_id,
+                    });
             Ok(serde_json::to_vec(&cached)?)
         },
     )
@@ -331,21 +377,21 @@ pub async fn delete_model_from_store(
                 &api_key,
                 ProviderRequest::ModelsDelete(model_id),
             )
-              .await?;
+            .await?;
 
-              if let Some(response) = response {
-                  let _ = store.delete_model(model_id).await?;
-                  invalidate_capability_catalog_cache().await;
-                  return Ok(Some(response));
-              }
-          }
-      }
+            if let Some(response) = response {
+                let _ = store.delete_model(model_id).await?;
+                invalidate_capability_catalog_cache().await;
+                return Ok(Some(response));
+            }
+        }
+    }
 
-      if store.delete_model(model_id).await? {
-          invalidate_capability_catalog_cache().await;
-          return Ok(Some(serde_json::to_value(DeleteModelResponse::deleted(
-              model_id,
-          ))?));
+    if store.delete_model(model_id).await? {
+        invalidate_capability_catalog_cache().await;
+        return Ok(Some(serde_json::to_value(DeleteModelResponse::deleted(
+            model_id,
+        ))?));
     }
 
     Ok(None)
@@ -356,6 +402,7 @@ struct ProviderExecutionTarget {
     provider_id: String,
     runtime_key: String,
     base_url: String,
+    runtime: ExtensionRuntime,
     local_fallback: bool,
 }
 
@@ -365,15 +412,22 @@ impl ProviderExecutionTarget {
             provider_id: LOCAL_PROVIDER_ID.to_owned(),
             runtime_key: String::new(),
             base_url: String::new(),
+            runtime: ExtensionRuntime::Builtin,
             local_fallback: true,
         }
     }
 
-    fn upstream(provider_id: String, runtime_key: String, base_url: String) -> Self {
+    fn upstream(
+        provider_id: String,
+        runtime_key: String,
+        base_url: String,
+        runtime: ExtensionRuntime,
+    ) -> Self {
         Self {
             provider_id,
             runtime_key,
             base_url,
+            runtime,
             local_fallback: false,
         }
     }
@@ -385,6 +439,7 @@ struct ProviderExecutionDescriptor {
     runtime_key: String,
     base_url: String,
     api_key: String,
+    runtime: ExtensionRuntime,
     local_fallback: bool,
 }
 
@@ -441,6 +496,7 @@ async fn provider_execution_target_for_provider(
                 provider.id.clone(),
                 load_plan.extension_id,
                 resolved_base_url,
+                load_plan.runtime,
             ))
         }
         Err(sdkwork_api_extension_host::ExtensionHostError::InstanceNotFound { .. }) => {
@@ -448,6 +504,7 @@ async fn provider_execution_target_for_provider(
                 provider.id.clone(),
                 provider_runtime_key(provider).to_owned(),
                 provider.base_url.clone(),
+                ExtensionRuntime::Builtin,
             ))
         }
         Err(error) => Err(error.into()),
@@ -465,6 +522,7 @@ async fn provider_execution_descriptor_for_provider(
         runtime_key: target.runtime_key,
         base_url: target.base_url,
         api_key,
+        runtime: target.runtime,
         local_fallback: target.local_fallback,
     })
 }
@@ -472,6 +530,11 @@ async fn provider_execution_descriptor_for_provider(
 pub const ROUTING_DECISION_CACHE_NAMESPACE: &str = "gateway_route_decisions";
 const ROUTING_DECISION_CACHE_TTL_MS: u64 = 30_000;
 static ROUTING_DECISION_CACHE_STORE: OnceLock<Reloadable<Arc<dyn CacheStore>>> = OnceLock::new();
+static ROUTING_RECOVERY_PROBE_LOCK_STORE: OnceLock<Reloadable<Arc<dyn DistributedLockStore>>> =
+    OnceLock::new();
+static GATEWAY_PROVIDER_MAX_IN_FLIGHT_LIMIT: OnceLock<Reloadable<Option<usize>>> = OnceLock::new();
+static GATEWAY_PROVIDER_IN_FLIGHT_COUNTERS: OnceLock<Mutex<HashMap<String, Arc<AtomicUsize>>>> =
+    OnceLock::new();
 pub const CAPABILITY_CATALOG_CACHE_NAMESPACE: &str = "gateway_capability_catalog";
 const CAPABILITY_CATALOG_CACHE_TTL_MS: u64 = 30_000;
 const CAPABILITY_CATALOG_CACHE_TAG_ALL_MODELS: &str = "models:all";
@@ -518,6 +581,61 @@ fn routing_decision_cache_store() -> Arc<dyn CacheStore> {
 
 pub fn configure_route_decision_cache_store(cache_store: Arc<dyn CacheStore>) {
     routing_decision_cache_store_handle().replace(cache_store);
+}
+
+fn routing_recovery_probe_lock_store_handle() -> &'static Reloadable<Arc<dyn DistributedLockStore>>
+{
+    ROUTING_RECOVERY_PROBE_LOCK_STORE.get_or_init(|| {
+        Reloadable::new(Arc::new(MemoryCacheStore::default()) as Arc<dyn DistributedLockStore>)
+    })
+}
+
+fn routing_recovery_probe_lock_store() -> Arc<dyn DistributedLockStore> {
+    routing_recovery_probe_lock_store_handle().snapshot()
+}
+
+pub fn configure_route_recovery_probe_lock_store(lock_store: Arc<dyn DistributedLockStore>) {
+    routing_recovery_probe_lock_store_handle().replace(lock_store);
+}
+
+const GATEWAY_PROVIDER_MAX_IN_FLIGHT_ENV: &str = "SDKWORK_GATEWAY_PROVIDER_MAX_IN_FLIGHT";
+
+fn gateway_provider_max_in_flight_limit_from_env(configured: Option<&str>) -> Option<usize> {
+    configured
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|limit| *limit > 0)
+}
+
+fn gateway_provider_max_in_flight_limit_handle() -> &'static Reloadable<Option<usize>> {
+    GATEWAY_PROVIDER_MAX_IN_FLIGHT_LIMIT.get_or_init(|| {
+        Reloadable::new(gateway_provider_max_in_flight_limit_from_env(
+            std::env::var(GATEWAY_PROVIDER_MAX_IN_FLIGHT_ENV)
+                .ok()
+                .as_deref(),
+        ))
+    })
+}
+
+fn gateway_provider_max_in_flight_limit() -> Option<usize> {
+    gateway_provider_max_in_flight_limit_handle().snapshot()
+}
+
+pub fn configure_gateway_provider_max_in_flight_limit(limit: Option<usize>) {
+    gateway_provider_max_in_flight_limit_handle().replace(limit);
+}
+
+fn gateway_provider_in_flight_counters_handle() -> &'static Mutex<HashMap<String, Arc<AtomicUsize>>>
+{
+    GATEWAY_PROVIDER_IN_FLIGHT_COUNTERS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn gateway_provider_in_flight_counter(provider_id: &str) -> Arc<AtomicUsize> {
+    gateway_provider_in_flight_counters_handle()
+        .lock()
+        .expect("gateway provider in-flight counter lock")
+        .entry(provider_id.to_owned())
+        .or_insert_with(|| Arc::new(AtomicUsize::new(0)))
+        .clone()
 }
 
 fn capability_catalog_cache_store_handle() -> &'static Reloadable<Option<Arc<dyn CacheStore>>> {
@@ -663,6 +781,7 @@ async fn select_gateway_route(
 ) -> Result<RoutingDecision> {
     let requested_region = current_request_routing_region();
     let api_key_group_id = current_request_api_key_group_id();
+    let recovery_probe_lock_store = routing_recovery_probe_lock_store();
     let decision = select_route_with_store_context(
         store,
         capability,
@@ -671,9 +790,11 @@ async fn select_gateway_route(
             .with_tenant_id_option(Some(tenant_id))
             .with_project_id_option(project_id)
             .with_api_key_group_id_option(api_key_group_id.as_deref())
-            .with_requested_region_option(requested_region.as_deref()),
+            .with_requested_region_option(requested_region.as_deref())
+            .with_recovery_probe_lock_store_option(Some(recovery_probe_lock_store.as_ref())),
     )
     .await?;
+    record_gateway_recovery_probe_from_decision(&decision);
     cache_routing_decision(
         tenant_id,
         project_id,
@@ -722,7 +843,8 @@ pub async fn planned_execution_usage_context_for_route(
     {
         Some(decision) => decision,
         None => {
-            select_route_with_store_context(
+            let recovery_probe_lock_store = routing_recovery_probe_lock_store();
+            let decision = select_route_with_store_context(
                 store,
                 capability,
                 route_key,
@@ -730,23 +852,47 @@ pub async fn planned_execution_usage_context_for_route(
                     .with_tenant_id_option(Some(tenant_id))
                     .with_project_id_option(Some(project_id))
                     .with_api_key_group_id_option(api_key_group_id.as_deref())
-                    .with_requested_region_option(requested_region.as_deref()),
+                    .with_requested_region_option(requested_region.as_deref())
+                    .with_recovery_probe_lock_store_option(Some(
+                        recovery_probe_lock_store.as_ref(),
+                    )),
             )
-            .await?
+            .await?;
+            record_gateway_recovery_probe_from_decision(&decision);
+            decision
         }
     };
+    gateway_usage_context_for_decision_provider(
+        store,
+        tenant_id,
+        &decision,
+        &decision.selected_provider_id,
+        api_key_group_id,
+        decision.fallback_reason.clone(),
+    )
+    .await
+}
+
+async fn gateway_usage_context_for_decision_provider(
+    store: &dyn AdminStore,
+    tenant_id: &str,
+    decision: &RoutingDecision,
+    provider_id: &str,
+    api_key_group_id: Option<String>,
+    fallback_reason: Option<String>,
+) -> Result<PlannedExecutionUsageContext> {
     let selected_assessment = decision
         .assessments
         .iter()
-        .find(|assessment| assessment.provider_id == decision.selected_provider_id);
-    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
+        .find(|assessment| assessment.provider_id == provider_id);
+    let Some(provider) = store.find_provider(provider_id).await? else {
         return Ok(PlannedExecutionUsageContext {
             provider_id: LOCAL_PROVIDER_ID.to_owned(),
             channel_id: None,
             api_key_group_id,
-            applied_routing_profile_id: decision.applied_routing_profile_id,
-            compiled_routing_snapshot_id: decision.compiled_routing_snapshot_id,
-            fallback_reason: decision.fallback_reason,
+            applied_routing_profile_id: decision.applied_routing_profile_id.clone(),
+            compiled_routing_snapshot_id: decision.compiled_routing_snapshot_id.clone(),
+            fallback_reason,
             latency_ms: selected_assessment.and_then(|assessment| assessment.latency_ms),
             reference_amount: selected_assessment.and_then(|assessment| assessment.cost),
         });
@@ -758,9 +904,9 @@ pub async fn planned_execution_usage_context_for_route(
             provider_id: target.provider_id,
             channel_id: Some(provider.channel_id),
             api_key_group_id,
-            applied_routing_profile_id: decision.applied_routing_profile_id,
-            compiled_routing_snapshot_id: decision.compiled_routing_snapshot_id,
-            fallback_reason: decision.fallback_reason,
+            applied_routing_profile_id: decision.applied_routing_profile_id.clone(),
+            compiled_routing_snapshot_id: decision.compiled_routing_snapshot_id.clone(),
+            fallback_reason,
             latency_ms: selected_assessment.and_then(|assessment| assessment.latency_ms),
             reference_amount: selected_assessment.and_then(|assessment| assessment.cost),
         });
@@ -776,9 +922,9 @@ pub async fn planned_execution_usage_context_for_route(
             provider_id: target.provider_id,
             channel_id: Some(provider.channel_id),
             api_key_group_id,
-            applied_routing_profile_id: decision.applied_routing_profile_id,
-            compiled_routing_snapshot_id: decision.compiled_routing_snapshot_id,
-            fallback_reason: decision.fallback_reason,
+            applied_routing_profile_id: decision.applied_routing_profile_id.clone(),
+            compiled_routing_snapshot_id: decision.compiled_routing_snapshot_id.clone(),
+            fallback_reason,
             latency_ms: selected_assessment.and_then(|assessment| assessment.latency_ms),
             reference_amount: selected_assessment.and_then(|assessment| assessment.cost),
         })
@@ -787,13 +933,623 @@ pub async fn planned_execution_usage_context_for_route(
             provider_id: LOCAL_PROVIDER_ID.to_owned(),
             channel_id: Some(provider.channel_id),
             api_key_group_id,
-            applied_routing_profile_id: decision.applied_routing_profile_id,
-            compiled_routing_snapshot_id: decision.compiled_routing_snapshot_id,
-            fallback_reason: decision.fallback_reason,
+            applied_routing_profile_id: decision.applied_routing_profile_id.clone(),
+            compiled_routing_snapshot_id: decision.compiled_routing_snapshot_id.clone(),
+            fallback_reason,
             latency_ms: selected_assessment.and_then(|assessment| assessment.latency_ms),
             reference_amount: selected_assessment.and_then(|assessment| assessment.cost),
         })
     }
+}
+
+fn gateway_execution_failover_fallback_reason(existing: Option<&str>) -> Option<String> {
+    match existing {
+        Some(existing)
+            if existing
+                .split(';')
+                .any(|value| value == "gateway_execution_failover") =>
+        {
+            Some(existing.to_owned())
+        }
+        Some(existing) => Some(format!("{existing};gateway_execution_failover")),
+        None => Some("gateway_execution_failover".to_owned()),
+    }
+}
+
+fn gateway_execution_decision_id(provider_id: &str, created_at_ms: u64) -> String {
+    format!("route_decision:gateway_execution:{provider_id}:{created_at_ms}")
+}
+
+async fn persist_gateway_execution_failover_decision_log(
+    store: &dyn AdminStore,
+    tenant_id: &str,
+    project_id: &str,
+    capability: &str,
+    route_key: &str,
+    decision: &RoutingDecision,
+    executed_provider_id: &str,
+) -> Result<()> {
+    let created_at_ms = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)?
+        .as_millis() as u64;
+    let requested_region =
+        current_request_routing_region().or_else(|| decision.requested_region.clone());
+    let api_key_group_id = current_request_api_key_group_id();
+    let fallback_reason =
+        gateway_execution_failover_fallback_reason(decision.fallback_reason.as_deref());
+    let log = RoutingDecisionLog::new(
+        gateway_execution_decision_id(executed_provider_id, created_at_ms),
+        RoutingDecisionSource::Gateway,
+        capability,
+        route_key,
+        executed_provider_id,
+        decision
+            .strategy
+            .clone()
+            .unwrap_or_else(|| "deterministic_priority".to_owned()),
+        created_at_ms,
+    )
+    .with_tenant_id_option(Some(tenant_id.to_owned()))
+    .with_project_id_option(Some(project_id.to_owned()))
+    .with_api_key_group_id_option(api_key_group_id)
+    .with_matched_policy_id_option(decision.matched_policy_id.clone())
+    .with_applied_routing_profile_id_option(decision.applied_routing_profile_id.clone())
+    .with_compiled_routing_snapshot_id_option(decision.compiled_routing_snapshot_id.clone())
+    .with_selection_seed_option(decision.selection_seed)
+    .with_selection_reason_option(decision.selection_reason.clone())
+    .with_fallback_reason_option(fallback_reason)
+    .with_requested_region_option(requested_region)
+    .with_slo_state(decision.slo_applied, decision.slo_degraded)
+    .with_assessments(decision.assessments.clone());
+    store.insert_routing_decision_log(&log).await?;
+    Ok(())
+}
+
+fn gateway_execution_observed_at_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn gateway_execution_health_message(
+    capability: &str,
+    provider_id: &str,
+    healthy: bool,
+    error: Option<&anyhow::Error>,
+) -> String {
+    match (healthy, error) {
+        (true, _) => format!(
+            "gateway execution succeeded for capability {capability} on provider {provider_id}"
+        ),
+        (false, Some(error)) => format!(
+            "gateway execution failed for capability {capability} on provider {provider_id}: {error}"
+        ),
+        (false, None) => format!(
+            "gateway execution failed for capability {capability} on provider {provider_id}"
+        ),
+    }
+}
+
+async fn persist_gateway_execution_health_snapshot(
+    store: &dyn AdminStore,
+    descriptor: &ProviderExecutionDescriptor,
+    healthy: bool,
+    capability: &str,
+    error: Option<&anyhow::Error>,
+) {
+    if descriptor.local_fallback {
+        return;
+    }
+
+    let observed_at_ms = gateway_execution_observed_at_ms();
+    record_gateway_provider_health(
+        &descriptor.provider_id,
+        descriptor.runtime.as_str(),
+        healthy,
+        observed_at_ms,
+    );
+
+    let snapshot = ProviderHealthSnapshot::new(
+        &descriptor.provider_id,
+        &descriptor.runtime_key,
+        descriptor.runtime.as_str(),
+        observed_at_ms,
+    )
+    .with_running(true)
+    .with_healthy(healthy)
+    .with_message(gateway_execution_health_message(
+        capability,
+        &descriptor.provider_id,
+        healthy,
+        error,
+    ));
+
+    if let Err(persist_error) = store.insert_provider_health_snapshot(&snapshot).await {
+        record_gateway_provider_health_persist_failure(
+            &descriptor.provider_id,
+            descriptor.runtime.as_str(),
+        );
+        eprintln!(
+            "gateway execution health snapshot persistence failed for provider {}: {persist_error}",
+            descriptor.provider_id
+        );
+    }
+}
+
+const GATEWAY_UPSTREAM_RETRY_MAX_ATTEMPTS_ENV: &str = "SDKWORK_GATEWAY_UPSTREAM_RETRY_MAX_ATTEMPTS";
+const GATEWAY_UPSTREAM_RETRY_BASE_DELAY_MS_ENV: &str =
+    "SDKWORK_GATEWAY_UPSTREAM_RETRY_BASE_DELAY_MS";
+const GATEWAY_UPSTREAM_RETRY_MAX_DELAY_MS_ENV: &str = "SDKWORK_GATEWAY_UPSTREAM_RETRY_MAX_DELAY_MS";
+const DEFAULT_GATEWAY_UPSTREAM_RETRY_MAX_ATTEMPTS: usize = 2;
+const DEFAULT_GATEWAY_UPSTREAM_RETRY_BASE_DELAY_MS: u64 = 25;
+const DEFAULT_GATEWAY_UPSTREAM_RETRY_MAX_DELAY_MS: u64 = 5_000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct GatewayUpstreamRetryPolicy {
+    max_attempts: usize,
+    base_delay_ms: u64,
+    max_delay_ms: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct GatewayExecutionPolicy {
+    failover_enabled: bool,
+    retry_policy: GatewayUpstreamRetryPolicy,
+}
+
+impl GatewayUpstreamRetryPolicy {
+    fn disabled() -> Self {
+        Self {
+            max_attempts: 1,
+            base_delay_ms: 0,
+            max_delay_ms: 0,
+        }
+    }
+
+    fn enabled(&self) -> bool {
+        self.max_attempts > 1
+    }
+
+    fn delay_before_next_attempt(&self, failed_attempt: usize) -> Duration {
+        if failed_attempt == 0 || self.base_delay_ms == 0 {
+            return Duration::from_millis(0);
+        }
+
+        let exponent = failed_attempt.saturating_sub(1).min(20) as u32;
+        let multiplier = 1u64.checked_shl(exponent).unwrap_or(u64::MAX);
+        let max_delay_ms = self.max_delay_ms.max(self.base_delay_ms);
+        let delay_ms = self
+            .base_delay_ms
+            .saturating_mul(multiplier)
+            .min(max_delay_ms);
+        Duration::from_millis(delay_ms)
+    }
+}
+
+async fn gateway_routing_policy_for_decision(
+    store: &dyn AdminStore,
+    decision: &RoutingDecision,
+) -> Result<Option<RoutingPolicy>> {
+    let Some(policy_id) = decision.matched_policy_id.as_deref() else {
+        return Ok(None);
+    };
+    Ok(store
+        .list_routing_policies()
+        .await?
+        .into_iter()
+        .find(|policy| policy.policy_id == policy_id))
+}
+
+async fn gateway_execution_policy_for_decision(
+    store: &dyn AdminStore,
+    decision: &RoutingDecision,
+    request: &ProviderRequest<'_>,
+) -> Result<GatewayExecutionPolicy> {
+    let routing_policy = gateway_routing_policy_for_decision(store, decision).await?;
+    Ok(GatewayExecutionPolicy {
+        failover_enabled: routing_policy
+            .as_ref()
+            .map(|policy| policy.execution_failover_enabled)
+            .unwrap_or(true),
+        retry_policy: gateway_upstream_retry_policy(request, routing_policy.as_ref()),
+    })
+}
+
+fn gateway_upstream_retry_policy(
+    request: &ProviderRequest<'_>,
+    routing_policy: Option<&RoutingPolicy>,
+) -> GatewayUpstreamRetryPolicy {
+    if !gateway_request_supports_retry(request) {
+        return GatewayUpstreamRetryPolicy::disabled();
+    }
+
+    let base_delay_ms = routing_policy
+        .and_then(|policy| policy.upstream_retry_base_delay_ms)
+        .unwrap_or_else(|| {
+            std::env::var(GATEWAY_UPSTREAM_RETRY_BASE_DELAY_MS_ENV)
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(DEFAULT_GATEWAY_UPSTREAM_RETRY_BASE_DELAY_MS)
+        });
+    let max_delay_ms = routing_policy
+        .and_then(|policy| policy.upstream_retry_max_delay_ms)
+        .unwrap_or_else(|| {
+            std::env::var(GATEWAY_UPSTREAM_RETRY_MAX_DELAY_MS_ENV)
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(DEFAULT_GATEWAY_UPSTREAM_RETRY_MAX_DELAY_MS)
+        })
+        .max(base_delay_ms);
+
+    GatewayUpstreamRetryPolicy {
+        max_attempts: routing_policy
+            .and_then(|policy| policy.upstream_retry_max_attempts)
+            .map(|value| value.clamp(1, 4) as usize)
+            .or_else(|| {
+                std::env::var(GATEWAY_UPSTREAM_RETRY_MAX_ATTEMPTS_ENV)
+                    .ok()
+                    .and_then(|value| value.parse::<usize>().ok())
+                    .map(|value| value.clamp(1, 4))
+            })
+            .unwrap_or(DEFAULT_GATEWAY_UPSTREAM_RETRY_MAX_ATTEMPTS),
+        base_delay_ms,
+        max_delay_ms,
+    }
+}
+
+fn gateway_request_supports_retry(request: &ProviderRequest<'_>) -> bool {
+    matches!(
+        request,
+        ProviderRequest::ChatCompletions(_)
+            | ProviderRequest::ChatCompletionsStream(_)
+            | ProviderRequest::Responses(_)
+            | ProviderRequest::ResponsesStream(_)
+    )
+}
+
+fn gateway_upstream_error_is_retryable(error: &anyhow::Error) -> bool {
+    if let Some(error) = gateway_execution_context_error(error) {
+        return matches!(
+            error.kind(),
+            GatewayExecutionContextErrorKind::RequestTimeout
+        );
+    }
+
+    if let Some(error) = gateway_provider_http_error(error) {
+        return matches!(
+            error.status(),
+            Some(
+                reqwest::StatusCode::REQUEST_TIMEOUT
+                    | reqwest::StatusCode::TOO_MANY_REQUESTS
+                    | reqwest::StatusCode::INTERNAL_SERVER_ERROR
+                    | reqwest::StatusCode::BAD_GATEWAY
+                    | reqwest::StatusCode::SERVICE_UNAVAILABLE
+                    | reqwest::StatusCode::GATEWAY_TIMEOUT
+            )
+        );
+    }
+
+    let Some(error) = gateway_reqwest_error(error) else {
+        return false;
+    };
+
+    if error.is_timeout() || error.is_connect() {
+        return true;
+    }
+
+    matches!(
+        error.status(),
+        Some(
+            reqwest::StatusCode::REQUEST_TIMEOUT
+                | reqwest::StatusCode::TOO_MANY_REQUESTS
+                | reqwest::StatusCode::INTERNAL_SERVER_ERROR
+                | reqwest::StatusCode::BAD_GATEWAY
+                | reqwest::StatusCode::SERVICE_UNAVAILABLE
+                | reqwest::StatusCode::GATEWAY_TIMEOUT
+        )
+    )
+}
+
+fn gateway_retry_reason_for_status(status: reqwest::StatusCode) -> &'static str {
+    match status {
+        reqwest::StatusCode::REQUEST_TIMEOUT => "status_408",
+        reqwest::StatusCode::TOO_MANY_REQUESTS => "status_429",
+        reqwest::StatusCode::INTERNAL_SERVER_ERROR => "status_500",
+        reqwest::StatusCode::BAD_GATEWAY => "status_502",
+        reqwest::StatusCode::SERVICE_UNAVAILABLE => "status_503",
+        reqwest::StatusCode::GATEWAY_TIMEOUT => "status_504",
+        _ => "status_other",
+    }
+}
+
+fn gateway_retry_reason_for_error(error: &anyhow::Error) -> &'static str {
+    if let Some(error) = gateway_execution_context_error(error) {
+        return match error.kind() {
+            GatewayExecutionContextErrorKind::RequestTimeout => "execution_timeout",
+            GatewayExecutionContextErrorKind::DeadlineExceeded => "deadline_exceeded",
+            GatewayExecutionContextErrorKind::ProviderOverloaded => "provider_overloaded",
+        };
+    }
+
+    if let Some(error) = gateway_provider_http_error(error) {
+        if let Some(status) = error.status() {
+            return gateway_retry_reason_for_status(status);
+        }
+    }
+
+    if let Some(error) = gateway_reqwest_error(error) {
+        if error.is_timeout() {
+            return "reqwest_timeout";
+        }
+        if error.is_connect() {
+            return "reqwest_connect";
+        }
+        if let Some(status) = error.status() {
+            return gateway_retry_reason_for_status(status);
+        }
+    }
+
+    "unknown"
+}
+
+fn gateway_execution_context_metric_reason(error: &GatewayExecutionContextError) -> &'static str {
+    match error.kind() {
+        GatewayExecutionContextErrorKind::RequestTimeout => "request_timeout",
+        GatewayExecutionContextErrorKind::DeadlineExceeded => "deadline_exceeded",
+        GatewayExecutionContextErrorKind::ProviderOverloaded => "provider_overloaded",
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GatewayExecutionContextErrorKind {
+    RequestTimeout,
+    DeadlineExceeded,
+    ProviderOverloaded,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GatewayExecutionContextError {
+    kind: GatewayExecutionContextErrorKind,
+    timeout_ms: Option<u64>,
+    deadline_at_ms: Option<u64>,
+    provider_id: Option<String>,
+    max_in_flight: Option<usize>,
+}
+
+impl GatewayExecutionContextError {
+    fn request_timeout(timeout_ms: u64, deadline_at_ms: Option<u64>) -> Self {
+        Self {
+            kind: GatewayExecutionContextErrorKind::RequestTimeout,
+            timeout_ms: Some(timeout_ms),
+            deadline_at_ms,
+            provider_id: None,
+            max_in_flight: None,
+        }
+    }
+
+    fn deadline_exceeded(deadline_at_ms: Option<u64>) -> Self {
+        Self {
+            kind: GatewayExecutionContextErrorKind::DeadlineExceeded,
+            timeout_ms: None,
+            deadline_at_ms,
+            provider_id: None,
+            max_in_flight: None,
+        }
+    }
+
+    fn provider_overloaded(provider_id: impl Into<String>, max_in_flight: usize) -> Self {
+        Self {
+            kind: GatewayExecutionContextErrorKind::ProviderOverloaded,
+            timeout_ms: None,
+            deadline_at_ms: None,
+            provider_id: Some(provider_id.into()),
+            max_in_flight: Some(max_in_flight),
+        }
+    }
+
+    fn kind(&self) -> GatewayExecutionContextErrorKind {
+        self.kind
+    }
+}
+
+impl fmt::Display for GatewayExecutionContextError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match (self.kind, self.timeout_ms, self.deadline_at_ms) {
+            (
+                GatewayExecutionContextErrorKind::RequestTimeout,
+                Some(timeout_ms),
+                Some(deadline),
+            ) => {
+                write!(
+                    f,
+                    "gateway upstream request timed out after {timeout_ms}ms before deadline {deadline}"
+                )
+            }
+            (GatewayExecutionContextErrorKind::RequestTimeout, Some(timeout_ms), None) => {
+                write!(f, "gateway upstream request timed out after {timeout_ms}ms")
+            }
+            (GatewayExecutionContextErrorKind::DeadlineExceeded, _, Some(deadline)) => {
+                write!(
+                    f,
+                    "gateway upstream deadline {deadline} has already expired"
+                )
+            }
+            (GatewayExecutionContextErrorKind::DeadlineExceeded, _, None) => {
+                write!(f, "gateway upstream deadline has already expired")
+            }
+            (GatewayExecutionContextErrorKind::RequestTimeout, None, _) => {
+                write!(f, "gateway upstream request timed out")
+            }
+            (GatewayExecutionContextErrorKind::ProviderOverloaded, _, _) => {
+                match (self.provider_id.as_deref(), self.max_in_flight) {
+                    (Some(provider_id), Some(max_in_flight)) => write!(
+                        f,
+                        "gateway provider {provider_id} is locally overloaded because in-flight requests reached {max_in_flight}"
+                    ),
+                    (Some(provider_id), None) => {
+                        write!(f, "gateway provider {provider_id} is locally overloaded")
+                    }
+                    (None, Some(max_in_flight)) => write!(
+                        f,
+                        "gateway provider is locally overloaded because in-flight requests reached {max_in_flight}"
+                    ),
+                    (None, None) => write!(f, "gateway provider is locally overloaded"),
+                }
+            }
+        }
+    }
+}
+
+impl std::error::Error for GatewayExecutionContextError {}
+
+struct GatewayProviderInFlightPermit {
+    counter: Arc<AtomicUsize>,
+}
+
+impl Drop for GatewayProviderInFlightPermit {
+    fn drop(&mut self) {
+        self.counter.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct GatewayRetryDelayDecision {
+    delay: Duration,
+    source: &'static str,
+}
+
+fn gateway_retry_delay_for_error(
+    retry_policy: GatewayUpstreamRetryPolicy,
+    failed_attempt: usize,
+    error: &anyhow::Error,
+) -> GatewayRetryDelayDecision {
+    let base_delay = retry_policy.delay_before_next_attempt(failed_attempt);
+    let retry_after = gateway_provider_http_error(error).and_then(|error| {
+        Some((
+            Duration::from_secs(error.retry_after_secs()?),
+            error.retry_after_source(),
+        ))
+    });
+    let retry_after_delay = retry_after
+        .map(|(delay, _)| delay)
+        .unwrap_or(Duration::from_millis(0));
+    let capped_retry_after = if retry_after_delay.is_zero() {
+        retry_after_delay
+    } else {
+        retry_after_delay.min(Duration::from_millis(retry_policy.max_delay_ms))
+    };
+    if !capped_retry_after.is_zero() && capped_retry_after > base_delay {
+        let source = match retry_after.and_then(|(_, source)| source) {
+            Some(ProviderRetryAfterSource::Seconds) => "retry_after_seconds",
+            Some(ProviderRetryAfterSource::HttpDate) => "retry_after_http_date",
+            None => "retry_after",
+        };
+        return GatewayRetryDelayDecision {
+            delay: capped_retry_after,
+            source,
+        };
+    }
+
+    GatewayRetryDelayDecision {
+        delay: base_delay.max(capped_retry_after),
+        source: "backoff",
+    }
+}
+
+fn gateway_provider_http_error(error: &anyhow::Error) -> Option<&ProviderHttpError> {
+    error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<ProviderHttpError>())
+}
+
+fn gateway_execution_context_error(error: &anyhow::Error) -> Option<&GatewayExecutionContextError> {
+    error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<GatewayExecutionContextError>())
+}
+
+fn gateway_execution_context_error_impacts_provider_health(
+    error: &GatewayExecutionContextError,
+) -> bool {
+    matches!(
+        error.kind(),
+        GatewayExecutionContextErrorKind::RequestTimeout
+    )
+}
+
+fn gateway_error_impacts_provider_health(error: &anyhow::Error) -> bool {
+    if let Some(error) = gateway_execution_context_error(error) {
+        return gateway_execution_context_error_impacts_provider_health(error);
+    }
+    true
+}
+
+fn gateway_reqwest_error(error: &anyhow::Error) -> Option<&reqwest::Error> {
+    error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<reqwest::Error>())
+}
+
+fn try_acquire_gateway_provider_in_flight_permit(
+    provider_id: Option<&str>,
+) -> Result<Option<GatewayProviderInFlightPermit>> {
+    let (Some(provider_id), Some(max_in_flight)) =
+        (provider_id, gateway_provider_max_in_flight_limit())
+    else {
+        return Ok(None);
+    };
+
+    let counter = gateway_provider_in_flight_counter(provider_id);
+    loop {
+        let current = counter.load(Ordering::Acquire);
+        if current >= max_in_flight {
+            return Err(anyhow::Error::new(
+                GatewayExecutionContextError::provider_overloaded(provider_id, max_in_flight),
+            ));
+        }
+        if counter
+            .compare_exchange(current, current + 1, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+        {
+            return Ok(Some(GatewayProviderInFlightPermit { counter }));
+        }
+    }
+}
+
+async fn execute_provider_request_with_execution_context(
+    adapter: &dyn ProviderExecutionAdapter,
+    provider_id: Option<&str>,
+    api_key: &str,
+    request: ProviderRequest<'_>,
+    options: &ProviderRequestOptions,
+) -> Result<ProviderOutput> {
+    let now_ms = gateway_execution_observed_at_ms();
+    if options.deadline_expired(now_ms) {
+        return Err(anyhow::Error::new(
+            GatewayExecutionContextError::deadline_exceeded(options.deadline_at_ms()),
+        ));
+    }
+
+    let _in_flight_permit = try_acquire_gateway_provider_in_flight_permit(provider_id)?;
+
+    if let Some(timeout_ms) = options.effective_timeout_ms(now_ms) {
+        return match tokio::time::timeout(
+            Duration::from_millis(timeout_ms),
+            adapter.execute_with_options(api_key, request, options),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => Err(anyhow::Error::new(
+                GatewayExecutionContextError::request_timeout(timeout_ms, options.deadline_at_ms()),
+            )),
+        };
+    }
+
+    adapter
+        .execute_with_options(api_key, request, options)
+        .await
 }
 
 pub async fn with_request_routing_region<T, F>(requested_region: Option<String>, future: F) -> T
@@ -889,7 +1645,7 @@ pub async fn relay_chat_completion_from_store(
     request: &CreateChatCompletionRequest,
 ) -> Result<Option<Value>> {
     let options = ProviderRequestOptions::default();
-    relay_chat_completion_from_store_with_options(
+    Ok(relay_chat_completion_from_store_with_execution_context(
         store,
         secret_manager,
         tenant_id,
@@ -897,7 +1653,149 @@ pub async fn relay_chat_completion_from_store(
         request,
         &options,
     )
+    .await?
+    .response)
+}
+
+pub async fn relay_chat_completion_from_store_with_execution_context(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    project_id: &str,
+    request: &CreateChatCompletionRequest,
+    options: &ProviderRequestOptions,
+) -> Result<GatewayExecutionResult<Value>> {
+    let decision = select_gateway_route(
+        store,
+        tenant_id,
+        Some(project_id),
+        "chat_completion",
+        &request.model,
+    )
+    .await?;
+    let execution_policy = gateway_execution_policy_for_decision(
+        store,
+        &decision,
+        &ProviderRequest::ChatCompletions(request),
+    )
+    .await?;
+    let selected_provider_id = decision.selected_provider_id.clone();
+    let Some(provider) = store.find_provider(&selected_provider_id).await? else {
+        return Ok(GatewayExecutionResult::new(None, None));
+    };
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
+    else {
+        return Ok(GatewayExecutionResult::new(None, None));
+    };
+    match execute_json_provider_request_for_provider_with_options(
+        store,
+        &provider,
+        &api_key,
+        ProviderRequest::ChatCompletions(request),
+        options,
+        execution_policy.retry_policy,
+    )
     .await
+    {
+        Ok(Some(response)) => {
+            let usage_context = gateway_usage_context_for_decision_provider(
+                store,
+                tenant_id,
+                &decision,
+                &provider.id,
+                current_request_api_key_group_id(),
+                decision.fallback_reason.clone(),
+            )
+            .await?;
+            Ok(GatewayExecutionResult::new(
+                Some(response),
+                Some(usage_context),
+            ))
+        }
+        Ok(None) => Ok(GatewayExecutionResult::new(None, None)),
+        Err(mut last_error) => {
+            if !execution_policy.failover_enabled {
+                return Err(last_error);
+            }
+            for candidate_provider_id in decision
+                .candidate_ids
+                .iter()
+                .filter(|provider_id| provider_id.as_str() != selected_provider_id)
+            {
+                let Some(candidate_provider) = store.find_provider(candidate_provider_id).await?
+                else {
+                    continue;
+                };
+                let Some(candidate_api_key) = resolve_provider_secret_with_manager(
+                    store,
+                    secret_manager,
+                    tenant_id,
+                    &candidate_provider.id,
+                )
+                .await?
+                else {
+                    continue;
+                };
+                match execute_json_provider_request_for_provider_with_options(
+                    store,
+                    &candidate_provider,
+                    &candidate_api_key,
+                    ProviderRequest::ChatCompletions(request),
+                    options,
+                    execution_policy.retry_policy,
+                )
+                .await
+                {
+                    Ok(Some(response)) => {
+                        record_gateway_execution_failover(
+                            "chat_completion",
+                            &selected_provider_id,
+                            &candidate_provider.id,
+                            "success",
+                        );
+                        persist_gateway_execution_failover_decision_log(
+                            store,
+                            tenant_id,
+                            project_id,
+                            "chat_completion",
+                            &request.model,
+                            &decision,
+                            &candidate_provider.id,
+                        )
+                        .await?;
+                        let usage_context = gateway_usage_context_for_decision_provider(
+                            store,
+                            tenant_id,
+                            &decision,
+                            &candidate_provider.id,
+                            current_request_api_key_group_id(),
+                            gateway_execution_failover_fallback_reason(
+                                decision.fallback_reason.as_deref(),
+                            ),
+                        )
+                        .await?;
+                        return Ok(GatewayExecutionResult::new(
+                            Some(response),
+                            Some(usage_context),
+                        ));
+                    }
+                    Ok(None) => continue,
+                    Err(error) => {
+                        record_gateway_execution_failover(
+                            "chat_completion",
+                            &selected_provider_id,
+                            &candidate_provider.id,
+                            "failure",
+                        );
+                        last_error = error;
+                    }
+                }
+            }
+            Err(last_error)
+        }
+    }
 }
 
 pub async fn relay_chat_completion_from_store_with_options(
@@ -908,32 +1806,16 @@ pub async fn relay_chat_completion_from_store_with_options(
     request: &CreateChatCompletionRequest,
     options: &ProviderRequestOptions,
 ) -> Result<Option<Value>> {
-    let decision = select_gateway_route(
+    Ok(relay_chat_completion_from_store_with_execution_context(
         store,
+        secret_manager,
         tenant_id,
-        Some(_project_id),
-        "chat_completion",
-        &request.model,
-    )
-    .await?;
-    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
-        return Ok(None);
-    };
-    let Some(api_key) =
-        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
-            .await?
-    else {
-        return Ok(None);
-    };
-
-    execute_json_provider_request_for_provider_with_options(
-        store,
-        &provider,
-        &api_key,
-        ProviderRequest::ChatCompletions(request),
+        _project_id,
+        request,
         options,
     )
-    .await
+    .await?
+    .response)
 }
 
 pub async fn relay_list_chat_completions_from_store(
@@ -1114,15 +1996,159 @@ pub async fn relay_chat_completion_stream_from_store(
     request: &CreateChatCompletionRequest,
 ) -> Result<Option<ProviderStreamOutput>> {
     let options = ProviderRequestOptions::default();
-    relay_chat_completion_stream_from_store_with_options(
+    Ok(
+        relay_chat_completion_stream_from_store_with_execution_context(
+            store,
+            secret_manager,
+            tenant_id,
+            _project_id,
+            request,
+            &options,
+        )
+        .await?
+        .response,
+    )
+}
+
+pub async fn relay_chat_completion_stream_from_store_with_execution_context(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    project_id: &str,
+    request: &CreateChatCompletionRequest,
+    options: &ProviderRequestOptions,
+) -> Result<GatewayExecutionResult<ProviderStreamOutput>> {
+    let decision = select_gateway_route(
         store,
-        secret_manager,
         tenant_id,
-        _project_id,
-        request,
-        &options,
+        Some(project_id),
+        "chat_completion",
+        &request.model,
+    )
+    .await?;
+    let execution_policy = gateway_execution_policy_for_decision(
+        store,
+        &decision,
+        &ProviderRequest::ChatCompletionsStream(request),
+    )
+    .await?;
+    let selected_provider_id = decision.selected_provider_id.clone();
+    let Some(provider) = store.find_provider(&selected_provider_id).await? else {
+        return Ok(GatewayExecutionResult::new(None, None));
+    };
+    let Some(api_key) =
+        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+            .await?
+    else {
+        return Ok(GatewayExecutionResult::new(None, None));
+    };
+    match execute_stream_provider_request_for_provider_with_options(
+        store,
+        &provider,
+        &api_key,
+        ProviderRequest::ChatCompletionsStream(request),
+        options,
+        execution_policy.retry_policy,
     )
     .await
+    {
+        Ok(Some(response)) => {
+            let usage_context = gateway_usage_context_for_decision_provider(
+                store,
+                tenant_id,
+                &decision,
+                &provider.id,
+                current_request_api_key_group_id(),
+                decision.fallback_reason.clone(),
+            )
+            .await?;
+            Ok(GatewayExecutionResult::new(
+                Some(response),
+                Some(usage_context),
+            ))
+        }
+        Ok(None) => Ok(GatewayExecutionResult::new(None, None)),
+        Err(mut last_error) => {
+            if !execution_policy.failover_enabled {
+                return Err(last_error);
+            }
+            for candidate_provider_id in decision
+                .candidate_ids
+                .iter()
+                .filter(|provider_id| provider_id.as_str() != selected_provider_id)
+            {
+                let Some(candidate_provider) = store.find_provider(candidate_provider_id).await?
+                else {
+                    continue;
+                };
+                let Some(candidate_api_key) = resolve_provider_secret_with_manager(
+                    store,
+                    secret_manager,
+                    tenant_id,
+                    &candidate_provider.id,
+                )
+                .await?
+                else {
+                    continue;
+                };
+                match execute_stream_provider_request_for_provider_with_options(
+                    store,
+                    &candidate_provider,
+                    &candidate_api_key,
+                    ProviderRequest::ChatCompletionsStream(request),
+                    options,
+                    execution_policy.retry_policy,
+                )
+                .await
+                {
+                    Ok(Some(response)) => {
+                        record_gateway_execution_failover(
+                            "chat_completion",
+                            &selected_provider_id,
+                            &candidate_provider.id,
+                            "success",
+                        );
+                        persist_gateway_execution_failover_decision_log(
+                            store,
+                            tenant_id,
+                            project_id,
+                            "chat_completion",
+                            &request.model,
+                            &decision,
+                            &candidate_provider.id,
+                        )
+                        .await?;
+                        let usage_context = gateway_usage_context_for_decision_provider(
+                            store,
+                            tenant_id,
+                            &decision,
+                            &candidate_provider.id,
+                            current_request_api_key_group_id(),
+                            gateway_execution_failover_fallback_reason(
+                                decision.fallback_reason.as_deref(),
+                            ),
+                        )
+                        .await?;
+                        return Ok(GatewayExecutionResult::new(
+                            Some(response),
+                            Some(usage_context),
+                        ));
+                    }
+                    Ok(None) => continue,
+                    Err(error) => {
+                        record_gateway_execution_failover(
+                            "chat_completion",
+                            &selected_provider_id,
+                            &candidate_provider.id,
+                            "failure",
+                        );
+                        last_error = error;
+                    }
+                }
+            }
+            Err(last_error)
+        }
+    }
 }
 
 pub async fn relay_chat_completion_stream_from_store_with_options(
@@ -1133,32 +2159,18 @@ pub async fn relay_chat_completion_stream_from_store_with_options(
     request: &CreateChatCompletionRequest,
     options: &ProviderRequestOptions,
 ) -> Result<Option<ProviderStreamOutput>> {
-    let decision = select_gateway_route(
-        store,
-        tenant_id,
-        Some(_project_id),
-        "chat_completion",
-        &request.model,
+    Ok(
+        relay_chat_completion_stream_from_store_with_execution_context(
+            store,
+            secret_manager,
+            tenant_id,
+            _project_id,
+            request,
+            options,
+        )
+        .await?
+        .response,
     )
-    .await?;
-    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
-        return Ok(None);
-    };
-    let Some(api_key) =
-        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
-            .await?
-    else {
-        return Ok(None);
-    };
-
-    execute_stream_provider_request_for_provider_with_options(
-        store,
-        &provider,
-        &api_key,
-        ProviderRequest::ChatCompletionsStream(request),
-        options,
-    )
-    .await
 }
 
 pub async fn relay_conversation_from_store(
@@ -1970,31 +2982,157 @@ pub async fn relay_response_from_store(
     _project_id: &str,
     request: &CreateResponseRequest,
 ) -> Result<Option<Value>> {
+    Ok(relay_response_from_store_with_execution_context(
+        store,
+        secret_manager,
+        tenant_id,
+        _project_id,
+        request,
+    )
+    .await?
+    .response)
+}
+
+pub async fn relay_response_from_store_with_execution_context(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    project_id: &str,
+    request: &CreateResponseRequest,
+) -> Result<GatewayExecutionResult<Value>> {
     let decision = select_gateway_route(
         store,
         tenant_id,
-        Some(_project_id),
+        Some(project_id),
         "responses",
         &request.model,
     )
     .await?;
-    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
-        return Ok(None);
+    let execution_policy = gateway_execution_policy_for_decision(
+        store,
+        &decision,
+        &ProviderRequest::Responses(request),
+    )
+    .await?;
+    let selected_provider_id = decision.selected_provider_id.clone();
+    let Some(provider) = store.find_provider(&selected_provider_id).await? else {
+        return Ok(GatewayExecutionResult::new(None, None));
     };
     let Some(api_key) =
         resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
             .await?
     else {
-        return Ok(None);
+        return Ok(GatewayExecutionResult::new(None, None));
     };
+    let options = ProviderRequestOptions::default();
 
-    execute_json_provider_request_for_provider(
+    match execute_json_provider_request_for_provider_with_options(
         store,
         &provider,
         &api_key,
         ProviderRequest::Responses(request),
+        &options,
+        execution_policy.retry_policy,
     )
     .await
+    {
+        Ok(Some(response)) => {
+            let usage_context = gateway_usage_context_for_decision_provider(
+                store,
+                tenant_id,
+                &decision,
+                &provider.id,
+                current_request_api_key_group_id(),
+                decision.fallback_reason.clone(),
+            )
+            .await?;
+            Ok(GatewayExecutionResult::new(
+                Some(response),
+                Some(usage_context),
+            ))
+        }
+        Ok(None) => Ok(GatewayExecutionResult::new(None, None)),
+        Err(mut last_error) => {
+            if !execution_policy.failover_enabled {
+                return Err(last_error);
+            }
+            for candidate_provider_id in decision
+                .candidate_ids
+                .iter()
+                .filter(|provider_id| provider_id.as_str() != selected_provider_id)
+            {
+                let Some(candidate_provider) = store.find_provider(candidate_provider_id).await?
+                else {
+                    continue;
+                };
+                let Some(candidate_api_key) = resolve_provider_secret_with_manager(
+                    store,
+                    secret_manager,
+                    tenant_id,
+                    &candidate_provider.id,
+                )
+                .await?
+                else {
+                    continue;
+                };
+                match execute_json_provider_request_for_provider_with_options(
+                    store,
+                    &candidate_provider,
+                    &candidate_api_key,
+                    ProviderRequest::Responses(request),
+                    &options,
+                    execution_policy.retry_policy,
+                )
+                .await
+                {
+                    Ok(Some(response)) => {
+                        record_gateway_execution_failover(
+                            "responses",
+                            &selected_provider_id,
+                            &candidate_provider.id,
+                            "success",
+                        );
+                        persist_gateway_execution_failover_decision_log(
+                            store,
+                            tenant_id,
+                            project_id,
+                            "responses",
+                            &request.model,
+                            &decision,
+                            &candidate_provider.id,
+                        )
+                        .await?;
+                        let usage_context = gateway_usage_context_for_decision_provider(
+                            store,
+                            tenant_id,
+                            &decision,
+                            &candidate_provider.id,
+                            current_request_api_key_group_id(),
+                            gateway_execution_failover_fallback_reason(
+                                decision.fallback_reason.as_deref(),
+                            ),
+                        )
+                        .await?;
+                        return Ok(GatewayExecutionResult::new(
+                            Some(response),
+                            Some(usage_context),
+                        ));
+                    }
+                    Ok(None) => continue,
+                    Err(error) => {
+                        record_gateway_execution_failover(
+                            "responses",
+                            &selected_provider_id,
+                            &candidate_provider.id,
+                            "failure",
+                        );
+                        last_error = error;
+                    }
+                }
+            }
+            Err(last_error)
+        }
+    }
 }
 
 pub async fn relay_response_stream_from_store(
@@ -2004,31 +3142,157 @@ pub async fn relay_response_stream_from_store(
     _project_id: &str,
     request: &CreateResponseRequest,
 ) -> Result<Option<ProviderStreamOutput>> {
+    Ok(relay_response_stream_from_store_with_execution_context(
+        store,
+        secret_manager,
+        tenant_id,
+        _project_id,
+        request,
+    )
+    .await?
+    .response)
+}
+
+pub async fn relay_response_stream_from_store_with_execution_context(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    project_id: &str,
+    request: &CreateResponseRequest,
+) -> Result<GatewayExecutionResult<ProviderStreamOutput>> {
     let decision = select_gateway_route(
         store,
         tenant_id,
-        Some(_project_id),
+        Some(project_id),
         "responses",
         &request.model,
     )
     .await?;
-    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
-        return Ok(None);
+    let execution_policy = gateway_execution_policy_for_decision(
+        store,
+        &decision,
+        &ProviderRequest::ResponsesStream(request),
+    )
+    .await?;
+    let selected_provider_id = decision.selected_provider_id.clone();
+    let Some(provider) = store.find_provider(&selected_provider_id).await? else {
+        return Ok(GatewayExecutionResult::new(None, None));
     };
     let Some(api_key) =
         resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
             .await?
     else {
-        return Ok(None);
+        return Ok(GatewayExecutionResult::new(None, None));
     };
+    let options = ProviderRequestOptions::default();
 
-    execute_stream_provider_request_for_provider(
+    match execute_stream_provider_request_for_provider_with_options(
         store,
         &provider,
         &api_key,
         ProviderRequest::ResponsesStream(request),
+        &options,
+        execution_policy.retry_policy,
     )
     .await
+    {
+        Ok(Some(response)) => {
+            let usage_context = gateway_usage_context_for_decision_provider(
+                store,
+                tenant_id,
+                &decision,
+                &provider.id,
+                current_request_api_key_group_id(),
+                decision.fallback_reason.clone(),
+            )
+            .await?;
+            Ok(GatewayExecutionResult::new(
+                Some(response),
+                Some(usage_context),
+            ))
+        }
+        Ok(None) => Ok(GatewayExecutionResult::new(None, None)),
+        Err(mut last_error) => {
+            if !execution_policy.failover_enabled {
+                return Err(last_error);
+            }
+            for candidate_provider_id in decision
+                .candidate_ids
+                .iter()
+                .filter(|provider_id| provider_id.as_str() != selected_provider_id)
+            {
+                let Some(candidate_provider) = store.find_provider(candidate_provider_id).await?
+                else {
+                    continue;
+                };
+                let Some(candidate_api_key) = resolve_provider_secret_with_manager(
+                    store,
+                    secret_manager,
+                    tenant_id,
+                    &candidate_provider.id,
+                )
+                .await?
+                else {
+                    continue;
+                };
+                match execute_stream_provider_request_for_provider_with_options(
+                    store,
+                    &candidate_provider,
+                    &candidate_api_key,
+                    ProviderRequest::ResponsesStream(request),
+                    &options,
+                    execution_policy.retry_policy,
+                )
+                .await
+                {
+                    Ok(Some(response)) => {
+                        record_gateway_execution_failover(
+                            "responses",
+                            &selected_provider_id,
+                            &candidate_provider.id,
+                            "success",
+                        );
+                        persist_gateway_execution_failover_decision_log(
+                            store,
+                            tenant_id,
+                            project_id,
+                            "responses",
+                            &request.model,
+                            &decision,
+                            &candidate_provider.id,
+                        )
+                        .await?;
+                        let usage_context = gateway_usage_context_for_decision_provider(
+                            store,
+                            tenant_id,
+                            &decision,
+                            &candidate_provider.id,
+                            current_request_api_key_group_id(),
+                            gateway_execution_failover_fallback_reason(
+                                decision.fallback_reason.as_deref(),
+                            ),
+                        )
+                        .await?;
+                        return Ok(GatewayExecutionResult::new(
+                            Some(response),
+                            Some(usage_context),
+                        ));
+                    }
+                    Ok(None) => continue,
+                    Err(error) => {
+                        record_gateway_execution_failover(
+                            "responses",
+                            &selected_provider_id,
+                            &candidate_provider.id,
+                            "failure",
+                        );
+                        last_error = error;
+                    }
+                }
+            }
+            Err(last_error)
+        }
+    }
 }
 
 pub async fn relay_count_response_input_tokens_from_store(
@@ -4814,8 +6078,8 @@ pub async fn relay_music_from_store(
     project_id: &str,
     request: &CreateMusicRequest,
 ) -> Result<Option<Value>> {
-    let decision = select_gateway_route(store, tenant_id, Some(project_id), "music", &request.model)
-        .await?;
+    let decision =
+        select_gateway_route(store, tenant_id, Some(project_id), "music", &request.model).await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -4826,8 +6090,13 @@ pub async fn relay_music_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request_for_provider(store, &provider, &api_key, ProviderRequest::Music(request))
-        .await
+    execute_json_provider_request_for_provider(
+        store,
+        &provider,
+        &api_key,
+        ProviderRequest::Music(request),
+    )
+    .await
 }
 
 pub async fn relay_list_music_from_store(
@@ -4836,7 +6105,8 @@ pub async fn relay_list_music_from_store(
     tenant_id: &str,
     project_id: &str,
 ) -> Result<Option<Value>> {
-    let decision = select_gateway_route(store, tenant_id, Some(project_id), "music", "music").await?;
+    let decision =
+        select_gateway_route(store, tenant_id, Some(project_id), "music", "music").await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -4847,8 +6117,13 @@ pub async fn relay_list_music_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request_for_provider(store, &provider, &api_key, ProviderRequest::MusicList)
-        .await
+    execute_json_provider_request_for_provider(
+        store,
+        &provider,
+        &api_key,
+        ProviderRequest::MusicList,
+    )
+    .await
 }
 
 pub async fn relay_get_music_from_store(
@@ -4858,7 +6133,8 @@ pub async fn relay_get_music_from_store(
     project_id: &str,
     music_id: &str,
 ) -> Result<Option<Value>> {
-    let decision = select_gateway_route(store, tenant_id, Some(project_id), "music", music_id).await?;
+    let decision =
+        select_gateway_route(store, tenant_id, Some(project_id), "music", music_id).await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -4885,7 +6161,8 @@ pub async fn relay_delete_music_from_store(
     project_id: &str,
     music_id: &str,
 ) -> Result<Option<Value>> {
-    let decision = select_gateway_route(store, tenant_id, Some(project_id), "music", music_id).await?;
+    let decision =
+        select_gateway_route(store, tenant_id, Some(project_id), "music", music_id).await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -4912,7 +6189,8 @@ pub async fn relay_music_content_from_store(
     project_id: &str,
     music_id: &str,
 ) -> Result<Option<ProviderStreamOutput>> {
-    let decision = select_gateway_route(store, tenant_id, Some(project_id), "music", music_id).await?;
+    let decision =
+        select_gateway_route(store, tenant_id, Some(project_id), "music", music_id).await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -4939,7 +6217,8 @@ pub async fn relay_music_lyrics_from_store(
     project_id: &str,
     request: &CreateMusicLyricsRequest,
 ) -> Result<Option<Value>> {
-    let decision = select_gateway_route(store, tenant_id, Some(project_id), "music", "lyrics").await?;
+    let decision =
+        select_gateway_route(store, tenant_id, Some(project_id), "music", "lyrics").await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -5400,11 +6679,20 @@ pub fn list_conversations(
     ]))
 }
 
+fn ensure_local_conversation_exists(conversation_id: &str) -> Result<()> {
+    if conversation_id != "conv_1" {
+        bail!("conversation not found");
+    }
+
+    Ok(())
+}
+
 pub fn get_conversation(
     _tenant_id: &str,
     _project_id: &str,
     conversation_id: &str,
 ) -> Result<ConversationObject> {
+    ensure_local_conversation_exists(conversation_id)?;
     Ok(ConversationObject::new(conversation_id))
 }
 
@@ -5414,6 +6702,7 @@ pub fn update_conversation(
     conversation_id: &str,
     metadata: Value,
 ) -> Result<ConversationObject> {
+    ensure_local_conversation_exists(conversation_id)?;
     Ok(ConversationObject::with_metadata(conversation_id, metadata))
 }
 
@@ -5422,14 +6711,16 @@ pub fn delete_conversation(
     _project_id: &str,
     conversation_id: &str,
 ) -> Result<DeleteConversationResponse> {
+    ensure_local_conversation_exists(conversation_id)?;
     Ok(DeleteConversationResponse::deleted(conversation_id))
 }
 
 pub fn create_conversation_items(
     _tenant_id: &str,
     _project_id: &str,
-    _conversation_id: &str,
+    conversation_id: &str,
 ) -> Result<ListConversationItemsResponse> {
+    ensure_local_conversation_exists(conversation_id)?;
     Ok(ListConversationItemsResponse::new(vec![
         ConversationItemObject::message("item_1", "assistant", "hello"),
     ]))
@@ -5438,19 +6729,30 @@ pub fn create_conversation_items(
 pub fn list_conversation_items(
     _tenant_id: &str,
     _project_id: &str,
-    _conversation_id: &str,
+    conversation_id: &str,
 ) -> Result<ListConversationItemsResponse> {
+    ensure_local_conversation_exists(conversation_id)?;
     Ok(ListConversationItemsResponse::new(vec![
         ConversationItemObject::message("item_1", "assistant", "hello"),
     ]))
 }
 
+fn ensure_local_conversation_item_exists(conversation_id: &str, item_id: &str) -> Result<()> {
+    ensure_local_conversation_exists(conversation_id)?;
+    if item_id != "item_1" {
+        bail!("conversation item not found");
+    }
+
+    Ok(())
+}
+
 pub fn get_conversation_item(
     _tenant_id: &str,
     _project_id: &str,
-    _conversation_id: &str,
+    conversation_id: &str,
     item_id: &str,
 ) -> Result<ConversationItemObject> {
+    ensure_local_conversation_item_exists(conversation_id, item_id)?;
     Ok(ConversationItemObject::message(
         item_id,
         "assistant",
@@ -5461,9 +6763,10 @@ pub fn get_conversation_item(
 pub fn delete_conversation_item(
     _tenant_id: &str,
     _project_id: &str,
-    _conversation_id: &str,
+    conversation_id: &str,
     item_id: &str,
 ) -> Result<DeleteConversationItemResponse> {
+    ensure_local_conversation_item_exists(conversation_id, item_id)?;
     Ok(DeleteConversationItemResponse::deleted(item_id))
 }
 
@@ -5481,6 +6784,7 @@ pub fn get_chat_completion(
     _project_id: &str,
     completion_id: &str,
 ) -> Result<ChatCompletionResponse> {
+    ensure_local_chat_completion_exists(completion_id)?;
     Ok(ChatCompletionResponse::empty(completion_id, "gpt-4.1"))
 }
 
@@ -5490,6 +6794,7 @@ pub fn update_chat_completion(
     completion_id: &str,
     metadata: Value,
 ) -> Result<ChatCompletionResponse> {
+    ensure_local_chat_completion_exists(completion_id)?;
     Ok(ChatCompletionResponse::with_metadata(
         completion_id,
         "gpt-4.1",
@@ -5502,29 +6807,57 @@ pub fn delete_chat_completion(
     _project_id: &str,
     completion_id: &str,
 ) -> Result<DeleteChatCompletionResponse> {
+    ensure_local_chat_completion_exists(completion_id)?;
     Ok(DeleteChatCompletionResponse::deleted(completion_id))
+}
+
+fn ensure_local_chat_completion_exists(completion_id: &str) -> Result<()> {
+    if completion_id != "chatcmpl_1" {
+        bail!("chat completion not found");
+    }
+
+    Ok(())
 }
 
 pub fn list_chat_completion_messages(
     _tenant_id: &str,
     _project_id: &str,
-    _completion_id: &str,
+    completion_id: &str,
 ) -> Result<ListChatCompletionMessagesResponse> {
+    ensure_local_chat_completion_exists(completion_id)?;
     Ok(ListChatCompletionMessagesResponse::new(vec![
         ChatCompletionMessageObject::assistant("msg_1", "hello"),
     ]))
 }
 
+fn ensure_local_response_model_present(model: &str) -> Result<()> {
+    if model.trim().is_empty() {
+        bail!("Response model is required.");
+    }
+
+    Ok(())
+}
+
 pub fn create_response(_tenant_id: &str, _project_id: &str, model: &str) -> Result<ResponseObject> {
+    ensure_local_response_model_present(model)?;
     Ok(ResponseObject::empty("resp_1", model))
 }
 
 pub fn count_response_input_tokens(
     _tenant_id: &str,
     _project_id: &str,
-    _model: &str,
+    model: &str,
 ) -> Result<ResponseInputTokensObject> {
+    ensure_local_response_model_present(model)?;
     Ok(ResponseInputTokensObject::new(42))
+}
+
+fn ensure_local_response_exists(response_id: &str) -> Result<()> {
+    if response_id != "resp_1" {
+        bail!("response not found");
+    }
+
+    Ok(())
 }
 
 pub fn get_response(
@@ -5532,14 +6865,16 @@ pub fn get_response(
     _project_id: &str,
     response_id: &str,
 ) -> Result<ResponseObject> {
+    ensure_local_response_exists(response_id)?;
     Ok(ResponseObject::empty(response_id, "gpt-4.1"))
 }
 
 pub fn list_response_input_items(
     _tenant_id: &str,
     _project_id: &str,
-    _response_id: &str,
+    response_id: &str,
 ) -> Result<ListResponseInputItemsResponse> {
+    ensure_local_response_exists(response_id)?;
     Ok(ListResponseInputItemsResponse::new(vec![
         ResponseInputItemObject::message("item_1"),
     ]))
@@ -5550,6 +6885,7 @@ pub fn delete_response(
     _project_id: &str,
     response_id: &str,
 ) -> Result<DeleteResponseResponse> {
+    ensure_local_response_exists(response_id)?;
     Ok(DeleteResponseResponse::deleted(response_id))
 }
 
@@ -5558,6 +6894,7 @@ pub fn cancel_response(
     _project_id: &str,
     response_id: &str,
 ) -> Result<ResponseObject> {
+    ensure_local_response_exists(response_id)?;
     Ok(ResponseObject::cancelled(response_id, "gpt-4.1"))
 }
 
@@ -5566,14 +6903,21 @@ pub fn compact_response(
     _project_id: &str,
     model: &str,
 ) -> Result<ResponseCompactionObject> {
+    if model.trim().is_empty() {
+        bail!("Response compaction model is required.");
+    }
     Ok(ResponseCompactionObject::new("resp_cmp_1", model))
 }
 
 pub fn create_completion(
     _tenant_id: &str,
     _project_id: &str,
-    _model: &str,
+    model: &str,
 ) -> Result<CompletionObject> {
+    if model.trim().is_empty() {
+        bail!("Completion model is required.");
+    }
+
     Ok(CompletionObject::new("cmpl_1", "SDKWork completion"))
 }
 
@@ -5582,6 +6926,10 @@ pub fn create_embedding(
     _project_id: &str,
     model: &str,
 ) -> Result<CreateEmbeddingResponse> {
+    if model.trim().is_empty() {
+        bail!("Embedding model is required.");
+    }
+
     Ok(CreateEmbeddingResponse::empty(model))
 }
 
@@ -5590,6 +6938,10 @@ pub fn create_moderation(
     _project_id: &str,
     model: &str,
 ) -> Result<ModerationResponse> {
+    if model.trim().is_empty() {
+        bail!("Moderation model is required.");
+    }
+
     Ok(ModerationResponse {
         id: "modr_1".to_owned(),
         model: model.to_owned(),
@@ -5603,8 +6955,12 @@ pub fn create_moderation(
 pub fn create_image_generation(
     _tenant_id: &str,
     _project_id: &str,
-    _model: &str,
+    model: &str,
 ) -> Result<ImagesResponse> {
+    if model.trim().is_empty() {
+        bail!("Image generation model is required.");
+    }
+
     Ok(ImagesResponse::new(vec![ImageObject::base64(
         "sdkwork-image",
     )]))
@@ -5669,6 +7025,12 @@ pub fn create_file(
     _project_id: &str,
     request: &CreateFileRequest,
 ) -> Result<FileObject> {
+    if request.purpose.trim().is_empty() {
+        bail!("File purpose is required.");
+    }
+    if request.filename.trim().is_empty() {
+        bail!("File filename is required.");
+    }
     Ok(FileObject::with_bytes(
         "file_1",
         &request.filename,
@@ -5686,7 +7048,16 @@ pub fn list_files(_tenant_id: &str, _project_id: &str) -> Result<ListFilesRespon
     )]))
 }
 
+fn ensure_local_file_exists(file_id: &str) -> Result<()> {
+    if file_id != "file_1" {
+        bail!("file not found");
+    }
+
+    Ok(())
+}
+
 pub fn get_file(_tenant_id: &str, _project_id: &str, file_id: &str) -> Result<FileObject> {
+    ensure_local_file_exists(file_id)?;
     Ok(FileObject::with_bytes(
         file_id,
         "train.jsonl",
@@ -5700,10 +7071,12 @@ pub fn delete_file(
     _project_id: &str,
     file_id: &str,
 ) -> Result<DeleteFileResponse> {
+    ensure_local_file_exists(file_id)?;
     Ok(DeleteFileResponse::deleted(file_id))
 }
 
 pub fn file_content(_tenant_id: &str, _project_id: &str, _file_id: &str) -> Result<Vec<u8>> {
+    ensure_local_file_exists(_file_id)?;
     Ok(b"{}".to_vec())
 }
 
@@ -5722,11 +7095,29 @@ pub fn list_containers(_tenant_id: &str, _project_id: &str) -> Result<ListContai
     )]))
 }
 
+fn ensure_local_container_exists(container_id: &str) -> Result<()> {
+    if container_id != "container_1" {
+        bail!("container not found");
+    }
+
+    Ok(())
+}
+
+fn ensure_local_container_file_exists(container_id: &str, file_id: &str) -> Result<()> {
+    ensure_local_container_exists(container_id)?;
+    if file_id != "file_1" {
+        bail!("container file not found");
+    }
+
+    Ok(())
+}
+
 pub fn get_container(
     _tenant_id: &str,
     _project_id: &str,
     container_id: &str,
 ) -> Result<ContainerObject> {
+    ensure_local_container_exists(container_id)?;
     Ok(ContainerObject::new(container_id, "ci-container"))
 }
 
@@ -5735,6 +7126,7 @@ pub fn delete_container(
     _project_id: &str,
     container_id: &str,
 ) -> Result<DeleteContainerResponse> {
+    ensure_local_container_exists(container_id)?;
     Ok(DeleteContainerResponse::deleted(container_id))
 }
 
@@ -5744,6 +7136,7 @@ pub fn create_container_file(
     container_id: &str,
     request: &CreateContainerFileRequest,
 ) -> Result<ContainerFileObject> {
+    ensure_local_container_exists(container_id)?;
     Ok(ContainerFileObject::new(&request.file_id, container_id))
 }
 
@@ -5752,6 +7145,7 @@ pub fn list_container_files(
     _project_id: &str,
     container_id: &str,
 ) -> Result<ListContainerFilesResponse> {
+    ensure_local_container_exists(container_id)?;
     Ok(ListContainerFilesResponse::new(vec![
         ContainerFileObject::new("file_1", container_id),
     ]))
@@ -5763,24 +7157,27 @@ pub fn get_container_file(
     container_id: &str,
     file_id: &str,
 ) -> Result<ContainerFileObject> {
+    ensure_local_container_file_exists(container_id, file_id)?;
     Ok(ContainerFileObject::new(file_id, container_id))
 }
 
 pub fn delete_container_file(
     _tenant_id: &str,
     _project_id: &str,
-    _container_id: &str,
+    container_id: &str,
     file_id: &str,
 ) -> Result<DeleteContainerFileResponse> {
+    ensure_local_container_file_exists(container_id, file_id)?;
     Ok(DeleteContainerFileResponse::deleted(file_id))
 }
 
 pub fn container_file_content(
     _tenant_id: &str,
     _project_id: &str,
-    _container_id: &str,
-    _file_id: &str,
+    container_id: &str,
+    file_id: &str,
 ) -> Result<Vec<u8>> {
+    ensure_local_container_file_exists(container_id, file_id)?;
     Ok(b"CONTAINER-FILE".to_vec())
 }
 
@@ -5820,7 +7217,12 @@ pub fn create_music(
         MusicObject::new("music_1")
             .with_status("completed")
             .with_model(&request.model)
-            .with_title(request.title.clone().unwrap_or_else(|| "SDKWork Track".to_owned()))
+            .with_title(
+                request
+                    .title
+                    .clone()
+                    .unwrap_or_else(|| "SDKWork Track".to_owned()),
+            )
             .with_audio_url("https://example.com/music.mp3")
             .with_lyrics(
                 request
@@ -5843,7 +7245,16 @@ pub fn list_music(_tenant_id: &str, _project_id: &str) -> Result<MusicTracksResp
     ]))
 }
 
+fn ensure_local_music_exists(music_id: &str) -> Result<()> {
+    if music_id != "music_1" {
+        bail!("music not found");
+    }
+
+    Ok(())
+}
+
 pub fn get_music(_tenant_id: &str, _project_id: &str, music_id: &str) -> Result<MusicObject> {
+    ensure_local_music_exists(music_id)?;
     Ok(MusicObject::new(music_id)
         .with_status("completed")
         .with_model("suno-v4")
@@ -5857,11 +7268,15 @@ pub fn delete_music(
     _project_id: &str,
     music_id: &str,
 ) -> Result<DeleteMusicResponse> {
+    ensure_local_music_exists(music_id)?;
     Ok(DeleteMusicResponse::deleted(music_id))
 }
 
-pub fn music_content(_tenant_id: &str, _project_id: &str, _music_id: &str) -> Result<Vec<u8>> {
-    Ok(vec![0x49, 0x44, 0x33, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x21])
+pub fn music_content(_tenant_id: &str, _project_id: &str, music_id: &str) -> Result<Vec<u8>> {
+    ensure_local_music_exists(music_id)?;
+    Ok(vec![
+        0x49, 0x44, 0x33, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x21,
+    ])
 }
 
 pub fn create_music_lyrics(
@@ -5869,17 +7284,14 @@ pub fn create_music_lyrics(
     _project_id: &str,
     request: &CreateMusicLyricsRequest,
 ) -> Result<MusicLyricsObject> {
-    Ok(MusicLyricsObject::new(
-        "lyrics_1",
-        "completed",
-        &request.prompt,
+    Ok(
+        MusicLyricsObject::new("lyrics_1", "completed", &request.prompt).with_title(
+            request
+                .title
+                .clone()
+                .unwrap_or_else(|| "SDKWork Lyrics".to_owned()),
+        ),
     )
-    .with_title(
-        request
-            .title
-            .clone()
-            .unwrap_or_else(|| "SDKWork Lyrics".to_owned()),
-    ))
 }
 
 pub fn create_video(
@@ -5902,7 +7314,16 @@ pub fn list_videos(_tenant_id: &str, _project_id: &str) -> Result<VideosResponse
 }
 
 pub fn get_video(_tenant_id: &str, _project_id: &str, video_id: &str) -> Result<VideoObject> {
+    ensure_local_video_exists(video_id)?;
     Ok(VideoObject::new(video_id, "https://example.com/video.mp4"))
+}
+
+fn ensure_local_video_exists(video_id: &str) -> Result<()> {
+    if video_id != "video_1" {
+        bail!("video not found");
+    }
+
+    Ok(())
 }
 
 pub fn delete_video(
@@ -5910,10 +7331,12 @@ pub fn delete_video(
     _project_id: &str,
     video_id: &str,
 ) -> Result<DeleteVideoResponse> {
+    ensure_local_video_exists(video_id)?;
     Ok(DeleteVideoResponse::deleted(video_id))
 }
 
-pub fn video_content(_tenant_id: &str, _project_id: &str, _video_id: &str) -> Result<Vec<u8>> {
+pub fn video_content(_tenant_id: &str, _project_id: &str, video_id: &str) -> Result<Vec<u8>> {
+    ensure_local_video_exists(video_id)?;
     Ok(b"VIDEO".to_vec())
 }
 
@@ -6016,7 +7439,16 @@ pub fn create_upload_part(
     _project_id: &str,
     request: &AddUploadPartRequest,
 ) -> Result<UploadPartObject> {
+    ensure_local_upload_exists(&request.upload_id)?;
     Ok(UploadPartObject::new("part_1", &request.upload_id))
+}
+
+fn ensure_local_upload_exists(upload_id: &str) -> Result<()> {
+    if upload_id != "upload_1" {
+        bail!("upload not found");
+    }
+
+    Ok(())
 }
 
 pub fn complete_upload(
@@ -6024,6 +7456,7 @@ pub fn complete_upload(
     _project_id: &str,
     request: &CompleteUploadRequest,
 ) -> Result<UploadObject> {
+    ensure_local_upload_exists(&request.upload_id)?;
     Ok(UploadObject::completed(
         &request.upload_id,
         "input.jsonl",
@@ -6035,6 +7468,7 @@ pub fn complete_upload(
 }
 
 pub fn cancel_upload(_tenant_id: &str, _project_id: &str, upload_id: &str) -> Result<UploadObject> {
+    ensure_local_upload_exists(upload_id)?;
     Ok(UploadObject::cancelled(
         upload_id,
         "input.jsonl",
@@ -6053,6 +7487,34 @@ pub fn create_fine_tuning_job(
     Ok(FineTuningJobObject::new("ftjob_1", model))
 }
 
+fn ensure_local_fine_tuning_job_exists(job_id: &str) -> Result<()> {
+    if job_id != "ftjob_1" {
+        bail!("fine tuning job not found");
+    }
+
+    Ok(())
+}
+
+fn ensure_local_fine_tuning_checkpoint_exists(checkpoint_id: &str) -> Result<()> {
+    if checkpoint_id != "ft:gpt-4.1-mini:checkpoint-1" {
+        bail!("fine tuning checkpoint not found");
+    }
+
+    Ok(())
+}
+
+fn ensure_local_fine_tuning_checkpoint_permission_exists(
+    checkpoint_id: &str,
+    permission_id: &str,
+) -> Result<()> {
+    ensure_local_fine_tuning_checkpoint_exists(checkpoint_id)?;
+    if permission_id != "perm_1" {
+        bail!("fine tuning checkpoint permission not found");
+    }
+
+    Ok(())
+}
+
 pub fn list_fine_tuning_jobs(
     _tenant_id: &str,
     _project_id: &str,
@@ -6067,6 +7529,7 @@ pub fn get_fine_tuning_job(
     _project_id: &str,
     job_id: &str,
 ) -> Result<FineTuningJobObject> {
+    ensure_local_fine_tuning_job_exists(job_id)?;
     Ok(FineTuningJobObject::new(job_id, "gpt-4.1-mini"))
 }
 
@@ -6075,14 +7538,16 @@ pub fn cancel_fine_tuning_job(
     _project_id: &str,
     job_id: &str,
 ) -> Result<FineTuningJobObject> {
+    ensure_local_fine_tuning_job_exists(job_id)?;
     Ok(FineTuningJobObject::cancelled(job_id, "gpt-4.1-mini"))
 }
 
 pub fn list_fine_tuning_job_events(
     _tenant_id: &str,
     _project_id: &str,
-    _job_id: &str,
+    job_id: &str,
 ) -> Result<ListFineTuningJobEventsResponse> {
+    ensure_local_fine_tuning_job_exists(job_id)?;
     Ok(ListFineTuningJobEventsResponse::new(vec![
         FineTuningJobEventObject::new("ftevent_1", "info", "job queued"),
     ]))
@@ -6091,8 +7556,9 @@ pub fn list_fine_tuning_job_events(
 pub fn list_fine_tuning_job_checkpoints(
     _tenant_id: &str,
     _project_id: &str,
-    _job_id: &str,
+    job_id: &str,
 ) -> Result<ListFineTuningJobCheckpointsResponse> {
+    ensure_local_fine_tuning_job_exists(job_id)?;
     Ok(ListFineTuningJobCheckpointsResponse::new(vec![
         FineTuningJobCheckpointObject::new("ftckpt_1", "ft:gpt-4.1-mini:checkpoint-1"),
     ]))
@@ -6103,6 +7569,7 @@ pub fn pause_fine_tuning_job(
     _project_id: &str,
     job_id: &str,
 ) -> Result<FineTuningJobObject> {
+    ensure_local_fine_tuning_job_exists(job_id)?;
     Ok(FineTuningJobObject::paused(job_id, "gpt-4.1-mini"))
 }
 
@@ -6111,14 +7578,17 @@ pub fn resume_fine_tuning_job(
     _project_id: &str,
     job_id: &str,
 ) -> Result<FineTuningJobObject> {
+    ensure_local_fine_tuning_job_exists(job_id)?;
     Ok(FineTuningJobObject::running(job_id, "gpt-4.1-mini"))
 }
 
 pub fn create_fine_tuning_checkpoint_permissions(
     _tenant_id: &str,
     _project_id: &str,
+    checkpoint_id: &str,
     request: &CreateFineTuningCheckpointPermissionsRequest,
 ) -> Result<ListFineTuningCheckpointPermissionsResponse> {
+    ensure_local_fine_tuning_checkpoint_exists(checkpoint_id)?;
     let project_id = request
         .project_ids
         .first()
@@ -6132,8 +7602,9 @@ pub fn create_fine_tuning_checkpoint_permissions(
 pub fn list_fine_tuning_checkpoint_permissions(
     _tenant_id: &str,
     _project_id: &str,
-    _checkpoint_id: &str,
+    checkpoint_id: &str,
 ) -> Result<ListFineTuningCheckpointPermissionsResponse> {
+    ensure_local_fine_tuning_checkpoint_exists(checkpoint_id)?;
     Ok(ListFineTuningCheckpointPermissionsResponse::new(vec![
         FineTuningCheckpointPermissionObject::new("perm_1", "project-2"),
     ]))
@@ -6142,8 +7613,10 @@ pub fn list_fine_tuning_checkpoint_permissions(
 pub fn delete_fine_tuning_checkpoint_permission(
     _tenant_id: &str,
     _project_id: &str,
+    checkpoint_id: &str,
     permission_id: &str,
 ) -> Result<DeleteFineTuningCheckpointPermissionResponse> {
+    ensure_local_fine_tuning_checkpoint_permission_exists(checkpoint_id, permission_id)?;
     Ok(DeleteFineTuningCheckpointPermissionResponse::deleted(
         permission_id,
     ))
@@ -6164,11 +7637,20 @@ pub fn list_assistants(_tenant_id: &str, _project_id: &str) -> Result<ListAssist
     )]))
 }
 
+fn ensure_local_assistant_exists(assistant_id: &str) -> Result<()> {
+    if assistant_id != "asst_1" {
+        bail!("assistant not found");
+    }
+
+    Ok(())
+}
+
 pub fn get_assistant(
     _tenant_id: &str,
     _project_id: &str,
     assistant_id: &str,
 ) -> Result<AssistantObject> {
+    ensure_local_assistant_exists(assistant_id)?;
     Ok(AssistantObject::new(assistant_id, "Support", "gpt-4.1"))
 }
 
@@ -6178,6 +7660,7 @@ pub fn update_assistant(
     assistant_id: &str,
     name: &str,
 ) -> Result<AssistantObject> {
+    ensure_local_assistant_exists(assistant_id)?;
     Ok(AssistantObject::new(assistant_id, name, "gpt-4.1"))
 }
 
@@ -6186,6 +7669,7 @@ pub fn delete_assistant(
     _project_id: &str,
     assistant_id: &str,
 ) -> Result<DeleteAssistantResponse> {
+    ensure_local_assistant_exists(assistant_id)?;
     Ok(DeleteAssistantResponse::deleted(assistant_id))
 }
 
@@ -6193,11 +7677,39 @@ pub fn create_thread(_tenant_id: &str, _project_id: &str) -> Result<ThreadObject
     Ok(ThreadObject::new("thread_1"))
 }
 
+fn ensure_local_thread_exists(thread_id: &str) -> Result<()> {
+    if thread_id != "thread_1" {
+        bail!("thread not found");
+    }
+
+    Ok(())
+}
+
+fn ensure_local_thread_message_exists(thread_id: &str, message_id: &str) -> Result<()> {
+    ensure_local_thread_exists(thread_id)?;
+    if message_id != "msg_1" {
+        bail!("thread message not found");
+    }
+
+    Ok(())
+}
+
+fn ensure_local_thread_run_exists(thread_id: &str, run_id: &str) -> Result<()> {
+    ensure_local_thread_exists(thread_id)?;
+    if run_id != "run_1" {
+        bail!("run not found");
+    }
+
+    Ok(())
+}
+
 pub fn get_thread(_tenant_id: &str, _project_id: &str, thread_id: &str) -> Result<ThreadObject> {
+    ensure_local_thread_exists(thread_id)?;
     Ok(ThreadObject::new(thread_id))
 }
 
 pub fn update_thread(_tenant_id: &str, _project_id: &str, thread_id: &str) -> Result<ThreadObject> {
+    ensure_local_thread_exists(thread_id)?;
     Ok(ThreadObject::new(thread_id))
 }
 
@@ -6206,6 +7718,7 @@ pub fn delete_thread(
     _project_id: &str,
     thread_id: &str,
 ) -> Result<DeleteThreadResponse> {
+    ensure_local_thread_exists(thread_id)?;
     Ok(DeleteThreadResponse::deleted(thread_id))
 }
 
@@ -6216,6 +7729,7 @@ pub fn create_thread_message(
     role: &str,
     text: &str,
 ) -> Result<ThreadMessageObject> {
+    ensure_local_thread_exists(thread_id)?;
     Ok(ThreadMessageObject::text("msg_1", thread_id, role, text))
 }
 
@@ -6224,6 +7738,7 @@ pub fn list_thread_messages(
     _project_id: &str,
     thread_id: &str,
 ) -> Result<ListThreadMessagesResponse> {
+    ensure_local_thread_exists(thread_id)?;
     Ok(ListThreadMessagesResponse::new(vec![
         ThreadMessageObject::text("msg_1", thread_id, "assistant", "hello"),
     ]))
@@ -6235,6 +7750,7 @@ pub fn get_thread_message(
     thread_id: &str,
     message_id: &str,
 ) -> Result<ThreadMessageObject> {
+    ensure_local_thread_message_exists(thread_id, message_id)?;
     Ok(ThreadMessageObject::text(
         message_id,
         thread_id,
@@ -6249,6 +7765,7 @@ pub fn update_thread_message(
     thread_id: &str,
     message_id: &str,
 ) -> Result<ThreadMessageObject> {
+    ensure_local_thread_message_exists(thread_id, message_id)?;
     Ok(ThreadMessageObject::text(
         message_id,
         thread_id,
@@ -6260,9 +7777,10 @@ pub fn update_thread_message(
 pub fn delete_thread_message(
     _tenant_id: &str,
     _project_id: &str,
-    _thread_id: &str,
+    thread_id: &str,
     message_id: &str,
 ) -> Result<DeleteThreadMessageResponse> {
+    ensure_local_thread_message_exists(thread_id, message_id)?;
     Ok(DeleteThreadMessageResponse::deleted(message_id))
 }
 
@@ -6273,6 +7791,7 @@ pub fn create_thread_run(
     assistant_id: &str,
     model: Option<&str>,
 ) -> Result<RunObject> {
+    ensure_local_thread_exists(thread_id)?;
     Ok(RunObject::queued(
         "run_1",
         thread_id,
@@ -6286,6 +7805,10 @@ pub fn create_thread_and_run(
     _project_id: &str,
     assistant_id: &str,
 ) -> Result<RunObject> {
+    if assistant_id.trim().is_empty() {
+        bail!("Thread and run assistant_id is required.");
+    }
+
     Ok(RunObject::queued(
         "run_1",
         "thread_1",
@@ -6299,6 +7822,7 @@ pub fn list_thread_runs(
     _project_id: &str,
     thread_id: &str,
 ) -> Result<ListRunsResponse> {
+    ensure_local_thread_exists(thread_id)?;
     Ok(ListRunsResponse::new(vec![RunObject::queued(
         "run_1", thread_id, "asst_1", "gpt-4.1",
     )]))
@@ -6310,6 +7834,7 @@ pub fn get_thread_run(
     thread_id: &str,
     run_id: &str,
 ) -> Result<RunObject> {
+    ensure_local_thread_run_exists(thread_id, run_id)?;
     Ok(RunObject::in_progress(
         run_id, thread_id, "asst_1", "gpt-4.1",
     ))
@@ -6321,6 +7846,7 @@ pub fn update_thread_run(
     thread_id: &str,
     run_id: &str,
 ) -> Result<RunObject> {
+    ensure_local_thread_run_exists(thread_id, run_id)?;
     Ok(RunObject::with_metadata(
         run_id,
         thread_id,
@@ -6337,6 +7863,7 @@ pub fn cancel_thread_run(
     thread_id: &str,
     run_id: &str,
 ) -> Result<RunObject> {
+    ensure_local_thread_run_exists(thread_id, run_id)?;
     Ok(RunObject::cancelled(run_id, thread_id, "asst_1", "gpt-4.1"))
 }
 
@@ -6347,6 +7874,7 @@ pub fn submit_thread_run_tool_outputs(
     run_id: &str,
     _tool_outputs: Vec<(&str, &str)>,
 ) -> Result<RunObject> {
+    ensure_local_thread_run_exists(thread_id, run_id)?;
     Ok(RunObject::queued(run_id, thread_id, "asst_1", "gpt-4.1"))
 }
 
@@ -6356,6 +7884,7 @@ pub fn list_thread_run_steps(
     thread_id: &str,
     run_id: &str,
 ) -> Result<ListRunStepsResponse> {
+    ensure_local_thread_run_exists(thread_id, run_id)?;
     Ok(ListRunStepsResponse::new(vec![
         RunStepObject::message_creation("step_1", thread_id, run_id, "asst_1", "msg_1"),
     ]))
@@ -6368,6 +7897,10 @@ pub fn get_thread_run_step(
     run_id: &str,
     step_id: &str,
 ) -> Result<RunStepObject> {
+    ensure_local_thread_run_exists(thread_id, run_id)?;
+    if step_id != "step_1" {
+        bail!("run step not found");
+    }
     Ok(RunStepObject::message_creation(
         step_id, thread_id, run_id, "asst_1", "msg_1",
     ))
@@ -6389,7 +7922,16 @@ pub fn list_webhooks(_tenant_id: &str, _project_id: &str) -> Result<ListWebhooks
     )]))
 }
 
+fn ensure_local_webhook_exists(webhook_id: &str) -> Result<()> {
+    if webhook_id != "wh_1" {
+        bail!("webhook not found");
+    }
+
+    Ok(())
+}
+
 pub fn get_webhook(_tenant_id: &str, _project_id: &str, webhook_id: &str) -> Result<WebhookObject> {
+    ensure_local_webhook_exists(webhook_id)?;
     Ok(WebhookObject::new(
         webhook_id,
         "https://example.com/webhook",
@@ -6402,6 +7944,7 @@ pub fn update_webhook(
     webhook_id: &str,
     url: &str,
 ) -> Result<WebhookObject> {
+    ensure_local_webhook_exists(webhook_id)?;
     Ok(WebhookObject::new(webhook_id, url))
 }
 
@@ -6410,6 +7953,7 @@ pub fn delete_webhook(
     _project_id: &str,
     webhook_id: &str,
 ) -> Result<DeleteWebhookResponse> {
+    ensure_local_webhook_exists(webhook_id)?;
     Ok(DeleteWebhookResponse::deleted(webhook_id))
 }
 
@@ -6432,7 +7976,38 @@ pub fn list_evals(_tenant_id: &str, _project_id: &str) -> Result<ListEvalsRespon
     )]))
 }
 
+fn ensure_local_eval_exists(eval_id: &str) -> Result<()> {
+    if eval_id != "eval_1" {
+        bail!("eval not found");
+    }
+
+    Ok(())
+}
+
+fn ensure_local_eval_run_exists(eval_id: &str, run_id: &str) -> Result<()> {
+    ensure_local_eval_exists(eval_id)?;
+    if run_id != "run_1" {
+        bail!("eval run not found");
+    }
+
+    Ok(())
+}
+
+fn ensure_local_eval_run_output_item_exists(
+    eval_id: &str,
+    run_id: &str,
+    output_item_id: &str,
+) -> Result<()> {
+    ensure_local_eval_run_exists(eval_id, run_id)?;
+    if output_item_id != "output_item_1" {
+        bail!("eval run output item not found");
+    }
+
+    Ok(())
+}
+
 pub fn get_eval(_tenant_id: &str, _project_id: &str, eval_id: &str) -> Result<EvalObject> {
+    ensure_local_eval_exists(eval_id)?;
     Ok(EvalObject::new(eval_id, "qa-benchmark"))
 }
 
@@ -6442,6 +8017,7 @@ pub fn update_eval(
     eval_id: &str,
     request: &UpdateEvalRequest,
 ) -> Result<EvalObject> {
+    ensure_local_eval_exists(eval_id)?;
     Ok(EvalObject::new(
         eval_id,
         request.name.as_deref().unwrap_or("qa-benchmark"),
@@ -6453,14 +8029,16 @@ pub fn delete_eval(
     _project_id: &str,
     eval_id: &str,
 ) -> Result<DeleteEvalResponse> {
+    ensure_local_eval_exists(eval_id)?;
     Ok(DeleteEvalResponse::deleted(eval_id))
 }
 
 pub fn list_eval_runs(
     _tenant_id: &str,
     _project_id: &str,
-    _eval_id: &str,
+    eval_id: &str,
 ) -> Result<ListEvalRunsResponse> {
+    ensure_local_eval_exists(eval_id)?;
     Ok(ListEvalRunsResponse::new(vec![EvalRunObject::completed(
         "run_1",
     )]))
@@ -6469,36 +8047,40 @@ pub fn list_eval_runs(
 pub fn create_eval_run(
     _tenant_id: &str,
     _project_id: &str,
-    _eval_id: &str,
+    eval_id: &str,
     _request: &CreateEvalRunRequest,
 ) -> Result<EvalRunObject> {
+    ensure_local_eval_exists(eval_id)?;
     Ok(EvalRunObject::queued("run_1"))
 }
 
 pub fn get_eval_run(
     _tenant_id: &str,
     _project_id: &str,
-    _eval_id: &str,
+    eval_id: &str,
     run_id: &str,
 ) -> Result<EvalRunObject> {
+    ensure_local_eval_run_exists(eval_id, run_id)?;
     Ok(EvalRunObject::completed(run_id))
 }
 
 pub fn delete_eval_run(
     _tenant_id: &str,
     _project_id: &str,
-    _eval_id: &str,
+    eval_id: &str,
     run_id: &str,
 ) -> Result<DeleteEvalRunResponse> {
+    ensure_local_eval_run_exists(eval_id, run_id)?;
     Ok(DeleteEvalRunResponse::deleted(run_id))
 }
 
 pub fn cancel_eval_run(
     _tenant_id: &str,
     _project_id: &str,
-    _eval_id: &str,
+    eval_id: &str,
     run_id: &str,
 ) -> Result<EvalRunObject> {
+    ensure_local_eval_run_exists(eval_id, run_id)?;
     Ok(EvalRunObject {
         id: run_id.to_owned(),
         object: "eval.run",
@@ -6509,9 +8091,10 @@ pub fn cancel_eval_run(
 pub fn list_eval_run_output_items(
     _tenant_id: &str,
     _project_id: &str,
-    _eval_id: &str,
-    _run_id: &str,
+    eval_id: &str,
+    run_id: &str,
 ) -> Result<ListEvalRunOutputItemsResponse> {
+    ensure_local_eval_run_exists(eval_id, run_id)?;
     Ok(ListEvalRunOutputItemsResponse::new(vec![
         EvalRunOutputItemObject::passed("output_item_1"),
     ]))
@@ -6520,10 +8103,11 @@ pub fn list_eval_run_output_items(
 pub fn get_eval_run_output_item(
     _tenant_id: &str,
     _project_id: &str,
-    _eval_id: &str,
-    _run_id: &str,
+    eval_id: &str,
+    run_id: &str,
     output_item_id: &str,
 ) -> Result<EvalRunOutputItemObject> {
+    ensure_local_eval_run_output_item_exists(eval_id, run_id, output_item_id)?;
     Ok(EvalRunOutputItemObject::passed(output_item_id))
 }
 
@@ -6544,11 +8128,21 @@ pub fn list_batches(_tenant_id: &str, _project_id: &str) -> Result<ListBatchesRe
     )]))
 }
 
+fn ensure_local_batch_exists(batch_id: &str) -> Result<()> {
+    if batch_id != "batch_1" {
+        bail!("batch not found");
+    }
+
+    Ok(())
+}
+
 pub fn get_batch(_tenant_id: &str, _project_id: &str, batch_id: &str) -> Result<BatchObject> {
+    ensure_local_batch_exists(batch_id)?;
     Ok(BatchObject::new(batch_id, "/v1/responses", "file_1"))
 }
 
 pub fn cancel_batch(_tenant_id: &str, _project_id: &str, batch_id: &str) -> Result<BatchObject> {
+    ensure_local_batch_exists(batch_id)?;
     Ok(BatchObject::cancelled(batch_id, "/v1/responses", "file_1"))
 }
 
@@ -6566,11 +8160,20 @@ pub fn list_vector_stores(_tenant_id: &str, _project_id: &str) -> Result<ListVec
     )]))
 }
 
+fn ensure_local_vector_store_exists(vector_store_id: &str) -> Result<()> {
+    if vector_store_id != "vs_1" {
+        bail!("vector store not found");
+    }
+
+    Ok(())
+}
+
 pub fn get_vector_store(
     _tenant_id: &str,
     _project_id: &str,
     vector_store_id: &str,
 ) -> Result<VectorStoreObject> {
+    ensure_local_vector_store_exists(vector_store_id)?;
     Ok(VectorStoreObject::new(vector_store_id, "kb-main"))
 }
 
@@ -6580,6 +8183,7 @@ pub fn update_vector_store(
     vector_store_id: &str,
     name: &str,
 ) -> Result<VectorStoreObject> {
+    ensure_local_vector_store_exists(vector_store_id)?;
     Ok(VectorStoreObject::new(vector_store_id, name))
 }
 
@@ -6588,6 +8192,7 @@ pub fn delete_vector_store(
     _project_id: &str,
     vector_store_id: &str,
 ) -> Result<DeleteVectorStoreResponse> {
+    ensure_local_vector_store_exists(vector_store_id)?;
     Ok(DeleteVectorStoreResponse::deleted(vector_store_id))
 }
 
@@ -6598,6 +8203,25 @@ pub fn search_vector_store(
     query: &str,
 ) -> Result<SearchVectorStoreResponse> {
     Ok(SearchVectorStoreResponse::sample(query))
+}
+
+fn ensure_local_vector_store_file_exists(vector_store_id: &str, file_id: &str) -> Result<()> {
+    if vector_store_id != "vs_1" || file_id != "file_1" {
+        bail!("vector store file not found");
+    }
+
+    Ok(())
+}
+
+fn ensure_local_vector_store_file_batch_exists(
+    vector_store_id: &str,
+    batch_id: &str,
+) -> Result<()> {
+    if vector_store_id != "vs_1" || batch_id != "vsfb_1" {
+        bail!("vector store file batch not found");
+    }
+
+    Ok(())
 }
 
 pub fn create_vector_store_file(
@@ -6622,18 +8246,20 @@ pub fn list_vector_store_files(
 pub fn get_vector_store_file(
     _tenant_id: &str,
     _project_id: &str,
-    _vector_store_id: &str,
+    vector_store_id: &str,
     file_id: &str,
 ) -> Result<VectorStoreFileObject> {
+    ensure_local_vector_store_file_exists(vector_store_id, file_id)?;
     Ok(VectorStoreFileObject::new(file_id))
 }
 
 pub fn delete_vector_store_file(
     _tenant_id: &str,
     _project_id: &str,
-    _vector_store_id: &str,
+    vector_store_id: &str,
     file_id: &str,
 ) -> Result<DeleteVectorStoreFileResponse> {
+    ensure_local_vector_store_file_exists(vector_store_id, file_id)?;
     Ok(DeleteVectorStoreFileResponse::deleted(file_id))
 }
 
@@ -6650,27 +8276,30 @@ pub fn create_vector_store_file_batch<T: AsRef<str>>(
 pub fn get_vector_store_file_batch(
     _tenant_id: &str,
     _project_id: &str,
-    _vector_store_id: &str,
+    vector_store_id: &str,
     batch_id: &str,
 ) -> Result<VectorStoreFileBatchObject> {
+    ensure_local_vector_store_file_batch_exists(vector_store_id, batch_id)?;
     Ok(VectorStoreFileBatchObject::new(batch_id))
 }
 
 pub fn cancel_vector_store_file_batch(
     _tenant_id: &str,
     _project_id: &str,
-    _vector_store_id: &str,
+    vector_store_id: &str,
     batch_id: &str,
 ) -> Result<VectorStoreFileBatchObject> {
+    ensure_local_vector_store_file_batch_exists(vector_store_id, batch_id)?;
     Ok(VectorStoreFileBatchObject::cancelled(batch_id))
 }
 
 pub fn list_vector_store_file_batch_files(
     _tenant_id: &str,
     _project_id: &str,
-    _vector_store_id: &str,
-    _batch_id: &str,
+    vector_store_id: &str,
+    batch_id: &str,
 ) -> Result<ListVectorStoreFilesResponse> {
+    ensure_local_vector_store_file_batch_exists(vector_store_id, batch_id)?;
     Ok(ListVectorStoreFilesResponse::new(vec![
         VectorStoreFileObject::new("file_1"),
     ]))
@@ -7075,8 +8704,14 @@ async fn execute_json_provider_request_for_provider(
     request: ProviderRequest<'_>,
 ) -> Result<Option<Value>> {
     let options = ProviderRequestOptions::default();
+    let retry_policy = gateway_upstream_retry_policy(&request, None);
     execute_json_provider_request_for_provider_with_options(
-        store, provider, api_key, request, &options,
+        store,
+        provider,
+        api_key,
+        request,
+        &options,
+        retry_policy,
     )
     .await
 }
@@ -7087,6 +8722,7 @@ async fn execute_json_provider_request_for_provider_with_options(
     api_key: &str,
     request: ProviderRequest<'_>,
     options: &ProviderRequestOptions,
+    retry_policy: GatewayUpstreamRetryPolicy,
 ) -> Result<Option<Value>> {
     let descriptor =
         provider_execution_descriptor_for_provider(store, provider, api_key.to_owned()).await?;
@@ -7096,14 +8732,87 @@ async fn execute_json_provider_request_for_provider_with_options(
     }
 
     let host = build_extension_host_from_store(store).await?;
-    let Some(adapter) = host.resolve_provider(&descriptor.runtime_key, descriptor.base_url) else {
+    let Some(adapter) = host.resolve_provider(&descriptor.runtime_key, descriptor.base_url.clone())
+    else {
         return Ok(None);
     };
 
-    let response = adapter
-        .execute_with_options(&descriptor.api_key, request, options)
-        .await?;
-    Ok(response.into_json())
+    let capability = provider_request_metric_capability(&request);
+    let mut attempt = 1usize;
+
+    loop {
+        record_gateway_upstream_outcome(capability, &descriptor.provider_id, "attempt");
+        match execute_provider_request_with_execution_context(
+            adapter.as_ref(),
+            Some(&descriptor.provider_id),
+            &descriptor.api_key,
+            request,
+            options,
+        )
+        .await
+        {
+            Ok(response) => {
+                record_gateway_upstream_outcome(capability, &descriptor.provider_id, "success");
+                persist_gateway_execution_health_snapshot(
+                    store,
+                    &descriptor,
+                    true,
+                    capability,
+                    None,
+                )
+                .await;
+                return Ok(response.into_json());
+            }
+            Err(error) => {
+                record_gateway_execution_context_failure_from_error(
+                    capability,
+                    &descriptor.provider_id,
+                    &error,
+                );
+                let retryable = gateway_upstream_error_is_retryable(&error);
+                let can_retry =
+                    retry_policy.enabled() && retryable && attempt < retry_policy.max_attempts;
+                if can_retry {
+                    let retry_reason = gateway_retry_reason_for_error(&error);
+                    let retry_delay = gateway_retry_delay_for_error(retry_policy, attempt, &error);
+                    record_gateway_upstream_retry_with_detail(
+                        capability,
+                        &descriptor.provider_id,
+                        "scheduled",
+                        retry_reason,
+                        Some(retry_delay.source),
+                        Some(retry_delay.delay.as_millis() as u64),
+                    );
+                    tokio::time::sleep(retry_delay.delay).await;
+                    attempt += 1;
+                    continue;
+                }
+
+                if retry_policy.enabled() && retryable && attempt > 1 {
+                    record_gateway_upstream_retry_with_detail(
+                        capability,
+                        &descriptor.provider_id,
+                        "exhausted",
+                        gateway_retry_reason_for_error(&error),
+                        None,
+                        None,
+                    );
+                }
+                record_gateway_upstream_outcome(capability, &descriptor.provider_id, "failure");
+                if gateway_error_impacts_provider_health(&error) {
+                    persist_gateway_execution_health_snapshot(
+                        store,
+                        &descriptor,
+                        false,
+                        capability,
+                        Some(&error),
+                    )
+                    .await;
+                }
+                return Err(error);
+            }
+        }
+    }
 }
 
 async fn execute_stream_provider_request_for_provider(
@@ -7113,8 +8822,14 @@ async fn execute_stream_provider_request_for_provider(
     request: ProviderRequest<'_>,
 ) -> Result<Option<ProviderStreamOutput>> {
     let options = ProviderRequestOptions::default();
+    let retry_policy = gateway_upstream_retry_policy(&request, None);
     execute_stream_provider_request_for_provider_with_options(
-        store, provider, api_key, request, &options,
+        store,
+        provider,
+        api_key,
+        request,
+        &options,
+        retry_policy,
     )
     .await
 }
@@ -7125,6 +8840,7 @@ async fn execute_stream_provider_request_for_provider_with_options(
     api_key: &str,
     request: ProviderRequest<'_>,
     options: &ProviderRequestOptions,
+    retry_policy: GatewayUpstreamRetryPolicy,
 ) -> Result<Option<ProviderStreamOutput>> {
     let descriptor =
         provider_execution_descriptor_for_provider(store, provider, api_key.to_owned()).await?;
@@ -7134,14 +8850,329 @@ async fn execute_stream_provider_request_for_provider_with_options(
     }
 
     let host = build_extension_host_from_store(store).await?;
-    let Some(adapter) = host.resolve_provider(&descriptor.runtime_key, descriptor.base_url) else {
+    let Some(adapter) = host.resolve_provider(&descriptor.runtime_key, descriptor.base_url.clone())
+    else {
         return Ok(None);
     };
 
-    let response = adapter
-        .execute_with_options(&descriptor.api_key, request, options)
-        .await?;
-    Ok(response.into_stream())
+    let capability = provider_request_metric_capability(&request);
+    let mut attempt = 1usize;
+
+    loop {
+        record_gateway_upstream_outcome(capability, &descriptor.provider_id, "attempt");
+        match execute_provider_request_with_execution_context(
+            adapter.as_ref(),
+            Some(&descriptor.provider_id),
+            &descriptor.api_key,
+            request,
+            options,
+        )
+        .await
+        {
+            Ok(response) => {
+                record_gateway_upstream_outcome(capability, &descriptor.provider_id, "success");
+                persist_gateway_execution_health_snapshot(
+                    store,
+                    &descriptor,
+                    true,
+                    capability,
+                    None,
+                )
+                .await;
+                return Ok(response.into_stream());
+            }
+            Err(error) => {
+                record_gateway_execution_context_failure_from_error(
+                    capability,
+                    &descriptor.provider_id,
+                    &error,
+                );
+                let retryable = gateway_upstream_error_is_retryable(&error);
+                let can_retry =
+                    retry_policy.enabled() && retryable && attempt < retry_policy.max_attempts;
+                if can_retry {
+                    let retry_reason = gateway_retry_reason_for_error(&error);
+                    let retry_delay = gateway_retry_delay_for_error(retry_policy, attempt, &error);
+                    record_gateway_upstream_retry_with_detail(
+                        capability,
+                        &descriptor.provider_id,
+                        "scheduled",
+                        retry_reason,
+                        Some(retry_delay.source),
+                        Some(retry_delay.delay.as_millis() as u64),
+                    );
+                    tokio::time::sleep(retry_delay.delay).await;
+                    attempt += 1;
+                    continue;
+                }
+
+                if retry_policy.enabled() && retryable && attempt > 1 {
+                    record_gateway_upstream_retry_with_detail(
+                        capability,
+                        &descriptor.provider_id,
+                        "exhausted",
+                        gateway_retry_reason_for_error(&error),
+                        None,
+                        None,
+                    );
+                }
+                record_gateway_upstream_outcome(capability, &descriptor.provider_id, "failure");
+                if gateway_error_impacts_provider_health(&error) {
+                    persist_gateway_execution_health_snapshot(
+                        store,
+                        &descriptor,
+                        false,
+                        capability,
+                        Some(&error),
+                    )
+                    .await;
+                }
+                return Err(error);
+            }
+        }
+    }
+}
+
+const GATEWAY_UPSTREAM_METRICS_SERVICE: &str = "gateway";
+
+fn record_gateway_upstream_outcome(capability: &str, provider_id: &str, outcome: &str) {
+    HttpMetricsRegistry::new(GATEWAY_UPSTREAM_METRICS_SERVICE).record_upstream_outcome(
+        capability,
+        provider_id,
+        outcome,
+    );
+}
+
+fn record_gateway_upstream_retry_with_detail(
+    capability: &str,
+    provider_id: &str,
+    outcome: &str,
+    reason: &str,
+    delay_source: Option<&str>,
+    delay_ms: Option<u64>,
+) {
+    let registry = HttpMetricsRegistry::new(GATEWAY_UPSTREAM_METRICS_SERVICE);
+    registry.record_upstream_retry(capability, provider_id, outcome);
+    registry.record_upstream_retry_reason(capability, provider_id, outcome, reason);
+    if let (Some(delay_source), Some(delay_ms)) = (delay_source, delay_ms) {
+        registry.record_upstream_retry_delay(capability, provider_id, delay_source, delay_ms);
+    }
+}
+
+fn record_gateway_provider_health(
+    provider_id: &str,
+    runtime: &str,
+    healthy: bool,
+    observed_at_ms: u64,
+) {
+    HttpMetricsRegistry::new(GATEWAY_UPSTREAM_METRICS_SERVICE).record_provider_health(
+        provider_id,
+        runtime,
+        healthy,
+        observed_at_ms,
+    );
+}
+
+fn record_gateway_provider_health_persist_failure(provider_id: &str, runtime: &str) {
+    HttpMetricsRegistry::new(GATEWAY_UPSTREAM_METRICS_SERVICE)
+        .record_provider_health_persist_failure(provider_id, runtime);
+}
+
+fn record_gateway_provider_health_recovery_probe(provider_id: &str, outcome: &str) {
+    HttpMetricsRegistry::new(GATEWAY_UPSTREAM_METRICS_SERVICE)
+        .record_provider_health_recovery_probe(provider_id, outcome);
+}
+
+fn record_gateway_execution_context_failure(capability: &str, provider_id: &str, reason: &str) {
+    HttpMetricsRegistry::new(GATEWAY_UPSTREAM_METRICS_SERVICE)
+        .record_gateway_execution_context_failure(capability, provider_id, reason);
+}
+
+fn record_gateway_execution_context_failure_from_error(
+    capability: &str,
+    provider_id: &str,
+    error: &anyhow::Error,
+) {
+    let Some(error) = gateway_execution_context_error(error) else {
+        return;
+    };
+    record_gateway_execution_context_failure(
+        capability,
+        provider_id,
+        gateway_execution_context_metric_reason(error),
+    );
+}
+
+fn record_gateway_execution_failover(
+    capability: &str,
+    from_provider_id: &str,
+    to_provider_id: &str,
+    outcome: &str,
+) {
+    HttpMetricsRegistry::new(GATEWAY_UPSTREAM_METRICS_SERVICE).record_gateway_failover(
+        capability,
+        from_provider_id,
+        to_provider_id,
+        outcome,
+    );
+}
+
+fn record_gateway_recovery_probe_from_decision(decision: &RoutingDecision) {
+    let Some(probe) = decision.provider_health_recovery_probe.as_ref() else {
+        return;
+    };
+    record_gateway_provider_health_recovery_probe(&probe.provider_id, probe.outcome.as_str());
+}
+
+fn provider_request_metric_capability(request: &ProviderRequest<'_>) -> &'static str {
+    match request {
+        ProviderRequest::ModelsList
+        | ProviderRequest::ModelsRetrieve(_)
+        | ProviderRequest::ModelsDelete(_) => "models",
+        ProviderRequest::ChatCompletions(_)
+        | ProviderRequest::ChatCompletionsStream(_)
+        | ProviderRequest::ChatCompletionsList
+        | ProviderRequest::ChatCompletionsRetrieve(_)
+        | ProviderRequest::ChatCompletionsUpdate(_, _)
+        | ProviderRequest::ChatCompletionsDelete(_)
+        | ProviderRequest::ChatCompletionsMessagesList(_) => "chat_completion",
+        ProviderRequest::Completions(_) => "completion",
+        ProviderRequest::Containers(_)
+        | ProviderRequest::ContainersList
+        | ProviderRequest::ContainersRetrieve(_)
+        | ProviderRequest::ContainersDelete(_)
+        | ProviderRequest::ContainerFiles(_, _)
+        | ProviderRequest::ContainerFilesList(_)
+        | ProviderRequest::ContainerFilesRetrieve(_, _)
+        | ProviderRequest::ContainerFilesDelete(_, _)
+        | ProviderRequest::ContainerFilesContent(_, _) => "containers",
+        ProviderRequest::Threads(_)
+        | ProviderRequest::ThreadsRetrieve(_)
+        | ProviderRequest::ThreadsUpdate(_, _)
+        | ProviderRequest::ThreadsDelete(_)
+        | ProviderRequest::ThreadMessages(_, _)
+        | ProviderRequest::ThreadMessagesList(_)
+        | ProviderRequest::ThreadMessagesRetrieve(_, _)
+        | ProviderRequest::ThreadMessagesUpdate(_, _, _)
+        | ProviderRequest::ThreadMessagesDelete(_, _)
+        | ProviderRequest::ThreadRuns(_, _)
+        | ProviderRequest::ThreadRunsList(_)
+        | ProviderRequest::ThreadRunsRetrieve(_, _)
+        | ProviderRequest::ThreadRunsUpdate(_, _, _)
+        | ProviderRequest::ThreadRunsCancel(_, _)
+        | ProviderRequest::ThreadRunsSubmitToolOutputs(_, _, _)
+        | ProviderRequest::ThreadRunStepsList(_, _)
+        | ProviderRequest::ThreadRunStepsRetrieve(_, _, _)
+        | ProviderRequest::ThreadsRuns(_) => "threads",
+        ProviderRequest::Conversations(_)
+        | ProviderRequest::ConversationsList
+        | ProviderRequest::ConversationsRetrieve(_)
+        | ProviderRequest::ConversationsUpdate(_, _)
+        | ProviderRequest::ConversationsDelete(_)
+        | ProviderRequest::ConversationItems(_, _)
+        | ProviderRequest::ConversationItemsList(_)
+        | ProviderRequest::ConversationItemsRetrieve(_, _)
+        | ProviderRequest::ConversationItemsDelete(_, _) => "conversations",
+        ProviderRequest::Responses(_)
+        | ProviderRequest::ResponsesStream(_)
+        | ProviderRequest::ResponsesInputTokens(_)
+        | ProviderRequest::ResponsesRetrieve(_)
+        | ProviderRequest::ResponsesDelete(_)
+        | ProviderRequest::ResponsesInputItemsList(_)
+        | ProviderRequest::ResponsesCancel(_)
+        | ProviderRequest::ResponsesCompact(_) => "responses",
+        ProviderRequest::Embeddings(_) => "embeddings",
+        ProviderRequest::Moderations(_) => "moderations",
+        ProviderRequest::Music(_)
+        | ProviderRequest::MusicList
+        | ProviderRequest::MusicRetrieve(_)
+        | ProviderRequest::MusicDelete(_)
+        | ProviderRequest::MusicContent(_)
+        | ProviderRequest::MusicLyrics(_) => "music",
+        ProviderRequest::ImagesGenerations(_)
+        | ProviderRequest::ImagesEdits(_)
+        | ProviderRequest::ImagesVariations(_) => "images",
+        ProviderRequest::AudioTranscriptions(_)
+        | ProviderRequest::AudioTranslations(_)
+        | ProviderRequest::AudioSpeech(_)
+        | ProviderRequest::AudioVoicesList
+        | ProviderRequest::AudioVoiceConsents(_) => "audio",
+        ProviderRequest::Files(_)
+        | ProviderRequest::FilesList
+        | ProviderRequest::FilesRetrieve(_)
+        | ProviderRequest::FilesDelete(_)
+        | ProviderRequest::FilesContent(_)
+        | ProviderRequest::Uploads(_)
+        | ProviderRequest::UploadParts(_)
+        | ProviderRequest::UploadComplete(_)
+        | ProviderRequest::UploadCancel(_) => "files",
+        ProviderRequest::FineTuningJobs(_)
+        | ProviderRequest::FineTuningJobsList
+        | ProviderRequest::FineTuningJobsRetrieve(_)
+        | ProviderRequest::FineTuningJobsCancel(_)
+        | ProviderRequest::FineTuningJobsEvents(_)
+        | ProviderRequest::FineTuningJobsCheckpoints(_)
+        | ProviderRequest::FineTuningJobsPause(_)
+        | ProviderRequest::FineTuningJobsResume(_)
+        | ProviderRequest::FineTuningCheckpointPermissions(_, _)
+        | ProviderRequest::FineTuningCheckpointPermissionsList(_)
+        | ProviderRequest::FineTuningCheckpointPermissionsDelete(_, _) => "fine_tuning",
+        ProviderRequest::Assistants(_)
+        | ProviderRequest::AssistantsList
+        | ProviderRequest::AssistantsRetrieve(_)
+        | ProviderRequest::AssistantsUpdate(_, _)
+        | ProviderRequest::AssistantsDelete(_) => "assistants",
+        ProviderRequest::RealtimeSessions(_) => "realtime",
+        ProviderRequest::Evals(_)
+        | ProviderRequest::EvalsList
+        | ProviderRequest::EvalsRetrieve(_)
+        | ProviderRequest::EvalsUpdate(_, _)
+        | ProviderRequest::EvalsDelete(_)
+        | ProviderRequest::EvalRunsList(_)
+        | ProviderRequest::EvalRuns(_, _)
+        | ProviderRequest::EvalRunsRetrieve(_, _)
+        | ProviderRequest::EvalRunsDelete(_, _)
+        | ProviderRequest::EvalRunsCancel(_, _)
+        | ProviderRequest::EvalRunOutputItemsList(_, _)
+        | ProviderRequest::EvalRunOutputItemsRetrieve(_, _, _) => "evals",
+        ProviderRequest::Batches(_)
+        | ProviderRequest::BatchesList
+        | ProviderRequest::BatchesRetrieve(_)
+        | ProviderRequest::BatchesCancel(_) => "batches",
+        ProviderRequest::VectorStores(_)
+        | ProviderRequest::VectorStoresList
+        | ProviderRequest::VectorStoresRetrieve(_)
+        | ProviderRequest::VectorStoresUpdate(_, _)
+        | ProviderRequest::VectorStoresDelete(_)
+        | ProviderRequest::VectorStoresSearch(_, _)
+        | ProviderRequest::VectorStoreFiles(_, _)
+        | ProviderRequest::VectorStoreFilesList(_)
+        | ProviderRequest::VectorStoreFilesRetrieve(_, _)
+        | ProviderRequest::VectorStoreFilesDelete(_, _)
+        | ProviderRequest::VectorStoreFileBatches(_, _)
+        | ProviderRequest::VectorStoreFileBatchesRetrieve(_, _)
+        | ProviderRequest::VectorStoreFileBatchesCancel(_, _)
+        | ProviderRequest::VectorStoreFileBatchesListFiles(_, _) => "vector_stores",
+        ProviderRequest::Videos(_)
+        | ProviderRequest::VideosList
+        | ProviderRequest::VideosRetrieve(_)
+        | ProviderRequest::VideosDelete(_)
+        | ProviderRequest::VideosContent(_)
+        | ProviderRequest::VideosRemix(_, _)
+        | ProviderRequest::VideoCharactersCreate(_)
+        | ProviderRequest::VideoCharactersList(_)
+        | ProviderRequest::VideoCharactersRetrieve(_, _)
+        | ProviderRequest::VideoCharactersCanonicalRetrieve(_)
+        | ProviderRequest::VideoCharactersUpdate(_, _, _)
+        | ProviderRequest::VideosEdits(_)
+        | ProviderRequest::VideosExtensions(_)
+        | ProviderRequest::VideosExtend(_, _) => "videos",
+        ProviderRequest::Webhooks(_)
+        | ProviderRequest::WebhooksList
+        | ProviderRequest::WebhooksRetrieve(_)
+        | ProviderRequest::WebhooksUpdate(_, _)
+        | ProviderRequest::WebhooksDelete(_) => "webhooks",
+    }
 }
 
 async fn execute_json_provider_request(
@@ -7167,9 +9198,14 @@ async fn execute_json_provider_request_with_options(
         return Ok(None);
     };
 
-    let response = adapter
-        .execute_with_options(api_key, request, options)
-        .await?;
+    let response = execute_provider_request_with_execution_context(
+        adapter.as_ref(),
+        None,
+        api_key,
+        request,
+        options,
+    )
+    .await?;
     Ok(response.into_json())
 }
 
@@ -7185,9 +9221,14 @@ async fn execute_stream_provider_request_with_options(
         return Ok(None);
     };
 
-    let response = adapter
-        .execute_with_options(api_key, request, options)
-        .await?;
+    let response = execute_provider_request_with_execution_context(
+        adapter.as_ref(),
+        None,
+        api_key,
+        request,
+        options,
+    )
+    .await?;
     Ok(response.into_stream())
 }
 
@@ -7291,13 +9332,19 @@ fn normalize_local_speech_format(format: &str) -> Result<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::{
-        cache_routing_decision, configure_route_decision_cache_store,
-        configured_extension_discovery_policy, current_request_api_key_group_id,
-        routing_decision_cache_key, take_cached_routing_decision, with_request_api_key_group_id,
-        with_request_routing_region, RoutingDecision, ROUTING_DECISION_CACHE_NAMESPACE,
+        ROUTING_DECISION_CACHE_NAMESPACE, RoutingDecision, cache_routing_decision,
+        configure_route_decision_cache_store, configured_extension_discovery_policy,
+        current_request_api_key_group_id, provider_request_metric_capability,
+        record_gateway_execution_context_failure, record_gateway_execution_failover,
+        record_gateway_provider_health, record_gateway_provider_health_persist_failure,
+        record_gateway_provider_health_recovery_probe, record_gateway_upstream_outcome,
+        record_gateway_upstream_retry_with_detail, routing_decision_cache_key,
+        take_cached_routing_decision, with_request_api_key_group_id, with_request_routing_region,
     };
     use sdkwork_api_cache_core::CacheStore;
     use sdkwork_api_cache_memory::MemoryCacheStore;
+    use sdkwork_api_observability::HttpMetricsRegistry;
+    use sdkwork_api_provider_core::ProviderRequest;
     use std::path::Path;
     use std::sync::Arc;
 
@@ -7336,6 +9383,135 @@ mod tests {
         assert!(!policy.enable_connector_extensions);
         assert!(policy.enable_native_dynamic_extensions);
         assert!(policy.require_signed_native_dynamic_extensions);
+    }
+
+    #[test]
+    fn provider_request_metric_capability_groups_requests_by_upstream_surface() {
+        assert_eq!(
+            provider_request_metric_capability(&ProviderRequest::ChatCompletionsList),
+            "chat_completion"
+        );
+        assert_eq!(
+            provider_request_metric_capability(&ProviderRequest::ResponsesRetrieve("resp-1")),
+            "responses"
+        );
+        assert_eq!(
+            provider_request_metric_capability(&ProviderRequest::AudioVoicesList),
+            "audio"
+        );
+    }
+
+    #[test]
+    fn gateway_upstream_outcomes_are_recorded_to_shared_gateway_metrics() {
+        record_gateway_upstream_outcome("chat_completion", "provider-metrics-test", "attempt");
+        record_gateway_upstream_outcome("chat_completion", "provider-metrics-test", "success");
+        record_gateway_upstream_outcome("chat_completion", "provider-metrics-test", "failure");
+        record_gateway_upstream_retry_with_detail(
+            "chat_completion",
+            "provider-metrics-test",
+            "exhausted",
+            "status_503",
+            None,
+            None,
+        );
+        record_gateway_upstream_retry_with_detail(
+            "chat_completion",
+            "provider-metrics-test",
+            "scheduled",
+            "status_429",
+            Some("retry_after_seconds"),
+            Some(1000),
+        );
+        record_gateway_execution_failover(
+            "chat_completion",
+            "provider-primary",
+            "provider-backup",
+            "success",
+        );
+        record_gateway_provider_health("provider-health-failed", "builtin", false, 1234);
+        record_gateway_provider_health("provider-health-healthy", "builtin", true, 5678);
+        record_gateway_provider_health_persist_failure("provider-health-failed", "builtin");
+        record_gateway_provider_health_recovery_probe("provider-health-recovery", "selected");
+        record_gateway_provider_health_recovery_probe(
+            "provider-health-recovery",
+            "lease_contended",
+        );
+        record_gateway_provider_health_recovery_probe("provider-health-recovery", "lease_error");
+        record_gateway_execution_context_failure(
+            "chat_completion",
+            "provider-context-timeout",
+            "request_timeout",
+        );
+        record_gateway_execution_context_failure(
+            "chat_completion",
+            "provider-context-overload",
+            "provider_overloaded",
+        );
+        record_gateway_execution_context_failure(
+            "chat_completion",
+            "provider-context-deadline",
+            "deadline_exceeded",
+        );
+
+        let output = HttpMetricsRegistry::new("gateway").render_prometheus();
+
+        assert!(output.contains(
+            "sdkwork_upstream_requests_total{service=\"gateway\",capability=\"chat_completion\",provider=\"provider-metrics-test\",outcome=\"attempt\"} 1"
+        ));
+        assert!(output.contains(
+            "sdkwork_upstream_requests_total{service=\"gateway\",capability=\"chat_completion\",provider=\"provider-metrics-test\",outcome=\"success\"} 1"
+        ));
+        assert!(output.contains(
+            "sdkwork_upstream_requests_total{service=\"gateway\",capability=\"chat_completion\",provider=\"provider-metrics-test\",outcome=\"failure\"} 1"
+        ));
+        assert!(output.contains(
+            "sdkwork_upstream_retries_total{service=\"gateway\",capability=\"chat_completion\",provider=\"provider-metrics-test\",outcome=\"scheduled\"} 1"
+        ));
+        assert!(output.contains(
+            "sdkwork_upstream_retries_total{service=\"gateway\",capability=\"chat_completion\",provider=\"provider-metrics-test\",outcome=\"exhausted\"} 1"
+        ));
+        assert!(output.contains(
+            "sdkwork_upstream_retry_reasons_total{service=\"gateway\",capability=\"chat_completion\",provider=\"provider-metrics-test\",outcome=\"scheduled\",reason=\"status_429\"} 1"
+        ));
+        assert!(output.contains(
+            "sdkwork_upstream_retry_reasons_total{service=\"gateway\",capability=\"chat_completion\",provider=\"provider-metrics-test\",outcome=\"exhausted\",reason=\"status_503\"} 1"
+        ));
+        assert!(output.contains(
+            "sdkwork_upstream_retry_delay_ms_total{service=\"gateway\",capability=\"chat_completion\",provider=\"provider-metrics-test\",source=\"retry_after_seconds\"} 1000"
+        ));
+        assert!(output.contains(
+            "sdkwork_gateway_failovers_total{service=\"gateway\",capability=\"chat_completion\",from_provider=\"provider-primary\",to_provider=\"provider-backup\",outcome=\"success\"} 1"
+        ));
+        assert!(output.contains(
+            "sdkwork_provider_health_status{service=\"gateway\",provider=\"provider-health-failed\",runtime=\"builtin\"} 0"
+        ));
+        assert!(output.contains(
+            "sdkwork_provider_health_status{service=\"gateway\",provider=\"provider-health-healthy\",runtime=\"builtin\"} 1"
+        ));
+        assert!(output.contains(
+            "sdkwork_provider_health_observed_at_ms{service=\"gateway\",provider=\"provider-health-healthy\",runtime=\"builtin\"} 5678"
+        ));
+        assert!(output.contains(
+            "sdkwork_provider_health_persist_failures_total{service=\"gateway\",provider=\"provider-health-failed\",runtime=\"builtin\"} 1"
+        ));
+        assert!(output.contains(
+            "sdkwork_provider_health_recovery_probes_total{service=\"gateway\",provider=\"provider-health-recovery\",outcome=\"selected\"} 1"
+        ));
+        assert!(output.contains(
+            "sdkwork_provider_health_recovery_probes_total{service=\"gateway\",provider=\"provider-health-recovery\",outcome=\"lease_contended\"} 1"
+        ));
+        assert!(output.contains(
+            "sdkwork_provider_health_recovery_probes_total{service=\"gateway\",provider=\"provider-health-recovery\",outcome=\"lease_error\"} 1"
+        ));
+        assert!(output.contains(
+            "sdkwork_gateway_execution_context_failures_total{service=\"gateway\",capability=\"chat_completion\",provider=\"provider-context-timeout\",reason=\"request_timeout\"} 1"
+        ));
+        assert!(output.contains(
+            "sdkwork_gateway_execution_context_failures_total{service=\"gateway\",capability=\"chat_completion\",provider=\"provider-context-overload\",reason=\"provider_overloaded\"} 1"
+        ));
+        assert!(output.contains(
+            "sdkwork_gateway_execution_context_failures_total{service=\"gateway\",capability=\"chat_completion\",provider=\"provider-context-deadline\",reason=\"deadline_exceeded\"} 1"
+        ));
     }
 
     #[tokio::test]
@@ -7379,11 +9555,13 @@ mod tests {
             )
             .await;
 
-            assert!(cache_store
-                .get(ROUTING_DECISION_CACHE_NAMESPACE, &cache_key)
-                .await
-                .unwrap()
-                .is_some());
+            assert!(
+                cache_store
+                    .get(ROUTING_DECISION_CACHE_NAMESPACE, &cache_key)
+                    .await
+                    .unwrap()
+                    .is_some()
+            );
 
             let cached = take_cached_routing_decision(
                 "tenant-1",

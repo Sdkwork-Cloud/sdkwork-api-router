@@ -5,6 +5,7 @@ members = [
     "crates/sdkwork-api-cache-redis",
     "crates/sdkwork-api-app-billing",
     "crates/sdkwork-api-app-commerce",
+    "crates/sdkwork-api-app-marketing",
     "crates/sdkwork-api-app-catalog",
     "crates/sdkwork-api-app-rate-limit",
     "crates/sdkwork-api-app-coupon",
@@ -16,6 +17,7 @@ members = [
     "crates/sdkwork-api-extension-core",
     "crates/sdkwork-api-extension-host",
     "crates/sdkwork-api-app-gateway",
+    "crates/sdkwork-api-app-jobs",
     "crates/sdkwork-api-app-routing",
     "crates/sdkwork-api-app-tenant",
     "crates/sdkwork-api-app-usage",
@@ -26,9 +28,11 @@ members = [
     "crates/sdkwork-api-domain-billing",
     "crates/sdkwork-api-domain-catalog",
     "crates/sdkwork-api-domain-commerce",
+    "crates/sdkwork-api-domain-marketing",
     "crates/sdkwork-api-domain-coupon",
     "crates/sdkwork-api-domain-credential",
     "crates/sdkwork-api-domain-identity",
+    "crates/sdkwork-api-domain-jobs",
     "crates/sdkwork-api-domain-rate-limit",
     "crates/sdkwork-api-domain-routing",
     "crates/sdkwork-api-domain-tenant",
@@ -76,26 +80,31 @@ argon2 = "0.5"
 axum = { version = "0.8", features = ["multipart"] }
 base64 = "0.22"
 bytes = "1"
-ed25519-dalek = "2.1"
+ed25519-dalek = "2.2"
 futures-util = "0.3"
-jsonwebtoken = "9.3"
-keyring = "3.6.2"
-libloading = "0.8"
-rand_core = { version = "0.6", features = ["getrandom"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "stream"] }
-serial_test = "3.2"
+httpdate = "1"
+jsonwebtoken = "10.3"
+hmac = "0.12"
+keyring = "3.6.3"
+libloading = "0.9"
+rand_core = "0.10"
+reqwest = { version = "0.13", default-features = false, features = ["json", "multipart", "rustls", "stream"] }
+serial_test = "3.4"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
-sha2 = "0.10"
+sha2 = "0.11"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "sqlite", "postgres"] }
-tokio = { version = "1.43", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1.51", features = ["macros", "rt-multi-thread"] }
 tokio-stream = "0.1"
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["cors"] }
-toml = "0.8"
+toml = "1.1"
 tracing = "0.1"
 tracing-subscriber = "0.3"
+utoipa = { version = "5.4.0", features = ["axum_extras"] }
+utoipa-axum = "0.2.0"
+utoipa-swagger-ui = { version = "9.0.2", features = ["axum", "vendored"] }
 
 [profile.dev]
 debug = 0

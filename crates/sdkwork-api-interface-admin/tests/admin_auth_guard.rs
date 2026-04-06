@@ -6,6 +6,7 @@ use sdkwork_api_secret_core::{master_key_id, SecretBackendKind};
 use sdkwork_api_storage_core::{AdminStore, Reloadable};
 use sdkwork_api_storage_sqlite::SqliteAdminStore;
 use serde_json::Value;
+use serial_test::serial;
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -16,6 +17,21 @@ async fn read_json(response: axum::response::Response) -> Value {
     serde_json::from_slice(&bytes).unwrap()
 }
 
+async fn read_body(response: axum::response::Response) -> String {
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    String::from_utf8(bytes.to_vec()).unwrap()
+}
+
+fn metric_counter_value(body: &str, metric_key: &str) -> u64 {
+    body.lines()
+        .find_map(|line| {
+            line.strip_prefix(metric_key)
+                .map(str::trim)
+                .and_then(|value| value.parse::<u64>().ok())
+        })
+        .unwrap_or(0)
+}
+
 async fn memory_pool() -> SqlitePool {
     sdkwork_api_storage_sqlite::run_migrations("sqlite::memory:")
         .await
@@ -23,6 +39,7 @@ async fn memory_pool() -> SqlitePool {
 }
 
 #[tokio::test]
+#[serial]
 async fn admin_routes_require_valid_bearer_token() {
     let pool = memory_pool().await;
     let app = sdkwork_api_interface_admin::admin_router_with_pool(pool);
@@ -92,6 +109,7 @@ async fn admin_routes_require_valid_bearer_token() {
 }
 
 #[tokio::test]
+#[serial]
 async fn admin_routes_use_the_configured_jwt_signing_secret() {
     let pool = memory_pool().await;
     let store = Arc::new(SqliteAdminStore::new(pool));
@@ -175,9 +193,31 @@ async fn admin_routes_use_the_configured_jwt_signing_secret() {
 }
 
 #[tokio::test]
+#[serial]
 async fn admin_metrics_route_reports_login_and_authenticated_requests() {
     let pool = memory_pool().await;
     let app = sdkwork_api_interface_admin::admin_router_with_pool(pool);
+    let login_metric_key =
+        "sdkwork_http_requests_total{service=\"admin\",method=\"POST\",route=\"/admin/auth/login\",status=\"200\"}";
+    let projects_metric_key =
+        "sdkwork_http_requests_total{service=\"admin\",method=\"GET\",route=\"/admin/projects\",status=\"200\"}";
+
+    let initial_metrics = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/metrics")
+                .header("authorization", "Bearer local-dev-metrics-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(initial_metrics.status(), StatusCode::OK);
+    let initial_body = read_body(initial_metrics).await;
+    let initial_login_total = metric_counter_value(&initial_body, login_metric_key);
+    let initial_projects_total = metric_counter_value(&initial_body, projects_metric_key);
 
     let login = app
         .clone()
@@ -210,7 +250,8 @@ async fn admin_metrics_route_reports_login_and_authenticated_requests() {
         .unwrap();
     assert_eq!(projects.status(), StatusCode::OK);
 
-    let metrics = app
+    let unauthorized_metrics = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("GET")
@@ -220,20 +261,35 @@ async fn admin_metrics_route_reports_login_and_authenticated_requests() {
         )
         .await
         .unwrap();
+    assert_eq!(unauthorized_metrics.status(), StatusCode::UNAUTHORIZED);
+
+    let metrics = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/metrics")
+                .header("authorization", "Bearer local-dev-metrics-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(metrics.status(), StatusCode::OK);
 
-    let bytes = to_bytes(metrics.into_body(), usize::MAX).await.unwrap();
-    let body = String::from_utf8(bytes.to_vec()).unwrap();
+    let body = read_body(metrics).await;
     assert!(body.contains("sdkwork_service_info{service=\"admin\"} 1"));
-    assert!(body.contains(
-        "sdkwork_http_requests_total{service=\"admin\",method=\"POST\",route=\"/admin/auth/login\",status=\"200\"} 1"
-    ));
-    assert!(body.contains(
-        "sdkwork_http_requests_total{service=\"admin\",method=\"GET\",route=\"/admin/projects\",status=\"200\"} 1"
-    ));
+    assert_eq!(
+        metric_counter_value(&body, login_metric_key),
+        initial_login_total + 1
+    );
+    assert_eq!(
+        metric_counter_value(&body, projects_metric_key),
+        initial_projects_total + 1
+    );
 }
 
 #[tokio::test]
+#[serial]
 async fn admin_routes_apply_rotated_live_jwt_secret_to_new_requests() {
     let pool = memory_pool().await;
     let live_store = Reloadable::new(Arc::new(SqliteAdminStore::new(pool)) as Arc<dyn AdminStore>);
@@ -331,6 +387,7 @@ async fn admin_routes_apply_rotated_live_jwt_secret_to_new_requests() {
 }
 
 #[tokio::test]
+#[serial]
 async fn admin_routes_apply_replaced_live_secret_manager_to_new_requests() {
     let pool = memory_pool().await;
     let store = Arc::new(SqliteAdminStore::new(pool));
@@ -425,6 +482,7 @@ async fn admin_routes_apply_replaced_live_secret_manager_to_new_requests() {
 }
 
 #[tokio::test]
+#[serial]
 async fn admin_password_change_requires_current_password_and_rotates_login_secret() {
     let pool = memory_pool().await;
     let app = sdkwork_api_interface_admin::admin_router_with_pool(pool);

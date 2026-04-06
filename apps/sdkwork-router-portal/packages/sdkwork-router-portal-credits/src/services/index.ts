@@ -4,6 +4,7 @@ import type {
   BillingEventAccountingModeSummary,
   BillingEventCapabilitySummary,
   BillingEventSummary,
+  PortalCouponValidationResponse,
   PortalCommerceCoupon,
   PortalCommerceOrder,
   PortalCommerceQuote,
@@ -14,6 +15,7 @@ import type {
 import type {
   CouponImpactPreview,
   CreditsGuardrail,
+  PortalCouponSelfServiceDecision,
   PortalCreditsFinanceProjection,
   PortalCreditsRedemptionCoverage,
   RecommendedCouponOffer,
@@ -124,6 +126,46 @@ export function buildPortalCreditsFinanceProjection(input: {
       video_seconds: billingSummary.total_video_seconds,
       music_seconds: billingSummary.total_music_seconds,
     },
+  };
+}
+
+export function buildPortalCouponSelfServiceDecision(
+  validation: PortalCouponValidationResponse,
+): PortalCouponSelfServiceDecision {
+  if (!validation.decision.eligible) {
+    return {
+      flow: 'blocked',
+      message:
+        validation.decision.rejection_reason?.trim()
+        || translatePortalText(
+          'This coupon is not eligible for the current workspace posture.',
+        ),
+      validation,
+    };
+  }
+
+  if (validation.template.benefit.benefit_kind === 'grant_units') {
+    return {
+      flow: 'grant_self_service',
+      message: translatePortalText(
+        '{code} can be redeemed directly here and will grant workspace units after confirmation.',
+        {
+          code: validation.code.code_value,
+        },
+      ),
+      validation,
+    };
+  }
+
+  return {
+    flow: 'checkout_only',
+    message: translatePortalText(
+      '{code} is valid, but it must be applied during checkout instead of the redeem center.',
+      {
+        code: validation.code.code_value,
+      },
+    ),
+    validation,
   };
 }
 

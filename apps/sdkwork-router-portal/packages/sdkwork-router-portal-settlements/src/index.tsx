@@ -1,0 +1,1 @@
+export { PortalSettlementsPage } from './pages';

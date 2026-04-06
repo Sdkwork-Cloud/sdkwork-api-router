@@ -40,7 +40,8 @@ test('form-heavy portal pages use focused drawers and admin tables instead of al
 
   assert.match(userPage, /<Tabs/);
   assert.match(userPage, /<Dialog/);
-  assert.match(userPage, /Security center/);
+  assert.match(userPage, /data-slot="portal-user-toolbar"/);
+  assert.match(userPage, /User center/);
 });
 
 test('portal api key create form reuses shared shadcn-style form primitives instead of local wrappers', () => {

@@ -1,6 +1,7 @@
 use serde::Serialize;
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ModelObject {
     pub id: String,
     pub object: &'static str,
@@ -17,7 +18,7 @@ impl ModelObject {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ListModelsResponse {
     pub object: &'static str,
     pub data: Vec<ModelObject>,
@@ -32,7 +33,7 @@ impl ListModelsResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct DeleteModelResponse {
     pub id: String,
     pub object: &'static str,

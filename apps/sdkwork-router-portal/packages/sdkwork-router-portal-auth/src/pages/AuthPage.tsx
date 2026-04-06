@@ -1,4 +1,4 @@
-import { ArrowRight, Chrome, Github, Lock, Mail, QrCode, Smartphone, User } from 'lucide-react';
+import { ArrowRight, GitBranch, Globe, Lock, Mail, QrCode, Smartphone, User } from 'lucide-react';
 import { useEffect, useState, type ComponentPropsWithoutRef, type FormEvent, type ReactNode } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { translatePortalText, usePortalI18n } from 'sdkwork-router-portal-commons';
@@ -313,7 +313,7 @@ export function AuthPage({ signIn, register }: PortalAuthPageProps) {
                     type="button"
                     variant="secondary"
                   >
-                    <Github className="h-5 w-5" />
+                    <GitBranch className="h-5 w-5" />
                     GitHub
                   </Button>
                   <Button
@@ -321,7 +321,7 @@ export function AuthPage({ signIn, register }: PortalAuthPageProps) {
                     type="button"
                     variant="secondary"
                   >
-                    <Chrome className="h-5 w-5" />
+                    <Globe className="h-5 w-5" />
                     Google
                   </Button>
                 </div>

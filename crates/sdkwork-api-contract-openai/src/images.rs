@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateImageRequest {
     pub model: String,
     pub prompt: String,
@@ -15,9 +16,10 @@ impl CreateImageRequest {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct ImageUpload {
     pub filename: String,
+    #[schema(value_type = String, format = Binary)]
     pub bytes: Vec<u8>,
     pub content_type: Option<String>,
 }
@@ -37,7 +39,7 @@ impl ImageUpload {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateImageEditRequest {
     pub model: Option<String>,
     pub prompt: String,
@@ -80,7 +82,7 @@ impl CreateImageEditRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateImageVariationRequest {
     pub model: Option<String>,
     pub image: ImageUpload,
@@ -112,7 +114,7 @@ impl CreateImageVariationRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ImageObject {
     pub b64_json: String,
 }
@@ -125,7 +127,7 @@ impl ImageObject {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ImagesResponse {
     pub data: Vec<ImageObject>,
 }

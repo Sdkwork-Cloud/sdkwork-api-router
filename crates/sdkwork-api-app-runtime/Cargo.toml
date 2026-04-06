@@ -10,6 +10,7 @@ async-trait.workspace = true
 axum.workspace = true
 futures-util.workspace = true
 sdkwork-api-app-credential = { path = "../sdkwork-api-app-credential" }
+sdkwork-api-app-billing = { path = "../sdkwork-api-app-billing" }
 sdkwork-api-app-extension = { path = "../sdkwork-api-app-extension" }
 sdkwork-api-app-gateway = { path = "../sdkwork-api-app-gateway" }
 sdkwork-api-cache-core = { path = "../sdkwork-api-cache-core" }
@@ -26,6 +27,7 @@ axum.workspace = true
 base64.workspace = true
 ed25519-dalek.workspace = true
 reqwest.workspace = true
+sdkwork-api-domain-billing = { path = "../sdkwork-api-domain-billing" }
 sdkwork-api-domain-catalog = { path = "../sdkwork-api-domain-catalog" }
 sdkwork-api-ext-provider-native-mock = { path = "../sdkwork-api-ext-provider-native-mock" }
 sdkwork-api-extension-core = { path = "../sdkwork-api-extension-core" }

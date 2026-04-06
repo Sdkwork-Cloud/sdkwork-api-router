@@ -2,6 +2,14 @@ import type {
   BillingEventAccountingModeSummary,
   BillingEventCapabilitySummary,
   BillingEventSummary,
+  CommercialAccountBalanceSnapshot,
+  CommercialAccountBenefitLotRecord,
+  CommercialAccountLedgerHistoryEntry,
+  CommercialAccountHoldRecord,
+  CommercialAccountSummary,
+  CommercialPricingPlanRecord,
+  CommercialPricingRateRecord,
+  CommercialRequestSettlementRecord,
   LedgerEntry,
   UsageRecord,
 } from 'sdkwork-router-portal-types';
@@ -11,6 +19,7 @@ import type {
   BuildPortalAccountViewModelInput,
   PortalAccountFinancialBreakdown,
   PortalAccountBalanceSummary,
+  PortalAccountCommercialPosture,
   PortalAccountHistoryRow,
   PortalAccountHistoryView,
   PortalAccountViewModel,
@@ -137,6 +146,139 @@ function buildFinancialBreakdown(
   };
 }
 
+function isActiveCommercialBenefitLot(
+  lot: CommercialAccountBenefitLotRecord,
+): boolean {
+  return lot.status === 'active';
+}
+
+function isExpiredCommercialBenefitLot(
+  lot: CommercialAccountBenefitLotRecord,
+): boolean {
+  return lot.status === 'expired';
+}
+
+function isOpenCommercialHold(hold: CommercialAccountHoldRecord): boolean {
+  return hold.status === 'held'
+    || hold.status === 'captured'
+    || hold.status === 'partially_released';
+}
+
+function isPricingPlanEffectiveAt(
+  plan: Pick<CommercialPricingPlanRecord, 'effective_from_ms' | 'effective_to_ms'>,
+  nowMs: number,
+): boolean {
+  return plan.effective_from_ms <= nowMs
+    && (plan.effective_to_ms == null || plan.effective_to_ms >= nowMs);
+}
+
+function selectPrimaryPricingPlan(
+  pricingPlans: CommercialPricingPlanRecord[],
+  nowMs: number,
+): CommercialPricingPlanRecord | null {
+  const comparePlans = (
+    left: CommercialPricingPlanRecord,
+    right: CommercialPricingPlanRecord,
+  ): number => {
+    const leftRank = left.status.trim().toLowerCase() === 'active'
+      ? (isPricingPlanEffectiveAt(left, nowMs) ? 0 : 1)
+      : 2;
+    const rightRank = right.status.trim().toLowerCase() === 'active'
+      ? (isPricingPlanEffectiveAt(right, nowMs) ? 0 : 1)
+      : 2;
+
+    return leftRank - rightRank
+      || right.plan_version - left.plan_version
+      || right.updated_at_ms - left.updated_at_ms
+      || right.created_at_ms - left.created_at_ms
+      || right.pricing_plan_id - left.pricing_plan_id;
+  };
+
+  return [...pricingPlans].sort(comparePlans)[0] ?? null;
+}
+
+function selectPrimaryPricingRate(
+  pricingRates: CommercialPricingRateRecord[],
+  primaryPlan: CommercialPricingPlanRecord | null,
+): CommercialPricingRateRecord | null {
+  const compareRates = (
+    left: CommercialPricingRateRecord,
+    right: CommercialPricingRateRecord,
+  ): number => {
+    const leftStatusRank = left.status.trim().toLowerCase() === 'active' ? 0 : 1;
+    const rightStatusRank = right.status.trim().toLowerCase() === 'active' ? 0 : 1;
+
+    return leftStatusRank - rightStatusRank
+      || right.priority - left.priority
+      || right.updated_at_ms - left.updated_at_ms
+      || right.created_at_ms - left.created_at_ms
+      || right.pricing_rate_id - left.pricing_rate_id;
+  };
+
+  if (primaryPlan) {
+    const primaryPlanRate = pricingRates
+      .filter((rate) => rate.pricing_plan_id === primaryPlan.pricing_plan_id)
+      .sort(compareRates)[0];
+    if (primaryPlanRate) {
+      return primaryPlanRate;
+    }
+  }
+
+  return [...pricingRates].sort(compareRates)[0] ?? null;
+}
+
+function buildCommercialPosture(input: BuildPortalAccountViewModelInput): PortalAccountCommercialPosture {
+  const commercialAccount = input.commercialAccount ?? null;
+  const accountBalance = input.accountBalance ?? null;
+  const benefitLots = input.benefitLots ?? [];
+  const holds = input.holds ?? [];
+  const requestSettlements = input.requestSettlements ?? [];
+  const pricingPlans = input.pricingPlans ?? [];
+  const pricingRates = input.pricingRates ?? [];
+  const nowMs = input.now ?? Date.now();
+  const effectivePricingPlans = pricingPlans.filter(
+    (plan) => plan.status.trim().toLowerCase() === 'active' && isPricingPlanEffectiveAt(plan, nowMs),
+  );
+  const primaryPlan = selectPrimaryPricingPlan(pricingPlans, nowMs);
+  const posturePricingRates = primaryPlan
+    ? pricingRates.filter((rate) => rate.pricing_plan_id === primaryPlan.pricing_plan_id)
+    : pricingRates;
+  const primaryRate = selectPrimaryPricingRate(pricingRates, primaryPlan);
+
+  return {
+    account_id: commercialAccount?.account.account_id ?? accountBalance?.account_id ?? null,
+    account_status: commercialAccount?.account.status ?? null,
+    account_type: commercialAccount?.account.account_type ?? null,
+    currency_code: commercialAccount?.account.currency_code ?? null,
+    credit_unit_code: commercialAccount?.account.credit_unit_code ?? null,
+    allow_overdraft: commercialAccount?.account.allow_overdraft ?? false,
+    overdraft_limit: commercialAccount?.account.overdraft_limit ?? 0,
+    available_balance:
+      accountBalance?.available_balance ?? commercialAccount?.available_balance ?? 0,
+    held_balance: accountBalance?.held_balance ?? commercialAccount?.held_balance ?? 0,
+    consumed_balance:
+      accountBalance?.consumed_balance ?? commercialAccount?.consumed_balance ?? 0,
+    grant_balance: accountBalance?.grant_balance ?? commercialAccount?.grant_balance ?? 0,
+    active_lot_count: accountBalance?.active_lot_count ?? commercialAccount?.active_lot_count ?? 0,
+    benefit_lot_count: benefitLots.length,
+    active_benefit_lot_count: benefitLots.filter(isActiveCommercialBenefitLot).length,
+    expired_benefit_lot_count: benefitLots.filter(isExpiredCommercialBenefitLot).length,
+    open_hold_count: holds.filter(isOpenCommercialHold).length,
+    settlement_count: requestSettlements.length,
+    captured_settlement_amount: requestSettlements.reduce(
+      (sum, settlement) => sum + settlement.captured_credit_amount,
+      0,
+    ),
+    pricing_plan_count: effectivePricingPlans.length,
+    pricing_rate_count: posturePricingRates.length,
+    primary_plan_display_name: primaryPlan?.display_name ?? null,
+    primary_rate_metric_code: primaryRate?.metric_code ?? null,
+    primary_rate_charge_unit: primaryRate?.charge_unit ?? null,
+    primary_rate_pricing_method: primaryRate?.pricing_method ?? null,
+    primary_rate_display_price_unit: primaryRate?.display_price_unit ?? null,
+  };
+}
+
 function ledgerSortKey(projectId: string, row: LedgerEntry): [number, number, string] {
   return [
     row.project_id === projectId ? 0 : 1,
@@ -162,6 +304,38 @@ function compareLedgerRows(projectId: string, left: LedgerEntry, right: LedgerEn
 
 function classifyLedgerKind(row: LedgerEntry): PortalAccountHistoryRow['kind'] {
   return row.amount < 0 || row.units < 0 ? 'expense' : 'revenue';
+}
+
+function classifyCommercialLedgerKind(
+  entry: CommercialAccountLedgerHistoryEntry['entry'],
+): PortalAccountHistoryRow['kind'] {
+  switch (entry.entry_type) {
+    case 'grant_issue':
+    case 'refund':
+    case 'hold_release':
+      return 'revenue';
+    case 'hold_create':
+    case 'settlement_capture':
+      return 'expense';
+    case 'manual_adjustment':
+    default:
+      return entry.amount < 0 || entry.quantity < 0 ? 'expense' : 'revenue';
+  }
+}
+
+function parseCommerceOrderId(scopeJson: string | null | undefined): string | null {
+  if (!scopeJson?.trim()) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(scopeJson) as { order_id?: unknown };
+    return typeof parsed.order_id === 'string' && parsed.order_id.trim()
+      ? parsed.order_id.trim()
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 function buildUsageHistoryRows(
@@ -214,6 +388,41 @@ function buildLedgerHistoryRows(
   }));
 }
 
+function buildAccountLedgerHistoryRows(
+  projectId: string,
+  bookedAmount: number,
+  ledgerHistory: CommercialAccountLedgerHistoryEntry[],
+  benefitLots: CommercialAccountBenefitLotRecord[],
+): PortalAccountHistoryRow[] {
+  const denominator = bookedAmount > 0
+    ? bookedAmount
+    : ledgerHistory.reduce((sum, row) => sum + Math.abs(row.entry.amount), 0);
+  const lotById = new Map(benefitLots.map((lot) => [lot.lot_id, lot]));
+
+  return ledgerHistory.map((history) => {
+    const orderId = history.allocations
+      .map((allocation) => parseCommerceOrderId(lotById.get(allocation.lot_id)?.scope_json))
+      .find((value) => Boolean(value)) ?? null;
+
+    return {
+      id: `account-ledger:${history.entry.ledger_entry_id}`,
+      project_id: projectId,
+      units: Math.abs(history.entry.quantity),
+      amount: Math.abs(history.entry.amount),
+      kind: classifyCommercialLedgerKind(history.entry),
+      source: 'ledger',
+      scope: 'current',
+      occurred_at_ms: history.entry.created_at_ms,
+      share_of_booked_amount:
+        denominator > 0 ? Math.min(1, Math.abs(history.entry.amount) / denominator) : 0,
+      ledger_entry_type: history.entry.entry_type,
+      order_id: orderId,
+      request_id: history.entry.request_id ?? null,
+      hold_id: history.entry.hold_id ?? null,
+    };
+  });
+}
+
 function matchesHistoryQuery(row: PortalAccountHistoryRow, normalizedQuery: string): boolean {
   if (!normalizedQuery) {
     return true;
@@ -224,6 +433,10 @@ function matchesHistoryQuery(row: PortalAccountHistoryRow, normalizedQuery: stri
     row.scope,
     row.kind,
     row.source,
+    row.ledger_entry_type,
+    row.order_id,
+    row.request_id,
+    row.hold_id,
     row.model,
     row.provider,
     row.channel_id,
@@ -306,9 +519,24 @@ export function buildPortalAccountViewModel(
 
   const revenueLedger = [...input.ledger].sort((left, right) =>
     compareLedgerRows(input.summary.project_id, left, right));
+  const currentScopeRevenueLedger = revenueLedger.filter(
+    (row) => row.project_id === input.summary.project_id,
+  );
+  const linkedScopeRevenueLedger = revenueLedger.filter(
+    (row) => row.project_id !== input.summary.project_id,
+  );
+  const currentLedgerHistoryRows = input.accountLedgerHistory?.length
+    ? buildAccountLedgerHistoryRows(
+      input.summary.project_id,
+      totalRevenue,
+      input.accountLedgerHistory,
+      input.benefitLots ?? [],
+    )
+    : buildLedgerHistoryRows(input.summary.project_id, totalRevenue, currentScopeRevenueLedger);
   const accountHistoryRows = [
     ...buildUsageHistoryRows(input.summary.project_id, totalRevenue, input.usageRecords),
-    ...buildLedgerHistoryRows(input.summary.project_id, totalRevenue, revenueLedger),
+    ...currentLedgerHistoryRows,
+    ...buildLedgerHistoryRows(input.summary.project_id, totalRevenue, linkedScopeRevenueLedger),
   ];
   const allHistoryRows = filterHistoryRows(accountHistoryRows, 'all', normalizedQuery);
   const expenseHistoryRows = allHistoryRows.filter((row) => row.kind === 'expense');
@@ -338,6 +566,14 @@ export function buildPortalAccountViewModel(
     trailing_7d: summarizeUsageRecords(trailing7dRecords),
     current_month: summarizeUsageRecords(currentMonthRecords),
     financial_breakdown: buildFinancialBreakdown(billingEventSummary),
+    commercial_posture: buildCommercialPosture(input),
+    commercial_account: input.commercialAccount ?? null,
+    account_balance: input.accountBalance ?? null,
+    benefit_lots: input.benefitLots ?? [],
+    holds: input.holds ?? [],
+    request_settlements: input.requestSettlements ?? [],
+    pricing_plans: input.pricingPlans ?? [],
+    pricing_rates: input.pricingRates ?? [],
     history_view: historyView,
     history_counts: {
       all: allHistoryRows.length,

@@ -39,8 +39,8 @@ use sdkwork_api_contract_openai::videos::{CreateVideoRequest, RemixVideoRequest}
 use sdkwork_api_contract_openai::webhooks::{CreateWebhookRequest, UpdateWebhookRequest};
 use sdkwork_api_domain_catalog::ModelCatalogEntry;
 use sdkwork_api_provider_core::{
-    ProviderAdapter, ProviderExecutionAdapter, ProviderOutput, ProviderRequest,
-    ProviderRequestOptions, ProviderStreamOutput,
+    OpenRouterProviderPreferences, ProviderAdapter, ProviderExecutionAdapter, ProviderOutput,
+    ProviderRequest, ProviderRequestOptions, ProviderStreamOutput,
 };
 use sdkwork_api_provider_openai::OpenAiProviderAdapter;
 use serde_json::Value;
@@ -749,6 +749,63 @@ impl ProviderAdapter for OpenRouterProviderAdapter {
     }
 }
 
+fn apply_openrouter_provider_preferences(
+    request: &CreateChatCompletionRequest,
+    preferences: Option<&OpenRouterProviderPreferences>,
+) -> CreateChatCompletionRequest {
+    let Some(preferences) = preferences else {
+        return request.clone();
+    };
+    if preferences.is_empty() {
+        return request.clone();
+    }
+
+    let mut request = request.clone();
+    let mut provider = request
+        .extra
+        .get("provider")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+
+    if !preferences.order().is_empty() {
+        provider.insert(
+            "order".to_owned(),
+            Value::Array(
+                preferences
+                    .order()
+                    .iter()
+                    .cloned()
+                    .map(Value::String)
+                    .collect(),
+            ),
+        );
+    }
+    if let Some(allow_fallbacks) = preferences.allow_fallbacks() {
+        provider.insert("allow_fallbacks".to_owned(), Value::Bool(allow_fallbacks));
+    }
+    if let Some(require_parameters) = preferences.require_parameters() {
+        provider.insert(
+            "require_parameters".to_owned(),
+            Value::Bool(require_parameters),
+        );
+    }
+    if let Some(data_collection) = preferences.data_collection() {
+        provider.insert(
+            "data_collection".to_owned(),
+            Value::String(data_collection.as_str().to_owned()),
+        );
+    }
+    if let Some(zero_data_retention) = preferences.zero_data_retention() {
+        provider.insert("zdr".to_owned(), Value::Bool(zero_data_retention));
+    }
+
+    request
+        .extra
+        .insert("provider".to_owned(), Value::Object(provider));
+    request
+}
+
 #[async_trait]
 impl ProviderExecutionAdapter for OpenRouterProviderAdapter {
     async fn execute(&self, api_key: &str, request: ProviderRequest<'_>) -> Result<ProviderOutput> {
@@ -761,8 +818,38 @@ impl ProviderExecutionAdapter for OpenRouterProviderAdapter {
         request: ProviderRequest<'_>,
         options: &ProviderRequestOptions,
     ) -> Result<ProviderOutput> {
-        self.delegate
-            .execute_with_options(api_key, request, options)
-            .await
+        match request {
+            ProviderRequest::ChatCompletions(body) => {
+                let request = apply_openrouter_provider_preferences(
+                    body,
+                    options.openrouter_provider_preferences(),
+                );
+                self.delegate
+                    .execute_with_options(
+                        api_key,
+                        ProviderRequest::ChatCompletions(&request),
+                        options,
+                    )
+                    .await
+            }
+            ProviderRequest::ChatCompletionsStream(body) => {
+                let request = apply_openrouter_provider_preferences(
+                    body,
+                    options.openrouter_provider_preferences(),
+                );
+                self.delegate
+                    .execute_with_options(
+                        api_key,
+                        ProviderRequest::ChatCompletionsStream(&request),
+                        options,
+                    )
+                    .await
+            }
+            _ => {
+                self.delegate
+                    .execute_with_options(api_key, request, options)
+                    .await
+            }
+        }
     }
 }

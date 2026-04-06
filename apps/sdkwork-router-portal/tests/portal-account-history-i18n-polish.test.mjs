@@ -24,3 +24,11 @@ test('account history productizes provider and channel detail labels instead of 
   assert.match(commons, /'OpenAI'/);
   assert.match(commons, /'Anthropic'/);
 });
+
+test('account history surfaces commerce order lineage instead of hiding ledger-only recharge rows', () => {
+  const accountPage = read('packages/sdkwork-router-portal-account/src/pages/index.tsx');
+
+  assert.match(accountPage, /resolveHistoryLedgerEntryLabel/);
+  assert.match(accountPage, /row\.order_id/);
+  assert.match(accountPage, /t\('Order'\)/);
+});

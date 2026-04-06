@@ -114,6 +114,7 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    config.validate_security_posture()?;
     init_tracing("router-product-service");
     let options = build_runtime_options(&settings);
     let runtime = RouterProductRuntime::start(loader, config, options).await?;

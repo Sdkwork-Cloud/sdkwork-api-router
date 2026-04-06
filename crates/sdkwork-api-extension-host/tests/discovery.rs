@@ -441,9 +441,17 @@ fn collect_package_file_digests_in(
             .replace('\\', "/");
         files.push(PackageFileDigest {
             path: relative,
-            sha256: format!("{digest:x}"),
+            sha256: sha256_hex_digest(digest),
         });
     }
+}
+
+fn sha256_hex_digest(digest: impl IntoIterator<Item = u8>) -> String {
+    let mut encoded = String::new();
+    for byte in digest {
+        encoded.push_str(&format!("{byte:02x}"));
+    }
+    encoded
 }
 
 #[derive(Debug)]

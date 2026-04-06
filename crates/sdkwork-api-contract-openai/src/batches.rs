@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateBatchRequest {
     pub input_file_id: String,
     pub endpoint: String,
@@ -21,7 +22,7 @@ impl CreateBatchRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct BatchObject {
     pub id: String,
     pub object: &'static str,
@@ -56,7 +57,7 @@ impl BatchObject {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ListBatchesResponse {
     pub object: &'static str,
     pub data: Vec<BatchObject>,

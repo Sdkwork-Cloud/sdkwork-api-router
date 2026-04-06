@@ -1,9 +1,6 @@
 import type { StatusBadgeVariant } from 'sdkwork-router-portal-commons/framework/display';
 
 import type {
-  BillingEventAccountingModeSummary,
-  BillingEventCapabilitySummary,
-  BillingEventSummary,
   PortalCommerceMembership,
   PortalDashboardSummary,
   PortalRouteKey,
@@ -43,18 +40,6 @@ export interface DashboardBalanceSummary {
   quota_limit_units: number | null;
   used_units: number;
   utilization_ratio: number | null;
-}
-
-export interface DashboardCommercialHighlights {
-  total_customer_charge: number;
-  leading_accounting_mode: BillingEventAccountingModeSummary | null;
-  leading_capability: BillingEventCapabilitySummary | null;
-  multimodal_totals: {
-    image_count: number;
-    audio_seconds: number;
-    video_seconds: number;
-    music_seconds: number;
-  };
 }
 
 export interface DashboardRoutingPosture {
@@ -135,7 +120,6 @@ export interface DashboardModuleItem {
 export interface PortalDashboardSnapshotBundle {
   dashboard: PortalDashboardSummary;
   membership: PortalCommerceMembership | null;
-  billing_event_summary: BillingEventSummary;
   routing_summary: PortalRoutingSummary;
   routing_logs: PortalRoutingDecisionLog[];
   usage_records: UsageRecord[];
@@ -149,7 +133,6 @@ export interface PortalDashboardPageProps {
 export interface PortalDashboardPageViewModel {
   snapshot: PortalDashboardSummary;
   membership: PortalCommerceMembership | null;
-  commercial_highlights: DashboardCommercialHighlights;
   balance: DashboardBalanceSummary;
   totals: DashboardMetricSummary;
   today: DashboardMetricSummary;

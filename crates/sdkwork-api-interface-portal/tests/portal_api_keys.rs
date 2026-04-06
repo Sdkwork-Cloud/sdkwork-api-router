@@ -26,7 +26,7 @@ async fn portal_token(app: axum::Router) -> String {
                 .uri("/portal/auth/register")
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    "{\"email\":\"portal@example.com\",\"password\":\"hunter2!\",\"display_name\":\"Portal User\"}",
+                    "{\"email\":\"portal@example.com\",\"password\":\"PortalPass123!\",\"display_name\":\"Portal User\"}",
                 ))
                 .unwrap(),
         )
@@ -638,7 +638,10 @@ async fn portal_routing_profiles_are_workspace_scoped_and_creatable_for_group_bi
         "Created from portal routing posture"
     );
     assert_eq!(created_profile_json["strategy"], "geo_affinity");
-    assert_eq!(created_profile_json["default_provider_id"], "provider-openai");
+    assert_eq!(
+        created_profile_json["default_provider_id"],
+        "provider-openai"
+    );
     assert_eq!(created_profile_json["max_cost"], 0.4);
     assert_eq!(created_profile_json["max_latency_ms"], 700);
     assert_eq!(created_profile_json["require_healthy"], true);

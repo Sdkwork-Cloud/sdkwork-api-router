@@ -102,6 +102,64 @@ async fn music_routes_return_ok() {
 
 #[serial(extension_env)]
 #[tokio::test]
+async fn music_content_route_returns_not_found_error_for_unknown_track() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/music/music_missing/content")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["message"], "Requested music asset was not found.");
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+}
+
+#[serial(extension_env)]
+#[tokio::test]
+async fn music_retrieve_route_returns_not_found_error_for_unknown_track() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/music/music_missing")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_music_not_found(response, "Requested music was not found.").await;
+}
+
+#[serial(extension_env)]
+#[tokio::test]
+async fn music_delete_route_returns_not_found_error_for_unknown_track() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/v1/music/music_missing")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_music_not_found(response, "Requested music was not found.").await;
+}
+
+#[serial(extension_env)]
+#[tokio::test]
 async fn stateless_music_routes_relay_to_openai_compatible_provider() {
     let upstream_state = UpstreamCaptureState::default();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -427,11 +485,94 @@ async fn create_model(
     assert_eq!(response.status(), StatusCode::CREATED);
 }
 
+#[serial(extension_env)]
+#[tokio::test]
+async fn stateful_music_retrieve_route_returns_not_found_without_usage() {
+    let ctx =
+        local_music_test_context("tenant-music-retrieve-missing", "project-music-retrieve-missing")
+            .await;
+
+    let response = ctx
+        .gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/music/music_missing")
+                .header("authorization", format!("Bearer {}", ctx.api_key))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_music_not_found(response, "Requested music was not found.").await;
+    support::assert_no_usage_records(ctx.admin_app, &ctx.admin_token).await;
+}
+
+#[serial(extension_env)]
+#[tokio::test]
+async fn stateful_music_delete_route_returns_not_found_without_usage() {
+    let ctx =
+        local_music_test_context("tenant-music-delete-missing", "project-music-delete-missing")
+            .await;
+
+    let response = ctx
+        .gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/v1/music/music_missing")
+                .header("authorization", format!("Bearer {}", ctx.api_key))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_music_not_found(response, "Requested music was not found.").await;
+    support::assert_no_usage_records(ctx.admin_app, &ctx.admin_token).await;
+}
+
+#[serial(extension_env)]
+#[tokio::test]
+async fn stateful_music_content_route_returns_not_found_without_usage() {
+    let ctx =
+        local_music_test_context("tenant-music-content-missing", "project-music-content-missing")
+            .await;
+
+    let response = ctx
+        .gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/music/music_missing/content")
+                .header("authorization", format!("Bearer {}", ctx.api_key))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_music_not_found(response, "Requested music asset was not found.").await;
+    support::assert_no_usage_records(ctx.admin_app, &ctx.admin_token).await;
+}
+
 async fn read_json(response: axum::response::Response) -> Value {
     let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
         .unwrap();
     serde_json::from_slice(&bytes).unwrap()
+}
+
+async fn assert_music_not_found(response: axum::response::Response, message: &str) {
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["message"], message);
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
 }
 
 async fn read_bytes(response: axum::response::Response) -> Vec<u8> {
@@ -445,6 +586,28 @@ async fn memory_pool() -> SqlitePool {
     sdkwork_api_storage_sqlite::run_migrations("sqlite::memory:")
         .await
         .unwrap()
+}
+
+struct LocalMusicTestContext {
+    admin_app: Router,
+    admin_token: String,
+    api_key: String,
+    gateway_app: Router,
+}
+
+async fn local_music_test_context(tenant_id: &str, project_id: &str) -> LocalMusicTestContext {
+    let pool = memory_pool().await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let api_key = support::issue_gateway_api_key(&pool, tenant_id, project_id).await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+
+    LocalMusicTestContext {
+        admin_app,
+        admin_token,
+        api_key,
+        gateway_app,
+    }
 }
 
 #[derive(Clone, Default)]

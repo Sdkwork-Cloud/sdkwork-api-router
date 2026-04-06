@@ -1,6 +1,8 @@
 use sdkwork_api_app_billing::{
-    plan_account_hold, resolve_payable_account_for_gateway_subject, summarize_account_balance,
+    plan_account_hold, resolve_payable_account_for_gateway_request_context,
+    resolve_payable_account_for_gateway_subject, summarize_account_balance,
 };
+use sdkwork_api_app_identity::gateway_auth_subject_from_request_context;
 use sdkwork_api_domain_billing::{
     AccountBenefitLotRecord, AccountBenefitSourceType, AccountBenefitType, AccountRecord,
     AccountStatus, AccountType,
@@ -202,4 +204,58 @@ async fn payable_account_resolution_rejects_inactive_primary_accounts() {
         .unwrap_err();
 
     assert_eq!(error.to_string(), "primary account 7401 is not active");
+}
+
+#[tokio::test]
+async fn resolves_active_primary_account_for_gateway_request_context_using_gateway_project_principal(
+) {
+    let pool = run_migrations("sqlite::memory:").await.unwrap();
+    let store = SqliteAdminStore::new(pool);
+
+    let request_context = sdkwork_api_app_identity::GatewayRequestContext {
+        tenant_id: "tenant-gateway-commercial".to_owned(),
+        project_id: "project-gateway-commercial".to_owned(),
+        environment: "live".to_owned(),
+        api_key_hash: "hash_live_gateway_project".to_owned(),
+        api_key_group_id: Some("group-live".to_owned()),
+    };
+    let derived_subject = gateway_auth_subject_from_request_context(&request_context);
+
+    let primary_account = AccountRecord::new(
+        7501,
+        derived_subject.tenant_id,
+        derived_subject.organization_id,
+        derived_subject.user_id,
+        AccountType::Primary,
+    )
+    .with_created_at_ms(10)
+    .with_updated_at_ms(10);
+    store.insert_account_record(&primary_account).await.unwrap();
+
+    let resolved = resolve_payable_account_for_gateway_request_context(&store, &request_context)
+        .await
+        .unwrap();
+
+    assert_eq!(resolved, Some(primary_account));
+}
+
+#[tokio::test]
+async fn payable_account_resolution_from_gateway_request_context_returns_none_without_matching_account(
+) {
+    let pool = run_migrations("sqlite::memory:").await.unwrap();
+    let store = SqliteAdminStore::new(pool);
+
+    let request_context = sdkwork_api_app_identity::GatewayRequestContext {
+        tenant_id: "tenant-gateway-commercial".to_owned(),
+        project_id: "project-gateway-commercial".to_owned(),
+        environment: "live".to_owned(),
+        api_key_hash: "hash_live_gateway_project".to_owned(),
+        api_key_group_id: Some("group-live".to_owned()),
+    };
+
+    let resolved = resolve_payable_account_for_gateway_request_context(&store, &request_context)
+        .await
+        .unwrap();
+
+    assert_eq!(resolved, None);
 }

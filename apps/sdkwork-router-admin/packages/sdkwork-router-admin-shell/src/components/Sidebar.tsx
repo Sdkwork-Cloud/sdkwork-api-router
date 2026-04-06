@@ -66,6 +66,8 @@ const iconByRoute: Record<AdminRouteKey, LucideIcon> = {
   users: Users,
   tenants: Building2,
   coupons: TicketPercent,
+  commercial: Building2,
+  pricing: TicketPercent,
   'api-keys': ShieldCheck,
   'rate-limits': TimerReset,
   'route-config': Waypoints,

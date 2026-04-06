@@ -87,6 +87,10 @@ test('dashboard follows claw-studio analytics workbench architecture adapted to 
   assert.match(dashboardPage, /Recent requests/);
   assert.match(dashboardPage, /Provider distribution/);
   assert.match(dashboardPage, /Model distribution/);
+  assert.doesNotMatch(dashboardPage, /Commercial highlights/);
+  assert.doesNotMatch(dashboardPage, /Leading accounting mode/);
+  assert.doesNotMatch(dashboardPage, /Leading capability/);
+  assert.doesNotMatch(dashboardPage, /Multimodal demand/);
   assert.doesNotMatch(dashboardComponents, /DashboardSectionHeader/);
   assert.doesNotMatch(dashboardPage, /const surfaceClass =/);
   assert.ok(
@@ -283,6 +287,7 @@ test('user and account modules are separated into personal identity and financia
     'index.tsx',
   );
 
+  assert.match(userPage, /data-slot="portal-user-toolbar"/);
   assert.match(userPage, /User details/);
   assert.match(userPage, /Profile overview/);
   assert.match(userPage, /Phone binding/);

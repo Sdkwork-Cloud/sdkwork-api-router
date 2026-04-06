@@ -26,6 +26,14 @@ import type {
   BillingEventAccountingModeSummary,
   BillingEventCapabilitySummary,
   BillingEventSummary,
+  CommercialAccountBalanceSnapshot,
+  CommercialAccountBenefitLotRecord,
+  CommercialAccountHistorySnapshot,
+  CommercialAccountHoldRecord,
+  CommercialAccountSummary,
+  CommercialPricingPlanRecord,
+  CommercialPricingRateRecord,
+  CommercialRequestSettlementRecord,
   LedgerEntry,
   PortalCommerceMembership,
   ProjectBillingSummary,
@@ -34,10 +42,13 @@ import type {
 } from 'sdkwork-router-portal-types';
 
 import {
+  getPortalCommercialAccountHistory,
   getPortalBillingEventSummary,
   getPortalBillingSummary,
   getPortalCommerceMembership,
   getPortalUsageSummary,
+  listPortalCommercialPricingPlans,
+  listPortalCommercialPricingRates,
   listPortalBillingLedger,
   listPortalUsageRecords,
 } from '../repository';
@@ -393,7 +404,7 @@ function capabilityLabel(
     case 'music':
       return t('Music');
     default:
-      return titleCaseToken(capability);
+      return t(titleCaseToken(capability));
   }
 }
 
@@ -491,6 +502,85 @@ function buildMultimodalUsageMetrics(
   ];
 }
 
+function commercialPricingChargeUnitLabel(
+  chargeUnit: CommercialPricingRateRecord['charge_unit'] | null,
+  t: TranslateFn,
+): string {
+  switch (chargeUnit) {
+    case 'input_token':
+      return t('Input token');
+    case 'output_token':
+      return t('Output token');
+    case 'cache_read_token':
+      return t('Cache read token');
+    case 'cache_write_token':
+      return t('Cache write token');
+    case 'request':
+      return t('Request');
+    case 'image':
+      return t('Image');
+    case 'audio_second':
+      return t('Audio second');
+    case 'audio_minute':
+      return t('Audio minute');
+    case 'video_second':
+      return t('Video second');
+    case 'video_minute':
+      return t('Video minute');
+    case 'music_track':
+      return t('Music track');
+    case 'character':
+      return t('Character');
+    case 'storage_mb_day':
+      return t('Storage MB day');
+    case 'tool_call':
+      return t('Tool call');
+    case 'unit':
+      return t('Unit');
+    default:
+      return t('n/a');
+  }
+}
+
+function commercialPricingMethodLabel(
+  pricingMethod: CommercialPricingRateRecord['pricing_method'] | null,
+  t: TranslateFn,
+): string {
+  switch (pricingMethod) {
+    case 'per_unit':
+      return t('Per unit');
+    case 'flat':
+      return t('Flat');
+    case 'step':
+      return t('Step');
+    case 'included_then_per_unit':
+      return t('Included then per unit');
+    default:
+      return t('n/a');
+  }
+}
+
+function commercialPricingDisplayUnit(
+  displayPriceUnit: string | null,
+  chargeUnit: CommercialPricingRateRecord['charge_unit'] | null,
+  t: TranslateFn,
+): string {
+  if (displayPriceUnit?.trim()) {
+    return displayPriceUnit;
+  }
+
+  switch (chargeUnit) {
+    case 'input_token':
+      return t('USD / 1M input tokens');
+    case 'image':
+      return t('USD / image');
+    case 'music_track':
+      return t('USD / music track');
+    default:
+      return t('n/a');
+  }
+}
+
 function formatSignedCurrency(
   amount: number,
   kind: PortalAccountHistoryRow['kind'],
@@ -535,7 +625,7 @@ function resolveMembershipStatusLabel(
     case 'paused':
       return t('Paused');
     default:
-      return status?.trim() ? titleCaseToken(status) : t('Inactive');
+      return status?.trim() ? t(titleCaseToken(status)) : t('Inactive');
   }
 }
 
@@ -553,7 +643,7 @@ function resolveQuotaPolicyLabel(
     return t('Enterprise quota');
   }
 
-  return titleCaseToken(quotaPolicyId ?? '');
+  return t(titleCaseToken(quotaPolicyId ?? ''));
 }
 
 function resolveHistoryTitle(
@@ -562,6 +652,16 @@ function resolveHistoryTitle(
 ): string {
   if (row.source === 'usage') {
     return row.model ?? t('Usage record');
+  }
+
+  if (row.order_id?.trim()) {
+    return row.ledger_entry_type === 'refund'
+      ? t('Refund order {orderId}', { orderId: row.order_id })
+      : t('Commerce order {orderId}', { orderId: row.order_id });
+  }
+
+  if (row.ledger_entry_type) {
+    return resolveHistoryLedgerEntryLabel(row.ledger_entry_type, t);
   }
 
   return t('Ledger snapshot');
@@ -617,6 +717,28 @@ function resolveHistoryChannelLabel(
   }
 }
 
+function resolveHistoryLedgerEntryLabel(
+  entryType: PortalAccountHistoryRow['ledger_entry_type'],
+  t: TranslateFn,
+): string {
+  switch (entryType) {
+    case 'grant_issue':
+      return t('Grant issue');
+    case 'refund':
+      return t('Refund');
+    case 'settlement_capture':
+      return t('Settlement capture');
+    case 'hold_create':
+      return t('Hold create');
+    case 'hold_release':
+      return t('Hold release');
+    case 'manual_adjustment':
+      return t('Manual adjustment');
+    default:
+      return t('Ledger snapshot');
+  }
+}
+
 function resolveHistoryDetail(
   row: PortalAccountHistoryRow,
   t: TranslateFn,
@@ -631,7 +753,16 @@ function resolveHistoryDetail(
       .join(' / ');
   }
 
-  return resolveHistoryProjectLabel(row, t);
+  return [
+    row.ledger_entry_type
+      ? `${t('Entry')}: ${resolveHistoryLedgerEntryLabel(row.ledger_entry_type, t)}`
+      : null,
+    row.order_id ? `${t('Order')}: ${row.order_id}` : null,
+    row.request_id != null ? `${t('Request')}: ${row.request_id}` : null,
+    resolveHistoryProjectLabel(row, t),
+  ]
+    .filter(Boolean)
+    .join(' / ');
 }
 
 function resolveHistoryEmptyState(
@@ -679,6 +810,15 @@ export function PortalAccountPage({ onNavigate }: PortalAccountPageProps) {
   const [membership, setMembership] = useState<PortalCommerceMembership | null>(null);
   const [usageSummary, setUsageSummary] = useState<UsageSummary | null>(null);
   const [usageRecords, setUsageRecords] = useState<UsageRecord[]>([]);
+  const [commercialAccountHistory, setCommercialAccountHistory] =
+    useState<CommercialAccountHistorySnapshot | null>(null);
+  const [commercialAccount, setCommercialAccount] = useState<CommercialAccountSummary | null>(null);
+  const [accountBalance, setAccountBalance] = useState<CommercialAccountBalanceSnapshot | null>(null);
+  const [benefitLots, setBenefitLots] = useState<CommercialAccountBenefitLotRecord[]>([]);
+  const [holds, setHolds] = useState<CommercialAccountHoldRecord[]>([]);
+  const [requestSettlements, setRequestSettlements] = useState<CommercialRequestSettlementRecord[]>([]);
+  const [pricingPlans, setPricingPlans] = useState<CommercialPricingPlanRecord[]>([]);
+  const [pricingRates, setPricingRates] = useState<CommercialPricingRateRecord[]>([]);
   const [status, setStatus] = useState(loadingStatus);
   const [historyView, setHistoryView] = useState<PortalAccountHistoryView>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -697,6 +837,9 @@ export function PortalAccountPage({ onNavigate }: PortalAccountPageProps) {
       getPortalCommerceMembership(),
       getPortalUsageSummary(),
       listPortalUsageRecords(),
+      getPortalCommercialAccountHistory(),
+      listPortalCommercialPricingPlans(),
+      listPortalCommercialPricingRates(),
     ])
       .then(
         ([
@@ -706,6 +849,9 @@ export function PortalAccountPage({ onNavigate }: PortalAccountPageProps) {
           nextMembership,
           nextUsageSummary,
           nextUsageRecords,
+          nextCommercialAccountHistory,
+          nextPricingPlans,
+          nextPricingRates,
         ]) => {
           if (cancelled) {
             return;
@@ -717,6 +863,21 @@ export function PortalAccountPage({ onNavigate }: PortalAccountPageProps) {
           setMembership(nextMembership);
           setUsageSummary(nextUsageSummary);
           setUsageRecords(nextUsageRecords);
+          setCommercialAccountHistory(nextCommercialAccountHistory);
+          setCommercialAccount({
+            account: nextCommercialAccountHistory.account,
+            available_balance: nextCommercialAccountHistory.balance.available_balance,
+            held_balance: nextCommercialAccountHistory.balance.held_balance,
+            consumed_balance: nextCommercialAccountHistory.balance.consumed_balance,
+            grant_balance: nextCommercialAccountHistory.balance.grant_balance,
+            active_lot_count: nextCommercialAccountHistory.balance.active_lot_count,
+          });
+          setAccountBalance(nextCommercialAccountHistory.balance);
+          setBenefitLots(nextCommercialAccountHistory.benefit_lots);
+          setHolds(nextCommercialAccountHistory.holds);
+          setRequestSettlements(nextCommercialAccountHistory.request_settlements);
+          setPricingPlans(nextPricingPlans);
+          setPricingRates(nextPricingRates);
           setStatus(syncedStatus);
         },
       )
@@ -741,6 +902,14 @@ export function PortalAccountPage({ onNavigate }: PortalAccountPageProps) {
             usageRecords,
             ledger,
             billingEventSummary,
+            accountLedgerHistory: commercialAccountHistory?.ledger ?? [],
+            commercialAccount,
+            accountBalance,
+            benefitLots,
+            holds,
+            requestSettlements,
+            pricingPlans,
+            pricingRates,
             historyView,
             page,
             pageSize: ACCOUNT_PAGE_SIZE,
@@ -748,12 +917,20 @@ export function PortalAccountPage({ onNavigate }: PortalAccountPageProps) {
           })
         : null,
     [
+      accountBalance,
+      benefitLots,
       billingEventSummary,
+      commercialAccount,
+      commercialAccountHistory,
       deferredSearch,
       historyView,
+      holds,
       ledger,
       membership,
       page,
+      pricingPlans,
+      pricingRates,
+      requestSettlements,
       summary,
       usageRecords,
       usageSummary,
@@ -799,6 +976,98 @@ export function PortalAccountPage({ onNavigate }: PortalAccountPageProps) {
     viewModel.financial_breakdown.multimodal_totals,
     t,
   );
+  const commercialPostureMetrics = [
+    {
+      label: t('Account'),
+      value: viewModel.commercial_posture.account_id === null
+        ? t('n/a')
+        : String(viewModel.commercial_posture.account_id),
+    },
+    {
+      label: t('Status'),
+      value: viewModel.commercial_posture.account_status
+        ? t(titleCaseToken(viewModel.commercial_posture.account_status))
+        : t('n/a'),
+    },
+    {
+      label: t('Available balance'),
+      value: formatUnits(viewModel.commercial_posture.available_balance),
+    },
+    {
+      label: t('Held balance'),
+      value: formatUnits(viewModel.commercial_posture.held_balance),
+    },
+  ];
+  const benefitLotItems = viewModel.benefit_lots.slice(0, 3).map((lot) => ({
+    label: t('{benefitType} #{lotId}', {
+      benefitType: t(titleCaseToken(lot.benefit_type)),
+      lotId: lot.lot_id,
+    }),
+    value: formatUnits(lot.remaining_quantity),
+    detail: [
+      t(titleCaseToken(lot.source_type)),
+      t(titleCaseToken(lot.status)),
+      lot.expires_at_ms ? t('Expires {date}', { date: formatDateTime(lot.expires_at_ms) }) : t('No expiry'),
+    ].join(' / '),
+  }));
+  const settlementMetrics = [
+    {
+      label: t('Open holds'),
+      value: formatUnits(viewModel.commercial_posture.open_hold_count),
+    },
+    {
+      label: t('Settlements'),
+      value: formatUnits(viewModel.commercial_posture.settlement_count),
+    },
+    {
+      label: t('Captured credits'),
+      value: formatUnits(viewModel.commercial_posture.captured_settlement_amount),
+    },
+    {
+      label: t('Grant balance'),
+      value: formatUnits(viewModel.commercial_posture.grant_balance),
+    },
+  ];
+  const pricingMetrics = [
+    {
+      label: t('Plans'),
+      value: formatUnits(viewModel.commercial_posture.pricing_plan_count),
+    },
+    {
+      label: t('Rates'),
+      value: formatUnits(viewModel.commercial_posture.pricing_rate_count),
+    },
+    {
+      label: t('Primary plan'),
+      value: viewModel.commercial_posture.primary_plan_display_name ?? t('n/a'),
+    },
+    {
+      label: t('Primary metric'),
+      value: viewModel.commercial_posture.primary_rate_metric_code ?? t('n/a'),
+    },
+    {
+      label: t('Charge unit'),
+      value: commercialPricingChargeUnitLabel(
+        viewModel.commercial_posture.primary_rate_charge_unit,
+        t,
+      ),
+    },
+    {
+      label: t('Billing method'),
+      value: commercialPricingMethodLabel(
+        viewModel.commercial_posture.primary_rate_pricing_method,
+        t,
+      ),
+    },
+    {
+      label: t('Price unit'),
+      value: commercialPricingDisplayUnit(
+        viewModel.commercial_posture.primary_rate_display_price_unit,
+        viewModel.commercial_posture.primary_rate_charge_unit,
+        t,
+      ),
+    },
+  ];
 
   return (
     <div className="space-y-4" data-slot="portal-account-page">
@@ -926,6 +1195,45 @@ export function PortalAccountPage({ onNavigate }: PortalAccountPageProps) {
         </CardContent>
       </Card>
 
+      <div className="grid gap-4 xl:grid-cols-2">
+        <AccountFinancialMetricCard
+          dataSlot="portal-account-commercial-posture"
+          description={t(
+            'Commercial posture keeps canonical account identity, balance, and liability state attached to the same workspace account view.',
+          )}
+          metrics={commercialPostureMetrics}
+          title={t('Commercial posture')}
+        />
+        <AccountFinancialListCard
+          dataSlot="portal-account-benefit-lots"
+          description={t(
+            'Benefit lots reveal which grants, recharges, or promotions still supply credit to this workspace.',
+          )}
+          emptyDescription={t(
+            'Benefit lots will appear after the commercial account receives recharge, coupon, or grant allocations.',
+          )}
+          emptyTitle={t('No benefit lots yet')}
+          items={benefitLotItems}
+          title={t('Benefit lots')}
+        />
+        <AccountFinancialMetricCard
+          dataSlot="portal-account-settlement-posture"
+          description={t(
+            'Settlement posture aligns holds, captures, and grant balance with canonical request settlement evidence.',
+          )}
+          metrics={settlementMetrics}
+          title={t('Settlement posture')}
+        />
+        <AccountFinancialMetricCard
+          dataSlot="portal-account-pricing-posture"
+          description={t(
+            'Pricing posture highlights which pricing plans and rates currently define commercial charging for this workspace.',
+          )}
+          metrics={pricingMetrics}
+          title={t('Pricing posture')}
+        />
+      </div>
+
       <Card
         className="border-zinc-200 bg-white shadow-none dark:border-zinc-800 dark:bg-zinc-950"
         data-slot="portal-account-history"
@@ -942,7 +1250,7 @@ export function PortalAccountPage({ onNavigate }: PortalAccountPageProps) {
 
               <Tabs
                 className="min-w-0"
-                onValueChange={(value) =>
+                onValueChange={(value: string) =>
                   startTransition(() => {
                     setHistoryView(value as PortalAccountHistoryView);
                     setPage(1);
@@ -1015,12 +1323,12 @@ export function PortalAccountPage({ onNavigate }: PortalAccountPageProps) {
               {
                 id: 'recorded',
                 header: t('Recorded'),
-                cell: (row) => resolveHistoryRecordedLabel(row, t),
+                cell: (row: PortalAccountHistoryRow) => resolveHistoryRecordedLabel(row, t),
               },
               {
                 id: 'type',
                 header: t('Type'),
-                cell: (row) => (
+                cell: (row: PortalAccountHistoryRow) => (
                   <Badge variant={row.kind === 'expense' ? 'warning' : 'success'}>
                     {row.kind === 'expense' ? t('Expense') : t('Revenue')}
                   </Badge>
@@ -1029,7 +1337,7 @@ export function PortalAccountPage({ onNavigate }: PortalAccountPageProps) {
               {
                 id: 'details',
                 header: t('Details'),
-                cell: (row) => (
+                cell: (row: PortalAccountHistoryRow) => (
                   <div className="flex flex-col gap-1">
                     <strong className="text-zinc-950 dark:text-zinc-50">
                       {resolveHistoryTitle(row, t)}
@@ -1043,12 +1351,12 @@ export function PortalAccountPage({ onNavigate }: PortalAccountPageProps) {
               {
                 id: 'units',
                 header: t('Units'),
-                cell: (row) => formatSignedUnits(row.units, row.kind),
+                cell: (row: PortalAccountHistoryRow) => formatSignedUnits(row.units, row.kind),
               },
               {
                 id: 'amount',
                 header: t('Amount'),
-                cell: (row) => formatSignedCurrency(row.amount, row.kind),
+                cell: (row: PortalAccountHistoryRow) => formatSignedCurrency(row.amount, row.kind),
               },
             ]}
             data-slot="portal-account-table"
@@ -1101,7 +1409,7 @@ export function PortalAccountPage({ onNavigate }: PortalAccountPageProps) {
                 </div>
               </div>
             )}
-            getRowId={(row) => row.id}
+            getRowId={(row: PortalAccountHistoryRow) => row.id}
             rows={viewModel.visible_history}
           />
         </CardContent>

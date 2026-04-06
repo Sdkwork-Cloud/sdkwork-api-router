@@ -211,6 +211,174 @@ async fn fine_tuning_checkpoint_permission_delete_route_returns_ok() {
 }
 
 #[tokio::test]
+async fn fine_tuning_retrieve_route_returns_not_found_for_unknown_job() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/fine_tuning/jobs/ftjob_missing")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested fine-tuning job was not found.").await;
+}
+
+#[tokio::test]
+async fn fine_tuning_cancel_route_returns_not_found_for_unknown_job() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/fine_tuning/jobs/ftjob_missing/cancel")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested fine-tuning job was not found.").await;
+}
+
+#[tokio::test]
+async fn fine_tuning_events_route_returns_not_found_for_unknown_job() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/fine_tuning/jobs/ftjob_missing/events")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested fine-tuning job was not found.").await;
+}
+
+#[tokio::test]
+async fn fine_tuning_checkpoints_route_returns_not_found_for_unknown_job() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/fine_tuning/jobs/ftjob_missing/checkpoints")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested fine-tuning job was not found.").await;
+}
+
+#[tokio::test]
+async fn fine_tuning_pause_route_returns_not_found_for_unknown_job() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/fine_tuning/jobs/ftjob_missing/pause")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested fine-tuning job was not found.").await;
+}
+
+#[tokio::test]
+async fn fine_tuning_resume_route_returns_not_found_for_unknown_job() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/fine_tuning/jobs/ftjob_missing/resume")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested fine-tuning job was not found.").await;
+}
+
+#[tokio::test]
+async fn fine_tuning_checkpoint_permissions_create_route_returns_not_found_for_unknown_checkpoint()
+{
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/fine_tuning/checkpoints/ft:missing:checkpoint/permissions")
+                .header("content-type", "application/json")
+                .body(Body::from("{\"project_ids\":[\"project-2\"]}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested fine-tuning checkpoint was not found.").await;
+}
+
+#[tokio::test]
+async fn fine_tuning_checkpoint_permissions_list_route_returns_not_found_for_unknown_checkpoint() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/fine_tuning/checkpoints/ft:missing:checkpoint/permissions")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested fine-tuning checkpoint was not found.").await;
+}
+
+#[tokio::test]
+async fn fine_tuning_checkpoint_permission_delete_route_returns_not_found_for_unknown_permission() {
+    let app = sdkwork_api_interface_http::gateway_router();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/v1/fine_tuning/checkpoints/ft:gpt-4.1-mini:checkpoint-1/permissions/perm_missing")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(
+        response,
+        "Requested fine-tuning checkpoint permission was not found.",
+    )
+    .await;
+}
+
+#[tokio::test]
 async fn stateless_fine_tuning_route_relays_to_openai_compatible_provider() {
     let upstream_state = UpstreamCaptureState::default();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -350,6 +518,246 @@ async fn stateless_fine_tuning_route_relays_to_openai_compatible_provider() {
     assert_eq!(checkpoints_json["data"][0]["id"], "ftckpt_1");
 }
 
+#[tokio::test]
+async fn stateful_fine_tuning_retrieve_route_returns_not_found_without_usage() {
+    let ctx = local_fine_tuning_test_context(
+        "tenant-fine-tuning-retrieve-missing",
+        "project-fine-tuning-retrieve-missing",
+    )
+    .await;
+
+    let response = ctx
+        .gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/fine_tuning/jobs/ftjob_missing")
+                .header("authorization", format!("Bearer {}", ctx.api_key))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested fine-tuning job was not found.").await;
+    support::assert_no_usage_records(ctx.admin_app, &ctx.admin_token).await;
+}
+
+#[tokio::test]
+async fn stateful_fine_tuning_cancel_route_returns_not_found_without_usage() {
+    let ctx = local_fine_tuning_test_context(
+        "tenant-fine-tuning-cancel-missing",
+        "project-fine-tuning-cancel-missing",
+    )
+    .await;
+
+    let response = ctx
+        .gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/fine_tuning/jobs/ftjob_missing/cancel")
+                .header("authorization", format!("Bearer {}", ctx.api_key))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested fine-tuning job was not found.").await;
+    support::assert_no_usage_records(ctx.admin_app, &ctx.admin_token).await;
+}
+
+#[tokio::test]
+async fn stateful_fine_tuning_events_route_returns_not_found_without_usage() {
+    let ctx = local_fine_tuning_test_context(
+        "tenant-fine-tuning-events-missing",
+        "project-fine-tuning-events-missing",
+    )
+    .await;
+
+    let response = ctx
+        .gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/fine_tuning/jobs/ftjob_missing/events")
+                .header("authorization", format!("Bearer {}", ctx.api_key))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested fine-tuning job was not found.").await;
+    support::assert_no_usage_records(ctx.admin_app, &ctx.admin_token).await;
+}
+
+#[tokio::test]
+async fn stateful_fine_tuning_checkpoints_route_returns_not_found_without_usage() {
+    let ctx = local_fine_tuning_test_context(
+        "tenant-fine-tuning-checkpoints-missing",
+        "project-fine-tuning-checkpoints-missing",
+    )
+    .await;
+
+    let response = ctx
+        .gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/fine_tuning/jobs/ftjob_missing/checkpoints")
+                .header("authorization", format!("Bearer {}", ctx.api_key))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested fine-tuning job was not found.").await;
+    support::assert_no_usage_records(ctx.admin_app, &ctx.admin_token).await;
+}
+
+#[tokio::test]
+async fn stateful_fine_tuning_pause_route_returns_not_found_without_usage() {
+    let ctx = local_fine_tuning_test_context(
+        "tenant-fine-tuning-pause-missing",
+        "project-fine-tuning-pause-missing",
+    )
+    .await;
+
+    let response = ctx
+        .gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/fine_tuning/jobs/ftjob_missing/pause")
+                .header("authorization", format!("Bearer {}", ctx.api_key))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested fine-tuning job was not found.").await;
+    support::assert_no_usage_records(ctx.admin_app, &ctx.admin_token).await;
+}
+
+#[tokio::test]
+async fn stateful_fine_tuning_resume_route_returns_not_found_without_usage() {
+    let ctx = local_fine_tuning_test_context(
+        "tenant-fine-tuning-resume-missing",
+        "project-fine-tuning-resume-missing",
+    )
+    .await;
+
+    let response = ctx
+        .gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/fine_tuning/jobs/ftjob_missing/resume")
+                .header("authorization", format!("Bearer {}", ctx.api_key))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested fine-tuning job was not found.").await;
+    support::assert_no_usage_records(ctx.admin_app, &ctx.admin_token).await;
+}
+
+#[tokio::test]
+async fn stateful_fine_tuning_checkpoint_permissions_create_route_returns_not_found_without_usage()
+{
+    let ctx = local_fine_tuning_test_context(
+        "tenant-fine-tuning-perms-create-missing",
+        "project-fine-tuning-perms-create-missing",
+    )
+    .await;
+
+    let response = ctx
+        .gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/fine_tuning/checkpoints/ft:missing:checkpoint/permissions")
+                .header("authorization", format!("Bearer {}", ctx.api_key))
+                .header("content-type", "application/json")
+                .body(Body::from("{\"project_ids\":[\"project-2\"]}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested fine-tuning checkpoint was not found.").await;
+    support::assert_no_usage_records(ctx.admin_app, &ctx.admin_token).await;
+}
+
+#[tokio::test]
+async fn stateful_fine_tuning_checkpoint_permissions_list_route_returns_not_found_without_usage() {
+    let ctx = local_fine_tuning_test_context(
+        "tenant-fine-tuning-perms-list-missing",
+        "project-fine-tuning-perms-list-missing",
+    )
+    .await;
+
+    let response = ctx
+        .gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/fine_tuning/checkpoints/ft:missing:checkpoint/permissions")
+                .header("authorization", format!("Bearer {}", ctx.api_key))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(response, "Requested fine-tuning checkpoint was not found.").await;
+    support::assert_no_usage_records(ctx.admin_app, &ctx.admin_token).await;
+}
+
+#[tokio::test]
+async fn stateful_fine_tuning_checkpoint_permission_delete_route_returns_not_found_without_usage() {
+    let ctx = local_fine_tuning_test_context(
+        "tenant-fine-tuning-perm-delete-missing",
+        "project-fine-tuning-perm-delete-missing",
+    )
+    .await;
+
+    let response = ctx
+        .gateway_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/v1/fine_tuning/checkpoints/ft:gpt-4.1-mini:checkpoint-1/permissions/perm_missing")
+                .header("authorization", format!("Bearer {}", ctx.api_key))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_openai_not_found(
+        response,
+        "Requested fine-tuning checkpoint permission was not found.",
+    )
+    .await;
+    support::assert_no_usage_records(ctx.admin_app, &ctx.admin_token).await;
+}
+
 async fn read_json(response: axum::response::Response) -> Value {
     let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
@@ -357,10 +765,43 @@ async fn read_json(response: axum::response::Response) -> Value {
     serde_json::from_slice(&bytes).unwrap()
 }
 
+async fn assert_openai_not_found(response: axum::response::Response, message: &str) {
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["message"], message);
+    assert_eq!(json["error"]["type"], "invalid_request_error");
+    assert_eq!(json["error"]["code"], "not_found");
+}
+
 async fn memory_pool() -> SqlitePool {
     sdkwork_api_storage_sqlite::run_migrations("sqlite::memory:")
         .await
         .unwrap()
+}
+
+struct LocalFineTuningTestContext {
+    admin_app: Router,
+    admin_token: String,
+    api_key: String,
+    gateway_app: Router,
+}
+
+async fn local_fine_tuning_test_context(
+    tenant_id: &str,
+    project_id: &str,
+) -> LocalFineTuningTestContext {
+    let pool = memory_pool().await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(admin_app.clone()).await;
+    let api_key = support::issue_gateway_api_key(&pool, tenant_id, project_id).await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+
+    LocalFineTuningTestContext {
+        admin_app,
+        admin_token,
+        api_key,
+        gateway_app,
+    }
 }
 
 #[derive(Clone, Default)]
@@ -1076,8 +1517,8 @@ async fn stateful_fine_tuning_extended_routes_relay_to_openai_compatible_provide
 }
 
 #[tokio::test]
-async fn stateful_fine_tuning_checkpoint_permission_usage_uses_checkpoint_route_key_for_provider_selection(
-) {
+async fn stateful_fine_tuning_checkpoint_permission_usage_uses_checkpoint_route_key_for_provider_selection()
+ {
     let tenant_id = "tenant-fine-tuning-permission-usage";
     let project_id = "project-fine-tuning-permission-usage";
     let checkpoint_id = "ft:gpt-4.1-mini:checkpoint-1";
@@ -1291,8 +1732,8 @@ async fn stateful_fine_tuning_checkpoint_permission_usage_uses_checkpoint_route_
 }
 
 #[tokio::test]
-async fn stateful_fine_tuning_checkpoint_permissions_create_usage_uses_created_permission_id_for_billing(
-) {
+async fn stateful_fine_tuning_checkpoint_permissions_create_usage_uses_created_permission_id_for_billing()
+ {
     let tenant_id = "tenant-fine-tuning-permission-create";
     let project_id = "project-fine-tuning-permission-create";
     let checkpoint_id = "ft:gpt-4.1-mini:checkpoint-1";

@@ -6,7 +6,7 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-clap = { version = "4.5", features = ["derive"] }
+clap = { version = "4.6", features = ["derive"] }
 sdkwork-api-config = { path = "../../crates/sdkwork-api-config" }
 sdkwork-api-observability = { path = "../../crates/sdkwork-api-observability" }
 sdkwork-api-product-runtime = { path = "../../crates/sdkwork-api-product-runtime" }

@@ -2,28 +2,38 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::{ensure, Result};
+use anyhow::{Result, ensure};
 use sdkwork_api_app_extension::{
-    list_extension_runtime_statuses, matching_runtime_statuses_for_provider,
-    ExtensionRuntimeStatusRecord,
+    ExtensionRuntimeStatusRecord, list_extension_runtime_statuses,
+    matching_runtime_statuses_for_provider,
 };
+use sdkwork_api_cache_core::DistributedLockStore;
 use sdkwork_api_domain_catalog::ProxyProvider;
 use sdkwork_api_domain_routing::{
-    select_policy, CompiledRoutingSnapshotRecord, ProjectRoutingPreferences,
-    ProviderHealthSnapshot, RoutingCandidateAssessment, RoutingCandidateHealth, RoutingDecision,
-    RoutingDecisionLog, RoutingDecisionSource, RoutingPolicy, RoutingProfileRecord,
-    RoutingStrategy,
+    CompiledRoutingSnapshotRecord, ProjectRoutingPreferences, ProviderHealthRecoveryProbe,
+    ProviderHealthRecoveryProbeOutcome, ProviderHealthSnapshot, RoutingCandidateAssessment,
+    RoutingCandidateHealth, RoutingDecision, RoutingDecisionLog, RoutingDecisionSource,
+    RoutingPolicy, RoutingProfileRecord, RoutingStrategy, select_policy,
 };
 use sdkwork_api_extension_core::{ExtensionInstallation, ExtensionInstance};
 use sdkwork_api_policy_routing::{
-    builtin_routing_strategy_registry, RoutingStrategyExecutionInput,
-    RoutingStrategyExecutionResult,
+    RoutingStrategyExecutionInput, RoutingStrategyExecutionResult,
+    builtin_routing_strategy_registry,
 };
 use sdkwork_api_storage_core::AdminStore;
 use serde_json::Value;
 
 const DEFAULT_WEIGHT: u64 = 100;
 const STRATEGY_STATIC_FALLBACK: &str = "static_fallback";
+const DEFAULT_PERSISTED_PROVIDER_HEALTH_FRESHNESS_TTL_MS: u64 = 60_000;
+const PROVIDER_HEALTH_FRESHNESS_TTL_ENV: &str = "SDKWORK_ROUTING_PROVIDER_HEALTH_FRESHNESS_TTL_MS";
+const DEFAULT_PROVIDER_HEALTH_RECOVERY_PROBE_PERCENT: u8 = 5;
+const PROVIDER_HEALTH_RECOVERY_PROBE_PERCENT_ENV: &str =
+    "SDKWORK_ROUTING_PROVIDER_HEALTH_RECOVERY_PROBE_PERCENT";
+const DEFAULT_PROVIDER_HEALTH_RECOVERY_PROBE_LOCK_TTL_MS: u64 = 30_000;
+const PROVIDER_HEALTH_RECOVERY_PROBE_LOCK_TTL_ENV: &str =
+    "SDKWORK_ROUTING_PROVIDER_HEALTH_RECOVERY_PROBE_LOCK_TTL_MS";
+const PROVIDER_HEALTH_RECOVERY_PROBE_FALLBACK_REASON: &str = "provider_health_recovery_probe";
 
 pub fn service_name() -> &'static str {
     "routing-service"
@@ -41,6 +51,10 @@ pub struct CreateRoutingPolicyInput<'a> {
     pub max_cost: Option<f64>,
     pub max_latency_ms: Option<u64>,
     pub require_healthy: bool,
+    pub execution_failover_enabled: bool,
+    pub upstream_retry_max_attempts: Option<u32>,
+    pub upstream_retry_base_delay_ms: Option<u64>,
+    pub upstream_retry_max_delay_ms: Option<u64>,
 }
 
 pub struct CreateRoutingProfileInput<'a> {
@@ -60,7 +74,7 @@ pub struct CreateRoutingProfileInput<'a> {
     pub preferred_region: Option<&'a str>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct RouteSelectionContext<'a> {
     pub decision_source: RoutingDecisionSource,
     pub tenant_id: Option<&'a str>,
@@ -68,6 +82,24 @@ pub struct RouteSelectionContext<'a> {
     pub api_key_group_id: Option<&'a str>,
     pub requested_region: Option<&'a str>,
     pub selection_seed: Option<u64>,
+    pub recovery_probe_lock_store: Option<&'a dyn DistributedLockStore>,
+}
+
+impl std::fmt::Debug for RouteSelectionContext<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RouteSelectionContext")
+            .field("decision_source", &self.decision_source)
+            .field("tenant_id", &self.tenant_id)
+            .field("project_id", &self.project_id)
+            .field("api_key_group_id", &self.api_key_group_id)
+            .field("requested_region", &self.requested_region)
+            .field("selection_seed", &self.selection_seed)
+            .field(
+                "recovery_probe_lock_store_configured",
+                &self.recovery_probe_lock_store.is_some(),
+            )
+            .finish()
+    }
 }
 
 impl<'a> RouteSelectionContext<'a> {
@@ -79,6 +111,7 @@ impl<'a> RouteSelectionContext<'a> {
             api_key_group_id: None,
             requested_region: None,
             selection_seed: None,
+            recovery_probe_lock_store: None,
         }
     }
 
@@ -104,6 +137,14 @@ impl<'a> RouteSelectionContext<'a> {
 
     pub fn with_selection_seed_option(mut self, selection_seed: Option<u64>) -> Self {
         self.selection_seed = selection_seed;
+        self
+    }
+
+    pub fn with_recovery_probe_lock_store_option(
+        mut self,
+        recovery_probe_lock_store: Option<&'a dyn DistributedLockStore>,
+    ) -> Self {
+        self.recovery_probe_lock_store = recovery_probe_lock_store;
         self
     }
 }
@@ -144,7 +185,11 @@ pub fn create_routing_policy(input: CreateRoutingPolicyInput<'_>) -> Result<Rout
         .with_ordered_provider_ids(input.ordered_provider_ids.to_vec())
         .with_max_cost_option(input.max_cost)
         .with_max_latency_ms_option(input.max_latency_ms)
-        .with_require_healthy(input.require_healthy);
+        .with_require_healthy(input.require_healthy)
+        .with_execution_failover_enabled(input.execution_failover_enabled)
+        .with_upstream_retry_max_attempts_option(input.upstream_retry_max_attempts)
+        .with_upstream_retry_base_delay_ms_option(input.upstream_retry_base_delay_ms)
+        .with_upstream_retry_max_delay_ms_option(input.upstream_retry_max_delay_ms);
 
     Ok(match input.default_provider_id {
         Some(default_provider_id) if !default_provider_id.trim().is_empty() => {
@@ -281,6 +326,7 @@ pub async fn simulate_route_with_store_selection_context(
         context.api_key_group_id,
         normalize_region_option(context.requested_region),
         context.selection_seed,
+        context.recovery_probe_lock_store,
     )
     .await
 }
@@ -352,6 +398,7 @@ async fn simulate_route_with_store_inner(
     api_key_group_id: Option<&str>,
     requested_region: Option<String>,
     selection_seed: Option<u64>,
+    recovery_probe_lock_store: Option<&dyn DistributedLockStore>,
 ) -> Result<RoutingDecision> {
     let project_preferences = match project_id {
         Some(project_id) => store.find_project_routing_preferences(project_id).await?,
@@ -494,6 +541,9 @@ async fn simulate_route_with_store_inner(
     let runtime_statuses = list_extension_runtime_statuses()?;
     let latest_provider_health =
         latest_provider_health_snapshots(store.list_provider_health_snapshots().await?);
+    let assessment_time_ms = current_time_millis();
+    let recovery_probe_provider_id =
+        recovery_probe_provider_id(&candidate_ids, &latest_provider_health, assessment_time_ms);
 
     let mut assessments = candidate_ids
         .iter()
@@ -507,6 +557,7 @@ async fn simulate_route_with_store_inner(
                 &installations_by_id,
                 &runtime_statuses,
                 latest_provider_health.get(provider_id),
+                assessment_time_ms,
             )
         })
         .collect::<Vec<_>>();
@@ -517,13 +568,17 @@ async fn simulate_route_with_store_inner(
         effective_policy.as_ref(),
         requested_region.as_deref(),
         selection_seed,
+        recovery_probe_provider_id.as_deref(),
+        recovery_probe_lock_store,
     );
+    let selection = selection.await;
     let CandidateSelection {
         selected_index,
         strategy,
         selection_seed,
         selection_reason,
         fallback_reason,
+        provider_health_recovery_probe,
         slo_applied,
         slo_degraded,
     } = selection;
@@ -544,6 +599,7 @@ async fn simulate_route_with_store_inner(
         .with_selection_reason(selection_reason)
         .with_fallback_reason_option(fallback_reason)
         .with_requested_region_option(requested_region)
+        .with_provider_health_recovery_probe_option(provider_health_recovery_probe)
         .with_slo_state(slo_applied, slo_degraded)
         .with_assessments(assessments);
     if let Some(selection_seed) = selection_seed {
@@ -829,8 +885,14 @@ struct CandidateSelection {
     selection_seed: Option<u64>,
     selection_reason: String,
     fallback_reason: Option<String>,
+    provider_health_recovery_probe: Option<ProviderHealthRecoveryProbe>,
     slo_applied: bool,
     slo_degraded: bool,
+}
+
+struct RecoveryProbeEvaluation {
+    selection: Option<CandidateSelection>,
+    provider_health_recovery_probe: ProviderHealthRecoveryProbe,
 }
 
 impl From<RoutingStrategyExecutionResult> for CandidateSelection {
@@ -841,18 +903,37 @@ impl From<RoutingStrategyExecutionResult> for CandidateSelection {
             selection_seed: value.selection_seed,
             selection_reason: value.selection_reason,
             fallback_reason: value.fallback_reason,
+            provider_health_recovery_probe: None,
             slo_applied: value.slo_applied,
             slo_degraded: value.slo_degraded,
         }
     }
 }
 
-fn select_candidate(
+async fn select_candidate(
     assessments: &mut [RoutingCandidateAssessment],
     matched_policy: Option<&RoutingPolicy>,
     requested_region: Option<&str>,
     provided_selection_seed: Option<u64>,
+    recovery_probe_provider_id: Option<&str>,
+    recovery_probe_lock_store: Option<&dyn DistributedLockStore>,
 ) -> CandidateSelection {
+    let mut provider_health_recovery_probe = None;
+    if let Some(evaluation) = select_recovery_probe_candidate(
+        assessments,
+        matched_policy,
+        provided_selection_seed,
+        recovery_probe_provider_id,
+        recovery_probe_lock_store,
+    )
+    .await
+    {
+        if let Some(selection) = evaluation.selection {
+            return selection;
+        }
+        provider_health_recovery_probe = Some(evaluation.provider_health_recovery_probe);
+    }
+
     let routing_strategy = matched_policy
         .map(|policy| policy.strategy)
         .unwrap_or(RoutingStrategy::DeterministicPriority);
@@ -863,14 +944,135 @@ fn select_candidate(
             .expect("builtin deterministic-priority routing plugin must exist")
     });
 
-    plugin
+    let mut selection: CandidateSelection = plugin
         .execute(RoutingStrategyExecutionInput {
             assessments,
             matched_policy,
             requested_region,
             provided_selection_seed,
         })
-        .into()
+        .into();
+    selection.provider_health_recovery_probe = provider_health_recovery_probe;
+    selection
+}
+
+async fn select_recovery_probe_candidate(
+    assessments: &mut [RoutingCandidateAssessment],
+    matched_policy: Option<&RoutingPolicy>,
+    provided_selection_seed: Option<u64>,
+    recovery_probe_provider_id: Option<&str>,
+    recovery_probe_lock_store: Option<&dyn DistributedLockStore>,
+) -> Option<RecoveryProbeEvaluation> {
+    let recovery_probe_provider_id = recovery_probe_provider_id?;
+    let routing_strategy = matched_policy
+        .map(|policy| policy.strategy)
+        .unwrap_or(RoutingStrategy::DeterministicPriority);
+    if routing_strategy != RoutingStrategy::DeterministicPriority {
+        return None;
+    }
+
+    let recovery_probe_percent = provider_health_recovery_probe_percent();
+    if recovery_probe_percent == 0 {
+        return None;
+    }
+
+    let selected_assessment = assessments.first()?;
+    if !selected_assessment.available
+        || selected_assessment.health != RoutingCandidateHealth::Healthy
+    {
+        return None;
+    }
+    if selected_assessment.provider_id == recovery_probe_provider_id {
+        return None;
+    }
+    let displaced_provider_id = selected_assessment.provider_id.clone();
+
+    let recovery_probe_index = assessments
+        .iter()
+        .position(|assessment| assessment.provider_id == recovery_probe_provider_id)?;
+    let recovery_assessment = assessments.get(recovery_probe_index)?;
+    if !recovery_assessment.available
+        || recovery_assessment.health != RoutingCandidateHealth::Unknown
+    {
+        return None;
+    }
+
+    let selection_seed = provided_selection_seed.unwrap_or_else(generate_selection_seed);
+    if selection_seed % 100 >= u64::from(recovery_probe_percent) {
+        return None;
+    }
+
+    let selected_provider_id = recovery_assessment.provider_id.clone();
+    let selected_probe = ProviderHealthRecoveryProbe::new(
+        selected_provider_id.clone(),
+        ProviderHealthRecoveryProbeOutcome::Selected,
+    );
+    let mut lease_reason_suffix = String::new();
+    if let Some(lock_store) = recovery_probe_lock_store {
+        let lock_ttl_ms = provider_health_recovery_probe_lock_ttl_ms();
+        if lock_ttl_ms > 0 {
+            let lock_scope = provider_health_recovery_probe_lock_scope(&selected_provider_id);
+            let lock_owner = provider_health_recovery_probe_lock_owner(selection_seed);
+            match lock_store
+                .try_acquire_lock(&lock_scope, &lock_owner, lock_ttl_ms)
+                .await
+            {
+                Ok(true) => {
+                    lease_reason_suffix =
+                        format!(" and the recovery probe lease was acquired for {lock_ttl_ms}ms");
+                }
+                Ok(false) => {
+                    if let Some(assessment) = assessments.get_mut(recovery_probe_index) {
+                        assessment.reasons.push(format!(
+                            "skipped provider health recovery probe because lease scope {lock_scope} is already held by another request"
+                        ));
+                    }
+                    return Some(RecoveryProbeEvaluation {
+                        selection: None,
+                        provider_health_recovery_probe: ProviderHealthRecoveryProbe::new(
+                            selected_provider_id,
+                            ProviderHealthRecoveryProbeOutcome::LeaseContended,
+                        ),
+                    });
+                }
+                Err(error) => {
+                    if let Some(assessment) = assessments.get_mut(recovery_probe_index) {
+                        assessment.reasons.push(format!(
+                            "skipped provider health recovery probe because lease acquisition for scope {lock_scope} failed: {error}"
+                        ));
+                    }
+                    return Some(RecoveryProbeEvaluation {
+                        selection: None,
+                        provider_health_recovery_probe: ProviderHealthRecoveryProbe::new(
+                            selected_provider_id,
+                            ProviderHealthRecoveryProbeOutcome::LeaseError,
+                        ),
+                    });
+                }
+            }
+        }
+    }
+    if let Some(assessment) = assessments.get_mut(recovery_probe_index) {
+        assessment.reasons.push(format!(
+            "selected for provider health recovery probe because the stale-unhealthy primary is due for revalidation and selection seed {selection_seed} matched the {recovery_probe_percent}% recovery cohort{lease_reason_suffix}"
+        ));
+    }
+
+    Some(RecoveryProbeEvaluation {
+        provider_health_recovery_probe: selected_probe.clone(),
+        selection: Some(CandidateSelection {
+            selected_index: recovery_probe_index,
+            strategy: RoutingStrategy::DeterministicPriority.as_str().to_owned(),
+            selection_seed: Some(selection_seed),
+            selection_reason: format!(
+                "selected {selected_provider_id} for provider health recovery probe because {displaced_provider_id} would otherwise keep serving traffic while the stale-unhealthy primary remains unrevalidated and selection seed {selection_seed} matched the {recovery_probe_percent}% recovery cohort{lease_reason_suffix}"
+            ),
+            fallback_reason: Some(PROVIDER_HEALTH_RECOVERY_PROBE_FALLBACK_REASON.to_owned()),
+            provider_health_recovery_probe: Some(selected_probe),
+            slo_applied: false,
+            slo_degraded: false,
+        }),
+    })
 }
 
 fn generate_selection_seed() -> u64 {
@@ -902,6 +1104,7 @@ fn assess_candidate(
     installations_by_id: &HashMap<String, ExtensionInstallation>,
     runtime_statuses: &[ExtensionRuntimeStatusRecord],
     persisted_provider_health: Option<&ProviderHealthSnapshot>,
+    assessment_time_ms: u64,
 ) -> RoutingCandidateAssessment {
     let mut assessment = RoutingCandidateAssessment::new(provider_id).with_policy_rank(policy_rank);
 
@@ -958,17 +1161,30 @@ fn assess_candidate(
         matching_runtime_statuses_for_provider(provider, instance, runtime_statuses);
     if matching_statuses.is_empty() {
         if let Some(snapshot) = persisted_provider_health {
-            let health = if snapshot.healthy {
-                RoutingCandidateHealth::Healthy
+            if persisted_provider_health_snapshot_is_fresh(snapshot, assessment_time_ms) {
+                let health = if snapshot.healthy {
+                    RoutingCandidateHealth::Healthy
+                } else {
+                    RoutingCandidateHealth::Unhealthy
+                };
+                assessment = assessment.with_health(health).with_reason(format!(
+                    "used persisted runtime health snapshot from {} at {}",
+                    snapshot.runtime, snapshot.observed_at_ms
+                ));
+                if let Some(message) = &snapshot.message {
+                    assessment = assessment.with_reason(format!("snapshot message = {message}"));
+                }
             } else {
-                RoutingCandidateHealth::Unhealthy
-            };
-            assessment = assessment.with_health(health).with_reason(format!(
-                "used persisted runtime health snapshot from {} at {}",
-                snapshot.runtime, snapshot.observed_at_ms
-            ));
-            if let Some(message) = &snapshot.message {
-                assessment = assessment.with_reason(format!("snapshot message = {message}"));
+                assessment = assessment
+                    .with_health(RoutingCandidateHealth::Unknown)
+                    .with_reason(format!(
+                        "ignored stale persisted runtime health snapshot from {} at {}",
+                        snapshot.runtime, snapshot.observed_at_ms
+                    ));
+                if let Some(message) = &snapshot.message {
+                    assessment =
+                        assessment.with_reason(format!("stale snapshot message = {message}"));
+                }
             }
         } else {
             assessment = assessment
@@ -1001,6 +1217,93 @@ fn assess_candidate(
     }
 
     assessment
+}
+
+fn persisted_provider_health_snapshot_is_fresh(
+    snapshot: &ProviderHealthSnapshot,
+    assessment_time_ms: u64,
+) -> bool {
+    persisted_provider_health_snapshot_is_fresh_for_ttl(
+        snapshot,
+        assessment_time_ms,
+        persisted_provider_health_snapshot_freshness_ttl_ms(),
+    )
+}
+
+fn persisted_provider_health_snapshot_is_fresh_for_ttl(
+    snapshot: &ProviderHealthSnapshot,
+    assessment_time_ms: u64,
+    freshness_ttl_ms: u64,
+) -> bool {
+    assessment_time_ms.saturating_sub(snapshot.observed_at_ms) <= freshness_ttl_ms
+}
+
+fn persisted_provider_health_snapshot_freshness_ttl_ms() -> u64 {
+    let configured = std::env::var(PROVIDER_HEALTH_FRESHNESS_TTL_ENV).ok();
+    persisted_provider_health_snapshot_freshness_ttl_ms_from_env(configured.as_deref())
+}
+
+fn persisted_provider_health_snapshot_freshness_ttl_ms_from_env(configured: Option<&str>) -> u64 {
+    configured
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(DEFAULT_PERSISTED_PROVIDER_HEALTH_FRESHNESS_TTL_MS)
+}
+
+fn recovery_probe_provider_id(
+    candidate_ids: &[String],
+    latest_provider_health: &HashMap<String, ProviderHealthSnapshot>,
+    assessment_time_ms: u64,
+) -> Option<String> {
+    let provider_id = candidate_ids.first()?;
+    let snapshot = latest_provider_health.get(provider_id)?;
+    if snapshot.healthy || persisted_provider_health_snapshot_is_fresh(snapshot, assessment_time_ms)
+    {
+        return None;
+    }
+    Some(provider_id.clone())
+}
+
+fn provider_health_recovery_probe_percent() -> u8 {
+    let configured = std::env::var(PROVIDER_HEALTH_RECOVERY_PROBE_PERCENT_ENV).ok();
+    provider_health_recovery_probe_percent_from_env(configured.as_deref())
+}
+
+fn provider_health_recovery_probe_lock_ttl_ms() -> u64 {
+    let configured = std::env::var(PROVIDER_HEALTH_RECOVERY_PROBE_LOCK_TTL_ENV).ok();
+    provider_health_recovery_probe_lock_ttl_ms_from_env(configured.as_deref())
+}
+
+fn provider_health_recovery_probe_percent_from_env(configured: Option<&str>) -> u8 {
+    configured
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .and_then(|value| value.parse::<u8>().ok())
+        .map(|value| value.min(100))
+        .unwrap_or(DEFAULT_PROVIDER_HEALTH_RECOVERY_PROBE_PERCENT)
+}
+
+fn provider_health_recovery_probe_lock_ttl_ms_from_env(configured: Option<&str>) -> u64 {
+    configured
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(DEFAULT_PROVIDER_HEALTH_RECOVERY_PROBE_LOCK_TTL_MS)
+}
+
+fn provider_health_recovery_probe_lock_scope(provider_id: &str) -> String {
+    format!("provider-health-recovery-probe:{provider_id}")
+}
+
+fn provider_health_recovery_probe_lock_owner(selection_seed: u64) -> String {
+    format!(
+        "{}:{}:{}:{}",
+        service_name(),
+        std::process::id(),
+        current_time_millis(),
+        selection_seed
+    )
 }
 
 fn latest_provider_health_snapshots(

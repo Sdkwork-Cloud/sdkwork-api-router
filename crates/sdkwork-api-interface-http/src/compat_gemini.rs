@@ -1,17 +1,17 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use anyhow::{Context, Result};
+use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use sdkwork_api_contract_openai::chat_completions::{
     ChatMessageInput, CreateChatCompletionRequest,
 };
 use sdkwork_api_contract_openai::responses::CountResponseInputTokensRequest;
 use sdkwork_api_provider_core::ProviderStreamOutput;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
-use crate::compat_streaming::{sse_data_frame, transform_openai_sse_stream, OpenAiSseEvent};
+use crate::compat_streaming::{OpenAiSseEvent, sse_data_frame, transform_openai_sse_stream};
 
 pub fn gemini_invalid_request_response(message: impl Into<String>) -> Response {
     gemini_error_response(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", message.into())

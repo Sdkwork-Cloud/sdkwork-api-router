@@ -1,17 +1,33 @@
 import {
+  getPortalCommercialAccount,
+  getPortalCommercialAccountHistory,
+  getPortalCommercialAccountBalance,
   getPortalBillingEventSummary,
   getPortalCommerceMembership,
   getPortalBillingSummary,
+  listPortalCommercialBenefitLots,
+  listPortalCommercialHolds,
+  listPortalCommercialPricingPlans,
+  listPortalCommercialPricingRates,
+  listPortalCommercialRequestSettlements,
   getPortalUsageSummary,
   listPortalBillingLedger,
   listPortalUsageRecords,
 } from 'sdkwork-router-portal-portal-api';
 
 export {
+  getPortalCommercialAccount,
+  getPortalCommercialAccountHistory,
+  getPortalCommercialAccountBalance,
   getPortalBillingEventSummary,
   getPortalBillingSummary,
   getPortalCommerceMembership,
   getPortalUsageSummary,
+  listPortalCommercialBenefitLots,
+  listPortalCommercialHolds,
+  listPortalCommercialPricingPlans,
+  listPortalCommercialPricingRates,
+  listPortalCommercialRequestSettlements,
   listPortalBillingLedger,
   listPortalUsageRecords,
 };

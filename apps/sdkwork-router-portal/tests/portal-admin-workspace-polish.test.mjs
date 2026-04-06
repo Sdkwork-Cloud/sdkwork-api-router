@@ -211,7 +211,9 @@ test('gateway command center localizes status feedback and primary workbench act
   assert.match(gatewayPage, /t\('Refresh service health'\)/);
   assert.match(gatewayPage, /t\('Refreshing service health\.\.\.'\)/);
   assert.match(gatewayPage, /t\('Clear filters'\)/);
-  assert.match(gatewayPage, /title=\{t\('Gateway posture'\)\}/);
+  assert.match(gatewayPage, /data-slot="portal-gateway-toolbar"/);
+  assert.doesNotMatch(gatewayPage, /<SectionHeader/);
+  assert.doesNotMatch(gatewayPage, /title=\{t\('Gateway posture'\)\}/);
   assert.match(gatewayPage, /title=\{t\('Preparing gateway command center'\)\}/);
 
   assert.match(commons, /'Loading the router product command center and current launch posture\.\.\.'/);

@@ -7,7 +7,15 @@ import {
 } from '@sdkwork/ui-pc-react';
 import { Plus, Search } from 'lucide-react';
 import { useState } from 'react';
-import { useAdminI18n } from 'sdkwork-router-admin-core';
+import {
+  countCurrentlyEffectiveCommercialPricingPlans,
+  commercialPricingChargeUnitLabel,
+  commercialPricingDisplayUnit,
+  commercialPricingMethodLabel,
+  selectPrimaryCommercialPricingPlan,
+  selectPrimaryCommercialPricingRate,
+  useAdminI18n,
+} from 'sdkwork-router-admin-core';
 import type { AdminPageProps, CreatedGatewayApiKey } from 'sdkwork-router-admin-types';
 
 import { ConfirmActionDialog } from './shared';
@@ -143,6 +151,92 @@ export function GatewayAccessPage({
     onUpdateApiKeyStatus,
     onDeleteApiKey,
   });
+  const activeCommercialAccounts = snapshot.commercialAccounts.filter(
+    (record) => record.account.status === 'active',
+  ).length;
+  const suspendedCommercialAccounts = snapshot.commercialAccounts.filter(
+    (record) => record.account.status === 'suspended',
+  ).length;
+  const activePricingPlans = countCurrentlyEffectiveCommercialPricingPlans(
+    snapshot.commercialPricingPlans,
+  );
+  const pricedMetrics = new Set(
+    snapshot.commercialPricingRates.map((rate) => rate.metric_code),
+  ).size;
+  const primaryPricingPlan = selectPrimaryCommercialPricingPlan(
+    snapshot.commercialPricingPlans,
+  );
+  const primaryPricingRate = selectPrimaryCommercialPricingRate(
+    snapshot.commercialPricingRates,
+    primaryPricingPlan,
+  );
+  const capturedSettlementAmount = snapshot.commercialRequestSettlements.reduce(
+    (sum, settlement) => sum + settlement.captured_credit_amount,
+    0,
+  );
+  const commercialGovernanceFacts = [
+    {
+      label: t('Open holds'),
+      value: formatNumber(
+        snapshot.commercialAccountHolds.filter((hold) =>
+          hold.status === 'held'
+          || hold.status === 'captured'
+          || hold.status === 'partially_released').length,
+      ),
+    },
+    {
+      label: t('Request settlements'),
+      value: formatNumber(snapshot.commercialRequestSettlements.length),
+    },
+    {
+      label: t('Captured credits'),
+      value: formatNumber(capturedSettlementAmount),
+    },
+  ];
+  const commercialAccountFacts = [
+    {
+      label: t('Total accounts'),
+      value: formatNumber(snapshot.commercialAccounts.length),
+    },
+    {
+      label: t('Active'),
+      value: formatNumber(activeCommercialAccounts),
+    },
+    {
+      label: t('Suspended'),
+      value: formatNumber(suspendedCommercialAccounts),
+    },
+  ];
+  const pricingPostureFacts = [
+    {
+      label: t('Plans'),
+      value: formatNumber(snapshot.commercialPricingPlans.length),
+    },
+    {
+      label: t('Active plans'),
+      value: formatNumber(activePricingPlans),
+    },
+    {
+      label: t('Rates'),
+      value: formatNumber(snapshot.commercialPricingRates.length),
+    },
+    {
+      label: t('Priced metrics'),
+      value: formatNumber(pricedMetrics),
+    },
+    {
+      label: t('Charge unit'),
+      value: commercialPricingChargeUnitLabel(primaryPricingRate?.charge_unit, t),
+    },
+    {
+      label: t('Billing method'),
+      value: commercialPricingMethodLabel(primaryPricingRate?.pricing_method, t),
+    },
+    {
+      label: t('Price unit'),
+      value: commercialPricingDisplayUnit(primaryPricingRate, t),
+    },
+  ];
 
   return (
     <>
@@ -199,6 +293,71 @@ export function GatewayAccessPage({
             </form>
           </CardContent>
         </Card>
+
+        <div className="grid gap-4 xl:grid-cols-3">
+          <Card>
+            <CardContent className="space-y-3 p-4">
+              <div className="space-y-1">
+                <div className="text-sm font-medium text-[var(--sdk-color-text-primary)]">
+                  {t('Commercial governance')}
+                </div>
+                <div className="text-sm text-[var(--sdk-color-text-secondary)]">
+                  {t('Credit holds, settlement capture, and liability posture stay visible while governing API access.')}
+                </div>
+              </div>
+              <div className="space-y-2 text-sm">
+                {commercialGovernanceFacts.map((item) => (
+                  <div className="flex items-center justify-between gap-3" key={item.label}>
+                    <div className="text-[var(--sdk-color-text-secondary)]">{item.label}</div>
+                    <div className="font-medium text-[var(--sdk-color-text-primary)]">{item.value}</div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="space-y-3 p-4">
+              <div className="space-y-1">
+                <div className="text-sm font-medium text-[var(--sdk-color-text-primary)]">
+                  {t('Commercial accounts')}
+                </div>
+                <div className="text-sm text-[var(--sdk-color-text-secondary)]">
+                  {t('Operators can confirm that API key issuance is mapped onto live commercial account inventory.')}
+                </div>
+              </div>
+              <div className="space-y-2 text-sm">
+                {commercialAccountFacts.map((item) => (
+                  <div className="flex items-center justify-between gap-3" key={item.label}>
+                    <div className="text-[var(--sdk-color-text-secondary)]">{item.label}</div>
+                    <div className="font-medium text-[var(--sdk-color-text-primary)]">{item.value}</div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="space-y-3 p-4">
+              <div className="space-y-1">
+                <div className="text-sm font-medium text-[var(--sdk-color-text-primary)]">
+                  {t('Pricing posture')}
+                </div>
+                <div className="text-sm text-[var(--sdk-color-text-secondary)]">
+                  {t('Pricing plans and rates define the commercial surface that gateway access policies must honor.')}
+                </div>
+              </div>
+              <div className="space-y-2 text-sm">
+                {pricingPostureFacts.map((item) => (
+                  <div className="flex items-center justify-between gap-3" key={item.label}>
+                    <div className="text-[var(--sdk-color-text-secondary)]">{item.label}</div>
+                    <div className="font-medium text-[var(--sdk-color-text-primary)]">{item.value}</div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
 
         <div className="min-h-0 flex-1">
           <GatewayAccessRegistrySection

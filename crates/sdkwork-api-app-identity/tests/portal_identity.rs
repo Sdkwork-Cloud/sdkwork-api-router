@@ -17,7 +17,7 @@ async fn portal_registration_login_and_workspace_summary_work() {
     let session = register_portal_user(
         &store,
         "portal@example.com",
-        "hunter2!",
+        "PortalPass123!",
         "Portal User",
         "portal-test-secret",
     )
@@ -45,7 +45,7 @@ async fn portal_registration_login_and_workspace_summary_work() {
     let login = login_portal_user(
         &store,
         "portal@example.com",
-        "hunter2!",
+        "PortalPass123!",
         "portal-test-secret",
     )
     .await
@@ -61,7 +61,7 @@ async fn portal_api_key_listing_is_workspace_scoped_and_login_rejects_invalid_pa
     let alice = register_portal_user(
         &store,
         "alice@example.com",
-        "hunter2!",
+        "PortalPass123!",
         "Alice",
         "portal-test-secret",
     )
@@ -70,7 +70,7 @@ async fn portal_api_key_listing_is_workspace_scoped_and_login_rejects_invalid_pa
     let bob = register_portal_user(
         &store,
         "bob@example.com",
-        "hunter2!",
+        "PortalPass123!",
         "Bob",
         "portal-test-secret",
     )
@@ -176,4 +176,25 @@ async fn portal_password_change_rejects_old_password_and_accepts_new_password() 
     .await
     .unwrap();
     assert_eq!(new_session.user.id, session.user.id);
+}
+
+#[tokio::test]
+async fn portal_registration_rejects_weak_passwords() {
+    let store = memory_store().await;
+
+    let error = register_portal_user(
+        &store,
+        "weak@example.com",
+        "password1234",
+        "Weak User",
+        "portal-test-secret",
+    )
+    .await
+    .unwrap_err();
+
+    assert!(matches!(
+        error,
+        PortalIdentityError::InvalidInput(message)
+            if message == "password must include an uppercase letter"
+    ));
 }
