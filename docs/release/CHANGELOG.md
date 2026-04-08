@@ -1,5 +1,17 @@
 # SDKWork API Router CHANGELOG
 
+## Unreleased - Step Loop Prompt Governance Refresh
+
+- Date: 2026-04-09
+- Type: patch
+- Highlights:
+  - rewrote `docs/prompts/反复执行Step指令.md` into a project-specific repeatable execution contract aligned with `docs/架构/`、`docs/step/`、`docs/review/`、`docs/release/`
+  - enforced a batch-first execution model: finish the current unlocked step code batch first, then enter per-step verification, review writeback, and release-note governance
+  - made serial vs parallel boundaries explicit, so repeated prompt reuse can accelerate safe iteration without hiding shared-file, migration, protocol, or release-gate dependencies
+  - added professional change-log rules covering date, type, verification, known gaps, and version discipline for every meaningful iteration
+  - kept completion truth strict: no “done” state is allowed until step closure, test closure, document closure, and release closure all converge
+
+
 ## Unreleased - Step 10 Release Governance Bundle
 
 - Date: 2026-04-09
