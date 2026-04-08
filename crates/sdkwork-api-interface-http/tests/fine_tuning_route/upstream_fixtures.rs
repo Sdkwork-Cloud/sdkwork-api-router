@@ -1,6 +1,6 @@
 use super::*;
 
-async fn upstream_fine_tuning_handler(
+pub(super) async fn upstream_fine_tuning_handler(
     State(state): State<UpstreamCaptureState>,
     headers: axum::http::HeaderMap,
 ) -> (StatusCode, Json<Value>) {
@@ -20,7 +20,7 @@ async fn upstream_fine_tuning_handler(
     )
 }
 
-async fn upstream_fine_tuning_list_handler(
+pub(super) async fn upstream_fine_tuning_list_handler(
     State(state): State<UpstreamCaptureState>,
     headers: axum::http::HeaderMap,
 ) -> (StatusCode, Json<Value>) {
@@ -43,7 +43,7 @@ async fn upstream_fine_tuning_list_handler(
     )
 }
 
-async fn upstream_fine_tuning_retrieve_handler(
+pub(super) async fn upstream_fine_tuning_retrieve_handler(
     State(state): State<UpstreamCaptureState>,
     headers: axum::http::HeaderMap,
 ) -> (StatusCode, Json<Value>) {
@@ -63,7 +63,7 @@ async fn upstream_fine_tuning_retrieve_handler(
     )
 }
 
-async fn upstream_fine_tuning_cancel_handler(
+pub(super) async fn upstream_fine_tuning_cancel_handler(
     State(state): State<UpstreamCaptureState>,
     headers: axum::http::HeaderMap,
 ) -> (StatusCode, Json<Value>) {
@@ -83,7 +83,7 @@ async fn upstream_fine_tuning_cancel_handler(
     )
 }
 
-async fn upstream_fine_tuning_events_handler(
+pub(super) async fn upstream_fine_tuning_events_handler(
     State(state): State<UpstreamCaptureState>,
     headers: axum::http::HeaderMap,
 ) -> (StatusCode, Json<Value>) {
@@ -106,7 +106,7 @@ async fn upstream_fine_tuning_events_handler(
     )
 }
 
-async fn upstream_fine_tuning_checkpoints_handler(
+pub(super) async fn upstream_fine_tuning_checkpoints_handler(
     State(state): State<UpstreamCaptureState>,
     headers: axum::http::HeaderMap,
 ) -> (StatusCode, Json<Value>) {
@@ -128,7 +128,7 @@ async fn upstream_fine_tuning_checkpoints_handler(
     )
 }
 
-async fn upstream_fine_tuning_pause_handler(
+pub(super) async fn upstream_fine_tuning_pause_handler(
     State(state): State<UpstreamCaptureState>,
     headers: axum::http::HeaderMap,
 ) -> (StatusCode, Json<Value>) {
@@ -148,7 +148,7 @@ async fn upstream_fine_tuning_pause_handler(
     )
 }
 
-async fn upstream_fine_tuning_resume_handler(
+pub(super) async fn upstream_fine_tuning_resume_handler(
     State(state): State<UpstreamCaptureState>,
     headers: axum::http::HeaderMap,
 ) -> (StatusCode, Json<Value>) {
@@ -168,7 +168,7 @@ async fn upstream_fine_tuning_resume_handler(
     )
 }
 
-async fn upstream_fine_tuning_checkpoint_permissions_create_handler(
+pub(super) async fn upstream_fine_tuning_checkpoint_permissions_create_handler(
     State(state): State<UpstreamCaptureState>,
     headers: axum::http::HeaderMap,
 ) -> (StatusCode, Json<Value>) {
@@ -192,7 +192,7 @@ async fn upstream_fine_tuning_checkpoint_permissions_create_handler(
     )
 }
 
-async fn upstream_fine_tuning_checkpoint_permissions_list_handler(
+pub(super) async fn upstream_fine_tuning_checkpoint_permissions_list_handler(
     State(state): State<UpstreamCaptureState>,
     headers: axum::http::HeaderMap,
 ) -> (StatusCode, Json<Value>) {
@@ -216,7 +216,7 @@ async fn upstream_fine_tuning_checkpoint_permissions_list_handler(
     )
 }
 
-async fn upstream_fine_tuning_checkpoint_permission_delete_handler(
+pub(super) async fn upstream_fine_tuning_checkpoint_permission_delete_handler(
     State(state): State<UpstreamCaptureState>,
     headers: axum::http::HeaderMap,
 ) -> (StatusCode, Json<Value>) {
