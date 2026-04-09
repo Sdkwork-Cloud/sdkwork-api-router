@@ -46,11 +46,13 @@ import type {
   PortalRechargeSelection,
 } from '../types';
 import {
+  buildPortalRechargeFlowTrackerState,
   buildPortalRechargeMobileActionState,
   buildPortalRechargePrimaryActionState,
   resolvePortalRechargePostOrderHandoffActive,
 } from './presentation';
 import type {
+  PortalRechargeFlowTrackerState,
   PortalRechargeMobileActionState,
   PortalRechargePrimaryActionState,
 } from './presentation';
@@ -378,6 +380,103 @@ function PortalRechargeMobileActionBar(input: {
   );
 }
 
+function PortalRechargeFlowTracker(input: {
+  flowState: PortalRechargeFlowTrackerState;
+  t: TranslateFn;
+}) {
+  const { flowState, t } = input;
+
+  return (
+    <div
+      className="space-y-3 rounded-[26px] border border-primary-200/60 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(244,248,255,0.92))] p-4 shadow-[0_16px_36px_rgba(15,23,42,0.06)] dark:border-primary-900/30 dark:bg-[linear-gradient(180deg,rgba(10,16,28,0.96),rgba(8,12,22,0.92))]"
+      data-slot="portal-recharge-flow-tracker"
+    >
+      <div className="space-y-1">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary-700 dark:text-primary-300">
+          {flowState.title}
+        </span>
+        <p className="text-sm leading-6 text-zinc-600 dark:text-zinc-300">
+          {t('The highlighted stage shows the next operator action across selection, order creation, and billing settlement.')}
+        </p>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-3">
+        {flowState.steps.map((step, index) => {
+          const tone = step.status === 'complete'
+            ? {
+                card: 'border-emerald-200/75 bg-emerald-50/82 dark:border-emerald-900/35 dark:bg-emerald-950/16',
+                badge: 'bg-emerald-600 text-white',
+                label: 'text-emerald-950 dark:text-emerald-50',
+                detail: 'text-emerald-800 dark:text-emerald-200',
+                eyebrow: t('Done'),
+              }
+            : step.status === 'current'
+              ? {
+                  card: 'border-primary-300/75 bg-primary-50/86 dark:border-primary-700/40 dark:bg-primary-950/22',
+                  badge: 'bg-[linear-gradient(135deg,var(--theme-primary-900),var(--theme-primary-600))] text-white',
+                  label: 'text-primary-950 dark:text-primary-50',
+                  detail: 'text-primary-800 dark:text-primary-200',
+                  eyebrow: t('Current'),
+                }
+              : step.status === 'attention'
+                ? {
+                    card: 'border-amber-200/75 bg-amber-50/82 dark:border-amber-900/35 dark:bg-amber-950/14',
+                    badge: 'bg-amber-400 text-amber-950',
+                    label: 'text-amber-950 dark:text-amber-50',
+                    detail: 'text-amber-800 dark:text-amber-200',
+                    eyebrow: t('Queue'),
+                  }
+                : {
+                    card: 'border-primary-200/60 bg-white/88 dark:border-primary-900/30 dark:bg-primary-950/12',
+                    badge: 'border border-primary-300/70 bg-white text-primary-700 dark:border-primary-700/45 dark:bg-primary-950/24 dark:text-primary-200',
+                    label: 'text-primary-950 dark:text-primary-50',
+                    detail: 'text-zinc-600 dark:text-zinc-300',
+                    eyebrow: t('Next'),
+                  };
+
+          return (
+            <div
+              className={`relative overflow-hidden rounded-[22px] border px-4 py-4 ${tone.card}`}
+              key={step.id}
+            >
+              {index < flowState.steps.length - 1 ? (
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-y-0 -right-3 hidden w-6 sm:block"
+                >
+                  <div className="absolute left-1/2 top-1/2 h-[1px] w-6 -translate-y-1/2 bg-primary-200/80 dark:bg-primary-800/70" />
+                </div>
+              ) : null}
+
+              <div className="relative space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <span
+                    className={`inline-flex h-8 min-w-8 items-center justify-center rounded-full px-2 text-sm font-semibold ${tone.badge}`}
+                  >
+                    {index + 1}
+                  </span>
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary-700/80 dark:text-primary-300/80">
+                    {tone.eyebrow}
+                  </span>
+                </div>
+
+                <div className="space-y-1">
+                  <strong className={`block text-sm font-semibold ${tone.label}`}>
+                    {step.label}
+                  </strong>
+                  <p className={`text-sm leading-6 ${tone.detail}`}>
+                    {step.detail}
+                  </p>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export function PortalRechargePage({ onNavigate }: PortalRechargePageProps) {
   const { t } = usePortalI18n();
   const loadingStatus = t('Loading recharge data...');
@@ -581,6 +680,13 @@ export function PortalRechargePage({ onNavigate }: PortalRechargePageProps) {
     quoteLoading,
     createLoading,
     hasSelection: hasActiveSelection,
+    t,
+  });
+  const flowTrackerState = buildPortalRechargeFlowTrackerState({
+    hasSelection: hasActiveSelection,
+    hasQuote: Boolean(quoteSnapshot),
+    postOrderHandoffActive,
+    pendingPaymentCount: pendingPaymentOrders.length,
     t,
   });
 
@@ -1082,6 +1188,8 @@ export function PortalRechargePage({ onNavigate }: PortalRechargePageProps) {
             >
               {t('Checkout stays in billing after order creation.')}
             </div>
+
+            <PortalRechargeFlowTracker flowState={flowTrackerState} t={t} />
 
             {quoteSnapshot ? (
               <div className="space-y-4">

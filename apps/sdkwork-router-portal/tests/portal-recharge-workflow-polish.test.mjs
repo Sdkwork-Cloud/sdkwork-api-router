@@ -47,12 +47,17 @@ test('recharge page keeps pending payment queue visible and routes users back to
   assert.match(page, /data-slot="portal-recharge-selection-hero"/);
   assert.match(page, /data-slot="portal-recharge-posture-strip"/);
   assert.match(page, /data-slot="portal-recharge-guidance-band"/);
+  assert.match(page, /data-slot="portal-recharge-flow-tracker"/);
   assert.match(page, /data-slot="portal-recharge-selection-story"/);
   assert.match(page, /data-slot="portal-recharge-quote-breakdown"/);
   assert.match(page, /data-slot="portal-recharge-next-step-callout"/);
   assert.match(page, /data-slot="portal-recharge-post-order-handoff"/);
   assert.match(page, /data-slot="portal-recharge-mobile-cta"/);
   assert.match(pageContract, /Payment information/);
+  assert.match(pageContract, /Funding flow/);
+  assert.match(pageContract, /Choose amount/);
+  assert.match(pageContract, /Create order/);
+  assert.match(pageContract, /Complete payment in billing/);
   assert.match(pageContract, /Checkout summary/);
   assert.match(pageContract, /Selection story/);
   assert.match(pageContract, /Recommended/);
@@ -65,6 +70,7 @@ test('recharge page keeps pending payment queue visible and routes users back to
   assert.match(pageContract, /Create another order/);
   assert.match(page, /buildPortalRechargePrimaryActionState/);
   assert.match(page, /buildPortalRechargeMobileActionState/);
+  assert.match(page, /buildPortalRechargeFlowTrackerState/);
   assert.match(page, /resolvePortalRechargePostOrderHandoffActive/);
   assert.match(page, /Pending payment queue/);
   assert.match(page, /Open billing workbench/);

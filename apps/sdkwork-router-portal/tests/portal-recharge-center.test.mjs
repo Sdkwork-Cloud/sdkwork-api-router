@@ -96,6 +96,7 @@ test('recharge page simplifies into a three-section commercial purchase surface'
   assert.match(page, /data-slot="portal-recharge-custom-form"/);
   assert.match(page, /data-slot="portal-recharge-quote-card"/);
   assert.match(page, /data-slot="portal-recharge-quote-note"/);
+  assert.match(page, /data-slot="portal-recharge-flow-tracker"/);
   assert.match(page, /data-slot="portal-recharge-selection-story"/);
   assert.match(page, /data-slot="portal-recharge-quote-breakdown"/);
   assert.match(page, /data-slot="portal-recharge-next-step-callout"/);
@@ -110,6 +111,10 @@ test('recharge page simplifies into a three-section commercial purchase surface'
   assert.match(pageContract, /Recommended/);
   assert.match(pageContract, /Custom amount/);
   assert.match(pageContract, /Payment information/);
+  assert.match(pageContract, /Funding flow/);
+  assert.match(pageContract, /Choose amount/);
+  assert.match(pageContract, /Create order/);
+  assert.match(pageContract, /Complete payment in billing/);
   assert.match(pageContract, /Checkout summary/);
   assert.match(pageContract, /Selection story/);
   assert.match(pageContract, /Best fit for steady usage/);

@@ -176,3 +176,140 @@ test('recharge presentation helpers keep the mobile CTA copy aligned with deskto
     },
   );
 });
+
+test('recharge presentation helpers derive a three-stage flow tracker for selection, order creation, and settlement', () => {
+  const { buildPortalRechargeFlowTrackerState } = loadRechargePresentation();
+  const t = createTranslator();
+
+  assert.deepEqual(
+    buildPortalRechargeFlowTrackerState({
+      hasSelection: false,
+      hasQuote: false,
+      postOrderHandoffActive: false,
+      pendingPaymentCount: 0,
+      t,
+    }),
+    {
+      title: 'Funding flow',
+      steps: [
+        {
+          id: 'choose_amount',
+          label: 'Choose amount',
+          detail: 'Pick a package or custom amount to unlock the live quote.',
+          status: 'current',
+        },
+        {
+          id: 'create_order',
+          label: 'Create order',
+          detail: 'Order creation unlocks once an amount is ready.',
+          status: 'pending',
+        },
+        {
+          id: 'complete_payment',
+          label: 'Complete payment in billing',
+          detail: 'Settlement starts after the recharge order is created.',
+          status: 'pending',
+        },
+      ],
+    },
+  );
+
+  assert.deepEqual(
+    buildPortalRechargeFlowTrackerState({
+      hasSelection: true,
+      hasQuote: true,
+      postOrderHandoffActive: false,
+      pendingPaymentCount: 0,
+      t,
+    }),
+    {
+      title: 'Funding flow',
+      steps: [
+        {
+          id: 'choose_amount',
+          label: 'Choose amount',
+          detail: 'Live quote ready for the selected recharge path.',
+          status: 'complete',
+        },
+        {
+          id: 'create_order',
+          label: 'Create order',
+          detail: 'Create the recharge order to hand settlement into billing.',
+          status: 'current',
+        },
+        {
+          id: 'complete_payment',
+          label: 'Complete payment in billing',
+          detail: 'Settlement starts after the recharge order is created.',
+          status: 'pending',
+        },
+      ],
+    },
+  );
+
+  assert.deepEqual(
+    buildPortalRechargeFlowTrackerState({
+      hasSelection: true,
+      hasQuote: true,
+      postOrderHandoffActive: true,
+      pendingPaymentCount: 1,
+      t,
+    }),
+    {
+      title: 'Funding flow',
+      steps: [
+        {
+          id: 'choose_amount',
+          label: 'Choose amount',
+          detail: 'Live quote ready for the selected recharge path.',
+          status: 'complete',
+        },
+        {
+          id: 'create_order',
+          label: 'Create order',
+          detail: 'Recharge order created and recorded.',
+          status: 'complete',
+        },
+        {
+          id: 'complete_payment',
+          label: 'Complete payment in billing',
+          detail: 'Continue in billing to finish payment capture.',
+          status: 'current',
+        },
+      ],
+    },
+  );
+
+  assert.deepEqual(
+    buildPortalRechargeFlowTrackerState({
+      hasSelection: true,
+      hasQuote: true,
+      postOrderHandoffActive: false,
+      pendingPaymentCount: 2,
+      t,
+    }),
+    {
+      title: 'Funding flow',
+      steps: [
+        {
+          id: 'choose_amount',
+          label: 'Choose amount',
+          detail: 'Live quote ready for the selected recharge path.',
+          status: 'complete',
+        },
+        {
+          id: 'create_order',
+          label: 'Create order',
+          detail: 'Create the recharge order to hand settlement into billing.',
+          status: 'current',
+        },
+        {
+          id: 'complete_payment',
+          label: 'Complete payment in billing',
+          detail: 'Pending settlement queue already needs billing follow-up.',
+          status: 'attention',
+        },
+      ],
+    },
+  );
+});

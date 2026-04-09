@@ -19,6 +19,24 @@ export interface PortalRechargeMobileActionState {
   disabled: boolean;
 }
 
+export type PortalRechargeFlowTrackerStepStatus =
+  | 'current'
+  | 'complete'
+  | 'pending'
+  | 'attention';
+
+export interface PortalRechargeFlowTrackerStep {
+  id: 'choose_amount' | 'create_order' | 'complete_payment';
+  label: string;
+  detail: string;
+  status: PortalRechargeFlowTrackerStepStatus;
+}
+
+export interface PortalRechargeFlowTrackerState {
+  title: string;
+  steps: PortalRechargeFlowTrackerStep[];
+}
+
 export interface PortalRechargePendingPaymentSpotlightLike {
   latestOrder: Pick<PortalCommerceOrder, 'order_id'>;
 }
@@ -119,5 +137,65 @@ export function buildPortalRechargeMobileActionState(input: {
       createLoading,
       hasSelection,
     }),
+  };
+}
+
+export function buildPortalRechargeFlowTrackerState(input: {
+  hasSelection: boolean;
+  hasQuote: boolean;
+  postOrderHandoffActive: boolean;
+  pendingPaymentCount: number;
+  t: TranslateFn;
+}): PortalRechargeFlowTrackerState {
+  const {
+    hasSelection,
+    hasQuote,
+    postOrderHandoffActive,
+    pendingPaymentCount,
+    t,
+  } = input;
+
+  const selectionReady = hasSelection && hasQuote;
+
+  return {
+    title: t('Funding flow'),
+    steps: [
+      {
+        id: 'choose_amount',
+        label: t('Choose amount'),
+        detail: selectionReady
+          ? t('Live quote ready for the selected recharge path.')
+          : t('Pick a package or custom amount to unlock the live quote.'),
+        status: selectionReady ? 'complete' : 'current',
+      },
+      {
+        id: 'create_order',
+        label: t('Create order'),
+        detail: postOrderHandoffActive
+          ? t('Recharge order created and recorded.')
+          : selectionReady
+            ? t('Create the recharge order to hand settlement into billing.')
+            : t('Order creation unlocks once an amount is ready.'),
+        status: postOrderHandoffActive
+          ? 'complete'
+          : selectionReady
+            ? 'current'
+            : 'pending',
+      },
+      {
+        id: 'complete_payment',
+        label: t('Complete payment in billing'),
+        detail: postOrderHandoffActive
+          ? t('Continue in billing to finish payment capture.')
+          : pendingPaymentCount > 0
+            ? t('Pending settlement queue already needs billing follow-up.')
+            : t('Settlement starts after the recharge order is created.'),
+        status: postOrderHandoffActive
+          ? 'current'
+          : pendingPaymentCount > 0
+            ? 'attention'
+            : 'pending',
+      },
+    ],
   };
 }
