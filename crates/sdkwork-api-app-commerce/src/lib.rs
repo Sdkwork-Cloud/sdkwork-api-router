@@ -1,8 +1,5 @@
-use async_trait::async_trait;
 use sdkwork_api_app_coupon::list_active_coupons;
-use sdkwork_api_domain_billing::QuotaPolicy;
 use sdkwork_api_domain_commerce::{CommerceOrderRecord, ProjectMembershipRecord};
-use sdkwork_api_domain_coupon::CouponCampaign;
 use sdkwork_api_storage_core::AdminStore;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -390,17 +387,17 @@ pub async fn submit_portal_commerce_order(
 
     let quote = preview_portal_commerce_quote(store, request).await?;
     let status = initial_order_status(&quote);
-
-    if should_fulfill_on_order_create(&quote) {
-        apply_quote_to_project_quota(store, normalized_project_id, &quote).await?;
-        consume_live_coupon_if_needed(store, quote.applied_coupon.as_ref()).await?;
-        activate_project_membership_if_needed(
+    if !should_fulfill_on_order_create(&quote) {
+        if let Some(existing) = find_reusable_pending_payable_order(
             store,
             normalized_user_id,
             normalized_project_id,
             &quote,
         )
-        .await?;
+        .await?
+        {
+            return Ok(existing);
+        }
     }
 
     let order = CommerceOrderRecord::new(
@@ -430,7 +427,42 @@ pub async fn submit_portal_commerce_order(
     store
         .insert_commerce_order(&order)
         .await
-        .map_err(CommerceError::from)
+        .map_err(CommerceError::from)?;
+
+    if should_fulfill_on_order_create(&quote) {
+        return settle_portal_commerce_order(
+            store,
+            normalized_user_id,
+            normalized_project_id,
+            &order.order_id,
+        )
+        .await;
+    }
+
+    Ok(order)
+}
+
+async fn find_reusable_pending_payable_order(
+    store: &dyn AdminStore,
+    user_id: &str,
+    project_id: &str,
+    quote: &PortalCommerceQuote,
+) -> CommerceResult<Option<CommerceOrderRecord>> {
+    let applied_coupon_code = quote
+        .applied_coupon
+        .as_ref()
+        .map(|coupon| coupon.code.as_str());
+    let orders = list_project_commerce_orders(store, project_id).await?;
+    Ok(orders.into_iter().find(|order| {
+        order.user_id == user_id
+            && order.status == "pending_payment"
+            && order.target_kind == quote.target_kind
+            && order.target_id == quote.target_id
+            && order.payable_price_cents == quote.payable_price_cents
+            && order.granted_units == quote.granted_units
+            && order.bonus_units == quote.bonus_units
+            && order.applied_coupon_code.as_deref() == applied_coupon_code
+    }))
 }
 
 pub async fn settle_portal_commerce_order(
@@ -438,6 +470,39 @@ pub async fn settle_portal_commerce_order(
     user_id: &str,
     project_id: &str,
     order_id: &str,
+) -> CommerceResult<CommerceOrderRecord> {
+    settle_portal_commerce_order_internal(
+        store,
+        user_id,
+        project_id,
+        order_id,
+        SettlementAuthorization::PortalUser,
+    )
+    .await
+}
+
+pub async fn settle_portal_commerce_order_from_verified_payment(
+    store: &dyn AdminStore,
+    user_id: &str,
+    project_id: &str,
+    order_id: &str,
+) -> CommerceResult<CommerceOrderRecord> {
+    settle_portal_commerce_order_internal(
+        store,
+        user_id,
+        project_id,
+        order_id,
+        SettlementAuthorization::VerifiedPayment,
+    )
+    .await
+}
+
+async fn settle_portal_commerce_order_internal(
+    store: &dyn AdminStore,
+    user_id: &str,
+    project_id: &str,
+    order_id: &str,
+    authorization: SettlementAuthorization,
 ) -> CommerceResult<CommerceOrderRecord> {
     let normalized_user_id = user_id.trim();
     let normalized_project_id = project_id.trim();
@@ -469,7 +534,7 @@ pub async fn settle_portal_commerce_order(
 
     match order.status.as_str() {
         "fulfilled" => return Ok(order),
-        "pending_payment" => {}
+        "pending_payment" | "pending_fulfillment" => {}
         other => {
             return Err(CommerceError::Conflict(format!(
                 "order {normalized_order_id} cannot be settled from status {other}"
@@ -477,11 +542,31 @@ pub async fn settle_portal_commerce_order(
         }
     }
 
+    if matches!(authorization, SettlementAuthorization::PortalUser)
+        && !is_zero_payment_checkout(&order)
+    {
+        return Err(CommerceError::Conflict(format!(
+            "order {normalized_order_id} requires verified payment confirmation before fulfillment"
+        )));
+    }
+
     let settlement_quote = load_order_settlement_quote(store, &order).await?;
-    apply_quote_to_project_quota(store, normalized_project_id, &settlement_quote).await?;
-    consume_live_coupon_if_needed(store, settlement_quote.applied_coupon.as_ref()).await?;
-    activate_project_membership_if_needed(
+    apply_quote_to_project_quota_once(
         store,
+        &order.order_id,
+        normalized_project_id,
+        &settlement_quote,
+    )
+    .await?;
+    consume_live_coupon_for_order_if_needed(
+        store,
+        &order.order_id,
+        order.applied_coupon_code.as_deref(),
+    )
+    .await?;
+    activate_project_membership_if_needed_once(
+        store,
+        &order.order_id,
         normalized_user_id,
         normalized_project_id,
         &settlement_quote,
@@ -493,6 +578,12 @@ pub async fn settle_portal_commerce_order(
         .insert_commerce_order(&order)
         .await
         .map_err(CommerceError::from)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SettlementAuthorization {
+    PortalUser,
+    VerifiedPayment,
 }
 
 pub async fn cancel_portal_commerce_order(
@@ -769,123 +860,92 @@ async fn load_optional_applied_coupon(
     }
 }
 
-async fn apply_quote_to_project_quota<T>(
-    store: &T,
+async fn load_optional_coupon_definition_for_settlement(
+    store: &dyn AdminStore,
+    coupon_code: Option<&str>,
+) -> CommerceResult<Option<CommerceCouponDefinition>> {
+    let Some(code) = coupon_code.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+
+    match find_coupon_definition(store, code).await {
+        Ok(definition) => Ok(Some(definition)),
+        Err(CommerceError::NotFound(_)) => Ok(store
+            .list_coupons()
+            .await
+            .map_err(CommerceError::from)?
+            .into_iter()
+            .find(|coupon| normalize_coupon_code(&coupon.code) == normalize_coupon_code(code))
+            .map(|coupon| {
+                let discount_percent = parse_discount_percent(&coupon.discount_label);
+                CommerceCouponDefinition {
+                    coupon: PortalCommerceCoupon {
+                        id: coupon.id,
+                        code: coupon.code,
+                        discount_label: coupon.discount_label.clone(),
+                        audience: coupon.audience,
+                        remaining: coupon.remaining,
+                        active: coupon.active,
+                        note: coupon.note,
+                        expires_on: coupon.expires_on,
+                        source: "live".to_owned(),
+                        discount_percent,
+                        bonus_units: 0,
+                    },
+                    benefit: CommerceCouponBenefit {
+                        discount_percent,
+                        bonus_units: 0,
+                    },
+                }
+            })),
+        Err(error) => Err(error),
+    }
+}
+
+async fn apply_quote_to_project_quota_once(
+    store: &dyn AdminStore,
+    order_id: &str,
     project_id: &str,
     quote: &PortalCommerceQuote,
-) -> CommerceResult<()>
-where
-    T: AdminStore + CommerceQuotaStore + ?Sized,
-{
+) -> CommerceResult<()> {
     let target_units = quote.granted_units.saturating_add(quote.bonus_units);
     if target_units == 0 {
         return Ok(());
     }
 
-    let effective_policy = load_effective_quota_policy(store, project_id).await?;
-    let current_limit = effective_policy
-        .as_ref()
-        .map(|policy| policy.max_units)
-        .unwrap_or(0);
-    let policy_id = effective_policy
-        .as_ref()
-        .map(|policy| policy.policy_id.clone())
-        .unwrap_or_else(|| format!("portal_commerce_{project_id}"));
-    let next_limit = match quote.target_kind.as_str() {
-        "subscription_plan" => current_limit.max(target_units),
-        "recharge_pack" | "custom_recharge" | "coupon_redemption" => {
-            current_limit.saturating_add(target_units)
-        }
-        _ => current_limit,
-    };
-
-    if next_limit == current_limit {
-        return Ok(());
-    }
-
-    let next_policy = QuotaPolicy::new(policy_id, project_id.to_owned(), next_limit);
     store
-        .insert_quota_policy(&next_policy)
+        .apply_commerce_order_quota_effect(order_id, project_id, &quote.target_kind, target_units)
         .await
         .map_err(CommerceError::from)?;
     Ok(())
 }
 
-async fn load_effective_quota_policy<T>(
-    store: &T,
-    project_id: &str,
-) -> CommerceResult<Option<QuotaPolicy>>
-where
-    T: CommerceQuotaStore + ?Sized,
-{
-    Ok(store
-        .list_quota_policies_for_project(project_id)
-        .await
-        .map_err(CommerceError::from)?
-        .into_iter()
-        .filter(|policy| policy.enabled)
-        .min_by(|left, right| {
-            left.max_units
-                .cmp(&right.max_units)
-                .then_with(|| left.policy_id.cmp(&right.policy_id))
-        }))
-}
-
-async fn consume_live_coupon_if_needed(
+async fn consume_live_coupon_for_order_if_needed(
     store: &dyn AdminStore,
-    coupon: Option<&PortalAppliedCoupon>,
+    order_id: &str,
+    coupon_code: Option<&str>,
 ) -> CommerceResult<()> {
-    let Some(coupon) = coupon else {
+    let Some(coupon_code) = coupon_code.map(str::trim).filter(|value| !value.is_empty()) else {
         return Ok(());
     };
-    if coupon.source != "live" {
-        return Ok(());
-    }
 
-    let definition = find_coupon_definition(store, &coupon.code).await?;
+    let definition = load_optional_coupon_definition_for_settlement(store, Some(coupon_code))
+        .await?
+        .ok_or_else(|| CommerceError::NotFound(format!("coupon {coupon_code} not found")))?;
     if definition.coupon.source != "live" {
         return Ok(());
     }
-    if definition.coupon.remaining == 0 {
-        return Err(CommerceError::InvalidInput(format!(
-            "coupon {} is no longer available",
-            definition.coupon.code
-        )));
-    }
-
-    let persisted_coupon = store
-        .find_coupon(&definition.coupon.id)
-        .await
-        .map_err(CommerceError::from)?
-        .ok_or_else(|| {
-            CommerceError::NotFound(format!("coupon {} not found", definition.coupon.code))
-        })?;
-    if persisted_coupon.remaining == 0 {
-        return Err(CommerceError::InvalidInput(format!(
-            "coupon {} is no longer available",
-            persisted_coupon.code
-        )));
-    }
 
     store
-        .insert_coupon(&CouponCampaign {
-            id: persisted_coupon.id,
-            code: persisted_coupon.code,
-            discount_label: persisted_coupon.discount_label,
-            audience: persisted_coupon.audience,
-            remaining: persisted_coupon.remaining.saturating_sub(1),
-            active: persisted_coupon.active,
-            note: persisted_coupon.note,
-            expires_on: persisted_coupon.expires_on,
-            created_at_ms: persisted_coupon.created_at_ms,
-        })
+        .consume_live_coupon_for_commerce_order(order_id, &definition.coupon.id)
         .await
         .map_err(CommerceError::from)?;
     Ok(())
 }
 
-async fn activate_project_membership_if_needed(
+async fn activate_project_membership_if_needed_once(
     store: &dyn AdminStore,
+    order_id: &str,
     user_id: &str,
     project_id: &str,
     quote: &PortalCommerceQuote,
@@ -901,21 +961,24 @@ async fn activate_project_membership_if_needed(
     let activated_at_ms = current_time_ms()?;
 
     store
-        .upsert_project_membership(&ProjectMembershipRecord::new(
-            generate_entity_id("membership")?,
-            project_id,
-            user_id,
-            plan.id,
-            plan.name,
-            quote.payable_price_cents,
-            quote.payable_price_label.clone(),
-            plan.cadence,
-            plan.included_units,
-            "active",
-            quote.source.clone(),
-            activated_at_ms,
-            activated_at_ms,
-        ))
+        .upsert_project_membership_for_commerce_order(
+            order_id,
+            &ProjectMembershipRecord::new(
+                generate_entity_id("membership")?,
+                project_id,
+                user_id,
+                plan.id,
+                plan.name,
+                quote.payable_price_cents,
+                quote.payable_price_label.clone(),
+                plan.cadence,
+                plan.included_units,
+                "active",
+                quote.source.clone(),
+                activated_at_ms,
+                activated_at_ms,
+            ),
+        )
         .await
         .map_err(CommerceError::from)?;
     Ok(())
@@ -927,7 +990,7 @@ fn should_fulfill_on_order_create(quote: &PortalCommerceQuote) -> bool {
 
 fn initial_order_status(quote: &PortalCommerceQuote) -> &'static str {
     if should_fulfill_on_order_create(quote) {
-        "fulfilled"
+        "pending_fulfillment"
     } else {
         "pending_payment"
     }
@@ -1009,17 +1072,9 @@ async fn load_order_settlement_quote(
     store: &dyn AdminStore,
     order: &CommerceOrderRecord,
 ) -> CommerceResult<PortalCommerceQuote> {
-    let settlement_preview = preview_portal_commerce_quote(
-        store,
-        &PortalCommerceQuoteRequest {
-            target_kind: order.target_kind.clone(),
-            target_id: order.target_id.clone(),
-            coupon_code: order.applied_coupon_code.clone(),
-            current_remaining_units: None,
-            custom_amount_cents: None,
-        },
-    )
-    .await?;
+    let applied_coupon =
+        load_optional_coupon_definition_for_settlement(store, order.applied_coupon_code.as_deref())
+            .await?;
 
     Ok(PortalCommerceQuote {
         target_kind: order.target_kind.clone(),
@@ -1031,123 +1086,153 @@ async fn load_order_settlement_quote(
         payable_price_label: order.payable_price_label.clone(),
         granted_units: order.granted_units,
         bonus_units: order.bonus_units,
-        amount_cents: settlement_preview.amount_cents,
+        amount_cents: None,
         projected_remaining_units: None,
-        applied_coupon: settlement_preview.applied_coupon,
-        pricing_rule_label: settlement_preview.pricing_rule_label,
-        effective_ratio_label: settlement_preview.effective_ratio_label,
+        applied_coupon: applied_coupon.map(|coupon| PortalAppliedCoupon {
+            code: coupon.coupon.code,
+            discount_label: coupon.coupon.discount_label,
+            source: coupon.coupon.source,
+            discount_percent: coupon.benefit.discount_percent,
+            bonus_units: coupon.benefit.bonus_units,
+        }),
+        pricing_rule_label: None,
+        effective_ratio_label: None,
         source: order.source.clone(),
     })
 }
 
 fn build_checkout_session(order: &CommerceOrderRecord) -> PortalCommerceCheckoutSession {
     let reference = format!("PAY-{}", normalize_payment_reference(&order.order_id));
-    let guidance = match (order.target_kind.as_str(), order.status.as_str()) {
-        ("subscription_plan", "pending_payment") => {
-            "Settle this checkout to activate the workspace membership and included monthly units."
-        }
-        ("recharge_pack", "pending_payment") => {
-            "Settle this checkout to apply the recharge pack and restore workspace quota headroom."
-        }
-        ("custom_recharge", "pending_payment") => {
-            "Settle this checkout to apply the custom recharge amount and restore workspace quota headroom."
-        }
-        ("coupon_redemption", "fulfilled") => {
-            "This order required no external payment and was fulfilled immediately at redemption time."
-        }
-        (_, "fulfilled") => {
-            "This checkout session is closed because the order has already been settled."
-        }
-        (_, "canceled") => {
-            "This checkout session is closed because the order was canceled before settlement."
-        }
-        (_, "failed") => "This checkout session is closed because the payment flow failed.",
-        _ => "This checkout session describes how the current order can move through the payment rail.",
-    };
+    let guidance = checkout_guidance_for_order(order);
 
-    let (session_status, provider, mode, methods) = match order.status.as_str() {
+    if is_zero_payment_checkout(order) {
+        let (session_status, mode) = match order.status.as_str() {
+            "fulfilled" => ("not_required", "instant_fulfillment"),
+            "failed" => ("failed", "closed"),
+            "canceled" => ("canceled", "closed"),
+            _ => ("processing", "instant_fulfillment"),
+        };
+        return PortalCommerceCheckoutSession {
+            order_id: order.order_id.clone(),
+            order_status: order.status.clone(),
+            session_status: session_status.to_owned(),
+            provider: "no_payment_required".to_owned(),
+            mode: mode.to_owned(),
+            reference,
+            payable_price_label: order.payable_price_label.clone(),
+            guidance,
+            methods: Vec::new(),
+        };
+    }
+
+    let (session_status, mode, methods) = match order.status.as_str() {
         "pending_payment" => (
             "open",
-            "manual_lab",
-            "operator_settlement",
+            "checkout_bridge",
             build_open_checkout_methods(order),
         ),
-        "fulfilled"
-            if order.target_kind == "coupon_redemption" || order.payable_price_cents == 0 =>
-        {
-            (
-                "not_required",
-                "no_payment_required",
-                "instant_fulfillment",
-                Vec::new(),
-            )
-        }
-        "fulfilled" => ("settled", "manual_lab", "closed", Vec::new()),
-        "canceled" => ("canceled", "manual_lab", "closed", Vec::new()),
-        "failed" => ("failed", "manual_lab", "closed", Vec::new()),
-        _ => ("closed", "manual_lab", "closed", Vec::new()),
+        "fulfilled" => ("settled", "closed", Vec::new()),
+        "canceled" => ("canceled", "closed", Vec::new()),
+        "failed" => ("failed", "closed", Vec::new()),
+        _ => ("closed", "closed", Vec::new()),
     };
 
     PortalCommerceCheckoutSession {
         order_id: order.order_id.clone(),
         order_status: order.status.clone(),
         session_status: session_status.to_owned(),
-        provider: provider.to_owned(),
+        provider: "payment_orchestrator".to_owned(),
         mode: mode.to_owned(),
         reference,
         payable_price_label: order.payable_price_label.clone(),
-        guidance: guidance.to_owned(),
+        guidance,
         methods,
+    }
+}
+
+fn is_zero_payment_checkout(order: &CommerceOrderRecord) -> bool {
+    order.payable_price_cents == 0 || order.target_kind == "coupon_redemption"
+}
+
+fn checkout_guidance_for_order(order: &CommerceOrderRecord) -> String {
+    match (order.target_kind.as_str(), order.status.as_str()) {
+        ("subscription_plan", "pending_payment") => {
+            "Canonical payment checkout is prepared. Settle the payment to activate the workspace membership and included monthly units.".to_owned()
+        }
+        ("recharge_pack", "pending_payment") => {
+            "Canonical payment checkout is prepared. Settle the payment to apply the recharge pack and restore workspace quota headroom.".to_owned()
+        }
+        ("custom_recharge", "pending_payment") => {
+            "Canonical payment checkout is prepared. Settle the payment to apply the custom recharge amount and restore workspace quota headroom.".to_owned()
+        }
+        (_, "pending_fulfillment") if is_zero_payment_checkout(order) => {
+            "This order requires no external payment and is being fulfilled through the internal redemption rail.".to_owned()
+        }
+        (_, "fulfilled") if is_zero_payment_checkout(order) => {
+            "This order required no external payment and was fulfilled immediately at redemption time.".to_owned()
+        }
+        (_, "fulfilled") => {
+            "This checkout session is closed because the order has already been settled.".to_owned()
+        }
+        (_, "canceled") => {
+            "This checkout session is closed because the order was canceled before settlement.".to_owned()
+        }
+        (_, "failed") => {
+            "This checkout session is closed because the payment flow failed.".to_owned()
+        }
+        _ => {
+            "This checkout session describes how the current order can move through the canonical payment rail.".to_owned()
+        }
     }
 }
 
 fn build_open_checkout_methods(
     order: &CommerceOrderRecord,
 ) -> Vec<PortalCommerceCheckoutSessionMethod> {
-    let mut methods = vec![
-        PortalCommerceCheckoutSessionMethod {
-            id: "manual_settlement".to_owned(),
-            label: "Manual settlement".to_owned(),
-            detail:
-                "Use the portal settlement action in desktop or lab mode to finalize the order."
-                    .to_owned(),
-            action: "settle_order".to_owned(),
-            availability: "available".to_owned(),
-        },
-        PortalCommerceCheckoutSessionMethod {
-            id: "cancel_order".to_owned(),
-            label: "Cancel checkout".to_owned(),
-            detail: "Close the pending order without applying quota or membership side effects."
-                .to_owned(),
-            action: "cancel_order".to_owned(),
-            availability: "available".to_owned(),
-        },
-    ];
+    let mut methods = Vec::new();
 
     if order.payable_price_cents > 0 {
         methods.push(PortalCommerceCheckoutSessionMethod {
             id: "provider_handoff".to_owned(),
             label: "Provider handoff".to_owned(),
-            detail: "Reserved seam for Stripe, Alipay, WeChat Pay, or other hosted payment providers in server mode.".to_owned(),
+            detail: "Canonical payment order and hosted checkout session are prepared. Wire Stripe, Alipay, WeChat Pay, or other gateways to this handoff.".to_owned(),
             action: "provider_handoff".to_owned(),
             availability: "planned".to_owned(),
         });
     }
 
+    methods.push(PortalCommerceCheckoutSessionMethod {
+        id: "cancel_order".to_owned(),
+        label: "Cancel checkout".to_owned(),
+        detail: "Close the pending order without applying quota or membership side effects."
+            .to_owned(),
+        action: "cancel_order".to_owned(),
+        availability: "available".to_owned(),
+    });
+
     methods
 }
 
-fn normalize_payment_reference(order_id: &str) -> String {
-    order_id
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() {
-                character.to_ascii_uppercase()
+fn normalize_identifier_component(value: &str, uppercase: bool) -> String {
+    let mut normalized = String::with_capacity(value.len());
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() {
+            normalized.push(if uppercase {
+                ch.to_ascii_uppercase()
             } else {
-                '-'
-            }
-        })
-        .collect()
+                ch.to_ascii_lowercase()
+            });
+        } else {
+            normalized.push('_');
+        }
+    }
+
+    normalized.trim_matches('_').to_owned()
+}
+
+fn normalize_payment_reference(order_id: &str) -> String {
+    let normalized = normalize_identifier_component(order_id, true);
+    normalized.replace('_', "-")
 }
 
 fn build_priced_quote(
@@ -1350,13 +1435,11 @@ fn resolve_custom_recharge_amount_cents(
         }
     }
 
-    let amount_cents = request_amount_cents
-        .or(amount_from_target)
-        .ok_or_else(|| {
-            CommerceError::InvalidInput(
-                "custom_amount_cents is required for custom_recharge".to_owned(),
-            )
-        })?;
+    let amount_cents = request_amount_cents.or(amount_from_target).ok_or_else(|| {
+        CommerceError::InvalidInput(
+            "custom_amount_cents is required for custom_recharge".to_owned(),
+        )
+    })?;
 
     validate_custom_recharge_amount_cents(amount_cents)?;
     Ok(amount_cents)
@@ -1529,7 +1612,8 @@ fn custom_recharge_rule_seeds() -> Vec<CustomRechargeRuleSeed> {
             min_amount_cents: 1_000,
             max_amount_cents: 4_500,
             units_per_cent: 25,
-            note: "Entry custom recharges restore balance quickly while preserving the starter ratio.",
+            note:
+                "Entry custom recharges restore balance quickly while preserving the starter ratio.",
         },
         CustomRechargeRuleSeed {
             id: "tier-growth",
@@ -1639,32 +1723,9 @@ fn current_time_ms() -> CommerceResult<u64> {
     .map_err(|error| CommerceError::Storage(error.into()))?)
 }
 
-#[async_trait]
-trait CommerceQuotaStore: Send + Sync {
-    async fn list_quota_policies_for_project(
-        &self,
-        project_id: &str,
-    ) -> anyhow::Result<Vec<QuotaPolicy>>;
-}
-
-#[async_trait]
-impl<T> CommerceQuotaStore for T
-where
-    T: AdminStore + ?Sized,
-{
-    async fn list_quota_policies_for_project(
-        &self,
-        project_id: &str,
-    ) -> anyhow::Result<Vec<QuotaPolicy>> {
-        AdminStore::list_quota_policies_for_project(self, project_id).await
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use async_trait::async_trait;
-    use std::sync::Mutex;
 
     #[test]
     fn parses_percent_discount_suffixes() {
@@ -1738,55 +1799,5 @@ mod tests {
         assert_eq!(quote.payable_price_label, "$0.00");
         assert_eq!(quote.bonus_units, 100);
         assert_eq!(quote.projected_remaining_units, Some(5_100));
-    }
-
-    #[tokio::test]
-    async fn load_effective_quota_policy_reads_only_project_scope() {
-        let store = RecordingCommerceQuotaStore::new(vec![
-            QuotaPolicy::new("policy-project-1-a", "project-1", 300).with_enabled(true),
-            QuotaPolicy::new("policy-project-1-b", "project-1", 200).with_enabled(true),
-            QuotaPolicy::new("policy-project-2", "project-2", 1).with_enabled(true),
-        ]);
-
-        let policy = load_effective_quota_policy(&store, "project-1")
-            .await
-            .unwrap()
-            .expect("expected project policy");
-
-        assert_eq!(policy.policy_id, "policy-project-1-b");
-        assert_eq!(
-            store.last_project_id.lock().unwrap().as_deref(),
-            Some("project-1")
-        );
-    }
-
-    struct RecordingCommerceQuotaStore {
-        policies: Vec<QuotaPolicy>,
-        last_project_id: Mutex<Option<String>>,
-    }
-
-    impl RecordingCommerceQuotaStore {
-        fn new(policies: Vec<QuotaPolicy>) -> Self {
-            Self {
-                policies,
-                last_project_id: Mutex::new(None),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl CommerceQuotaStore for RecordingCommerceQuotaStore {
-        async fn list_quota_policies_for_project(
-            &self,
-            project_id: &str,
-        ) -> anyhow::Result<Vec<QuotaPolicy>> {
-            *self.last_project_id.lock().unwrap() = Some(project_id.to_owned());
-            Ok(self
-                .policies
-                .iter()
-                .filter(|policy| policy.project_id == project_id)
-                .cloned()
-                .collect())
-        }
     }
 }

@@ -1,17 +1,17 @@
 use std::collections::BTreeMap;
 
 use anyhow::{Context, Result};
+use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use sdkwork_api_contract_openai::chat_completions::{
     ChatMessageInput, CreateChatCompletionRequest,
 };
 use sdkwork_api_contract_openai::responses::CountResponseInputTokensRequest;
 use sdkwork_api_provider_core::ProviderStreamOutput;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
-use crate::compat_streaming::{sse_named_event_frame, transform_openai_sse_stream, OpenAiSseEvent};
+use crate::compat_streaming::{OpenAiSseEvent, sse_named_event_frame, transform_openai_sse_stream};
 
 pub fn anthropic_invalid_request_response(message: impl Into<String>) -> Response {
     anthropic_error_response(

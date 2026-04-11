@@ -1,20 +1,20 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use axum::Router;
-use futures_util::{stream, StreamExt, TryStreamExt};
+use futures_util::{StreamExt, TryStreamExt, stream};
 use std::io;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use sdkwork_api_app_credential::{resolve_credential_secret_with_manager, CredentialSecretManager};
+use sdkwork_api_app_credential::{CredentialSecretManager, resolve_credential_secret_with_manager};
 use sdkwork_api_app_extension::{
-    start_provider_health_snapshot_supervision, ExtensionDiscoveryPolicy,
+    ExtensionDiscoveryPolicy, start_provider_health_snapshot_supervision,
 };
 use sdkwork_api_app_gateway::{
-    reload_extension_host_with_policy, reload_extension_host_with_scope,
-    start_configured_extension_hot_reload_supervision, ConfiguredExtensionHostReloadScope,
+    ConfiguredExtensionHostReloadScope, reload_extension_host_with_policy,
+    reload_extension_host_with_scope, start_configured_extension_hot_reload_supervision,
 };
 use sdkwork_api_cache_core::{CacheDriverFactory, CacheDriverRegistry, CacheRuntimeStores};
 use sdkwork_api_cache_memory::MemoryCacheStore;
@@ -24,12 +24,13 @@ use sdkwork_api_config::{
     StandaloneRuntimeDynamicConfig,
 };
 use sdkwork_api_storage_core::{
-    AdminStore, ExtensionRuntimeRolloutParticipantRecord, ExtensionRuntimeRolloutRecord,
-    Reloadable, ServiceRuntimeNodeRecord, StandaloneConfigRolloutParticipantRecord,
-    StandaloneConfigRolloutRecord, StorageDialect, StorageDriverFactory, StorageDriverRegistry,
+    AdminStore, CommercialKernelStore, ExtensionRuntimeRolloutParticipantRecord,
+    ExtensionRuntimeRolloutRecord, Reloadable, ServiceRuntimeNodeRecord,
+    StandaloneConfigRolloutParticipantRecord, StandaloneConfigRolloutRecord, StorageDialect,
+    StorageDriverFactory, StorageDriverRegistry,
 };
-use sdkwork_api_storage_postgres::{run_migrations as run_postgres_migrations, PostgresAdminStore};
-use sdkwork_api_storage_sqlite::{run_migrations as run_sqlite_migrations, SqliteAdminStore};
+use sdkwork_api_storage_postgres::{PostgresAdminStore, run_migrations as run_postgres_migrations};
+use sdkwork_api_storage_sqlite::{SqliteAdminStore, run_migrations as run_sqlite_migrations};
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -306,6 +307,7 @@ impl StandaloneServiceKind {
 
 pub struct StandaloneServiceReloadHandles {
     store: Reloadable<Arc<dyn AdminStore>>,
+    payment_store: Option<Reloadable<Arc<dyn CommercialKernelStore>>>,
     coordination_store: Option<Reloadable<Arc<dyn AdminStore>>>,
     secret_manager: Option<Reloadable<CredentialSecretManager>>,
     admin_jwt_signing_secret: Option<Reloadable<String>>,
@@ -318,6 +320,7 @@ impl StandaloneServiceReloadHandles {
     pub fn gateway(store: Reloadable<Arc<dyn AdminStore>>) -> Self {
         Self {
             store,
+            payment_store: None,
             coordination_store: None,
             secret_manager: None,
             admin_jwt_signing_secret: None,
@@ -333,6 +336,7 @@ impl StandaloneServiceReloadHandles {
     ) -> Self {
         Self {
             store,
+            payment_store: None,
             coordination_store: None,
             secret_manager: None,
             admin_jwt_signing_secret: Some(admin_jwt_signing_secret),
@@ -348,6 +352,7 @@ impl StandaloneServiceReloadHandles {
     ) -> Self {
         Self {
             store,
+            payment_store: None,
             coordination_store: None,
             secret_manager: None,
             admin_jwt_signing_secret: None,
@@ -359,6 +364,14 @@ impl StandaloneServiceReloadHandles {
 
     pub fn with_coordination_store(mut self, coordination_store: Arc<dyn AdminStore>) -> Self {
         self.coordination_store = Some(Reloadable::new(coordination_store));
+        self
+    }
+
+    pub fn with_payment_store(
+        mut self,
+        payment_store: Reloadable<Arc<dyn CommercialKernelStore>>,
+    ) -> Self {
+        self.payment_store = Some(payment_store);
         self
     }
 
@@ -397,39 +410,52 @@ struct PendingStandaloneRuntimeRestartRequired {
     message: String,
 }
 
-struct SqliteAdminStoreFactory;
+pub struct StandaloneAdminPaymentStoreHandles {
+    pub admin_store: Arc<dyn AdminStore>,
+    pub payment_store: Arc<dyn CommercialKernelStore>,
+}
+
+struct SqliteAdminPaymentStoreFactory;
 
 #[async_trait]
-impl StorageDriverFactory<Arc<dyn AdminStore>> for SqliteAdminStoreFactory {
+impl StorageDriverFactory<StandaloneAdminPaymentStoreHandles> for SqliteAdminPaymentStoreFactory {
     fn dialect(&self) -> StorageDialect {
         StorageDialect::Sqlite
     }
 
     fn driver_name(&self) -> &'static str {
-        "sqlite-admin-store"
+        "sqlite-admin-payment-store"
     }
 
-    async fn build(&self, database_url: &str) -> Result<Arc<dyn AdminStore>> {
+    async fn build(&self, database_url: &str) -> Result<StandaloneAdminPaymentStoreHandles> {
         let pool = run_sqlite_migrations(database_url).await?;
-        Ok(Arc::new(SqliteAdminStore::new(pool)))
+        let store = Arc::new(SqliteAdminStore::new(pool));
+        Ok(StandaloneAdminPaymentStoreHandles {
+            admin_store: store.clone(),
+            payment_store: store,
+        })
     }
 }
 
-struct PostgresAdminStoreFactory;
+struct PostgresAdminPaymentStoreFactory;
 
 #[async_trait]
-impl StorageDriverFactory<Arc<dyn AdminStore>> for PostgresAdminStoreFactory {
+impl StorageDriverFactory<StandaloneAdminPaymentStoreHandles> for PostgresAdminPaymentStoreFactory {
     fn dialect(&self) -> StorageDialect {
         StorageDialect::Postgres
     }
 
     fn driver_name(&self) -> &'static str {
-        "postgres-admin-store"
+        "postgres-admin-payment-store"
     }
 
-    async fn build(&self, database_url: &str) -> Result<Arc<dyn AdminStore>> {
+    async fn build(&self, database_url: &str) -> Result<StandaloneAdminPaymentStoreHandles> {
         let pool = run_postgres_migrations(database_url).await?;
-        Ok(Arc::new(PostgresAdminStore::new(pool)))
+        let store = Arc::new(PostgresAdminStore::new(pool));
+        Ok(StandaloneAdminPaymentStoreHandles {
+            admin_store: store.clone(),
+            payment_store: store,
+        })
     }
 }
 
@@ -464,7 +490,8 @@ impl CacheDriverFactory for RedisCacheStoreFactory {
     }
 
     async fn build(&self, cache_url: Option<&str>) -> Result<CacheRuntimeStores> {
-        let cache_url = cache_url.ok_or_else(|| anyhow::anyhow!("redis cache backend requires cache_url"))?;
+        let cache_url =
+            cache_url.ok_or_else(|| anyhow::anyhow!("redis cache backend requires cache_url"))?;
         let store = Arc::new(RedisCacheStore::connect(cache_url).await?);
         Ok(CacheRuntimeStores::new(store.clone(), store))
     }
@@ -473,10 +500,11 @@ impl CacheDriverFactory for RedisCacheStoreFactory {
 const STANDALONE_SUPPORTED_STORAGE_DIALECTS: [StorageDialect; 2] =
     [StorageDialect::Sqlite, StorageDialect::Postgres];
 
-fn standalone_admin_store_registry() -> StorageDriverRegistry<Arc<dyn AdminStore>> {
+fn standalone_admin_payment_store_registry()
+-> StorageDriverRegistry<StandaloneAdminPaymentStoreHandles> {
     StorageDriverRegistry::new()
-        .with_factory(SqliteAdminStoreFactory)
-        .with_factory(PostgresAdminStoreFactory)
+        .with_factory(SqliteAdminPaymentStoreFactory)
+        .with_factory(PostgresAdminPaymentStoreFactory)
 }
 
 fn supported_storage_dialects_summary() -> String {
@@ -496,6 +524,14 @@ fn standalone_cache_driver_registry() -> CacheDriverRegistry {
 pub async fn build_admin_store_from_config(
     config: &StandaloneConfig,
 ) -> Result<Arc<dyn AdminStore>> {
+    Ok(build_admin_payment_store_handles_from_config(config)
+        .await?
+        .admin_store)
+}
+
+pub async fn build_admin_payment_store_handles_from_config(
+    config: &StandaloneConfig,
+) -> Result<StandaloneAdminPaymentStoreHandles> {
     let supported_dialects = supported_storage_dialects_summary();
     let Some(dialect) = config.storage_dialect() else {
         anyhow::bail!(
@@ -505,7 +541,7 @@ pub async fn build_admin_store_from_config(
         );
     };
 
-    let registry = standalone_admin_store_registry();
+    let registry = standalone_admin_payment_store_registry();
     let Some(driver) = registry.resolve(dialect) else {
         anyhow::bail!(
             "standalone runtime supervision does not yet support storage dialect: {} (supported dialects: {})",
@@ -516,7 +552,7 @@ pub async fn build_admin_store_from_config(
 
     driver.build(&config.database_url).await.with_context(|| {
         format!(
-            "failed to initialize standalone admin store with driver {}",
+            "failed to initialize standalone admin/payment store with driver {}",
             driver.driver_name()
         )
     })
@@ -533,12 +569,15 @@ pub async fn build_cache_runtime_from_config(
         );
     };
 
-    driver.build(config.cache_url.as_deref()).await.with_context(|| {
-        format!(
-            "failed to initialize standalone cache runtime with driver {}",
-            driver.driver_name()
-        )
-    })
+    driver
+        .build(config.cache_url.as_deref())
+        .await
+        .with_context(|| {
+            format!(
+                "failed to initialize standalone cache runtime with driver {}",
+                driver.driver_name()
+            )
+        })
 }
 
 fn build_secret_manager_from_config(config: &StandaloneConfig) -> CredentialSecretManager {
@@ -1124,8 +1163,12 @@ async fn reload_standalone_runtime_config_pass(
     let next_config = config_loader.reload()?;
     let restart_required_changes =
         restart_required_changed_fields(service_kind, &state.current_config, &next_config);
-    let restart_required_message = (!restart_required_changes.is_empty())
-        .then(|| format!("restart required for {}", restart_required_changes.join(", ")));
+    let restart_required_message = (!restart_required_changes.is_empty()).then(|| {
+        format!(
+            "restart required for {}",
+            restart_required_changes.join(", ")
+        )
+    });
 
     let next_dynamic = next_config.runtime_dynamic_config();
     let bind_changed = service_bind(service_kind, &state.current_config)
@@ -1159,8 +1202,8 @@ async fn reload_standalone_runtime_config_pass(
         });
     }
 
-    let prepared_store = if database_changed {
-        Some(build_admin_store_from_config(&next_config).await?)
+    let prepared_store_handles = if database_changed {
+        Some(build_admin_payment_store_handles_from_config(&next_config).await?)
     } else {
         None
     };
@@ -1190,9 +1233,9 @@ async fn reload_standalone_runtime_config_pass(
         })?;
 
         let next_secret_manager = build_secret_manager_from_config(&next_config);
-        let validation_store = prepared_store
+        let validation_store = prepared_store_handles
             .as_ref()
-            .map(Arc::as_ref)
+            .map(|handles| handles.admin_store.as_ref())
             .unwrap_or(state.current_store.as_ref());
         validate_secret_manager_for_store(validation_store, &next_secret_manager).await?;
         Some(next_secret_manager)
@@ -1211,9 +1254,12 @@ async fn reload_standalone_runtime_config_pass(
         next_dynamic.apply_to_process_env();
     }
 
-    if let Some(next_store) = prepared_store {
-        state.current_store = next_store.clone();
-        reload_handles.store.replace(next_store);
+    if let Some(next_store_handles) = prepared_store_handles {
+        state.current_store = next_store_handles.admin_store.clone();
+        reload_handles.store.replace(next_store_handles.admin_store);
+        if let Some(live_payment_store) = reload_handles.payment_store.as_ref() {
+            live_payment_store.replace(next_store_handles.payment_store);
+        }
     }
 
     if admin_jwt_changed {
@@ -1285,16 +1331,12 @@ async fn reload_standalone_runtime_config_pass(
     state.current_config = applied_config.clone();
     state.current_dynamic = applied_config.runtime_dynamic_config();
     state.previous_watch_state = Some(next_watch_state.clone());
-    update_pending_restart_required(
-        state,
-        next_watch_state,
-        restart_required_message.as_deref(),
-    );
+    update_pending_restart_required(state, next_watch_state, restart_required_message.as_deref());
 
     Ok(match restart_required_message {
-        Some(message) => {
-            StandaloneRuntimeReloadOutcome::restart_required(format!("{applied_message}; {message}"))
-        }
+        Some(message) => StandaloneRuntimeReloadOutcome::restart_required(format!(
+            "{applied_message}; {message}"
+        )),
         None => StandaloneRuntimeReloadOutcome::applied(applied_message),
     })
 }
@@ -1853,7 +1895,7 @@ mod tests {
     use super::*;
     use sdkwork_api_app_credential::persist_credential_with_secret_and_manager;
     use sdkwork_api_config::CacheBackendKind;
-    use sdkwork_api_storage_sqlite::{run_migrations, SqliteAdminStore};
+    use sdkwork_api_storage_sqlite::{SqliteAdminStore, run_migrations};
     use std::io::Write;
 
     #[tokio::test]
@@ -1976,8 +2018,7 @@ mod tests {
             ..current.clone()
         };
 
-        let applied =
-            merge_applied_service_config(StandaloneServiceKind::Gateway, &current, &next);
+        let applied = merge_applied_service_config(StandaloneServiceKind::Gateway, &current, &next);
 
         assert_eq!(applied.gateway_bind, "127.0.0.1:19090");
         assert_eq!(applied.cache_backend, CacheBackendKind::Memory);
@@ -2003,39 +2044,43 @@ mod tests {
                         Ok((mut stream, _)) => {
                             stream.set_nonblocking(false).unwrap();
                             loop {
-                            match read_minimal_resp_array(&mut stream) {
-                                Ok(Some(command)) => match String::from_utf8_lossy(&command[0])
-                                    .to_ascii_uppercase()
-                                    .as_str()
-                                {
-                                    "PING" => {
-                                        stream.write_all(b"+PONG\r\n").unwrap();
-                                        stream.flush().unwrap();
+                                match read_minimal_resp_array(&mut stream) {
+                                    Ok(Some(command)) => match String::from_utf8_lossy(&command[0])
+                                        .to_ascii_uppercase()
+                                        .as_str()
+                                    {
+                                        "PING" => {
+                                            stream.write_all(b"+PONG\r\n").unwrap();
+                                            stream.flush().unwrap();
+                                        }
+                                        "GET" => {
+                                            stream.write_all(b"$-1\r\n").unwrap();
+                                            stream.flush().unwrap();
+                                        }
+                                        "AUTH" | "SELECT" => {
+                                            stream.write_all(b"+OK\r\n").unwrap();
+                                            stream.flush().unwrap();
+                                        }
+                                        other => {
+                                            panic!("unexpected minimal redis command: {other}")
+                                        }
+                                    },
+                                    Ok(None) => break,
+                                    Err(error)
+                                        if matches!(
+                                            error.kind(),
+                                            std::io::ErrorKind::UnexpectedEof
+                                                | std::io::ErrorKind::ConnectionReset
+                                                | std::io::ErrorKind::TimedOut
+                                        ) =>
+                                    {
+                                        break;
                                     }
-                                    "GET" => {
-                                        stream.write_all(b"$-1\r\n").unwrap();
-                                        stream.flush().unwrap();
+                                    Err(error) => {
+                                        panic!("minimal redis server read failed: {error}")
                                     }
-                                    "AUTH" | "SELECT" => {
-                                        stream.write_all(b"+OK\r\n").unwrap();
-                                        stream.flush().unwrap();
-                                    }
-                                    other => panic!("unexpected minimal redis command: {other}"),
-                                },
-                                Ok(None) => break,
-                                Err(error)
-                                    if matches!(
-                                        error.kind(),
-                                        std::io::ErrorKind::UnexpectedEof
-                                            | std::io::ErrorKind::ConnectionReset
-                                            | std::io::ErrorKind::TimedOut
-                                    ) =>
-                                {
-                                    break
                                 }
-                                Err(error) => panic!("minimal redis server read failed: {error}"),
                             }
-                        }
                         }
                         Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                             std::thread::sleep(std::time::Duration::from_millis(10));
@@ -2059,8 +2104,7 @@ mod tests {
 
     impl Drop for MinimalRedisPingServer {
         fn drop(&mut self) {
-            self.stop
-                .store(true, std::sync::atomic::Ordering::Relaxed);
+            self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
             let _ = std::net::TcpStream::connect(&self.address);
             if let Some(thread) = self.thread.take() {
                 thread.join().unwrap();

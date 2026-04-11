@@ -16,6 +16,8 @@ sdkwork-api-storage-core = { path = "../sdkwork-api-storage-core" }
 
 [dev-dependencies]
 tokio.workspace = true
+sdkwork-api-storage-core = { path = "../sdkwork-api-storage-core" }
+sdkwork-api-storage-sqlite = { path = "../sdkwork-api-storage-sqlite" }
 
 [lib]
 path = "src/lib.rs"

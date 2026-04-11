@@ -2563,10 +2563,14 @@ dependencies = [
  "anyhow",
  "async-trait",
  "sdkwork-api-domain-billing",
+ "sdkwork-api-domain-commerce",
  "sdkwork-api-domain-identity",
+ "sdkwork-api-domain-payment",
  "sdkwork-api-policy-quota",
  "sdkwork-api-storage-core",
  "sdkwork-api-storage-sqlite",
+ "serde_json",
+ "sha2",
  "tokio",
 ]
 
@@ -2591,6 +2595,7 @@ dependencies = [
  "sdkwork-api-domain-commerce",
  "sdkwork-api-domain-coupon",
  "sdkwork-api-storage-core",
+ "sdkwork-api-storage-sqlite",
  "serde",
  "tokio",
 ]
@@ -2694,6 +2699,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "sdkwork-api-app-payment"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "sdkwork-api-app-billing",
+ "sdkwork-api-app-commerce",
+ "sdkwork-api-domain-billing",
+ "sdkwork-api-domain-commerce",
+ "sdkwork-api-domain-identity",
+ "sdkwork-api-domain-payment",
+ "sdkwork-api-storage-core",
+ "sdkwork-api-storage-sqlite",
+ "serde",
+ "sha2",
+ "tokio",
+]
+
+[[package]]
 name = "sdkwork-api-app-rate-limit"
 version = "0.1.0"
 dependencies = [
@@ -2742,6 +2765,7 @@ dependencies = [
  "sdkwork-api-cache-redis",
  "sdkwork-api-config",
  "sdkwork-api-domain-catalog",
+ "sdkwork-api-domain-payment",
  "sdkwork-api-ext-provider-native-mock",
  "sdkwork-api-extension-core",
  "sdkwork-api-extension-host",
@@ -2878,6 +2902,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "sdkwork-api-domain-payment"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "sdkwork-api-domain-rate-limit"
 version = "0.1.0"
 dependencies = [
@@ -2969,6 +3000,7 @@ dependencies = [
  "sdkwork-api-app-extension",
  "sdkwork-api-app-gateway",
  "sdkwork-api-app-identity",
+ "sdkwork-api-app-payment",
  "sdkwork-api-app-rate-limit",
  "sdkwork-api-app-routing",
  "sdkwork-api-app-runtime",
@@ -2976,9 +3008,11 @@ dependencies = [
  "sdkwork-api-app-usage",
  "sdkwork-api-domain-billing",
  "sdkwork-api-domain-catalog",
+ "sdkwork-api-domain-commerce",
  "sdkwork-api-domain-coupon",
  "sdkwork-api-domain-credential",
  "sdkwork-api-domain-identity",
+ "sdkwork-api-domain-payment",
  "sdkwork-api-domain-rate-limit",
  "sdkwork-api-domain-routing",
  "sdkwork-api-domain-tenant",
@@ -2989,6 +3023,7 @@ dependencies = [
  "sdkwork-api-openapi",
  "sdkwork-api-secret-core",
  "sdkwork-api-storage-core",
+ "sdkwork-api-storage-postgres",
  "sdkwork-api-storage-sqlite",
  "serde",
  "serde_json",
@@ -3014,6 +3049,7 @@ dependencies = [
  "sdkwork-api-app-credential",
  "sdkwork-api-app-gateway",
  "sdkwork-api-app-identity",
+ "sdkwork-api-app-payment",
  "sdkwork-api-app-rate-limit",
  "sdkwork-api-app-routing",
  "sdkwork-api-app-usage",
@@ -3022,7 +3058,9 @@ dependencies = [
  "sdkwork-api-cache-redis",
  "sdkwork-api-contract-openai",
  "sdkwork-api-domain-catalog",
+ "sdkwork-api-domain-commerce",
  "sdkwork-api-domain-identity",
+ "sdkwork-api-domain-payment",
  "sdkwork-api-domain-rate-limit",
  "sdkwork-api-ext-provider-native-mock",
  "sdkwork-api-extension-core",
@@ -3049,21 +3087,26 @@ dependencies = [
 name = "sdkwork-api-interface-portal"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "axum",
  "sdkwork-api-app-billing",
  "sdkwork-api-app-commerce",
  "sdkwork-api-app-coupon",
  "sdkwork-api-app-identity",
+ "sdkwork-api-app-payment",
  "sdkwork-api-app-routing",
  "sdkwork-api-app-usage",
  "sdkwork-api-domain-billing",
  "sdkwork-api-domain-catalog",
+ "sdkwork-api-domain-commerce",
  "sdkwork-api-domain-identity",
+ "sdkwork-api-domain-payment",
  "sdkwork-api-domain-rate-limit",
  "sdkwork-api-domain-routing",
  "sdkwork-api-domain-usage",
  "sdkwork-api-observability",
  "sdkwork-api-storage-core",
+ "sdkwork-api-storage-postgres",
  "sdkwork-api-storage-sqlite",
  "serde",
  "serde_json",
@@ -3257,6 +3300,7 @@ dependencies = [
  "sdkwork-api-domain-coupon",
  "sdkwork-api-domain-credential",
  "sdkwork-api-domain-identity",
+ "sdkwork-api-domain-payment",
  "sdkwork-api-domain-rate-limit",
  "sdkwork-api-domain-routing",
  "sdkwork-api-domain-tenant",
@@ -3286,6 +3330,7 @@ dependencies = [
  "sdkwork-api-domain-coupon",
  "sdkwork-api-domain-credential",
  "sdkwork-api-domain-identity",
+ "sdkwork-api-domain-payment",
  "sdkwork-api-domain-rate-limit",
  "sdkwork-api-domain-routing",
  "sdkwork-api-domain-tenant",
@@ -3310,6 +3355,7 @@ dependencies = [
  "sdkwork-api-domain-coupon",
  "sdkwork-api-domain-credential",
  "sdkwork-api-domain-identity",
+ "sdkwork-api-domain-payment",
  "sdkwork-api-domain-rate-limit",
  "sdkwork-api-domain-routing",
  "sdkwork-api-domain-tenant",

@@ -2,27 +2,28 @@ mod compat_anthropic;
 mod compat_gemini;
 mod compat_streaming;
 
+use std::str::FromStr;
 use std::sync::{Arc, OnceLock};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use axum::{
+    Json, Router,
     body::Body,
     extract::FromRequestParts,
     extract::Json as ExtractJson,
     extract::Multipart,
     extract::Path,
     extract::State,
-    http::header,
-    http::request::Parts,
     http::HeaderMap,
     http::Request,
     http::StatusCode,
+    http::header,
+    http::request::Parts,
     middleware::Next,
     response::{Html, IntoResponse, Response},
     routing::{get, post},
-    Json, Router,
 };
-use base64::{engine::general_purpose::STANDARD, Engine as _};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use compat_anthropic::{
     anthropic_bad_gateway_response, anthropic_count_tokens_request,
     anthropic_invalid_request_response, anthropic_request_to_chat_completion,
@@ -35,8 +36,8 @@ use compat_gemini::{
     openai_count_tokens_to_gemini,
 };
 use sdkwork_api_app_billing::{
-    check_quota, create_billing_event, persist_billing_event, persist_ledger_entry,
-    BillingAccountingMode, CreateBillingEventInput, QuotaCheckResult,
+    BillingAccountingMode, CreateBillingEventInput, QuotaCheckResult, check_quota,
+    create_billing_event, persist_billing_event, persist_ledger_entry,
 };
 use sdkwork_api_app_credential::CredentialSecretManager;
 use sdkwork_api_app_gateway::cancel_batch;
@@ -133,8 +134,8 @@ use sdkwork_api_app_gateway::list_files;
 use sdkwork_api_app_gateway::list_fine_tuning_job_checkpoints;
 use sdkwork_api_app_gateway::list_fine_tuning_job_events;
 use sdkwork_api_app_gateway::list_fine_tuning_jobs;
-use sdkwork_api_app_gateway::list_music;
 use sdkwork_api_app_gateway::list_models;
+use sdkwork_api_app_gateway::list_music;
 use sdkwork_api_app_gateway::list_response_input_items;
 use sdkwork_api_app_gateway::list_thread_messages;
 use sdkwork_api_app_gateway::list_thread_run_steps;
@@ -145,6 +146,7 @@ use sdkwork_api_app_gateway::list_vector_stores;
 use sdkwork_api_app_gateway::list_video_characters;
 use sdkwork_api_app_gateway::list_videos;
 use sdkwork_api_app_gateway::list_webhooks;
+use sdkwork_api_app_gateway::music_content;
 use sdkwork_api_app_gateway::remix_video;
 use sdkwork_api_app_gateway::search_vector_store;
 use sdkwork_api_app_gateway::submit_thread_run_tool_outputs;
@@ -159,7 +161,6 @@ use sdkwork_api_app_gateway::update_vector_store;
 use sdkwork_api_app_gateway::update_video_character;
 use sdkwork_api_app_gateway::update_webhook;
 use sdkwork_api_app_gateway::video_content;
-use sdkwork_api_app_gateway::music_content;
 use sdkwork_api_app_gateway::{
     create_embedding, create_response, delete_model_from_store,
     execute_json_provider_request_with_runtime_and_options,
@@ -178,16 +179,16 @@ use sdkwork_api_app_gateway::{
     relay_delete_conversation_from_store, relay_delete_conversation_item_from_store,
     relay_delete_eval_from_store, relay_delete_file_from_store, relay_delete_music_from_store,
     relay_delete_response_from_store, relay_delete_thread_from_store,
-    relay_delete_thread_message_from_store,
-    relay_delete_vector_store_file_from_store, relay_delete_vector_store_from_store,
-    relay_delete_video_from_store, relay_delete_webhook_from_store, relay_embedding_from_store,
-    relay_eval_from_store, relay_eval_run_from_store, relay_extend_video_from_store,
-    relay_file_content_from_store, relay_file_from_store, relay_fine_tuning_job_from_store,
-    relay_get_assistant_from_store, relay_get_batch_from_store,
-    relay_get_chat_completion_from_store, relay_get_conversation_from_store,
-    relay_get_conversation_item_from_store, relay_get_eval_from_store,
-    relay_get_eval_run_from_store, relay_get_file_from_store, relay_get_fine_tuning_job_from_store,
-    relay_get_music_from_store, relay_get_response_from_store, relay_get_thread_from_store,
+    relay_delete_thread_message_from_store, relay_delete_vector_store_file_from_store,
+    relay_delete_vector_store_from_store, relay_delete_video_from_store,
+    relay_delete_webhook_from_store, relay_embedding_from_store, relay_eval_from_store,
+    relay_eval_run_from_store, relay_extend_video_from_store, relay_file_content_from_store,
+    relay_file_from_store, relay_fine_tuning_job_from_store, relay_get_assistant_from_store,
+    relay_get_batch_from_store, relay_get_chat_completion_from_store,
+    relay_get_conversation_from_store, relay_get_conversation_item_from_store,
+    relay_get_eval_from_store, relay_get_eval_run_from_store, relay_get_file_from_store,
+    relay_get_fine_tuning_job_from_store, relay_get_music_from_store,
+    relay_get_response_from_store, relay_get_thread_from_store,
     relay_get_thread_message_from_store, relay_get_thread_run_from_store,
     relay_get_thread_run_step_from_store, relay_get_vector_store_file_batch_from_store,
     relay_get_vector_store_file_from_store, relay_get_vector_store_from_store,
@@ -197,20 +198,21 @@ use sdkwork_api_app_gateway::{
     relay_list_batches_from_store, relay_list_chat_completion_messages_from_store,
     relay_list_chat_completions_from_store, relay_list_conversation_items_from_store,
     relay_list_conversations_from_store, relay_list_eval_runs_from_store,
-    relay_list_evals_from_store, relay_list_files_from_store, relay_list_music_from_store,
+    relay_list_evals_from_store, relay_list_files_from_store,
     relay_list_fine_tuning_job_checkpoints_from_store,
     relay_list_fine_tuning_job_events_from_store, relay_list_fine_tuning_jobs_from_store,
-    relay_music_content_from_store, relay_music_from_store, relay_music_lyrics_from_store,
-    relay_list_response_input_items_from_store, relay_list_thread_messages_from_store,
-    relay_list_thread_run_steps_from_store, relay_list_thread_runs_from_store,
-    relay_list_vector_store_file_batch_files_from_store, relay_list_vector_store_files_from_store,
-    relay_list_vector_stores_from_store, relay_list_video_characters_from_store,
-    relay_list_videos_from_store, relay_list_webhooks_from_store, relay_moderation_from_store,
-    relay_realtime_session_from_store, relay_remix_video_from_store, relay_response_from_store,
-    relay_response_stream_from_store, relay_search_vector_store_from_store,
-    relay_speech_from_store, relay_submit_thread_run_tool_outputs_from_store,
-    relay_thread_and_run_from_store, relay_thread_from_store, relay_thread_messages_from_store,
-    relay_thread_run_from_store, relay_transcription_from_store, relay_translation_from_store,
+    relay_list_music_from_store, relay_list_response_input_items_from_store,
+    relay_list_thread_messages_from_store, relay_list_thread_run_steps_from_store,
+    relay_list_thread_runs_from_store, relay_list_vector_store_file_batch_files_from_store,
+    relay_list_vector_store_files_from_store, relay_list_vector_stores_from_store,
+    relay_list_video_characters_from_store, relay_list_videos_from_store,
+    relay_list_webhooks_from_store, relay_moderation_from_store, relay_music_content_from_store,
+    relay_music_from_store, relay_music_lyrics_from_store, relay_realtime_session_from_store,
+    relay_remix_video_from_store, relay_response_from_store, relay_response_stream_from_store,
+    relay_search_vector_store_from_store, relay_speech_from_store,
+    relay_submit_thread_run_tool_outputs_from_store, relay_thread_and_run_from_store,
+    relay_thread_from_store, relay_thread_messages_from_store, relay_thread_run_from_store,
+    relay_transcription_from_store, relay_translation_from_store,
     relay_update_assistant_from_store, relay_update_chat_completion_from_store,
     relay_update_conversation_from_store, relay_update_eval_from_store,
     relay_update_thread_from_store, relay_update_thread_message_from_store,
@@ -222,7 +224,11 @@ use sdkwork_api_app_gateway::{
     relay_webhook_from_store, with_request_api_key_group_id, with_request_routing_region,
 };
 use sdkwork_api_app_identity::{
-    resolve_gateway_request_context, GatewayRequestContext as IdentityGatewayRequestContext,
+    GatewayRequestContext as IdentityGatewayRequestContext, resolve_gateway_request_context,
+};
+use sdkwork_api_app_payment::{
+    PaymentCallbackIntakeDisposition, PaymentCallbackIntakeRequest,
+    PaymentCallbackNormalizedOutcome, PaymentSubjectScope, ingest_payment_callback,
 };
 use sdkwork_api_app_rate_limit::check_rate_limit;
 use sdkwork_api_app_usage::persist_usage_record_with_tokens_and_facts;
@@ -278,18 +284,19 @@ use sdkwork_api_contract_openai::videos::{
     RemixVideoRequest, UpdateVideoCharacterRequest,
 };
 use sdkwork_api_contract_openai::webhooks::{CreateWebhookRequest, UpdateWebhookRequest};
+use sdkwork_api_domain_payment::PaymentProviderCode;
 use sdkwork_api_domain_rate_limit::RateLimitCheckResult;
-use sdkwork_api_observability::{observe_http_metrics, observe_http_tracing, HttpMetricsRegistry};
+use sdkwork_api_observability::{HttpMetricsRegistry, observe_http_metrics, observe_http_tracing};
 use sdkwork_api_openapi::{
-    build_openapi_document, extract_routes_from_function, render_docs_html, HttpMethod,
-    OpenApiServiceSpec, RouteEntry,
+    HttpMethod, OpenApiServiceSpec, RouteEntry, build_openapi_document,
+    extract_routes_from_function, render_docs_html,
 };
 use sdkwork_api_policy_billing::{
-    builtin_billing_policy_registry, BillingPolicyExecutionInput,
-    BillingPolicyExecutionResult, GROUP_DEFAULT_BILLING_POLICY_ID,
+    BillingPolicyExecutionInput, BillingPolicyExecutionResult, GROUP_DEFAULT_BILLING_POLICY_ID,
+    builtin_billing_policy_registry,
 };
 use sdkwork_api_provider_core::{ProviderRequest, ProviderRequestOptions, ProviderStreamOutput};
-use sdkwork_api_storage_core::{AdminStore, Reloadable};
+use sdkwork_api_storage_core::{AdminStore, CommercialKernelStore, Reloadable};
 use sdkwork_api_storage_sqlite::SqliteAdminStore;
 use serde_json::Value;
 use sqlx::SqlitePool;
@@ -421,6 +428,7 @@ fn humanize_route_path(path: &str, ignored_prefix: Option<&str>) -> String {
 pub struct GatewayApiState {
     live_store: Reloadable<Arc<dyn AdminStore>>,
     live_secret_manager: Reloadable<CredentialSecretManager>,
+    live_payment_store: Option<Reloadable<Arc<dyn CommercialKernelStore>>>,
     store: Arc<dyn AdminStore>,
     secret_manager: CredentialSecretManager,
 }
@@ -430,6 +438,7 @@ impl Clone for GatewayApiState {
         Self {
             live_store: self.live_store.clone(),
             live_secret_manager: self.live_secret_manager.clone(),
+            live_payment_store: self.live_payment_store.clone(),
             store: self.live_store.snapshot(),
             secret_manager: self.live_secret_manager.snapshot(),
         }
@@ -442,14 +451,17 @@ impl GatewayApiState {
     }
 
     pub fn with_master_key(pool: SqlitePool, credential_master_key: impl Into<String>) -> Self {
-        Self::with_store_and_secret_manager(
+        Self::with_payment_store_and_secret_manager(
             Arc::new(SqliteAdminStore::new(pool)),
             CredentialSecretManager::database_encrypted(credential_master_key),
         )
     }
 
     pub fn with_secret_manager(pool: SqlitePool, secret_manager: CredentialSecretManager) -> Self {
-        Self::with_store_and_secret_manager(Arc::new(SqliteAdminStore::new(pool)), secret_manager)
+        Self::with_payment_store_and_secret_manager(
+            Arc::new(SqliteAdminStore::new(pool)),
+            secret_manager,
+        )
     }
 
     pub fn with_store_and_secret_manager(
@@ -460,6 +472,24 @@ impl GatewayApiState {
             Reloadable::new(store),
             Reloadable::new(secret_manager),
         )
+    }
+
+    pub fn with_payment_store_and_secret_manager<S>(
+        store: Arc<S>,
+        secret_manager: CredentialSecretManager,
+    ) -> Self
+    where
+        S: AdminStore + CommercialKernelStore + 'static,
+    {
+        let admin_store: Arc<dyn AdminStore> = store.clone();
+        let payment_store: Arc<dyn CommercialKernelStore> = store;
+        Self {
+            store: admin_store.clone(),
+            live_store: Reloadable::new(admin_store),
+            live_payment_store: Some(Reloadable::new(payment_store)),
+            live_secret_manager: Reloadable::new(secret_manager.clone()),
+            secret_manager,
+        }
     }
 
     pub fn with_live_store_and_secret_manager(
@@ -478,8 +508,70 @@ impl GatewayApiState {
             secret_manager: live_secret_manager.snapshot(),
             live_store,
             live_secret_manager,
+            live_payment_store: None,
         }
     }
+
+    pub fn with_live_store_payment_store_and_secret_manager_handle(
+        live_store: Reloadable<Arc<dyn AdminStore>>,
+        live_payment_store: Reloadable<Arc<dyn CommercialKernelStore>>,
+        live_secret_manager: Reloadable<CredentialSecretManager>,
+    ) -> Self {
+        Self {
+            store: live_store.snapshot(),
+            secret_manager: live_secret_manager.snapshot(),
+            live_store,
+            live_secret_manager,
+            live_payment_store: Some(live_payment_store),
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct PaymentCallbackHttpRequest {
+    tenant_id: u64,
+    #[serde(default)]
+    organization_id: u64,
+    #[serde(default)]
+    user_id: u64,
+    event_type: String,
+    event_id: String,
+    dedupe_key: String,
+    #[serde(default)]
+    payment_order_id: Option<String>,
+    #[serde(default)]
+    payment_attempt_id: Option<String>,
+    #[serde(default)]
+    provider_transaction_id: Option<String>,
+    #[serde(default)]
+    signature_status: Option<String>,
+    #[serde(default)]
+    provider_status: Option<String>,
+    #[serde(default)]
+    currency_code: Option<String>,
+    #[serde(default)]
+    amount_minor: Option<u64>,
+    #[serde(default)]
+    fee_minor: Option<u64>,
+    #[serde(default)]
+    net_amount_minor: Option<u64>,
+    #[serde(default)]
+    payload_json: Option<String>,
+    #[serde(default)]
+    received_at_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct PaymentCallbackHttpResponse {
+    disposition: PaymentCallbackIntakeDisposition,
+    normalized_outcome: Option<PaymentCallbackNormalizedOutcome>,
+    callback_event_id: String,
+    processing_status: String,
+    signature_status: String,
+    payment_order_id: Option<String>,
+    payment_attempt_id: Option<String>,
+    payment_session_id: Option<String>,
+    payment_transaction_id: Option<String>,
 }
 
 tokio::task_local! {
@@ -722,6 +814,112 @@ fn current_gateway_request_latency_ms() -> Option<u64> {
     CURRENT_GATEWAY_REQUEST_STARTED_AT
         .try_with(|started_at| started_at.elapsed().as_millis() as u64)
         .ok()
+}
+
+async fn payment_callbacks_with_state_handler(
+    Path((provider_code, gateway_account_id)): Path<(String, String)>,
+    State(state): State<GatewayApiState>,
+    ExtractJson(payload): ExtractJson<PaymentCallbackHttpRequest>,
+) -> Response {
+    let Some(payment_store) = state
+        .live_payment_store
+        .as_ref()
+        .map(|store| store.snapshot())
+    else {
+        return payment_callback_error_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "gateway state does not expose canonical payment callback processing",
+        );
+    };
+
+    let provider_code = match PaymentProviderCode::from_str(provider_code.as_str()) {
+        Ok(provider_code) => provider_code,
+        Err(error) => return payment_callback_error_response(StatusCode::BAD_REQUEST, error),
+    };
+
+    let intake = PaymentCallbackIntakeRequest::new(
+        PaymentSubjectScope::new(payload.tenant_id, payload.organization_id, payload.user_id),
+        provider_code,
+        gateway_account_id,
+        payload.event_type,
+        payload.event_id,
+        payload.dedupe_key,
+        payload
+            .received_at_ms
+            .unwrap_or_else(|| current_billing_timestamp_ms().unwrap_or(0)),
+    )
+    .with_payment_order_id(payload.payment_order_id)
+    .with_payment_attempt_id(payload.payment_attempt_id)
+    .with_provider_transaction_id(payload.provider_transaction_id)
+    .with_signature_status(
+        payload
+            .signature_status
+            .unwrap_or_else(|| "pending".to_owned()),
+    )
+    .with_provider_status(payload.provider_status)
+    .with_currency_code(payload.currency_code)
+    .with_amount_minor(payload.amount_minor)
+    .with_fee_minor(payload.fee_minor)
+    .with_net_amount_minor(payload.net_amount_minor)
+    .with_payload_json(payload.payload_json);
+
+    let result = match ingest_payment_callback(payment_store.as_ref(), &intake).await {
+        Ok(result) => result,
+        Err(error) => {
+            let message = error.to_string();
+            let status = if message.contains("payment_order_id")
+                || message.contains("payment order not found")
+            {
+                StatusCode::ACCEPTED
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            return payment_callback_error_response(status, message);
+        }
+    };
+
+    let response = PaymentCallbackHttpResponse {
+        disposition: result.disposition,
+        normalized_outcome: result.normalized_outcome,
+        callback_event_id: result.callback_event.callback_event_id,
+        processing_status: result.callback_event.processing_status.as_str().to_owned(),
+        signature_status: result.callback_event.signature_status,
+        payment_order_id: result
+            .payment_order_opt
+            .as_ref()
+            .map(|payment_order| payment_order.payment_order_id.clone())
+            .or(result.callback_event.payment_order_id),
+        payment_attempt_id: result
+            .payment_attempt_opt
+            .as_ref()
+            .map(|payment_attempt| payment_attempt.payment_attempt_id.clone())
+            .or(result.callback_event.payment_attempt_id),
+        payment_session_id: result
+            .payment_session_opt
+            .as_ref()
+            .map(|payment_session| payment_session.payment_session_id.clone()),
+        payment_transaction_id: result
+            .payment_transaction_opt
+            .as_ref()
+            .map(|payment_transaction| payment_transaction.payment_transaction_id.clone()),
+    };
+
+    (
+        payment_callback_status_code(result.disposition),
+        Json(response),
+    )
+        .into_response()
+}
+
+fn payment_callback_status_code(disposition: PaymentCallbackIntakeDisposition) -> StatusCode {
+    match disposition {
+        PaymentCallbackIntakeDisposition::RequiresProviderQuery => StatusCode::ACCEPTED,
+        _ => StatusCode::OK,
+    }
+}
+
+fn payment_callback_error_response(status: StatusCode, message: impl Into<String>) -> Response {
+    (status, Json(serde_json::json!({ "error": message.into() }))).into_response()
 }
 
 async fn apply_gateway_request_context(
@@ -1262,7 +1460,10 @@ pub fn gateway_router_with_pool(pool: SqlitePool) -> Router {
     gateway_router_with_pool_and_master_key(pool, "local-dev-master-key")
 }
 
-pub fn gateway_router_with_store(store: Arc<dyn AdminStore>) -> Router {
+pub fn gateway_router_with_store<S>(store: Arc<S>) -> Router
+where
+    S: AdminStore + CommercialKernelStore + 'static,
+{
     gateway_router_with_store_and_secret_manager(
         store,
         CredentialSecretManager::database_encrypted("local-dev-master-key"),
@@ -1273,27 +1474,30 @@ pub fn gateway_router_with_pool_and_master_key(
     pool: SqlitePool,
     credential_master_key: impl Into<String>,
 ) -> Router {
-    gateway_router_with_store_and_secret_manager(
+    gateway_router_with_state(GatewayApiState::with_payment_store_and_secret_manager(
         Arc::new(SqliteAdminStore::new(pool)),
         CredentialSecretManager::database_encrypted(credential_master_key),
-    )
+    ))
 }
 
 pub fn gateway_router_with_pool_and_secret_manager(
     pool: SqlitePool,
     secret_manager: CredentialSecretManager,
 ) -> Router {
-    gateway_router_with_store_and_secret_manager(
+    gateway_router_with_state(GatewayApiState::with_payment_store_and_secret_manager(
         Arc::new(SqliteAdminStore::new(pool)),
         secret_manager,
-    )
+    ))
 }
 
-pub fn gateway_router_with_store_and_secret_manager(
-    store: Arc<dyn AdminStore>,
+pub fn gateway_router_with_store_and_secret_manager<S>(
+    store: Arc<S>,
     secret_manager: CredentialSecretManager,
-) -> Router {
-    gateway_router_with_state(GatewayApiState::with_store_and_secret_manager(
+) -> Router
+where
+    S: AdminStore + CommercialKernelStore + 'static,
+{
+    gateway_router_with_state(GatewayApiState::with_payment_store_and_secret_manager(
         store,
         secret_manager,
     ))
@@ -1305,6 +1509,10 @@ pub fn gateway_router_with_state(state: GatewayApiState) -> Router {
     Router::new()
         .route("/openapi.json", get(gateway_openapi_handler))
         .route("/docs", get(gateway_docs_handler))
+        .route(
+            "/_sdkwork/payments/providers/{provider_code}/gateway-accounts/{gateway_account_id}/callbacks",
+            post(payment_callbacks_with_state_handler),
+        )
         .route(
             "/metrics",
             get({
@@ -3634,12 +3842,14 @@ async fn music_handler(
         }
     }
 
-    Json(create_music(
-        request_context.tenant_id(),
-        request_context.project_id(),
-        &request,
+    Json(
+        create_music(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &request,
+        )
+        .expect("music create"),
     )
-    .expect("music create"))
     .into_response()
 }
 
@@ -3652,12 +3862,8 @@ async fn music_list_handler(request_context: StatelessGatewayRequest) -> Respons
         }
     }
 
-    Json(list_music(
-        request_context.tenant_id(),
-        request_context.project_id(),
-    )
-    .expect("music list"))
-    .into_response()
+    Json(list_music(request_context.tenant_id(), request_context.project_id()).expect("music list"))
+        .into_response()
 }
 
 async fn music_retrieve_handler(
@@ -3674,12 +3880,14 @@ async fn music_retrieve_handler(
         }
     }
 
-    Json(get_music(
-        request_context.tenant_id(),
-        request_context.project_id(),
-        &music_id,
+    Json(
+        get_music(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &music_id,
+        )
+        .expect("music retrieve"),
     )
-    .expect("music retrieve"))
     .into_response()
 }
 
@@ -3697,12 +3905,14 @@ async fn music_delete_handler(
         }
     }
 
-    Json(delete_music(
-        request_context.tenant_id(),
-        request_context.project_id(),
-        &music_id,
+    Json(
+        delete_music(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &music_id,
+        )
+        .expect("music delete"),
     )
-    .expect("music delete"))
     .into_response()
 }
 
@@ -3741,12 +3951,14 @@ async fn music_lyrics_handler(
         }
     }
 
-    Json(create_music_lyrics(
-        request_context.tenant_id(),
-        request_context.project_id(),
-        &request,
+    Json(
+        create_music_lyrics(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &request,
+        )
+        .expect("music lyrics"),
     )
-    .expect("music lyrics"))
     .into_response()
 }
 
@@ -5711,18 +5923,18 @@ async fn chat_completions_with_state_handler(
                 let token_usage = extract_token_usage_metrics(&response);
                 let usage_result =
                     record_gateway_usage_for_project_with_route_key_and_tokens_and_reference(
-                    state.store.as_ref(),
-                    request_context.tenant_id(),
-                    request_context.project_id(),
-                    "chat_completion",
-                    &request.model,
-                    &request.model,
-                    100,
-                    0.10,
-                    token_usage,
-                    response_usage_id_or_single_data_item_id(&response),
-                )
-                .await;
+                        state.store.as_ref(),
+                        request_context.tenant_id(),
+                        request_context.project_id(),
+                        "chat_completion",
+                        &request.model,
+                        &request.model,
+                        100,
+                        0.10,
+                        token_usage,
+                        response_usage_id_or_single_data_item_id(&response),
+                    )
+                    .await;
                 if usage_result.is_err() {
                     return (
                         axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -11396,8 +11608,9 @@ async fn music_with_state_handler(
         Ok(Some(response)) => {
             let usage_model = response_usage_id_or_single_data_item_id(&response)
                 .unwrap_or(request.model.as_str());
-            let music_seconds =
-                request.duration_seconds.unwrap_or_else(|| music_seconds_from_response(&response));
+            let music_seconds = request
+                .duration_seconds
+                .unwrap_or_else(|| music_seconds_from_response(&response));
             if record_gateway_usage_for_project_with_media_and_reference_id(
                 state.store.as_ref(),
                 request_context.tenant_id(),
@@ -11441,7 +11654,9 @@ async fn music_with_state_handler(
         _ => request.model.as_str(),
     };
     let music_seconds = match response.data.as_slice() {
-        [track] => track.duration_seconds.unwrap_or(request.duration_seconds.unwrap_or(0.0)),
+        [track] => track
+            .duration_seconds
+            .unwrap_or(request.duration_seconds.unwrap_or(0.0)),
         _ => request.duration_seconds.unwrap_or(0.0),
     };
 
@@ -11531,12 +11746,8 @@ async fn music_list_with_state_handler(
             .into_response();
     }
 
-    Json(list_music(
-        request_context.tenant_id(),
-        request_context.project_id(),
-    )
-    .expect("music list"))
-    .into_response()
+    Json(list_music(request_context.tenant_id(), request_context.project_id()).expect("music list"))
+        .into_response()
 }
 
 async fn music_retrieve_with_state_handler(
@@ -11600,12 +11811,14 @@ async fn music_retrieve_with_state_handler(
             .into_response();
     }
 
-    Json(get_music(
-        request_context.tenant_id(),
-        request_context.project_id(),
-        &music_id,
+    Json(
+        get_music(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &music_id,
+        )
+        .expect("music retrieve"),
     )
-    .expect("music retrieve"))
     .into_response()
 }
 
@@ -11670,12 +11883,14 @@ async fn music_delete_with_state_handler(
             .into_response();
     }
 
-    Json(delete_music(
-        request_context.tenant_id(),
-        request_context.project_id(),
-        &music_id,
+    Json(
+        delete_music(
+            request_context.tenant_id(),
+            request_context.project_id(),
+            &music_id,
+        )
+        .expect("music delete"),
     )
-    .expect("music delete"))
     .into_response()
 }
 
@@ -17125,15 +17340,7 @@ async fn record_gateway_usage_for_project(
     amount: f64,
 ) -> anyhow::Result<()> {
     record_gateway_usage_for_project_with_route_key_and_reference_id(
-        store,
-        tenant_id,
-        project_id,
-        capability,
-        model,
-        model,
-        units,
-        amount,
-        None,
+        store, tenant_id, project_id, capability, model, model, units, amount, None,
     )
     .await
 }
@@ -17493,7 +17700,9 @@ async fn load_api_key_group_default_accounting_mode(
     store: &dyn AdminStore,
     api_key_group_id: Option<&str>,
 ) -> anyhow::Result<Option<String>> {
-    let Some(api_key_group_id) = api_key_group_id.map(str::trim).filter(|value| !value.is_empty())
+    let Some(api_key_group_id) = api_key_group_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
     else {
         return Ok(None);
     };

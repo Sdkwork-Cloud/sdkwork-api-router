@@ -1,5 +1,12 @@
-﻿use axum::body::{to_bytes, Body};
+use axum::body::{to_bytes, Body};
 use axum::http::{Request, StatusCode};
+use sdkwork_api_app_payment::{
+    ingest_payment_callback, PaymentCallbackIntakeDisposition, PaymentCallbackIntakeRequest,
+    PaymentCallbackNormalizedOutcome, PaymentSubjectScope,
+};
+use sdkwork_api_domain_payment::PaymentProviderCode;
+use sdkwork_api_storage_core::PaymentKernelStore;
+use sdkwork_api_storage_sqlite::SqliteAdminStore;
 use serde_json::Value;
 use sqlx::SqlitePool;
 use tower::ServiceExt;
@@ -52,6 +59,65 @@ async fn portal_workspace(app: axum::Router, token: &str) -> Value {
 
     assert_eq!(response.status(), StatusCode::OK);
     read_json(response).await
+}
+
+async fn settle_portal_order_via_verified_payment(
+    pool: &SqlitePool,
+    order_id: &str,
+    settled_at_ms: u64,
+) {
+    let store = SqliteAdminStore::new(pool.clone());
+    let payment_order = store
+        .list_payment_order_records()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|payment_order| payment_order.commerce_order_id == order_id)
+        .unwrap();
+    let payment_attempt = store
+        .list_payment_attempt_records_for_order(&payment_order.payment_order_id)
+        .await
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    let scope = PaymentSubjectScope::new(
+        payment_order.tenant_id,
+        payment_order.organization_id,
+        payment_order.user_id,
+    );
+
+    let result = ingest_payment_callback(
+        &store,
+        &PaymentCallbackIntakeRequest::new(
+            scope,
+            PaymentProviderCode::Stripe,
+            "stripe-main",
+            "checkout.session.completed",
+            &format!("evt_settled_{order_id}"),
+            &format!("dedupe_evt_settled_{order_id}"),
+            settled_at_ms,
+        )
+        .with_payment_order_id(Some(payment_order.payment_order_id.clone()))
+        .with_payment_attempt_id(Some(payment_attempt.payment_attempt_id.clone()))
+        .with_provider_transaction_id(Some(format!("pi_{order_id}")))
+        .with_signature_status("verified")
+        .with_provider_status(Some("succeeded".to_owned()))
+        .with_amount_minor(Some(payment_order.payable_minor))
+        .with_currency_code(Some(payment_order.currency_code.clone()))
+        .with_payload_json(Some(format!("{{\"id\":\"evt_settled_{order_id}\"}}"))),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        result.disposition,
+        PaymentCallbackIntakeDisposition::Processed
+    );
+    assert_eq!(
+        result.normalized_outcome,
+        Some(PaymentCallbackNormalizedOutcome::Settled)
+    );
 }
 
 #[tokio::test]
@@ -152,7 +218,10 @@ async fn portal_commerce_catalog_exposes_server_managed_recharge_options_and_cus
     assert_eq!(json["custom_recharge_policy"]["enabled"], true);
     assert_eq!(json["custom_recharge_policy"]["min_amount_cents"], 1000);
     assert_eq!(json["custom_recharge_policy"]["step_amount_cents"], 500);
-    assert_eq!(json["custom_recharge_policy"]["suggested_amount_cents"], 5000);
+    assert_eq!(
+        json["custom_recharge_policy"]["suggested_amount_cents"],
+        5000
+    );
     assert_eq!(
         json["custom_recharge_policy"]["rules"][1]["effective_ratio_label"],
         "2,800 units / $1"
@@ -349,9 +418,14 @@ async fn portal_commerce_quote_and_order_support_custom_recharge_from_server_pol
         .await
         .unwrap();
 
-    assert_eq!(settle_response.status(), StatusCode::OK);
+    assert_eq!(settle_response.status(), StatusCode::CONFLICT);
     let settle_json = read_json(settle_response).await;
-    assert_eq!(settle_json["status"], "fulfilled");
+    assert_eq!(
+        settle_json["error"]["message"],
+        format!("order {order_id} requires verified payment confirmation before fulfillment")
+    );
+
+    settle_portal_order_via_verified_payment(&pool, &order_id, 1_710_000_120).await;
 
     let billing_response = app
         .oneshot(
@@ -519,7 +593,8 @@ async fn portal_commerce_orders_queue_paid_checkout_and_fulfill_coupon_redemptio
 }
 
 #[tokio::test]
-async fn portal_commerce_pending_recharge_can_be_settled_or_canceled() {
+async fn portal_commerce_pending_recharge_requires_verified_payment_before_fulfillment_and_can_be_canceled(
+) {
     let pool = memory_pool().await;
     sqlx::query(
         "INSERT INTO ai_coupon_campaigns (id, code, discount_label, audience, remaining, active, note, expires_on, created_at_ms)
@@ -606,8 +681,8 @@ async fn portal_commerce_pending_recharge_can_be_settled_or_canceled() {
     assert_eq!(checkout_session_json["order_id"], settled_order_id);
     assert_eq!(checkout_session_json["order_status"], "pending_payment");
     assert_eq!(checkout_session_json["session_status"], "open");
-    assert_eq!(checkout_session_json["provider"], "manual_lab");
-    assert_eq!(checkout_session_json["mode"], "operator_settlement");
+    assert_eq!(checkout_session_json["provider"], "payment_orchestrator");
+    assert_eq!(checkout_session_json["mode"], "checkout_bridge");
     assert!(checkout_session_json["reference"]
         .as_str()
         .unwrap()
@@ -616,12 +691,12 @@ async fn portal_commerce_pending_recharge_can_be_settled_or_canceled() {
         .as_array()
         .unwrap()
         .iter()
-        .any(|method| method["action"] == "settle_order"));
-    assert!(checkout_session_json["methods"]
+        .any(|method| method["action"] == "provider_handoff"));
+    assert!(!checkout_session_json["methods"]
         .as_array()
         .unwrap()
         .iter()
-        .any(|method| method["action"] == "provider_handoff"));
+        .any(|method| method["action"] == "settle_order"));
 
     let settle_response = app
         .clone()
@@ -638,10 +713,14 @@ async fn portal_commerce_pending_recharge_can_be_settled_or_canceled() {
         .await
         .unwrap();
 
-    assert_eq!(settle_response.status(), StatusCode::OK);
+    assert_eq!(settle_response.status(), StatusCode::CONFLICT);
     let settle_json = read_json(settle_response).await;
-    assert_eq!(settle_json["order_id"], settled_order_id);
-    assert_eq!(settle_json["status"], "fulfilled");
+    assert_eq!(
+        settle_json["error"]["message"],
+        format!(
+            "order {settled_order_id} requires verified payment confirmation before fulfillment"
+        )
+    );
 
     let settled_checkout_session_response = app
         .clone()
@@ -660,14 +739,12 @@ async fn portal_commerce_pending_recharge_can_be_settled_or_canceled() {
 
     assert_eq!(settled_checkout_session_response.status(), StatusCode::OK);
     let settled_checkout_session_json = read_json(settled_checkout_session_response).await;
-    assert_eq!(settled_checkout_session_json["session_status"], "settled");
-    assert_eq!(
-        settled_checkout_session_json["methods"]
-            .as_array()
-            .unwrap()
-            .len(),
-        0
-    );
+    assert_eq!(settled_checkout_session_json["session_status"], "open");
+    assert!(settled_checkout_session_json["methods"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|method| method["action"] == "provider_handoff"));
 
     let billing_after_settle = app
         .clone()
@@ -684,7 +761,7 @@ async fn portal_commerce_pending_recharge_can_be_settled_or_canceled() {
 
     assert_eq!(billing_after_settle.status(), StatusCode::OK);
     let billing_after_settle_json = read_json(billing_after_settle).await;
-    assert_eq!(billing_after_settle_json["remaining_units"], 100260);
+    assert_eq!(billing_after_settle_json["remaining_units"], 260);
 
     let cancel_create_response = app
         .clone()
@@ -742,11 +819,12 @@ async fn portal_commerce_pending_recharge_can_be_settled_or_canceled() {
 
     assert_eq!(billing_after_cancel.status(), StatusCode::OK);
     let billing_after_cancel_json = read_json(billing_after_cancel).await;
-    assert_eq!(billing_after_cancel_json["remaining_units"], 100260);
+    assert_eq!(billing_after_cancel_json["remaining_units"], 260);
 }
 
 #[tokio::test]
-async fn portal_commerce_subscription_checkout_requires_settlement_before_membership_activation() {
+async fn portal_commerce_subscription_checkout_requires_verified_payment_before_membership_activation(
+) {
     let pool = memory_pool().await;
     let app = sdkwork_api_interface_portal::portal_router_with_pool(pool.clone());
     let token = portal_token(app.clone()).await;
@@ -848,9 +926,14 @@ async fn portal_commerce_subscription_checkout_requires_settlement_before_member
         .await
         .unwrap();
 
-    assert_eq!(settle_response.status(), StatusCode::OK);
+    assert_eq!(settle_response.status(), StatusCode::CONFLICT);
     let settle_json = read_json(settle_response).await;
-    assert_eq!(settle_json["status"], "fulfilled");
+    assert_eq!(
+        settle_json["error"]["message"],
+        format!("order {order_id} requires verified payment confirmation before fulfillment")
+    );
+
+    settle_portal_order_via_verified_payment(&pool, order_id, 1_710_000_240).await;
 
     let settled_billing_response = app
         .clone()
@@ -1029,7 +1112,7 @@ async fn portal_commerce_payment_events_can_fail_checkout_and_block_invalid_reco
 }
 
 #[tokio::test]
-async fn portal_commerce_payment_settlement_event_activates_membership_and_quota() {
+async fn portal_commerce_verified_payment_callback_activates_membership_and_quota() {
     let pool = memory_pool().await;
     let app = sdkwork_api_interface_portal::portal_router_with_pool(pool.clone());
     let token = portal_token(app.clone()).await;
@@ -1096,9 +1179,14 @@ async fn portal_commerce_payment_settlement_event_activates_membership_and_quota
         .await
         .unwrap();
 
-    assert_eq!(settle_response.status(), StatusCode::OK);
+    assert_eq!(settle_response.status(), StatusCode::CONFLICT);
     let settle_json = read_json(settle_response).await;
-    assert_eq!(settle_json["status"], "fulfilled");
+    assert_eq!(
+        settle_json["error"]["message"],
+        format!("order {order_id} requires verified payment confirmation before fulfillment")
+    );
+
+    settle_portal_order_via_verified_payment(&pool, &order_id, 1_710_000_360).await;
 
     let billing_response = app
         .clone()
@@ -1137,3 +1225,85 @@ async fn portal_commerce_payment_settlement_event_activates_membership_and_quota
     assert_eq!(membership_json["status"], "active");
 }
 
+#[tokio::test]
+async fn portal_commerce_reuses_existing_pending_payable_order_for_repeat_create() {
+    let pool = memory_pool().await;
+    let app = sdkwork_api_interface_portal::portal_router_with_pool(pool.clone());
+    let token = portal_token(app.clone()).await;
+    let workspace = portal_workspace(app.clone(), &token).await;
+    let project_id = workspace["project"]["id"].as_str().unwrap().to_owned();
+
+    let first_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/portal/commerce/orders")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"target_kind\":\"subscription_plan\",\"target_id\":\"growth\"}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(first_response.status(), StatusCode::CREATED);
+    let first_json = read_json(first_response).await;
+    let first_order_id = first_json["order_id"].as_str().unwrap().to_owned();
+
+    let second_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/portal/commerce/orders")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"target_kind\":\"subscription_plan\",\"target_id\":\"growth\"}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(second_response.status(), StatusCode::CREATED);
+    let second_json = read_json(second_response).await;
+    assert_eq!(second_json["order_id"], first_order_id);
+
+    let order_center_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/portal/commerce/order-center")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(order_center_response.status(), StatusCode::OK);
+    let order_center_json = read_json(order_center_response).await;
+    assert_eq!(order_center_json.as_array().unwrap().len(), 1);
+    assert_eq!(order_center_json[0]["order"]["order_id"], first_order_id);
+
+    let commerce_order_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM ai_commerce_orders WHERE project_id = ?")
+            .bind(&project_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(commerce_order_count, 1);
+
+    let payment_order_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM ai_payment_order WHERE project_id = ?")
+            .bind(&project_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(payment_order_count, 1);
+}

@@ -4,22 +4,23 @@ use std::sync::Arc;
 use std::time::Duration as StdDuration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use axum::{routing::get, Router};
+use axum::{Router, routing::get};
 use reqwest::Client;
 use sdkwork_api_app_credential::{
-    persist_credential_with_secret_and_manager, resolve_provider_secret_with_manager,
-    CredentialSecretManager,
+    CredentialSecretManager, persist_credential_with_secret_and_manager,
+    resolve_provider_secret_with_manager,
 };
 use sdkwork_api_app_gateway::reload_configured_extension_host;
 use sdkwork_api_app_runtime::{
-    create_extension_runtime_rollout, create_standalone_config_rollout,
-    find_extension_runtime_rollout, find_standalone_config_rollout,
-    start_extension_runtime_rollout_supervision, start_standalone_runtime_supervision,
     CreateStandaloneConfigRolloutRequest, StandaloneListenerHost, StandaloneServiceKind,
-    StandaloneServiceReloadHandles,
+    StandaloneServiceReloadHandles, create_extension_runtime_rollout,
+    create_standalone_config_rollout, find_extension_runtime_rollout,
+    find_standalone_config_rollout, start_extension_runtime_rollout_supervision,
+    start_standalone_runtime_supervision,
 };
 use sdkwork_api_config::{CacheBackendKind, StandaloneConfigLoader};
 use sdkwork_api_domain_catalog::{Channel, ModelCatalogEntry, ProxyProvider};
+use sdkwork_api_domain_payment::PaymentOrderRecord;
 use sdkwork_api_ext_provider_native_mock::FIXTURE_EXTENSION_ID;
 use sdkwork_api_extension_core::{
     CompatibilityLevel, ExtensionKind, ExtensionManifest, ExtensionPermission, ExtensionProtocol,
@@ -28,12 +29,12 @@ use sdkwork_api_extension_core::{
 use sdkwork_api_extension_host::shutdown_all_native_dynamic_runtimes;
 use sdkwork_api_storage_core::{
     AdminStore, ExtensionRuntimeRolloutParticipantRecord, ExtensionRuntimeRolloutRecord,
-    Reloadable, ServiceRuntimeNodeRecord, StandaloneConfigRolloutParticipantRecord,
-    StandaloneConfigRolloutRecord,
+    CommercialKernelStore, PaymentKernelStore, Reloadable, ServiceRuntimeNodeRecord,
+    StandaloneConfigRolloutParticipantRecord, StandaloneConfigRolloutRecord,
 };
-use sdkwork_api_storage_sqlite::{run_migrations, SqliteAdminStore};
+use sdkwork_api_storage_sqlite::{SqliteAdminStore, run_migrations};
 use serial_test::serial;
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 
 #[tokio::test]
 async fn standalone_listener_host_rebinds_requests_to_new_bind() {
@@ -285,6 +286,74 @@ async fn standalone_runtime_supervision_continues_heartbeat_in_reloaded_database
     wait_for_models(&live_store, &["gpt-4.1-rotated"]).await;
     let rotated_store = live_store.snapshot();
     wait_for_service_runtime_node(rotated_store.as_ref(), "portal-node-rotating").await;
+
+    drop(supervision);
+    cleanup_dir(&config_root);
+}
+
+#[serial(runtime_config_env)]
+#[tokio::test]
+async fn standalone_runtime_supervision_reloads_gateway_payment_store_after_database_change() {
+    let config_root = temp_root("runtime-gateway-payment-store-reload");
+    let gateway_bind = available_bind();
+    let initial_db_path = config_root.join("initial.db");
+    let rotated_db_path = config_root.join("rotated.db");
+    let initial_db_url = sqlite_url_for_path(&initial_db_path);
+    let rotated_db_url = sqlite_url_for_path(&rotated_db_path);
+
+    seed_model_and_payment_store(
+        &initial_db_url,
+        "gateway-payment-initial",
+        "payment-order-initial",
+    )
+    .await;
+    seed_model_and_payment_store(
+        &rotated_db_url,
+        "gateway-payment-rotated",
+        "payment-order-rotated",
+    )
+    .await;
+    write_gateway_store_runtime_config_with_cache(
+        &config_root,
+        &gateway_bind,
+        &initial_db_url,
+        CacheBackendKind::Memory,
+        None,
+    );
+
+    let (loader, initial_config) = StandaloneConfigLoader::from_local_root_and_pairs(
+        &config_root,
+        std::iter::empty::<(&str, &str)>(),
+    )
+    .unwrap();
+    initial_config.apply_to_process_env();
+
+    let (initial_store, initial_payment_store) = seed_model_and_payment_store(
+        &initial_db_url,
+        "gateway-payment-initial",
+        "payment-order-initial",
+    )
+    .await;
+    let live_store = Reloadable::new(initial_store);
+    let live_payment_store = Reloadable::new(initial_payment_store);
+    let supervision = start_standalone_runtime_supervision(
+        StandaloneServiceKind::Gateway,
+        loader,
+        initial_config,
+        StandaloneServiceReloadHandles::gateway(live_store.clone())
+            .with_payment_store(live_payment_store.clone()),
+    );
+
+    write_gateway_store_runtime_config_with_cache(
+        &config_root,
+        &gateway_bind,
+        &rotated_db_url,
+        CacheBackendKind::Memory,
+        None,
+    );
+
+    wait_for_models(&live_store, &["gateway-payment-rotated"]).await;
+    wait_for_payment_order(&live_payment_store, "payment-order-rotated").await;
 
     drop(supervision);
     cleanup_dir(&config_root);
@@ -586,11 +655,12 @@ async fn cluster_standalone_config_rollout_fails_when_only_cache_backend_change_
 
     write_gateway_runtime_config(&gateway_root, &gateway_bind);
 
-    let (gateway_loader, gateway_initial_config) = StandaloneConfigLoader::from_local_root_and_pairs(
-        &gateway_root,
-        std::iter::empty::<(&str, &str)>(),
-    )
-    .unwrap();
+    let (gateway_loader, gateway_initial_config) =
+        StandaloneConfigLoader::from_local_root_and_pairs(
+            &gateway_root,
+            std::iter::empty::<(&str, &str)>(),
+        )
+        .unwrap();
 
     let gateway_live_store = Reloadable::new(empty_store().await);
     let gateway_supervision = start_standalone_runtime_supervision(
@@ -643,8 +713,8 @@ async fn cluster_standalone_config_rollout_fails_when_only_cache_backend_change_
 
 #[serial(runtime_config_env)]
 #[tokio::test]
-async fn cluster_standalone_config_rollout_applies_database_reload_but_fails_when_cache_backend_also_requires_restart(
-) {
+async fn cluster_standalone_config_rollout_applies_database_reload_but_fails_when_cache_backend_also_requires_restart()
+ {
     let shared_store = empty_store().await;
     let gateway_root = temp_root("cluster-config-rollout-gateway-store-and-cache-restart");
     let gateway_bind = available_bind();
@@ -661,13 +731,15 @@ async fn cluster_standalone_config_rollout_applies_database_reload_but_fails_whe
         None,
     );
 
-    let (gateway_loader, gateway_initial_config) = StandaloneConfigLoader::from_local_root_and_pairs(
-        &gateway_root,
-        std::iter::empty::<(&str, &str)>(),
-    )
-    .unwrap();
+    let (gateway_loader, gateway_initial_config) =
+        StandaloneConfigLoader::from_local_root_and_pairs(
+            &gateway_root,
+            std::iter::empty::<(&str, &str)>(),
+        )
+        .unwrap();
 
-    let gateway_live_store = Reloadable::new(seed_model_store(&initial_db_url, "gateway-initial").await);
+    let gateway_live_store =
+        Reloadable::new(seed_model_store(&initial_db_url, "gateway-initial").await);
     let gateway_supervision = start_standalone_runtime_supervision(
         StandaloneServiceKind::Gateway,
         gateway_loader,
@@ -677,8 +749,11 @@ async fn cluster_standalone_config_rollout_applies_database_reload_but_fails_whe
             .with_node_id("gateway-node-store-and-cache-restart"),
     );
 
-    wait_for_service_runtime_node(shared_store.as_ref(), "gateway-node-store-and-cache-restart")
-        .await;
+    wait_for_service_runtime_node(
+        shared_store.as_ref(),
+        "gateway-node-store-and-cache-restart",
+    )
+    .await;
 
     write_gateway_store_runtime_config_with_cache(
         &gateway_root,
@@ -916,6 +991,68 @@ async fn seed_model_store(database_url: &str, model_id: &str) -> Arc<dyn AdminSt
     Arc::new(store)
 }
 
+async fn seed_model_and_payment_store(
+    database_url: &str,
+    model_id: &str,
+    payment_order_id: &str,
+) -> (Arc<dyn AdminStore>, Arc<dyn CommercialKernelStore>) {
+    if let Some(path) = sqlite_path_from_url(database_url) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        let _ = fs::File::create(path).unwrap();
+    }
+    let pool = run_migrations(database_url).await.unwrap();
+    let store = Arc::new(SqliteAdminStore::new(pool));
+    store
+        .insert_channel(&Channel::new("openai", "OpenAI"))
+        .await
+        .unwrap();
+    store
+        .insert_provider(
+            &ProxyProvider::new(
+                "provider-openai-official",
+                "openai",
+                "openai",
+                "https://api.openai.com/v1",
+                "OpenAI Official",
+            )
+            .with_extension_id("sdkwork.provider.openai.official"),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_model(&ModelCatalogEntry::new(
+            model_id,
+            "provider-openai-official",
+        ))
+        .await
+        .unwrap();
+    store
+        .insert_payment_order_record(
+            &PaymentOrderRecord::new(
+                payment_order_id,
+                format!("commerce-{payment_order_id}"),
+                101,
+                0,
+                202,
+                "project-runtime-gateway",
+                "recharge_pack",
+                "workspace",
+                "project-runtime-gateway",
+                "USD",
+                4_000,
+            )
+            .with_created_at_ms(1_730_000_000)
+            .with_updated_at_ms(1_730_000_000),
+        )
+        .await
+        .unwrap();
+    let admin_store: Arc<dyn AdminStore> = store.clone();
+    let payment_store: Arc<dyn CommercialKernelStore> = store;
+    (admin_store, payment_store)
+}
+
 async fn empty_store() -> Arc<dyn AdminStore> {
     let pool = run_migrations("sqlite::memory:").await.unwrap();
     Arc::new(SqliteAdminStore::new(pool))
@@ -1015,6 +1152,26 @@ async fn wait_for_models(live_store: &Reloadable<Arc<dyn AdminStore>>, expected:
     }
 
     panic!("live store did not reach expected models");
+}
+
+async fn wait_for_payment_order(
+    live_payment_store: &Reloadable<Arc<dyn CommercialKernelStore>>,
+    expected_payment_order_id: &str,
+) {
+    for _ in 0..200 {
+        if live_payment_store
+            .snapshot()
+            .find_payment_order_record(expected_payment_order_id)
+            .await
+            .unwrap()
+            .is_some()
+        {
+            return;
+        }
+        sleep(Duration::from_millis(25)).await;
+    }
+
+    panic!("live payment store did not reach expected payment order");
 }
 
 async fn wait_for_reloadable_string(live_value: &Reloadable<String>, expected: &str) {

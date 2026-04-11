@@ -16,6 +16,7 @@ sdkwork-api-app-credential = { path = "../sdkwork-api-app-credential" }
 sdkwork-api-app-extension = { path = "../sdkwork-api-app-extension" }
 sdkwork-api-app-gateway = { path = "../sdkwork-api-app-gateway" }
 sdkwork-api-app-identity = { path = "../sdkwork-api-app-identity" }
+sdkwork-api-app-payment = { path = "../sdkwork-api-app-payment" }
 sdkwork-api-app-rate-limit = { path = "../sdkwork-api-app-rate-limit" }
 sdkwork-api-app-runtime = { path = "../sdkwork-api-app-runtime" }
 sdkwork-api-app-routing = { path = "../sdkwork-api-app-routing" }
@@ -26,6 +27,7 @@ sdkwork-api-domain-catalog = { path = "../sdkwork-api-domain-catalog" }
 sdkwork-api-domain-coupon = { path = "../sdkwork-api-domain-coupon" }
 sdkwork-api-domain-credential = { path = "../sdkwork-api-domain-credential" }
 sdkwork-api-domain-identity = { path = "../sdkwork-api-domain-identity" }
+sdkwork-api-domain-payment = { path = "../sdkwork-api-domain-payment" }
 sdkwork-api-domain-rate-limit = { path = "../sdkwork-api-domain-rate-limit" }
 sdkwork-api-domain-routing = { path = "../sdkwork-api-domain-routing" }
 sdkwork-api-domain-tenant = { path = "../sdkwork-api-domain-tenant" }
@@ -34,10 +36,13 @@ sdkwork-api-extension-core = { path = "../sdkwork-api-extension-core" }
 sdkwork-api-observability = { path = "../sdkwork-api-observability" }
 sdkwork-api-openapi = { path = "../sdkwork-api-openapi" }
 sdkwork-api-storage-core = { path = "../sdkwork-api-storage-core" }
+sdkwork-api-storage-postgres = { path = "../sdkwork-api-storage-postgres" }
 sdkwork-api-storage-sqlite = { path = "../sdkwork-api-storage-sqlite" }
 sqlx.workspace = true
 
 [dev-dependencies]
+sdkwork-api-domain-commerce = { path = "../sdkwork-api-domain-commerce" }
+sdkwork-api-domain-payment = { path = "../sdkwork-api-domain-payment" }
 serial_test.workspace = true
 serde_json.workspace = true
 sdkwork-api-extension-host = { path = "../sdkwork-api-extension-host" }

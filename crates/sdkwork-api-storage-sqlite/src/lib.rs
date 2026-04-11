@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{ensure, Result};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::fs;
@@ -25,6 +25,15 @@ use sdkwork_api_domain_identity::{
     AdminUserRecord, ApiKeyGroupRecord, CanonicalApiKeyRecord, GatewayApiKeyRecord,
     IdentityBindingRecord, IdentityUserRecord, PortalUserRecord,
 };
+use sdkwork_api_domain_payment::{
+    FinanceDirection, FinanceEntryCode, FinanceJournalEntryRecord, FinanceJournalLineRecord,
+    PaymentAttemptRecord, PaymentAttemptStatus, PaymentCallbackEventRecord,
+    PaymentCallbackProcessingStatus, PaymentChannelPolicyRecord, PaymentGatewayAccountRecord,
+    PaymentOrderRecord, PaymentOrderStatus, PaymentProviderCode, PaymentRefundStatus,
+    PaymentSessionKind, PaymentSessionRecord, PaymentSessionStatus, PaymentTransactionKind,
+    PaymentTransactionRecord, ReconciliationMatchStatus, ReconciliationMatchSummaryRecord,
+    RefundOrderRecord, RefundOrderStatus,
+};
 use sdkwork_api_domain_rate_limit::{
     RateLimitCheckResult, RateLimitPolicy, RateLimitWindowSnapshot,
 };
@@ -42,8 +51,9 @@ use sdkwork_api_extension_core::{ExtensionInstallation, ExtensionInstance, Exten
 use sdkwork_api_secret_core::SecretEnvelope;
 use sdkwork_api_storage_core::{
     AccountKernelStore, AdminStore, ExtensionRuntimeRolloutParticipantRecord,
-    ExtensionRuntimeRolloutRecord, IdentityKernelStore, ServiceRuntimeNodeRecord,
-    StandaloneConfigRolloutParticipantRecord, StandaloneConfigRolloutRecord, StorageDialect,
+    ExtensionRuntimeRolloutRecord, IdentityKernelStore, PaymentKernelStore,
+    ServiceRuntimeNodeRecord, StandaloneConfigRolloutParticipantRecord,
+    StandaloneConfigRolloutRecord, StorageDialect,
 };
 use serde_json::Value;
 use sqlx::{
@@ -856,6 +866,412 @@ pub async fn run_migrations(url: &str) -> Result<SqlitePool> {
     .execute(&pool)
     .await?;
     sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_payment_gateway_account (
+            gateway_account_id TEXT PRIMARY KEY NOT NULL,
+            tenant_id INTEGER NOT NULL,
+            organization_id INTEGER NOT NULL DEFAULT 0,
+            provider_code TEXT NOT NULL,
+            environment TEXT NOT NULL DEFAULT 'production',
+            merchant_id TEXT NOT NULL DEFAULT '',
+            app_id TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'active',
+            priority INTEGER NOT NULL DEFAULT 0,
+            created_at_ms INTEGER NOT NULL DEFAULT 0,
+            updated_at_ms INTEGER NOT NULL DEFAULT 0
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_payment_gateway_account_provider_status_priority
+         ON ai_payment_gateway_account (
+             tenant_id,
+             organization_id,
+             provider_code,
+             status,
+             priority
+         )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_payment_channel_policy (
+            channel_policy_id TEXT PRIMARY KEY NOT NULL,
+            tenant_id INTEGER NOT NULL,
+            organization_id INTEGER NOT NULL DEFAULT 0,
+            scene_code TEXT NOT NULL DEFAULT '',
+            country_code TEXT NOT NULL DEFAULT '',
+            currency_code TEXT NOT NULL DEFAULT '',
+            client_kind TEXT NOT NULL DEFAULT '',
+            provider_code TEXT NOT NULL,
+            method_code TEXT NOT NULL,
+            priority INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'active',
+            created_at_ms INTEGER NOT NULL DEFAULT 0,
+            updated_at_ms INTEGER NOT NULL DEFAULT 0
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_payment_order (
+            payment_order_id TEXT PRIMARY KEY NOT NULL,
+            tenant_id INTEGER NOT NULL,
+            organization_id INTEGER NOT NULL DEFAULT 0,
+            user_id INTEGER NOT NULL,
+            commerce_order_id TEXT NOT NULL,
+            project_id TEXT NOT NULL DEFAULT '',
+            order_kind TEXT NOT NULL DEFAULT '',
+            subject_type TEXT NOT NULL DEFAULT '',
+            subject_id TEXT NOT NULL DEFAULT '',
+            currency_code TEXT NOT NULL DEFAULT 'USD',
+            amount_minor INTEGER NOT NULL DEFAULT 0,
+            discount_minor INTEGER NOT NULL DEFAULT 0,
+            subsidy_minor INTEGER NOT NULL DEFAULT 0,
+            payable_minor INTEGER NOT NULL DEFAULT 0,
+            captured_amount_minor INTEGER NOT NULL DEFAULT 0,
+            provider_code TEXT NOT NULL DEFAULT 'unspecified',
+            method_code TEXT,
+            payment_status TEXT NOT NULL DEFAULT 'created',
+            fulfillment_status TEXT NOT NULL DEFAULT 'pending',
+            refund_status TEXT NOT NULL DEFAULT 'not_requested',
+            quote_snapshot_json TEXT,
+            metadata_json TEXT,
+            version INTEGER NOT NULL DEFAULT 0,
+            created_at_ms INTEGER NOT NULL DEFAULT 0,
+            updated_at_ms INTEGER NOT NULL DEFAULT 0
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    ensure_sqlite_column(
+        &pool,
+        "ai_payment_order",
+        "captured_amount_minor",
+        "captured_amount_minor INTEGER NOT NULL DEFAULT 0",
+    )
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_payment_order_user_created_at
+         ON ai_payment_order (tenant_id, organization_id, user_id, created_at_ms DESC)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_payment_order_provider_status_updated_at
+         ON ai_payment_order (
+             tenant_id,
+             organization_id,
+             provider_code,
+             payment_status,
+             updated_at_ms DESC
+         )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_payment_attempt (
+            payment_attempt_id TEXT PRIMARY KEY NOT NULL,
+            tenant_id INTEGER NOT NULL,
+            organization_id INTEGER NOT NULL DEFAULT 0,
+            payment_order_id TEXT NOT NULL,
+            attempt_no INTEGER NOT NULL DEFAULT 1,
+            gateway_account_id TEXT NOT NULL DEFAULT '',
+            provider_code TEXT NOT NULL DEFAULT 'unspecified',
+            method_code TEXT NOT NULL DEFAULT '',
+            client_kind TEXT NOT NULL DEFAULT '',
+            idempotency_key TEXT NOT NULL,
+            provider_request_id TEXT,
+            provider_payment_reference TEXT,
+            attempt_status TEXT NOT NULL DEFAULT 'initiated',
+            request_payload_hash TEXT NOT NULL DEFAULT '',
+            expires_at_ms INTEGER,
+            created_at_ms INTEGER NOT NULL DEFAULT 0,
+            updated_at_ms INTEGER NOT NULL DEFAULT 0
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_payment_attempt_order_attempt
+         ON ai_payment_attempt (
+             tenant_id,
+             organization_id,
+             payment_order_id,
+             attempt_no DESC
+         )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_payment_session (
+            payment_session_id TEXT PRIMARY KEY NOT NULL,
+            tenant_id INTEGER NOT NULL,
+            organization_id INTEGER NOT NULL DEFAULT 0,
+            payment_attempt_id TEXT NOT NULL,
+            session_kind TEXT NOT NULL DEFAULT 'redirect',
+            session_status TEXT NOT NULL DEFAULT 'open',
+            display_reference TEXT,
+            qr_payload TEXT,
+            redirect_url TEXT,
+            expires_at_ms INTEGER NOT NULL DEFAULT 0,
+            created_at_ms INTEGER NOT NULL DEFAULT 0,
+            updated_at_ms INTEGER NOT NULL DEFAULT 0
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_payment_session_attempt
+         ON ai_payment_session (tenant_id, organization_id, payment_attempt_id)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_payment_transaction (
+            payment_transaction_id TEXT PRIMARY KEY NOT NULL,
+            tenant_id INTEGER NOT NULL,
+            organization_id INTEGER NOT NULL DEFAULT 0,
+            payment_order_id TEXT NOT NULL,
+            payment_attempt_id TEXT,
+            transaction_kind TEXT NOT NULL DEFAULT 'sale',
+            provider_code TEXT NOT NULL DEFAULT 'unspecified',
+            provider_transaction_id TEXT NOT NULL,
+            currency_code TEXT NOT NULL DEFAULT 'USD',
+            amount_minor INTEGER NOT NULL DEFAULT 0,
+            fee_minor INTEGER,
+            net_amount_minor INTEGER,
+            provider_status TEXT NOT NULL DEFAULT 'pending',
+            raw_event_id TEXT,
+            occurred_at_ms INTEGER NOT NULL DEFAULT 0,
+            created_at_ms INTEGER NOT NULL DEFAULT 0
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_payment_transaction_order_occurred_at
+         ON ai_payment_transaction (
+             tenant_id,
+             organization_id,
+             payment_order_id,
+             occurred_at_ms DESC
+         )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_payment_callback_event (
+            callback_event_id TEXT PRIMARY KEY NOT NULL,
+            tenant_id INTEGER NOT NULL,
+            organization_id INTEGER NOT NULL DEFAULT 0,
+            provider_code TEXT NOT NULL DEFAULT 'unspecified',
+            gateway_account_id TEXT NOT NULL DEFAULT '',
+            event_type TEXT NOT NULL DEFAULT '',
+            event_identity TEXT NOT NULL DEFAULT '',
+            dedupe_key TEXT NOT NULL,
+            payment_order_id TEXT,
+            payment_attempt_id TEXT,
+            provider_transaction_id TEXT,
+            signature_status TEXT NOT NULL DEFAULT 'pending',
+            processing_status TEXT NOT NULL DEFAULT 'pending',
+            payload_json TEXT,
+            received_at_ms INTEGER NOT NULL DEFAULT 0,
+            processed_at_ms INTEGER
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_payment_callback_event_processing_received_at
+         ON ai_payment_callback_event (
+             tenant_id,
+             organization_id,
+             processing_status,
+             received_at_ms DESC
+         )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_payment_callback_event_provider_dedupe
+         ON ai_payment_callback_event (
+             provider_code,
+             gateway_account_id,
+             dedupe_key
+         )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_refund_order (
+            refund_order_id TEXT PRIMARY KEY NOT NULL,
+            tenant_id INTEGER NOT NULL,
+            organization_id INTEGER NOT NULL DEFAULT 0,
+            payment_order_id TEXT NOT NULL,
+            commerce_order_id TEXT NOT NULL DEFAULT '',
+            refund_reason_code TEXT NOT NULL DEFAULT '',
+            requested_by_type TEXT NOT NULL DEFAULT '',
+            requested_by_id TEXT NOT NULL DEFAULT '',
+            currency_code TEXT NOT NULL DEFAULT 'USD',
+            requested_amount_minor INTEGER NOT NULL DEFAULT 0,
+            approved_amount_minor INTEGER,
+            refunded_amount_minor INTEGER NOT NULL DEFAULT 0,
+            refund_status TEXT NOT NULL DEFAULT 'requested',
+            created_at_ms INTEGER NOT NULL DEFAULT 0,
+            updated_at_ms INTEGER NOT NULL DEFAULT 0
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    ensure_sqlite_column(
+        &pool,
+        "ai_refund_order",
+        "refund_reason_code",
+        "refund_reason_code TEXT NOT NULL DEFAULT ''",
+    )
+    .await?;
+    ensure_sqlite_column(
+        &pool,
+        "ai_refund_order",
+        "requested_by_type",
+        "requested_by_type TEXT NOT NULL DEFAULT ''",
+    )
+    .await?;
+    ensure_sqlite_column(
+        &pool,
+        "ai_refund_order",
+        "requested_by_id",
+        "requested_by_id TEXT NOT NULL DEFAULT ''",
+    )
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_refund_order_payment_created_at
+         ON ai_refund_order (
+             tenant_id,
+             organization_id,
+             payment_order_id,
+             created_at_ms DESC
+         )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_refund_attempt (
+            refund_attempt_id TEXT PRIMARY KEY NOT NULL,
+            tenant_id INTEGER NOT NULL,
+            organization_id INTEGER NOT NULL DEFAULT 0,
+            refund_order_id TEXT NOT NULL,
+            attempt_no INTEGER NOT NULL DEFAULT 1,
+            provider_refund_id TEXT,
+            provider_code TEXT NOT NULL DEFAULT 'unspecified',
+            attempt_status TEXT NOT NULL DEFAULT 'requested',
+            created_at_ms INTEGER NOT NULL DEFAULT 0,
+            updated_at_ms INTEGER NOT NULL DEFAULT 0
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_refund_order_processing_steps (
+            refund_order_id TEXT NOT NULL,
+            step_key TEXT NOT NULL,
+            applied_at_ms INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (refund_order_id, step_key)
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_finance_journal_entry (
+            finance_journal_entry_id TEXT PRIMARY KEY NOT NULL,
+            tenant_id INTEGER NOT NULL,
+            organization_id INTEGER NOT NULL DEFAULT 0,
+            source_kind TEXT NOT NULL DEFAULT '',
+            source_id TEXT NOT NULL DEFAULT '',
+            entry_code TEXT NOT NULL DEFAULT '',
+            currency_code TEXT NOT NULL DEFAULT 'USD',
+            entry_status TEXT NOT NULL DEFAULT 'draft',
+            occurred_at_ms INTEGER NOT NULL DEFAULT 0,
+            created_at_ms INTEGER NOT NULL DEFAULT 0
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_finance_journal_entry_source
+         ON ai_finance_journal_entry (tenant_id, organization_id, source_kind, source_id)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_finance_journal_line (
+            finance_journal_line_id TEXT PRIMARY KEY NOT NULL,
+            tenant_id INTEGER NOT NULL,
+            organization_id INTEGER NOT NULL DEFAULT 0,
+            finance_journal_entry_id TEXT NOT NULL,
+            line_no INTEGER NOT NULL DEFAULT 0,
+            account_code TEXT NOT NULL DEFAULT '',
+            direction TEXT NOT NULL DEFAULT 'debit',
+            amount_minor INTEGER NOT NULL DEFAULT 0,
+            party_type TEXT,
+            party_id TEXT
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_payment_reconciliation_batch (
+            reconciliation_batch_id TEXT PRIMARY KEY NOT NULL,
+            tenant_id INTEGER NOT NULL,
+            organization_id INTEGER NOT NULL DEFAULT 0,
+            provider_code TEXT NOT NULL DEFAULT 'unspecified',
+            gateway_account_id TEXT NOT NULL DEFAULT '',
+            artifact_date TEXT NOT NULL DEFAULT '',
+            import_status TEXT NOT NULL DEFAULT 'pending',
+            created_at_ms INTEGER NOT NULL DEFAULT 0
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_payment_reconciliation_line (
+            reconciliation_line_id TEXT PRIMARY KEY NOT NULL,
+            tenant_id INTEGER NOT NULL,
+            organization_id INTEGER NOT NULL DEFAULT 0,
+            reconciliation_batch_id TEXT NOT NULL,
+            provider_transaction_id TEXT NOT NULL DEFAULT '',
+            payment_order_id TEXT,
+            refund_order_id TEXT,
+            provider_amount_minor INTEGER NOT NULL DEFAULT 0,
+            local_amount_minor INTEGER,
+            match_status TEXT NOT NULL DEFAULT 'matched',
+            reason_code TEXT,
+            created_at_ms INTEGER NOT NULL DEFAULT 0,
+            updated_at_ms INTEGER NOT NULL DEFAULT 0
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    ensure_sqlite_column(
+        &pool,
+        "ai_payment_reconciliation_line",
+        "updated_at_ms",
+        "updated_at_ms INTEGER NOT NULL DEFAULT 0",
+    )
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_payment_reconciliation_line_batch_status
+         ON ai_payment_reconciliation_line (
+             tenant_id,
+             organization_id,
+             reconciliation_batch_id,
+             match_status
+         )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
         "CREATE TABLE IF NOT EXISTS ai_pricing_plan (
             pricing_plan_id INTEGER PRIMARY KEY NOT NULL,
             tenant_id INTEGER NOT NULL,
@@ -1174,6 +1590,16 @@ pub async fn run_migrations(url: &str) -> Result<SqlitePool> {
     sqlx::query(
         "CREATE INDEX IF NOT EXISTS idx_ai_commerce_orders_user_created_at
          ON ai_commerce_orders (user_id, created_at_ms DESC, status, order_id)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_commerce_order_settlement_steps (
+            order_id TEXT NOT NULL,
+            step_key TEXT NOT NULL,
+            applied_at_ms INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (order_id, step_key)
+        )",
     )
     .execute(&pool)
     .await?;
@@ -2745,11 +3171,330 @@ fn decode_billing_event_row(row: &SqliteRow) -> Result<BillingEventRecord> {
     })
 }
 
+fn decode_payment_order_row(row: &SqliteRow) -> Result<PaymentOrderRecord> {
+    let mut record = PaymentOrderRecord::new(
+        row.try_get::<String, _>("payment_order_id")?,
+        row.try_get::<String, _>("commerce_order_id")?,
+        u64::try_from(row.try_get::<i64, _>("tenant_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("organization_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("user_id")?)?,
+        row.try_get::<String, _>("project_id")?,
+        row.try_get::<String, _>("order_kind")?,
+        row.try_get::<String, _>("subject_type")?,
+        row.try_get::<String, _>("subject_id")?,
+        row.try_get::<String, _>("currency_code")?,
+        u64::try_from(row.try_get::<i64, _>("amount_minor")?)?,
+    )
+    .with_discount_minor(u64::try_from(row.try_get::<i64, _>("discount_minor")?)?)
+    .with_subsidy_minor(u64::try_from(row.try_get::<i64, _>("subsidy_minor")?)?)
+    .with_payable_minor(u64::try_from(row.try_get::<i64, _>("payable_minor")?)?)
+    .with_captured_amount_minor(u64::try_from(
+        row.try_get::<i64, _>("captured_amount_minor")?,
+    )?)
+    .with_provider_code(
+        PaymentProviderCode::from_str(&row.try_get::<String, _>("provider_code")?)
+            .map_err(anyhow::Error::msg)?,
+    )
+    .with_payment_status(
+        PaymentOrderStatus::from_str(&row.try_get::<String, _>("payment_status")?)
+            .map_err(anyhow::Error::msg)?,
+    )
+    .with_fulfillment_status(row.try_get::<String, _>("fulfillment_status")?)
+    .with_refund_status(
+        PaymentRefundStatus::from_str(&row.try_get::<String, _>("refund_status")?)
+            .map_err(anyhow::Error::msg)?,
+    )
+    .with_quote_snapshot_json(row.try_get("quote_snapshot_json")?)
+    .with_metadata_json(row.try_get("metadata_json")?)
+    .with_version(u64::try_from(row.try_get::<i64, _>("version")?)?)
+    .with_created_at_ms(u64::try_from(row.try_get::<i64, _>("created_at_ms")?)?)
+    .with_updated_at_ms(u64::try_from(row.try_get::<i64, _>("updated_at_ms")?)?);
+
+    if let Some(method_code) = row.try_get::<Option<String>, _>("method_code")? {
+        record = record.with_method_code(method_code);
+    }
+
+    Ok(record)
+}
+
+fn decode_payment_gateway_account_row(row: &SqliteRow) -> Result<PaymentGatewayAccountRecord> {
+    Ok(PaymentGatewayAccountRecord::new(
+        row.try_get::<String, _>("gateway_account_id")?,
+        u64::try_from(row.try_get::<i64, _>("tenant_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("organization_id")?)?,
+        PaymentProviderCode::from_str(&row.try_get::<String, _>("provider_code")?)
+            .map_err(anyhow::Error::msg)?,
+    )
+    .with_environment(row.try_get::<String, _>("environment")?)
+    .with_merchant_id(row.try_get::<String, _>("merchant_id")?)
+    .with_app_id(row.try_get::<String, _>("app_id")?)
+    .with_status(row.try_get::<String, _>("status")?)
+    .with_priority(i32::try_from(row.try_get::<i64, _>("priority")?)?)
+    .with_created_at_ms(u64::try_from(row.try_get::<i64, _>("created_at_ms")?)?)
+    .with_updated_at_ms(u64::try_from(row.try_get::<i64, _>("updated_at_ms")?)?))
+}
+
+fn decode_payment_channel_policy_row(row: &SqliteRow) -> Result<PaymentChannelPolicyRecord> {
+    Ok(PaymentChannelPolicyRecord::new(
+        row.try_get::<String, _>("channel_policy_id")?,
+        u64::try_from(row.try_get::<i64, _>("tenant_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("organization_id")?)?,
+        PaymentProviderCode::from_str(&row.try_get::<String, _>("provider_code")?)
+            .map_err(anyhow::Error::msg)?,
+        row.try_get::<String, _>("method_code")?,
+    )
+    .with_scene_code(row.try_get::<String, _>("scene_code")?)
+    .with_country_code(row.try_get::<String, _>("country_code")?)
+    .with_currency_code(row.try_get::<String, _>("currency_code")?)
+    .with_client_kind(row.try_get::<String, _>("client_kind")?)
+    .with_priority(i32::try_from(row.try_get::<i64, _>("priority")?)?)
+    .with_status(row.try_get::<String, _>("status")?)
+    .with_created_at_ms(u64::try_from(row.try_get::<i64, _>("created_at_ms")?)?)
+    .with_updated_at_ms(u64::try_from(row.try_get::<i64, _>("updated_at_ms")?)?))
+}
+
+fn decode_payment_attempt_row(row: &SqliteRow) -> Result<PaymentAttemptRecord> {
+    let mut record = PaymentAttemptRecord::new(
+        row.try_get::<String, _>("payment_attempt_id")?,
+        u64::try_from(row.try_get::<i64, _>("tenant_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("organization_id")?)?,
+        row.try_get::<String, _>("payment_order_id")?,
+        u32::try_from(row.try_get::<i64, _>("attempt_no")?)?,
+        row.try_get::<String, _>("gateway_account_id")?,
+        PaymentProviderCode::from_str(&row.try_get::<String, _>("provider_code")?)
+            .map_err(anyhow::Error::msg)?,
+        row.try_get::<String, _>("method_code")?,
+        row.try_get::<String, _>("client_kind")?,
+        row.try_get::<String, _>("idempotency_key")?,
+    )
+    .with_provider_request_id(row.try_get("provider_request_id")?)
+    .with_provider_payment_reference(row.try_get("provider_payment_reference")?)
+    .with_attempt_status(
+        PaymentAttemptStatus::from_str(&row.try_get::<String, _>("attempt_status")?)
+            .map_err(anyhow::Error::msg)?,
+    )
+    .with_request_payload_hash(row.try_get::<String, _>("request_payload_hash")?)
+    .with_expires_at_ms(
+        row.try_get::<Option<i64>, _>("expires_at_ms")?
+            .map(u64::try_from)
+            .transpose()?,
+    )
+    .with_created_at_ms(u64::try_from(row.try_get::<i64, _>("created_at_ms")?)?)
+    .with_updated_at_ms(u64::try_from(row.try_get::<i64, _>("updated_at_ms")?)?);
+
+    if record.request_payload_hash.is_empty() {
+        record = record.with_request_payload_hash("");
+    }
+
+    Ok(record)
+}
+
+fn decode_payment_session_row(row: &SqliteRow) -> Result<PaymentSessionRecord> {
+    Ok(PaymentSessionRecord::new(
+        row.try_get::<String, _>("payment_session_id")?,
+        u64::try_from(row.try_get::<i64, _>("tenant_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("organization_id")?)?,
+        row.try_get::<String, _>("payment_attempt_id")?,
+        PaymentSessionKind::from_str(&row.try_get::<String, _>("session_kind")?)
+            .map_err(anyhow::Error::msg)?,
+        PaymentSessionStatus::from_str(&row.try_get::<String, _>("session_status")?)
+            .map_err(anyhow::Error::msg)?,
+    )
+    .with_display_reference(row.try_get("display_reference")?)
+    .with_qr_payload(row.try_get("qr_payload")?)
+    .with_redirect_url(row.try_get("redirect_url")?)
+    .with_expires_at_ms(u64::try_from(row.try_get::<i64, _>("expires_at_ms")?)?)
+    .with_created_at_ms(u64::try_from(row.try_get::<i64, _>("created_at_ms")?)?)
+    .with_updated_at_ms(u64::try_from(row.try_get::<i64, _>("updated_at_ms")?)?))
+}
+
+fn decode_payment_callback_event_row(row: &SqliteRow) -> Result<PaymentCallbackEventRecord> {
+    Ok(PaymentCallbackEventRecord::new(
+        row.try_get::<String, _>("callback_event_id")?,
+        u64::try_from(row.try_get::<i64, _>("tenant_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("organization_id")?)?,
+        PaymentProviderCode::from_str(&row.try_get::<String, _>("provider_code")?)
+            .map_err(anyhow::Error::msg)?,
+        row.try_get::<String, _>("gateway_account_id")?,
+        row.try_get::<String, _>("event_type")?,
+        row.try_get::<String, _>("event_identity")?,
+        row.try_get::<String, _>("dedupe_key")?,
+        u64::try_from(row.try_get::<i64, _>("received_at_ms")?)?,
+    )
+    .with_payment_order_id(row.try_get("payment_order_id")?)
+    .with_payment_attempt_id(row.try_get("payment_attempt_id")?)
+    .with_provider_transaction_id(row.try_get("provider_transaction_id")?)
+    .with_signature_status(row.try_get::<String, _>("signature_status")?)
+    .with_processing_status(
+        PaymentCallbackProcessingStatus::from_str(&row.try_get::<String, _>("processing_status")?)
+            .map_err(anyhow::Error::msg)?,
+    )
+    .with_payload_json(row.try_get("payload_json")?)
+    .with_processed_at_ms(
+        row.try_get::<Option<i64>, _>("processed_at_ms")?
+            .map(u64::try_from)
+            .transpose()?,
+    ))
+}
+
+fn decode_refund_order_row(row: &SqliteRow) -> Result<RefundOrderRecord> {
+    Ok(RefundOrderRecord::new(
+        row.try_get::<String, _>("refund_order_id")?,
+        u64::try_from(row.try_get::<i64, _>("tenant_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("organization_id")?)?,
+        row.try_get::<String, _>("payment_order_id")?,
+        row.try_get::<String, _>("commerce_order_id")?,
+        row.try_get::<String, _>("refund_reason_code")?,
+        row.try_get::<String, _>("requested_by_type")?,
+        row.try_get::<String, _>("requested_by_id")?,
+        row.try_get::<String, _>("currency_code")?,
+        u64::try_from(row.try_get::<i64, _>("requested_amount_minor")?)?,
+    )
+    .with_approved_amount_minor(
+        row.try_get::<Option<i64>, _>("approved_amount_minor")?
+            .map(u64::try_from)
+            .transpose()?,
+    )
+    .with_refunded_amount_minor(u64::try_from(
+        row.try_get::<i64, _>("refunded_amount_minor")?,
+    )?)
+    .with_refund_status(
+        RefundOrderStatus::from_str(&row.try_get::<String, _>("refund_status")?)
+            .map_err(anyhow::Error::msg)?,
+    )
+    .with_created_at_ms(u64::try_from(row.try_get::<i64, _>("created_at_ms")?)?)
+    .with_updated_at_ms(u64::try_from(row.try_get::<i64, _>("updated_at_ms")?)?))
+}
+
+fn decode_payment_transaction_row(row: &SqliteRow) -> Result<PaymentTransactionRecord> {
+    Ok(PaymentTransactionRecord::new(
+        row.try_get::<String, _>("payment_transaction_id")?,
+        u64::try_from(row.try_get::<i64, _>("tenant_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("organization_id")?)?,
+        row.try_get::<String, _>("payment_order_id")?,
+        PaymentTransactionKind::from_str(&row.try_get::<String, _>("transaction_kind")?)
+            .map_err(anyhow::Error::msg)?,
+        PaymentProviderCode::from_str(&row.try_get::<String, _>("provider_code")?)
+            .map_err(anyhow::Error::msg)?,
+        row.try_get::<String, _>("provider_transaction_id")?,
+        row.try_get::<String, _>("currency_code")?,
+        u64::try_from(row.try_get::<i64, _>("amount_minor")?)?,
+        u64::try_from(row.try_get::<i64, _>("occurred_at_ms")?)?,
+    )
+    .with_payment_attempt_id(row.try_get("payment_attempt_id")?)
+    .with_fee_minor(
+        row.try_get::<Option<i64>, _>("fee_minor")?
+            .map(u64::try_from)
+            .transpose()?,
+    )
+    .with_net_amount_minor(
+        row.try_get::<Option<i64>, _>("net_amount_minor")?
+            .map(u64::try_from)
+            .transpose()?,
+    )
+    .with_provider_status(row.try_get::<String, _>("provider_status")?)
+    .with_raw_event_id(row.try_get("raw_event_id")?)
+    .with_created_at_ms(u64::try_from(row.try_get::<i64, _>("created_at_ms")?)?))
+}
+
+fn decode_finance_journal_entry_row(row: &SqliteRow) -> Result<FinanceJournalEntryRecord> {
+    Ok(FinanceJournalEntryRecord::new(
+        row.try_get::<String, _>("finance_journal_entry_id")?,
+        u64::try_from(row.try_get::<i64, _>("tenant_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("organization_id")?)?,
+        row.try_get::<String, _>("source_kind")?,
+        row.try_get::<String, _>("source_id")?,
+        FinanceEntryCode::from_str(&row.try_get::<String, _>("entry_code")?)
+            .map_err(anyhow::Error::msg)?,
+        row.try_get::<String, _>("currency_code")?,
+        u64::try_from(row.try_get::<i64, _>("occurred_at_ms")?)?,
+    )
+    .with_entry_status(row.try_get::<String, _>("entry_status")?)
+    .with_created_at_ms(u64::try_from(row.try_get::<i64, _>("created_at_ms")?)?))
+}
+
+fn decode_finance_journal_line_row(row: &SqliteRow) -> Result<FinanceJournalLineRecord> {
+    Ok(FinanceJournalLineRecord::new(
+        row.try_get::<String, _>("finance_journal_line_id")?,
+        u64::try_from(row.try_get::<i64, _>("tenant_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("organization_id")?)?,
+        row.try_get::<String, _>("finance_journal_entry_id")?,
+        u32::try_from(row.try_get::<i64, _>("line_no")?)?,
+        row.try_get::<String, _>("account_code")?,
+        FinanceDirection::from_str(&row.try_get::<String, _>("direction")?)
+            .map_err(anyhow::Error::msg)?,
+        u64::try_from(row.try_get::<i64, _>("amount_minor")?)?,
+    )
+    .with_party_type(row.try_get("party_type")?)
+    .with_party_id(row.try_get("party_id")?))
+}
+
+fn decode_reconciliation_match_summary_row(
+    row: &SqliteRow,
+) -> Result<ReconciliationMatchSummaryRecord> {
+    Ok(ReconciliationMatchSummaryRecord::new(
+        row.try_get::<String, _>("reconciliation_line_id")?,
+        u64::try_from(row.try_get::<i64, _>("tenant_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("organization_id")?)?,
+        row.try_get::<String, _>("reconciliation_batch_id")?,
+        row.try_get::<String, _>("provider_transaction_id")?,
+        ReconciliationMatchStatus::from_str(&row.try_get::<String, _>("match_status")?)
+            .map_err(anyhow::Error::msg)?,
+        u64::try_from(row.try_get::<i64, _>("provider_amount_minor")?)?,
+    )
+    .with_local_amount_minor(
+        row.try_get::<Option<i64>, _>("local_amount_minor")?
+            .map(u64::try_from)
+            .transpose()?,
+    )
+    .with_payment_order_id(row.try_get("payment_order_id")?)
+    .with_refund_order_id(row.try_get("refund_order_id")?)
+    .with_reason_code(row.try_get("reason_code")?)
+    .with_created_at_ms(u64::try_from(row.try_get::<i64, _>("created_at_ms")?)?)
+    .with_updated_at_ms(u64::try_from(row.try_get::<i64, _>("updated_at_ms")?)?))
+}
+
 fn current_timestamp_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
         .unwrap_or_default()
+}
+
+async fn try_insert_commerce_order_settlement_step(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    order_id: &str,
+    step_key: &str,
+) -> Result<bool> {
+    let result = sqlx::query(
+        "INSERT INTO ai_commerce_order_settlement_steps (order_id, step_key, applied_at_ms)
+         VALUES (?, ?, ?)
+         ON CONFLICT(order_id, step_key) DO NOTHING",
+    )
+    .bind(order_id)
+    .bind(step_key)
+    .bind(current_timestamp_ms())
+    .execute(&mut **tx)
+    .await?;
+    Ok(result.rows_affected() == 1)
+}
+
+async fn try_insert_refund_order_processing_step(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    refund_order_id: &str,
+    step_key: &str,
+) -> Result<bool> {
+    let result = sqlx::query(
+        "INSERT INTO ai_refund_order_processing_steps (refund_order_id, step_key, applied_at_ms)
+         VALUES (?, ?, ?)
+         ON CONFLICT(refund_order_id, step_key) DO NOTHING",
+    )
+    .bind(refund_order_id)
+    .bind(step_key)
+    .bind(current_timestamp_ms())
+    .execute(&mut **tx)
+    .await?;
+    Ok(result.rows_affected() == 1)
 }
 
 type PortalUserRow = (
@@ -5682,6 +6427,219 @@ impl SqliteAdminStore {
             .collect())
     }
 
+    pub async fn apply_commerce_order_quota_effect(
+        &self,
+        order_id: &str,
+        project_id: &str,
+        target_kind: &str,
+        target_units: u64,
+    ) -> Result<bool> {
+        let mut tx = self.pool.begin().await?;
+        if !try_insert_commerce_order_settlement_step(&mut tx, order_id, "quota").await? {
+            tx.rollback().await?;
+            return Ok(false);
+        }
+
+        let current_policy = sqlx::query_as::<_, (String, i64)>(
+            "SELECT policy_id, max_units
+             FROM ai_billing_quota_policies
+             WHERE project_id = ? AND enabled != 0
+             ORDER BY max_units ASC, policy_id ASC
+             LIMIT 1",
+        )
+        .bind(project_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let (policy_id, current_limit) = match current_policy {
+            Some((policy_id, max_units)) => (policy_id, u64::try_from(max_units)?),
+            None => (format!("portal_commerce_{project_id}"), 0),
+        };
+        let next_limit = match target_kind {
+            "subscription_plan" => current_limit.max(target_units),
+            "recharge_pack" | "custom_recharge" | "coupon_redemption" => {
+                current_limit.saturating_add(target_units)
+            }
+            _ => current_limit,
+        };
+
+        if next_limit != current_limit {
+            sqlx::query(
+                "INSERT INTO ai_billing_quota_policies (policy_id, project_id, max_units, enabled)
+                 VALUES (?, ?, ?, ?)
+                 ON CONFLICT(policy_id) DO UPDATE SET
+                    project_id = excluded.project_id,
+                    max_units = excluded.max_units,
+                    enabled = excluded.enabled",
+            )
+            .bind(&policy_id)
+            .bind(project_id)
+            .bind(i64::try_from(next_limit)?)
+            .bind(1_i64)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await?;
+        Ok(true)
+    }
+
+    pub async fn apply_refund_order_quota_reversal(
+        &self,
+        refund_order_id: &str,
+        project_id: &str,
+        target_kind: &str,
+        target_units: u64,
+    ) -> Result<bool> {
+        let mut tx = self.pool.begin().await?;
+        if !try_insert_refund_order_processing_step(&mut tx, refund_order_id, "quota").await? {
+            tx.rollback().await?;
+            return Ok(false);
+        }
+
+        ensure!(
+            matches!(target_kind, "recharge_pack" | "custom_recharge"),
+            "quota reversal does not support {target_kind}"
+        );
+
+        let (policy_id, current_limit) = sqlx::query_as::<_, (String, i64)>(
+            "SELECT policy_id, max_units
+             FROM ai_billing_quota_policies
+             WHERE project_id = ? AND enabled != 0
+             ORDER BY max_units ASC, policy_id ASC
+             LIMIT 1",
+        )
+        .bind(project_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("quota policy not found for project {project_id}"))?;
+        let current_limit = u64::try_from(current_limit)?;
+        ensure!(
+            current_limit >= target_units,
+            "quota policy for project {project_id} cannot reverse {target_units} units from current limit {current_limit}"
+        );
+        let next_limit = current_limit.saturating_sub(target_units);
+
+        sqlx::query(
+            "INSERT INTO ai_billing_quota_policies (policy_id, project_id, max_units, enabled)
+             VALUES (?, ?, ?, ?)
+             ON CONFLICT(policy_id) DO UPDATE SET
+                project_id = excluded.project_id,
+                max_units = excluded.max_units,
+                enabled = excluded.enabled",
+        )
+        .bind(&policy_id)
+        .bind(project_id)
+        .bind(i64::try_from(next_limit)?)
+        .bind(1_i64)
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok(true)
+    }
+
+    pub async fn consume_live_coupon_for_commerce_order(
+        &self,
+        order_id: &str,
+        coupon_id: &str,
+    ) -> Result<bool> {
+        let mut tx = self.pool.begin().await?;
+        if !try_insert_commerce_order_settlement_step(&mut tx, order_id, "coupon").await? {
+            tx.rollback().await?;
+            return Ok(false);
+        }
+
+        let remaining = sqlx::query_as::<_, (i64,)>(
+            "SELECT remaining
+             FROM ai_coupon_campaigns
+             WHERE id = ?",
+        )
+        .bind(coupon_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("coupon {coupon_id} not found"))?
+        .0;
+        if remaining <= 0 {
+            return Err(anyhow::anyhow!("coupon {coupon_id} is no longer available"));
+        }
+
+        let updated = sqlx::query(
+            "UPDATE ai_coupon_campaigns
+             SET remaining = remaining - 1
+             WHERE id = ? AND remaining > 0",
+        )
+        .bind(coupon_id)
+        .execute(&mut *tx)
+        .await?;
+        if updated.rows_affected() != 1 {
+            return Err(anyhow::anyhow!("coupon {coupon_id} is no longer available"));
+        }
+
+        tx.commit().await?;
+        Ok(true)
+    }
+
+    pub async fn upsert_project_membership_for_commerce_order(
+        &self,
+        order_id: &str,
+        membership: &ProjectMembershipRecord,
+    ) -> Result<bool> {
+        let mut tx = self.pool.begin().await?;
+        if !try_insert_commerce_order_settlement_step(&mut tx, order_id, "membership").await? {
+            tx.rollback().await?;
+            return Ok(false);
+        }
+
+        sqlx::query(
+            "INSERT INTO ai_project_memberships (
+                project_id,
+                membership_id,
+                user_id,
+                plan_id,
+                plan_name,
+                price_cents,
+                price_label,
+                cadence,
+                included_units,
+                status,
+                source,
+                activated_at_ms,
+                updated_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(project_id) DO UPDATE SET
+                membership_id = excluded.membership_id,
+                user_id = excluded.user_id,
+                plan_id = excluded.plan_id,
+                plan_name = excluded.plan_name,
+                price_cents = excluded.price_cents,
+                price_label = excluded.price_label,
+                cadence = excluded.cadence,
+                included_units = excluded.included_units,
+                status = excluded.status,
+                source = excluded.source,
+                activated_at_ms = excluded.activated_at_ms,
+                updated_at_ms = excluded.updated_at_ms",
+        )
+        .bind(&membership.project_id)
+        .bind(&membership.membership_id)
+        .bind(&membership.user_id)
+        .bind(&membership.plan_id)
+        .bind(&membership.plan_name)
+        .bind(i64::try_from(membership.price_cents)?)
+        .bind(&membership.price_label)
+        .bind(&membership.cadence)
+        .bind(i64::try_from(membership.included_units)?)
+        .bind(&membership.status)
+        .bind(&membership.source)
+        .bind(i64::try_from(membership.activated_at_ms)?)
+        .bind(i64::try_from(membership.updated_at_ms)?)
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok(true)
+    }
+
     pub async fn upsert_project_membership(
         &self,
         membership: &ProjectMembershipRecord,
@@ -6865,6 +7823,10 @@ impl AdminStore for SqliteAdminStore {
         StorageDialect::Sqlite
     }
 
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
     async fn insert_channel(&self, channel: &Channel) -> Result<Channel> {
         SqliteAdminStore::insert_channel(self, channel).await
     }
@@ -7272,6 +8234,23 @@ impl AdminStore for SqliteAdminStore {
         SqliteAdminStore::list_commerce_orders_for_project(self, project_id).await
     }
 
+    async fn apply_commerce_order_quota_effect(
+        &self,
+        order_id: &str,
+        project_id: &str,
+        target_kind: &str,
+        target_units: u64,
+    ) -> Result<bool> {
+        SqliteAdminStore::apply_commerce_order_quota_effect(
+            self,
+            order_id,
+            project_id,
+            target_kind,
+            target_units,
+        )
+        .await
+    }
+
     async fn upsert_project_membership(
         &self,
         membership: &ProjectMembershipRecord,
@@ -7279,11 +8258,28 @@ impl AdminStore for SqliteAdminStore {
         SqliteAdminStore::upsert_project_membership(self, membership).await
     }
 
+    async fn consume_live_coupon_for_commerce_order(
+        &self,
+        order_id: &str,
+        coupon_id: &str,
+    ) -> Result<bool> {
+        SqliteAdminStore::consume_live_coupon_for_commerce_order(self, order_id, coupon_id).await
+    }
+
     async fn find_project_membership(
         &self,
         project_id: &str,
     ) -> Result<Option<ProjectMembershipRecord>> {
         SqliteAdminStore::find_project_membership(self, project_id).await
+    }
+
+    async fn upsert_project_membership_for_commerce_order(
+        &self,
+        order_id: &str,
+        membership: &ProjectMembershipRecord,
+    ) -> Result<bool> {
+        SqliteAdminStore::upsert_project_membership_for_commerce_order(self, order_id, membership)
+            .await
     }
 
     async fn insert_portal_user(&self, user: &PortalUserRecord) -> Result<PortalUserRecord> {
@@ -7878,6 +8874,133 @@ impl AccountKernelStore for SqliteAdminStore {
             .collect()
     }
 
+    async fn apply_refund_order_account_grant_reversal(
+        &self,
+        refund_order_id: &str,
+        lot_id: u64,
+        reversal_quantity: f64,
+        updated_at_ms: u64,
+        ledger_entry: &AccountLedgerEntryRecord,
+        ledger_allocation: &AccountLedgerAllocationRecord,
+    ) -> Result<bool> {
+        let mut tx = self.pool.begin().await?;
+        if !try_insert_refund_order_processing_step(&mut tx, refund_order_id, "account").await? {
+            tx.rollback().await?;
+            return Ok(false);
+        }
+
+        let updated = sqlx::query(
+            "UPDATE ai_account_benefit_lot
+             SET remaining_quantity = CASE
+                    WHEN remaining_quantity - ? <= 0 THEN 0
+                    ELSE remaining_quantity - ?
+                 END,
+                 status = CASE
+                    WHEN remaining_quantity - ? <= 0 THEN ?
+                    ELSE ?
+                 END,
+                 updated_at_ms = ?
+             WHERE lot_id = ?
+               AND status = ?
+               AND (remaining_quantity - held_quantity) >= ?",
+        )
+        .bind(reversal_quantity)
+        .bind(reversal_quantity)
+        .bind(reversal_quantity)
+        .bind(account_benefit_lot_status_as_str(
+            AccountBenefitLotStatus::Exhausted,
+        ))
+        .bind(account_benefit_lot_status_as_str(
+            AccountBenefitLotStatus::Active,
+        ))
+        .bind(i64::try_from(updated_at_ms)?)
+        .bind(i64::try_from(lot_id)?)
+        .bind(account_benefit_lot_status_as_str(
+            AccountBenefitLotStatus::Active,
+        ))
+        .bind(reversal_quantity)
+        .execute(&mut *tx)
+        .await?;
+        if updated.rows_affected() != 1 {
+            let lot_exists = sqlx::query_as::<_, (i64,)>(
+                "SELECT COUNT(1)
+                 FROM ai_account_benefit_lot
+                 WHERE lot_id = ?",
+            )
+            .bind(i64::try_from(lot_id)?)
+            .fetch_one(&mut *tx)
+            .await?
+            .0 > 0;
+            if lot_exists {
+                return Err(anyhow::anyhow!(
+                    "account benefit lot {lot_id} does not have enough refundable quantity"
+                ));
+            }
+            return Err(anyhow::anyhow!(
+                "account benefit lot {lot_id} not found for refund {refund_order_id}"
+            ));
+        }
+
+        sqlx::query(
+            "INSERT INTO ai_account_ledger_entry (
+                ledger_entry_id, tenant_id, organization_id, account_id, user_id,
+                request_id, hold_id, entry_type, benefit_type, quantity, amount, created_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(ledger_entry_id) DO UPDATE SET
+                tenant_id = excluded.tenant_id,
+                organization_id = excluded.organization_id,
+                account_id = excluded.account_id,
+                user_id = excluded.user_id,
+                request_id = excluded.request_id,
+                hold_id = excluded.hold_id,
+                entry_type = excluded.entry_type,
+                benefit_type = excluded.benefit_type,
+                quantity = excluded.quantity,
+                amount = excluded.amount,
+                created_at_ms = excluded.created_at_ms",
+        )
+        .bind(i64::try_from(ledger_entry.ledger_entry_id)?)
+        .bind(i64::try_from(ledger_entry.tenant_id)?)
+        .bind(i64::try_from(ledger_entry.organization_id)?)
+        .bind(i64::try_from(ledger_entry.account_id)?)
+        .bind(i64::try_from(ledger_entry.user_id)?)
+        .bind(ledger_entry.request_id.map(i64::try_from).transpose()?)
+        .bind(ledger_entry.hold_id.map(i64::try_from).transpose()?)
+        .bind(account_ledger_entry_type_as_str(ledger_entry.entry_type))
+        .bind(&ledger_entry.benefit_type)
+        .bind(ledger_entry.quantity)
+        .bind(ledger_entry.amount)
+        .bind(i64::try_from(ledger_entry.created_at_ms)?)
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            "INSERT INTO ai_account_ledger_allocation (
+                ledger_allocation_id, tenant_id, organization_id, ledger_entry_id, lot_id,
+                quantity_delta, created_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(ledger_allocation_id) DO UPDATE SET
+                tenant_id = excluded.tenant_id,
+                organization_id = excluded.organization_id,
+                ledger_entry_id = excluded.ledger_entry_id,
+                lot_id = excluded.lot_id,
+                quantity_delta = excluded.quantity_delta,
+                created_at_ms = excluded.created_at_ms",
+        )
+        .bind(i64::try_from(ledger_allocation.ledger_allocation_id)?)
+        .bind(i64::try_from(ledger_allocation.tenant_id)?)
+        .bind(i64::try_from(ledger_allocation.organization_id)?)
+        .bind(i64::try_from(ledger_allocation.ledger_entry_id)?)
+        .bind(i64::try_from(ledger_allocation.lot_id)?)
+        .bind(ledger_allocation.quantity_delta)
+        .bind(i64::try_from(ledger_allocation.created_at_ms)?)
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok(true)
+    }
+
     async fn insert_account_hold(&self, record: &AccountHoldRecord) -> Result<AccountHoldRecord> {
         sqlx::query(
             "INSERT INTO ai_account_hold (
@@ -8390,6 +9513,835 @@ impl AccountKernelStore for SqliteAdminStore {
         .await?;
         rows.into_iter()
             .map(decode_request_settlement_row)
+            .collect()
+    }
+}
+
+#[async_trait]
+impl PaymentKernelStore for SqliteAdminStore {
+    async fn insert_payment_order_record(
+        &self,
+        record: &PaymentOrderRecord,
+    ) -> Result<PaymentOrderRecord> {
+        sqlx::query(
+            "INSERT INTO ai_payment_order (
+                payment_order_id, tenant_id, organization_id, user_id, commerce_order_id,
+                project_id, order_kind, subject_type, subject_id, currency_code,
+                amount_minor, discount_minor, subsidy_minor, payable_minor,
+                captured_amount_minor, provider_code, method_code, payment_status,
+                fulfillment_status, refund_status, quote_snapshot_json, metadata_json,
+                version, created_at_ms, updated_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(payment_order_id) DO UPDATE SET
+                tenant_id = excluded.tenant_id,
+                organization_id = excluded.organization_id,
+                user_id = excluded.user_id,
+                commerce_order_id = excluded.commerce_order_id,
+                project_id = excluded.project_id,
+                order_kind = excluded.order_kind,
+                subject_type = excluded.subject_type,
+                subject_id = excluded.subject_id,
+                currency_code = excluded.currency_code,
+                amount_minor = excluded.amount_minor,
+                discount_minor = excluded.discount_minor,
+                subsidy_minor = excluded.subsidy_minor,
+                payable_minor = excluded.payable_minor,
+                captured_amount_minor = excluded.captured_amount_minor,
+                provider_code = excluded.provider_code,
+                method_code = excluded.method_code,
+                payment_status = excluded.payment_status,
+                fulfillment_status = excluded.fulfillment_status,
+                refund_status = excluded.refund_status,
+                quote_snapshot_json = excluded.quote_snapshot_json,
+                metadata_json = excluded.metadata_json,
+                version = excluded.version,
+                created_at_ms = excluded.created_at_ms,
+                updated_at_ms = excluded.updated_at_ms",
+        )
+        .bind(&record.payment_order_id)
+        .bind(i64::try_from(record.tenant_id)?)
+        .bind(i64::try_from(record.organization_id)?)
+        .bind(i64::try_from(record.user_id)?)
+        .bind(&record.commerce_order_id)
+        .bind(&record.project_id)
+        .bind(&record.order_kind)
+        .bind(&record.subject_type)
+        .bind(&record.subject_id)
+        .bind(&record.currency_code)
+        .bind(i64::try_from(record.amount_minor)?)
+        .bind(i64::try_from(record.discount_minor)?)
+        .bind(i64::try_from(record.subsidy_minor)?)
+        .bind(i64::try_from(record.payable_minor)?)
+        .bind(i64::try_from(record.captured_amount_minor)?)
+        .bind(record.provider_code.as_str())
+        .bind(record.method_code.as_deref())
+        .bind(record.payment_status.as_str())
+        .bind(&record.fulfillment_status)
+        .bind(record.refund_status.as_str())
+        .bind(record.quote_snapshot_json.as_deref())
+        .bind(record.metadata_json.as_deref())
+        .bind(i64::try_from(record.version)?)
+        .bind(i64::try_from(record.created_at_ms)?)
+        .bind(i64::try_from(record.updated_at_ms)?)
+        .execute(&self.pool)
+        .await?;
+        Ok(record.clone())
+    }
+
+    async fn find_payment_order_record(
+        &self,
+        payment_order_id: &str,
+    ) -> Result<Option<PaymentOrderRecord>> {
+        let row = sqlx::query(
+            "SELECT payment_order_id, tenant_id, organization_id, user_id, commerce_order_id,
+                    project_id, order_kind, subject_type, subject_id, currency_code,
+                    amount_minor, discount_minor, subsidy_minor, payable_minor,
+                    captured_amount_minor, provider_code, method_code, payment_status,
+                    fulfillment_status, refund_status, quote_snapshot_json, metadata_json,
+                    version, created_at_ms, updated_at_ms
+             FROM ai_payment_order
+             WHERE payment_order_id = ?",
+        )
+        .bind(payment_order_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(|row| decode_payment_order_row(&row)).transpose()
+    }
+
+    async fn list_payment_order_records(&self) -> Result<Vec<PaymentOrderRecord>> {
+        let rows = sqlx::query(
+            "SELECT payment_order_id, tenant_id, organization_id, user_id, commerce_order_id,
+                    project_id, order_kind, subject_type, subject_id, currency_code,
+                    amount_minor, discount_minor, subsidy_minor, payable_minor,
+                    captured_amount_minor, provider_code, method_code, payment_status,
+                    fulfillment_status, refund_status, quote_snapshot_json, metadata_json,
+                    version, created_at_ms, updated_at_ms
+             FROM ai_payment_order
+             ORDER BY created_at_ms DESC, payment_order_id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|row| decode_payment_order_row(&row))
+            .collect()
+    }
+
+    async fn insert_payment_gateway_account_record(
+        &self,
+        record: &PaymentGatewayAccountRecord,
+    ) -> Result<PaymentGatewayAccountRecord> {
+        sqlx::query(
+            "INSERT INTO ai_payment_gateway_account (
+                gateway_account_id, tenant_id, organization_id, provider_code, environment,
+                merchant_id, app_id, status, priority, created_at_ms, updated_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(gateway_account_id) DO UPDATE SET
+                tenant_id = excluded.tenant_id,
+                organization_id = excluded.organization_id,
+                provider_code = excluded.provider_code,
+                environment = excluded.environment,
+                merchant_id = excluded.merchant_id,
+                app_id = excluded.app_id,
+                status = excluded.status,
+                priority = excluded.priority,
+                created_at_ms = excluded.created_at_ms,
+                updated_at_ms = excluded.updated_at_ms",
+        )
+        .bind(&record.gateway_account_id)
+        .bind(i64::try_from(record.tenant_id)?)
+        .bind(i64::try_from(record.organization_id)?)
+        .bind(record.provider_code.as_str())
+        .bind(&record.environment)
+        .bind(&record.merchant_id)
+        .bind(&record.app_id)
+        .bind(&record.status)
+        .bind(i64::from(record.priority))
+        .bind(i64::try_from(record.created_at_ms)?)
+        .bind(i64::try_from(record.updated_at_ms)?)
+        .execute(&self.pool)
+        .await?;
+        Ok(record.clone())
+    }
+
+    async fn list_payment_gateway_account_records(
+        &self,
+    ) -> Result<Vec<PaymentGatewayAccountRecord>> {
+        let rows = sqlx::query(
+            "SELECT gateway_account_id, tenant_id, organization_id, provider_code, environment,
+                    merchant_id, app_id, status, priority, created_at_ms, updated_at_ms
+             FROM ai_payment_gateway_account
+             ORDER BY priority DESC, gateway_account_id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|row| decode_payment_gateway_account_row(&row))
+            .collect()
+    }
+
+    async fn insert_payment_channel_policy_record(
+        &self,
+        record: &PaymentChannelPolicyRecord,
+    ) -> Result<PaymentChannelPolicyRecord> {
+        sqlx::query(
+            "INSERT INTO ai_payment_channel_policy (
+                channel_policy_id, tenant_id, organization_id, scene_code, country_code,
+                currency_code, client_kind, provider_code, method_code, priority, status,
+                created_at_ms, updated_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(channel_policy_id) DO UPDATE SET
+                tenant_id = excluded.tenant_id,
+                organization_id = excluded.organization_id,
+                scene_code = excluded.scene_code,
+                country_code = excluded.country_code,
+                currency_code = excluded.currency_code,
+                client_kind = excluded.client_kind,
+                provider_code = excluded.provider_code,
+                method_code = excluded.method_code,
+                priority = excluded.priority,
+                status = excluded.status,
+                created_at_ms = excluded.created_at_ms,
+                updated_at_ms = excluded.updated_at_ms",
+        )
+        .bind(&record.channel_policy_id)
+        .bind(i64::try_from(record.tenant_id)?)
+        .bind(i64::try_from(record.organization_id)?)
+        .bind(&record.scene_code)
+        .bind(&record.country_code)
+        .bind(&record.currency_code)
+        .bind(&record.client_kind)
+        .bind(record.provider_code.as_str())
+        .bind(&record.method_code)
+        .bind(i64::from(record.priority))
+        .bind(&record.status)
+        .bind(i64::try_from(record.created_at_ms)?)
+        .bind(i64::try_from(record.updated_at_ms)?)
+        .execute(&self.pool)
+        .await?;
+        Ok(record.clone())
+    }
+
+    async fn list_payment_channel_policy_records(&self) -> Result<Vec<PaymentChannelPolicyRecord>> {
+        let rows = sqlx::query(
+            "SELECT channel_policy_id, tenant_id, organization_id, scene_code, country_code,
+                    currency_code, client_kind, provider_code, method_code, priority, status,
+                    created_at_ms, updated_at_ms
+             FROM ai_payment_channel_policy
+             ORDER BY priority DESC, channel_policy_id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|row| decode_payment_channel_policy_row(&row))
+            .collect()
+    }
+
+    async fn insert_payment_attempt_record(
+        &self,
+        record: &PaymentAttemptRecord,
+    ) -> Result<PaymentAttemptRecord> {
+        sqlx::query(
+            "INSERT INTO ai_payment_attempt (
+                payment_attempt_id, tenant_id, organization_id, payment_order_id, attempt_no,
+                gateway_account_id, provider_code, method_code, client_kind, idempotency_key,
+                provider_request_id, provider_payment_reference, attempt_status,
+                request_payload_hash, expires_at_ms, created_at_ms, updated_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(payment_attempt_id) DO UPDATE SET
+                tenant_id = excluded.tenant_id,
+                organization_id = excluded.organization_id,
+                payment_order_id = excluded.payment_order_id,
+                attempt_no = excluded.attempt_no,
+                gateway_account_id = excluded.gateway_account_id,
+                provider_code = excluded.provider_code,
+                method_code = excluded.method_code,
+                client_kind = excluded.client_kind,
+                idempotency_key = excluded.idempotency_key,
+                provider_request_id = excluded.provider_request_id,
+                provider_payment_reference = excluded.provider_payment_reference,
+                attempt_status = excluded.attempt_status,
+                request_payload_hash = excluded.request_payload_hash,
+                expires_at_ms = excluded.expires_at_ms,
+                created_at_ms = excluded.created_at_ms,
+                updated_at_ms = excluded.updated_at_ms",
+        )
+        .bind(&record.payment_attempt_id)
+        .bind(i64::try_from(record.tenant_id)?)
+        .bind(i64::try_from(record.organization_id)?)
+        .bind(&record.payment_order_id)
+        .bind(i64::from(record.attempt_no))
+        .bind(&record.gateway_account_id)
+        .bind(record.provider_code.as_str())
+        .bind(&record.method_code)
+        .bind(&record.client_kind)
+        .bind(&record.idempotency_key)
+        .bind(record.provider_request_id.as_deref())
+        .bind(record.provider_payment_reference.as_deref())
+        .bind(record.attempt_status.as_str())
+        .bind(&record.request_payload_hash)
+        .bind(record.expires_at_ms.map(i64::try_from).transpose()?)
+        .bind(i64::try_from(record.created_at_ms)?)
+        .bind(i64::try_from(record.updated_at_ms)?)
+        .execute(&self.pool)
+        .await?;
+        Ok(record.clone())
+    }
+
+    async fn list_payment_attempt_records_for_order(
+        &self,
+        payment_order_id: &str,
+    ) -> Result<Vec<PaymentAttemptRecord>> {
+        let rows = sqlx::query(
+            "SELECT payment_attempt_id, tenant_id, organization_id, payment_order_id, attempt_no,
+                    gateway_account_id, provider_code, method_code, client_kind, idempotency_key,
+                    provider_request_id, provider_payment_reference, attempt_status,
+                    request_payload_hash, expires_at_ms, created_at_ms, updated_at_ms
+             FROM ai_payment_attempt
+             WHERE payment_order_id = ?
+             ORDER BY attempt_no DESC, payment_attempt_id",
+        )
+        .bind(payment_order_id)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|row| decode_payment_attempt_row(&row))
+            .collect()
+    }
+
+    async fn insert_payment_session_record(
+        &self,
+        record: &PaymentSessionRecord,
+    ) -> Result<PaymentSessionRecord> {
+        sqlx::query(
+            "INSERT INTO ai_payment_session (
+                payment_session_id, tenant_id, organization_id, payment_attempt_id,
+                session_kind, session_status, display_reference, qr_payload, redirect_url,
+                expires_at_ms, created_at_ms, updated_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(payment_session_id) DO UPDATE SET
+                tenant_id = excluded.tenant_id,
+                organization_id = excluded.organization_id,
+                payment_attempt_id = excluded.payment_attempt_id,
+                session_kind = excluded.session_kind,
+                session_status = excluded.session_status,
+                display_reference = excluded.display_reference,
+                qr_payload = excluded.qr_payload,
+                redirect_url = excluded.redirect_url,
+                expires_at_ms = excluded.expires_at_ms,
+                created_at_ms = excluded.created_at_ms,
+                updated_at_ms = excluded.updated_at_ms",
+        )
+        .bind(&record.payment_session_id)
+        .bind(i64::try_from(record.tenant_id)?)
+        .bind(i64::try_from(record.organization_id)?)
+        .bind(&record.payment_attempt_id)
+        .bind(record.session_kind.as_str())
+        .bind(record.session_status.as_str())
+        .bind(record.display_reference.as_deref())
+        .bind(record.qr_payload.as_deref())
+        .bind(record.redirect_url.as_deref())
+        .bind(i64::try_from(record.expires_at_ms)?)
+        .bind(i64::try_from(record.created_at_ms)?)
+        .bind(i64::try_from(record.updated_at_ms)?)
+        .execute(&self.pool)
+        .await?;
+        Ok(record.clone())
+    }
+
+    async fn list_payment_session_records_for_attempt(
+        &self,
+        payment_attempt_id: &str,
+    ) -> Result<Vec<PaymentSessionRecord>> {
+        let rows = sqlx::query(
+            "SELECT payment_session_id, tenant_id, organization_id, payment_attempt_id,
+                    session_kind, session_status, display_reference, qr_payload, redirect_url,
+                    expires_at_ms, created_at_ms, updated_at_ms
+             FROM ai_payment_session
+             WHERE payment_attempt_id = ?
+             ORDER BY created_at_ms DESC, payment_session_id",
+        )
+        .bind(payment_attempt_id)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|row| decode_payment_session_row(&row))
+            .collect()
+    }
+
+    async fn find_payment_callback_event_record_by_dedupe_key(
+        &self,
+        provider_code: PaymentProviderCode,
+        gateway_account_id: &str,
+        dedupe_key: &str,
+    ) -> Result<Option<PaymentCallbackEventRecord>> {
+        let row = sqlx::query(
+            "SELECT callback_event_id, tenant_id, organization_id, provider_code,
+                    gateway_account_id, event_type, event_identity, dedupe_key,
+                    payment_order_id, payment_attempt_id, provider_transaction_id,
+                    signature_status, processing_status, payload_json, received_at_ms,
+                    processed_at_ms
+             FROM ai_payment_callback_event
+             WHERE provider_code = ?
+               AND gateway_account_id = ?
+               AND dedupe_key = ?
+             LIMIT 1",
+        )
+        .bind(provider_code.as_str())
+        .bind(gateway_account_id)
+        .bind(dedupe_key)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(|row| decode_payment_callback_event_row(&row))
+            .transpose()
+    }
+
+    async fn insert_payment_callback_event_record(
+        &self,
+        record: &PaymentCallbackEventRecord,
+    ) -> Result<PaymentCallbackEventRecord> {
+        sqlx::query(
+            "INSERT INTO ai_payment_callback_event (
+                callback_event_id, tenant_id, organization_id, provider_code,
+                gateway_account_id, event_type, event_identity, dedupe_key, payment_order_id,
+                payment_attempt_id, provider_transaction_id, signature_status,
+                processing_status, payload_json, received_at_ms, processed_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(callback_event_id) DO UPDATE SET
+                tenant_id = excluded.tenant_id,
+                organization_id = excluded.organization_id,
+                provider_code = excluded.provider_code,
+                gateway_account_id = excluded.gateway_account_id,
+                event_type = excluded.event_type,
+                event_identity = excluded.event_identity,
+                dedupe_key = excluded.dedupe_key,
+                payment_order_id = excluded.payment_order_id,
+                payment_attempt_id = excluded.payment_attempt_id,
+                provider_transaction_id = excluded.provider_transaction_id,
+                signature_status = excluded.signature_status,
+                processing_status = excluded.processing_status,
+                payload_json = excluded.payload_json,
+                received_at_ms = excluded.received_at_ms,
+                processed_at_ms = excluded.processed_at_ms",
+        )
+        .bind(&record.callback_event_id)
+        .bind(i64::try_from(record.tenant_id)?)
+        .bind(i64::try_from(record.organization_id)?)
+        .bind(record.provider_code.as_str())
+        .bind(&record.gateway_account_id)
+        .bind(&record.event_type)
+        .bind(&record.event_identity)
+        .bind(&record.dedupe_key)
+        .bind(record.payment_order_id.as_deref())
+        .bind(record.payment_attempt_id.as_deref())
+        .bind(record.provider_transaction_id.as_deref())
+        .bind(&record.signature_status)
+        .bind(record.processing_status.as_str())
+        .bind(record.payload_json.as_deref())
+        .bind(i64::try_from(record.received_at_ms)?)
+        .bind(record.processed_at_ms.map(i64::try_from).transpose()?)
+        .execute(&self.pool)
+        .await?;
+        Ok(record.clone())
+    }
+
+    async fn list_payment_callback_event_records(&self) -> Result<Vec<PaymentCallbackEventRecord>> {
+        let rows = sqlx::query(
+            "SELECT callback_event_id, tenant_id, organization_id, provider_code,
+                    gateway_account_id, event_type, event_identity, dedupe_key,
+                    payment_order_id, payment_attempt_id, provider_transaction_id,
+                    signature_status, processing_status, payload_json, received_at_ms,
+                    processed_at_ms
+             FROM ai_payment_callback_event
+             ORDER BY received_at_ms DESC, callback_event_id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|row| decode_payment_callback_event_row(&row))
+            .collect()
+    }
+
+    async fn insert_payment_transaction_record(
+        &self,
+        record: &PaymentTransactionRecord,
+    ) -> Result<PaymentTransactionRecord> {
+        sqlx::query(
+            "INSERT INTO ai_payment_transaction (
+                payment_transaction_id, tenant_id, organization_id, payment_order_id,
+                payment_attempt_id, transaction_kind, provider_code, provider_transaction_id,
+                currency_code, amount_minor, fee_minor, net_amount_minor, provider_status,
+                raw_event_id, occurred_at_ms, created_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(payment_transaction_id) DO UPDATE SET
+                tenant_id = excluded.tenant_id,
+                organization_id = excluded.organization_id,
+                payment_order_id = excluded.payment_order_id,
+                payment_attempt_id = excluded.payment_attempt_id,
+                transaction_kind = excluded.transaction_kind,
+                provider_code = excluded.provider_code,
+                provider_transaction_id = excluded.provider_transaction_id,
+                currency_code = excluded.currency_code,
+                amount_minor = excluded.amount_minor,
+                fee_minor = excluded.fee_minor,
+                net_amount_minor = excluded.net_amount_minor,
+                provider_status = excluded.provider_status,
+                raw_event_id = excluded.raw_event_id,
+                occurred_at_ms = excluded.occurred_at_ms,
+                created_at_ms = excluded.created_at_ms",
+        )
+        .bind(&record.payment_transaction_id)
+        .bind(i64::try_from(record.tenant_id)?)
+        .bind(i64::try_from(record.organization_id)?)
+        .bind(&record.payment_order_id)
+        .bind(record.payment_attempt_id.as_deref())
+        .bind(record.transaction_kind.as_str())
+        .bind(record.provider_code.as_str())
+        .bind(&record.provider_transaction_id)
+        .bind(&record.currency_code)
+        .bind(i64::try_from(record.amount_minor)?)
+        .bind(record.fee_minor.map(i64::try_from).transpose()?)
+        .bind(record.net_amount_minor.map(i64::try_from).transpose()?)
+        .bind(&record.provider_status)
+        .bind(record.raw_event_id.as_deref())
+        .bind(i64::try_from(record.occurred_at_ms)?)
+        .bind(i64::try_from(record.created_at_ms)?)
+        .execute(&self.pool)
+        .await?;
+        Ok(record.clone())
+    }
+
+    async fn list_payment_transaction_records_for_order(
+        &self,
+        payment_order_id: &str,
+    ) -> Result<Vec<PaymentTransactionRecord>> {
+        let rows = sqlx::query(
+            "SELECT payment_transaction_id, tenant_id, organization_id, payment_order_id,
+                    payment_attempt_id, transaction_kind, provider_code, provider_transaction_id,
+                    currency_code, amount_minor, fee_minor, net_amount_minor, provider_status,
+                    raw_event_id, occurred_at_ms, created_at_ms
+             FROM ai_payment_transaction
+             WHERE payment_order_id = ?
+             ORDER BY occurred_at_ms DESC, payment_transaction_id",
+        )
+        .bind(payment_order_id)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|row| decode_payment_transaction_row(&row))
+            .collect()
+    }
+
+    async fn insert_refund_order_record(
+        &self,
+        record: &RefundOrderRecord,
+    ) -> Result<RefundOrderRecord> {
+        sqlx::query(
+            "INSERT INTO ai_refund_order (
+                refund_order_id, tenant_id, organization_id, payment_order_id, commerce_order_id,
+                refund_reason_code, requested_by_type, requested_by_id, currency_code,
+                requested_amount_minor, approved_amount_minor, refunded_amount_minor,
+                refund_status, created_at_ms, updated_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(refund_order_id) DO UPDATE SET
+                tenant_id = excluded.tenant_id,
+                organization_id = excluded.organization_id,
+                payment_order_id = excluded.payment_order_id,
+                commerce_order_id = excluded.commerce_order_id,
+                refund_reason_code = excluded.refund_reason_code,
+                requested_by_type = excluded.requested_by_type,
+                requested_by_id = excluded.requested_by_id,
+                currency_code = excluded.currency_code,
+                requested_amount_minor = excluded.requested_amount_minor,
+                approved_amount_minor = excluded.approved_amount_minor,
+                refunded_amount_minor = excluded.refunded_amount_minor,
+                refund_status = excluded.refund_status,
+                created_at_ms = excluded.created_at_ms,
+                updated_at_ms = excluded.updated_at_ms",
+        )
+        .bind(&record.refund_order_id)
+        .bind(i64::try_from(record.tenant_id)?)
+        .bind(i64::try_from(record.organization_id)?)
+        .bind(&record.payment_order_id)
+        .bind(&record.commerce_order_id)
+        .bind(&record.refund_reason_code)
+        .bind(&record.requested_by_type)
+        .bind(&record.requested_by_id)
+        .bind(&record.currency_code)
+        .bind(i64::try_from(record.requested_amount_minor)?)
+        .bind(
+            record
+                .approved_amount_minor
+                .map(i64::try_from)
+                .transpose()?,
+        )
+        .bind(i64::try_from(record.refunded_amount_minor)?)
+        .bind(record.refund_status.as_str())
+        .bind(i64::try_from(record.created_at_ms)?)
+        .bind(i64::try_from(record.updated_at_ms)?)
+        .execute(&self.pool)
+        .await?;
+        Ok(record.clone())
+    }
+
+    async fn list_refund_order_records_for_payment_order(
+        &self,
+        payment_order_id: &str,
+    ) -> Result<Vec<RefundOrderRecord>> {
+        let rows = sqlx::query(
+            "SELECT refund_order_id, tenant_id, organization_id, payment_order_id,
+                    commerce_order_id, refund_reason_code, requested_by_type,
+                    requested_by_id, currency_code, requested_amount_minor,
+                    approved_amount_minor, refunded_amount_minor, refund_status,
+                    created_at_ms, updated_at_ms
+             FROM ai_refund_order
+             WHERE payment_order_id = ?
+             ORDER BY created_at_ms DESC, refund_order_id",
+        )
+        .bind(payment_order_id)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|row| decode_refund_order_row(&row))
+            .collect()
+    }
+
+    async fn find_refund_order_record(
+        &self,
+        refund_order_id: &str,
+    ) -> Result<Option<RefundOrderRecord>> {
+        let row = sqlx::query(
+            "SELECT refund_order_id, tenant_id, organization_id, payment_order_id,
+                    commerce_order_id, refund_reason_code, requested_by_type,
+                    requested_by_id, currency_code, requested_amount_minor,
+                    approved_amount_minor, refunded_amount_minor, refund_status,
+                    created_at_ms, updated_at_ms
+             FROM ai_refund_order
+             WHERE refund_order_id = ?",
+        )
+        .bind(refund_order_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(|row| decode_refund_order_row(&row)).transpose()
+    }
+
+    async fn apply_refund_order_quota_reversal(
+        &self,
+        refund_order_id: &str,
+        project_id: &str,
+        target_kind: &str,
+        target_units: u64,
+    ) -> Result<bool> {
+        SqliteAdminStore::apply_refund_order_quota_reversal(
+            self,
+            refund_order_id,
+            project_id,
+            target_kind,
+            target_units,
+        )
+        .await
+    }
+
+    async fn insert_finance_journal_entry_record(
+        &self,
+        record: &FinanceJournalEntryRecord,
+    ) -> Result<FinanceJournalEntryRecord> {
+        sqlx::query(
+            "INSERT INTO ai_finance_journal_entry (
+                finance_journal_entry_id, tenant_id, organization_id, source_kind, source_id,
+                entry_code, currency_code, entry_status, occurred_at_ms, created_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(finance_journal_entry_id) DO UPDATE SET
+                tenant_id = excluded.tenant_id,
+                organization_id = excluded.organization_id,
+                source_kind = excluded.source_kind,
+                source_id = excluded.source_id,
+                entry_code = excluded.entry_code,
+                currency_code = excluded.currency_code,
+                entry_status = excluded.entry_status,
+                occurred_at_ms = excluded.occurred_at_ms,
+                created_at_ms = excluded.created_at_ms",
+        )
+        .bind(&record.finance_journal_entry_id)
+        .bind(i64::try_from(record.tenant_id)?)
+        .bind(i64::try_from(record.organization_id)?)
+        .bind(&record.source_kind)
+        .bind(&record.source_id)
+        .bind(record.entry_code.as_str())
+        .bind(&record.currency_code)
+        .bind(&record.entry_status)
+        .bind(i64::try_from(record.occurred_at_ms)?)
+        .bind(i64::try_from(record.created_at_ms)?)
+        .execute(&self.pool)
+        .await?;
+        Ok(record.clone())
+    }
+
+    async fn list_finance_journal_entry_records(&self) -> Result<Vec<FinanceJournalEntryRecord>> {
+        let rows = sqlx::query(
+            "SELECT finance_journal_entry_id, tenant_id, organization_id, source_kind, source_id,
+                    entry_code, currency_code, entry_status, occurred_at_ms, created_at_ms
+             FROM ai_finance_journal_entry
+             ORDER BY occurred_at_ms DESC, finance_journal_entry_id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|row| decode_finance_journal_entry_row(&row))
+            .collect()
+    }
+
+    async fn insert_finance_journal_line_record(
+        &self,
+        record: &FinanceJournalLineRecord,
+    ) -> Result<FinanceJournalLineRecord> {
+        sqlx::query(
+            "INSERT INTO ai_finance_journal_line (
+                finance_journal_line_id, tenant_id, organization_id, finance_journal_entry_id,
+                line_no, account_code, direction, amount_minor, party_type, party_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(finance_journal_line_id) DO UPDATE SET
+                tenant_id = excluded.tenant_id,
+                organization_id = excluded.organization_id,
+                finance_journal_entry_id = excluded.finance_journal_entry_id,
+                line_no = excluded.line_no,
+                account_code = excluded.account_code,
+                direction = excluded.direction,
+                amount_minor = excluded.amount_minor,
+                party_type = excluded.party_type,
+                party_id = excluded.party_id",
+        )
+        .bind(&record.finance_journal_line_id)
+        .bind(i64::try_from(record.tenant_id)?)
+        .bind(i64::try_from(record.organization_id)?)
+        .bind(&record.finance_journal_entry_id)
+        .bind(i64::from(record.line_no))
+        .bind(&record.account_code)
+        .bind(record.direction.as_str())
+        .bind(i64::try_from(record.amount_minor)?)
+        .bind(record.party_type.as_deref())
+        .bind(record.party_id.as_deref())
+        .execute(&self.pool)
+        .await?;
+        Ok(record.clone())
+    }
+
+    async fn list_finance_journal_line_records(
+        &self,
+        finance_journal_entry_id: &str,
+    ) -> Result<Vec<FinanceJournalLineRecord>> {
+        let rows = sqlx::query(
+            "SELECT finance_journal_line_id, tenant_id, organization_id, finance_journal_entry_id,
+                    line_no, account_code, direction, amount_minor, party_type, party_id
+             FROM ai_finance_journal_line
+             WHERE finance_journal_entry_id = ?
+             ORDER BY line_no ASC, finance_journal_line_id",
+        )
+        .bind(finance_journal_entry_id)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|row| decode_finance_journal_line_row(&row))
+            .collect()
+    }
+
+    async fn insert_reconciliation_match_summary_record(
+        &self,
+        record: &ReconciliationMatchSummaryRecord,
+    ) -> Result<ReconciliationMatchSummaryRecord> {
+        sqlx::query(
+            "INSERT INTO ai_payment_reconciliation_line (
+                reconciliation_line_id, tenant_id, organization_id, reconciliation_batch_id,
+                provider_transaction_id, payment_order_id, refund_order_id,
+                provider_amount_minor, local_amount_minor, match_status, reason_code,
+                created_at_ms, updated_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(reconciliation_line_id) DO UPDATE SET
+                tenant_id = excluded.tenant_id,
+                organization_id = excluded.organization_id,
+                reconciliation_batch_id = excluded.reconciliation_batch_id,
+                provider_transaction_id = excluded.provider_transaction_id,
+                payment_order_id = excluded.payment_order_id,
+                refund_order_id = excluded.refund_order_id,
+                provider_amount_minor = excluded.provider_amount_minor,
+                local_amount_minor = excluded.local_amount_minor,
+                match_status = excluded.match_status,
+                reason_code = excluded.reason_code,
+                created_at_ms = excluded.created_at_ms,
+                updated_at_ms = excluded.updated_at_ms",
+        )
+        .bind(&record.reconciliation_line_id)
+        .bind(i64::try_from(record.tenant_id)?)
+        .bind(i64::try_from(record.organization_id)?)
+        .bind(&record.reconciliation_batch_id)
+        .bind(&record.provider_transaction_id)
+        .bind(record.payment_order_id.as_deref())
+        .bind(record.refund_order_id.as_deref())
+        .bind(i64::try_from(record.provider_amount_minor)?)
+        .bind(record.local_amount_minor.map(i64::try_from).transpose()?)
+        .bind(record.match_status.as_str())
+        .bind(record.reason_code.as_deref())
+        .bind(i64::try_from(record.created_at_ms)?)
+        .bind(i64::try_from(record.updated_at_ms)?)
+        .execute(&self.pool)
+        .await?;
+        Ok(record.clone())
+    }
+
+    async fn list_reconciliation_match_summary_records(
+        &self,
+        reconciliation_batch_id: &str,
+    ) -> Result<Vec<ReconciliationMatchSummaryRecord>> {
+        let rows = sqlx::query(
+            "SELECT reconciliation_line_id, tenant_id, organization_id, reconciliation_batch_id,
+                    provider_transaction_id, payment_order_id, refund_order_id,
+                    provider_amount_minor, local_amount_minor, match_status, reason_code,
+                    created_at_ms, updated_at_ms
+             FROM ai_payment_reconciliation_line
+             WHERE reconciliation_batch_id = ?
+             ORDER BY created_at_ms DESC, reconciliation_line_id",
+        )
+        .bind(reconciliation_batch_id)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|row| decode_reconciliation_match_summary_row(&row))
+            .collect()
+    }
+
+    async fn find_reconciliation_match_summary_record(
+        &self,
+        reconciliation_line_id: &str,
+    ) -> Result<Option<ReconciliationMatchSummaryRecord>> {
+        sqlx::query(
+            "SELECT reconciliation_line_id, tenant_id, organization_id, reconciliation_batch_id,
+                    provider_transaction_id, payment_order_id, refund_order_id,
+                    provider_amount_minor, local_amount_minor, match_status, reason_code,
+                    created_at_ms, updated_at_ms
+             FROM ai_payment_reconciliation_line
+             WHERE reconciliation_line_id = ?",
+        )
+        .bind(reconciliation_line_id)
+        .fetch_optional(&self.pool)
+        .await?
+        .map(|row| decode_reconciliation_match_summary_row(&row))
+        .transpose()
+    }
+
+    async fn list_all_reconciliation_match_summary_records(
+        &self,
+    ) -> Result<Vec<ReconciliationMatchSummaryRecord>> {
+        let rows = sqlx::query(
+            "SELECT reconciliation_line_id, tenant_id, organization_id, reconciliation_batch_id,
+                    provider_transaction_id, payment_order_id, refund_order_id,
+                    provider_amount_minor, local_amount_minor, match_status, reason_code,
+                    created_at_ms, updated_at_ms
+             FROM ai_payment_reconciliation_line
+             ORDER BY created_at_ms DESC, reconciliation_line_id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|row| decode_reconciliation_match_summary_row(&row))
             .collect()
     }
 }

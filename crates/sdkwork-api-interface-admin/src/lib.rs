@@ -1,10 +1,14 @@
+use std::collections::BTreeMap;
+use std::str::FromStr;
 use std::sync::{Arc, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use anyhow::ensure;
 use axum::{
     body::Bytes,
     extract::FromRequestParts,
     extract::Path,
+    extract::Query,
     extract::State,
     http::header,
     http::request::Parts,
@@ -39,10 +43,10 @@ use sdkwork_api_app_extension::{
     list_provider_health_snapshots, persist_extension_installation, persist_extension_instance,
     PersistExtensionInstanceInput,
 };
-  use sdkwork_api_app_gateway::{
-      invalidate_capability_catalog_cache, reload_extension_host_with_scope,
-      ConfiguredExtensionHostReloadScope,
-  };
+use sdkwork_api_app_gateway::{
+    invalidate_capability_catalog_cache, reload_extension_host_with_scope,
+    ConfiguredExtensionHostReloadScope,
+};
 use sdkwork_api_app_identity::{
     change_admin_password, create_api_key_group, delete_admin_user, delete_api_key_group,
     delete_gateway_api_key, delete_portal_user, list_admin_user_profiles, list_api_key_groups,
@@ -52,6 +56,10 @@ use sdkwork_api_app_identity::{
     update_api_key_group, update_gateway_api_key_metadata, upsert_admin_user, upsert_portal_user,
     verify_jwt, AdminIdentityError, ApiKeyGroupInput, Claims, CreatedGatewayApiKey,
     PortalIdentityError,
+};
+use sdkwork_api_app_payment::{
+    approve_refund_order_request, cancel_refund_order_request, load_admin_payment_order_dossier,
+    start_refund_order_execution, AdminPaymentOrderDossier,
 };
 use sdkwork_api_app_rate_limit::{
     create_rate_limit_policy, list_rate_limit_policies, persist_rate_limit_policy,
@@ -75,7 +83,9 @@ use sdkwork_api_app_tenant::{
 };
 use sdkwork_api_app_usage::list_usage_records;
 use sdkwork_api_app_usage::summarize_usage_records_from_store;
-use sdkwork_api_domain_billing::{BillingEventRecord, BillingEventSummary, BillingSummary, LedgerEntry, QuotaPolicy};
+use sdkwork_api_domain_billing::{
+    BillingEventRecord, BillingEventSummary, BillingSummary, LedgerEntry, QuotaPolicy,
+};
 use sdkwork_api_domain_catalog::{
     Channel, ChannelModelRecord, ModelCapability, ModelCatalogEntry, ModelPriceRecord,
     ProviderChannelBinding, ProxyProvider,
@@ -84,6 +94,11 @@ use sdkwork_api_domain_coupon::CouponCampaign;
 use sdkwork_api_domain_credential::UpstreamCredential;
 use sdkwork_api_domain_identity::{
     AdminUserProfile, ApiKeyGroupRecord, GatewayApiKeyRecord, PortalUserProfile,
+};
+use sdkwork_api_domain_payment::{
+    PaymentChannelPolicyRecord, PaymentGatewayAccountRecord, PaymentOrderRecord,
+    PaymentProviderCode, ReconciliationMatchStatus, ReconciliationMatchSummaryRecord,
+    RefundOrderRecord, RefundOrderStatus,
 };
 use sdkwork_api_domain_rate_limit::{RateLimitPolicy, RateLimitWindowSnapshot};
 use sdkwork_api_domain_routing::{
@@ -99,7 +114,8 @@ use sdkwork_api_openapi::{
     build_openapi_document, extract_routes_from_function, render_docs_html, HttpMethod,
     OpenApiServiceSpec, RouteEntry,
 };
-use sdkwork_api_storage_core::{AdminStore, Reloadable};
+use sdkwork_api_storage_core::{AdminStore, PaymentKernelStore, Reloadable};
+use sdkwork_api_storage_postgres::PostgresAdminStore;
 use sdkwork_api_storage_sqlite::SqliteAdminStore;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -553,6 +569,154 @@ struct CreateApiKeyRequest {
     plaintext_key: Option<String>,
     #[serde(default)]
     api_key_group_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct ResolveReconciliationLineRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    resolved_at_ms: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
+struct PaymentReconciliationReasonBreakdownItem {
+    reason_code: String,
+    count: usize,
+    latest_updated_at_ms: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct PaymentReconciliationSummaryResponse {
+    total_count: usize,
+    active_count: usize,
+    resolved_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    latest_updated_at_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    oldest_active_created_at_ms: Option<u64>,
+    active_reason_breakdown: Vec<PaymentReconciliationReasonBreakdownItem>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct PaymentReconciliationListQuery {
+    #[serde(default)]
+    lifecycle: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct PaymentGatewayAccountListQuery {
+    #[serde(default)]
+    provider_code: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    tenant_id: Option<u64>,
+    #[serde(default)]
+    organization_id: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpsertPaymentGatewayAccountRequest {
+    gateway_account_id: String,
+    tenant_id: u64,
+    organization_id: u64,
+    provider_code: String,
+    environment: String,
+    merchant_id: String,
+    app_id: String,
+    status: String,
+    priority: i32,
+    #[serde(default)]
+    created_at_ms: Option<u64>,
+    #[serde(default)]
+    updated_at_ms: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct PaymentChannelPolicyListQuery {
+    #[serde(default)]
+    provider_code: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    tenant_id: Option<u64>,
+    #[serde(default)]
+    organization_id: Option<u64>,
+    #[serde(default)]
+    scene_code: Option<String>,
+    #[serde(default)]
+    currency_code: Option<String>,
+    #[serde(default)]
+    client_kind: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpsertPaymentChannelPolicyRequest {
+    channel_policy_id: String,
+    tenant_id: u64,
+    organization_id: u64,
+    scene_code: String,
+    country_code: String,
+    currency_code: String,
+    client_kind: String,
+    provider_code: String,
+    method_code: String,
+    priority: i32,
+    status: String,
+    #[serde(default)]
+    created_at_ms: Option<u64>,
+    #[serde(default)]
+    updated_at_ms: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApproveRefundOrderRequest {
+    #[serde(default)]
+    approved_amount_minor: Option<u64>,
+    approved_at_ms: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct CancelRefundOrderRequest {
+    canceled_at_ms: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct StartRefundOrderRequest {
+    started_at_ms: u64,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct RefundOrderListQuery {
+    #[serde(default)]
+    refund_status: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PaymentReconciliationLifecycle {
+    All,
+    Active,
+    Resolved,
+}
+
+impl PaymentReconciliationLifecycle {
+    fn parse(raw: Option<&str>) -> anyhow::Result<Self> {
+        match raw.unwrap_or("all") {
+            "all" => Ok(Self::All),
+            "active" => Ok(Self::Active),
+            "resolved" => Ok(Self::Resolved),
+            other => Err(anyhow::anyhow!(
+                "unsupported reconciliation lifecycle filter: {other}"
+            )),
+        }
+    }
+
+    fn matches(self, line: &ReconciliationMatchSummaryRecord) -> bool {
+        match self {
+            Self::All => true,
+            Self::Active => !matches!(line.match_status, ReconciliationMatchStatus::Resolved),
+            Self::Resolved => matches!(line.match_status, ReconciliationMatchStatus::Resolved),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1099,6 +1263,7 @@ pub fn admin_router_with_store_and_secret_manager_and_jwt_secret(
 pub fn admin_router_with_state(state: AdminApiState) -> Router {
     let service_name: Arc<str> = Arc::from("admin");
     let metrics = Arc::new(HttpMetricsRegistry::new("admin"));
+    let metrics_store = state.store.clone();
     Router::new()
         .route("/admin/openapi.json", get(admin_openapi_handler))
         .route("/admin/docs", get(admin_docs_handler))
@@ -1106,15 +1271,20 @@ pub fn admin_router_with_state(state: AdminApiState) -> Router {
             "/metrics",
             get({
                 let metrics = metrics.clone();
+                let metrics_store = metrics_store.clone();
                 move || {
                     let metrics = metrics.clone();
+                    let metrics_store = metrics_store.clone();
                     async move {
+                        let body =
+                            render_admin_metrics_payload(metrics.as_ref(), metrics_store.as_ref())
+                                .await;
                         (
                             [(
                                 header::CONTENT_TYPE,
                                 "text/plain; version=0.0.4; charset=utf-8",
                             )],
-                            metrics.render_prometheus(),
+                            body,
                         )
                     }
                 }
@@ -1293,6 +1463,44 @@ pub fn admin_router_with_state(state: AdminApiState) -> Router {
         )
         .route("/admin/billing/ledger", get(list_ledger_entries_handler))
         .route("/admin/billing/summary", get(billing_summary_handler))
+        .route("/admin/payments/orders", get(list_payment_orders_handler))
+        .route(
+            "/admin/payments/orders/{payment_order_id}",
+            get(get_payment_order_dossier_handler),
+        )
+        .route("/admin/payments/refunds", get(list_refund_orders_handler))
+        .route(
+            "/admin/payments/refunds/{refund_order_id}/approve",
+            post(approve_refund_order_handler),
+        )
+        .route(
+            "/admin/payments/refunds/{refund_order_id}/start",
+            post(start_refund_order_handler),
+        )
+        .route(
+            "/admin/payments/refunds/{refund_order_id}/cancel",
+            post(cancel_refund_order_handler),
+        )
+        .route(
+            "/admin/payments/gateway-accounts",
+            get(list_payment_gateway_accounts_handler).post(upsert_payment_gateway_account_handler),
+        )
+        .route(
+            "/admin/payments/channel-policies",
+            get(list_payment_channel_policies_handler).post(upsert_payment_channel_policy_handler),
+        )
+        .route(
+            "/admin/payments/reconciliation-summary",
+            get(payment_reconciliation_summary_handler),
+        )
+        .route(
+            "/admin/payments/reconciliation-lines",
+            get(list_payment_reconciliation_lines_handler),
+        )
+        .route(
+            "/admin/payments/reconciliation-lines/{reconciliation_line_id}/resolve",
+            post(resolve_payment_reconciliation_line_handler),
+        )
         .route(
             "/admin/billing/quota-policies",
             get(list_quota_policies_handler).post(create_quota_policy_handler),
@@ -1584,8 +1792,8 @@ async fn list_channels_handler(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
-  fn admin_error_response(error: AdminIdentityError) -> (StatusCode, Json<ErrorResponse>) {
-      let status = match error {
+fn admin_error_response(error: AdminIdentityError) -> (StatusCode, Json<ErrorResponse>) {
+    let status = match error {
         AdminIdentityError::InvalidInput(_) => StatusCode::BAD_REQUEST,
         AdminIdentityError::DuplicateEmail => StatusCode::CONFLICT,
         AdminIdentityError::Protected(_) => StatusCode::CONFLICT,
@@ -1599,13 +1807,13 @@ async fn list_channels_handler(
         error: ErrorBody {
             message: error.to_string(),
         },
-      };
-      (status, Json(body))
-  }
+    };
+    (status, Json(body))
+}
 
-  async fn invalidate_catalog_cache_after_mutation() {
-      invalidate_capability_catalog_cache().await;
-  }
+async fn invalidate_catalog_cache_after_mutation() {
+    invalidate_capability_catalog_cache().await;
+}
 
 fn gateway_api_key_create_error_response(
     error: anyhow::Error,
@@ -1659,33 +1867,33 @@ fn portal_admin_error_response(error: PortalIdentityError) -> (StatusCode, Json<
     (status, Json(body))
 }
 
-  async fn create_channel_handler(
-      _claims: AuthenticatedAdminClaims,
-      State(state): State<AdminApiState>,
-      Json(request): Json<CreateChannelRequest>,
-  ) -> Result<(StatusCode, Json<Channel>), StatusCode> {
-      let channel = persist_channel(state.store.as_ref(), &request.id, &request.name)
-          .await
-          .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-      invalidate_catalog_cache_after_mutation().await;
-      Ok((StatusCode::CREATED, Json(channel)))
-  }
+async fn create_channel_handler(
+    _claims: AuthenticatedAdminClaims,
+    State(state): State<AdminApiState>,
+    Json(request): Json<CreateChannelRequest>,
+) -> Result<(StatusCode, Json<Channel>), StatusCode> {
+    let channel = persist_channel(state.store.as_ref(), &request.id, &request.name)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    invalidate_catalog_cache_after_mutation().await;
+    Ok((StatusCode::CREATED, Json(channel)))
+}
 
 async fn delete_channel_handler(
     _claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
     Path(channel_id): Path<String>,
-  ) -> Result<StatusCode, StatusCode> {
-      let deleted = delete_catalog_channel(state.store.as_ref(), &channel_id)
-          .await
-          .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-      if deleted {
-          invalidate_catalog_cache_after_mutation().await;
-          Ok(StatusCode::NO_CONTENT)
-      } else {
-          Err(StatusCode::NOT_FOUND)
-      }
-  }
+) -> Result<StatusCode, StatusCode> {
+    let deleted = delete_catalog_channel(state.store.as_ref(), &channel_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if deleted {
+        invalidate_catalog_cache_after_mutation().await;
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(StatusCode::NOT_FOUND)
+    }
+}
 
 async fn list_providers_handler(
     _claims: AuthenticatedAdminClaims,
@@ -1701,7 +1909,7 @@ async fn create_provider_handler(
     _claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
     Json(request): Json<CreateProviderRequest>,
-  ) -> Result<(StatusCode, Json<ProxyProvider>), StatusCode> {
+) -> Result<(StatusCode, Json<ProxyProvider>), StatusCode> {
     let primary_channel_id = request
         .channel_bindings
         .iter()
@@ -1720,12 +1928,12 @@ async fn create_provider_handler(
             display_name: &request.display_name,
             channel_bindings: &bindings,
         },
-      )
-      .await
-      .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-      invalidate_catalog_cache_after_mutation().await;
-      Ok((StatusCode::CREATED, Json(provider)))
-  }
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    invalidate_catalog_cache_after_mutation().await;
+    Ok((StatusCode::CREATED, Json(provider)))
+}
 
 async fn delete_provider_handler(
     _claims: AuthenticatedAdminClaims,
@@ -1750,16 +1958,16 @@ async fn delete_provider_handler(
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-      let deleted = delete_catalog_provider(state.store.as_ref(), &provider_id)
-          .await
-          .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-      if deleted {
-          invalidate_catalog_cache_after_mutation().await;
-          Ok(StatusCode::NO_CONTENT)
-      } else {
-          Err(StatusCode::NOT_FOUND)
-      }
-  }
+    let deleted = delete_catalog_provider(state.store.as_ref(), &provider_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if deleted {
+        invalidate_catalog_cache_after_mutation().await;
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(StatusCode::NOT_FOUND)
+    }
+}
 
 async fn list_credentials_handler(
     _claims: AuthenticatedAdminClaims,
@@ -1825,7 +2033,7 @@ async fn create_channel_model_handler(
     _claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
     Json(request): Json<CreateChannelModelRequest>,
-  ) -> Result<(StatusCode, Json<ChannelModelRecord>), StatusCode> {
+) -> Result<(StatusCode, Json<ChannelModelRecord>), StatusCode> {
     let record = persist_channel_model_with_metadata(
         state.store.as_ref(),
         &request.channel_id,
@@ -1835,28 +2043,28 @@ async fn create_channel_model_handler(
         request.streaming,
         request.context_window,
         request.description.as_deref(),
-      )
-      .await
-      .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-      invalidate_catalog_cache_after_mutation().await;
-      Ok((StatusCode::CREATED, Json(record)))
-  }
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    invalidate_catalog_cache_after_mutation().await;
+    Ok((StatusCode::CREATED, Json(record)))
+}
 
 async fn delete_channel_model_handler(
     _claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
     Path((channel_id, model_id)): Path<(String, String)>,
-  ) -> Result<StatusCode, StatusCode> {
-      let deleted = delete_catalog_channel_model(state.store.as_ref(), &channel_id, &model_id)
-          .await
-          .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-      if deleted {
-          invalidate_catalog_cache_after_mutation().await;
-          Ok(StatusCode::NO_CONTENT)
-      } else {
-          Err(StatusCode::NOT_FOUND)
-      }
-  }
+) -> Result<StatusCode, StatusCode> {
+    let deleted = delete_catalog_channel_model(state.store.as_ref(), &channel_id, &model_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if deleted {
+        invalidate_catalog_cache_after_mutation().await;
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(StatusCode::NOT_FOUND)
+    }
+}
 
 async fn list_models_handler(
     _claims: AuthenticatedAdminClaims,
@@ -1872,36 +2080,36 @@ async fn create_model_handler(
     _claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
     Json(request): Json<CreateModelRequest>,
-  ) -> Result<(StatusCode, Json<ModelCatalogEntry>), StatusCode> {
-      let model = persist_model_with_metadata(
+) -> Result<(StatusCode, Json<ModelCatalogEntry>), StatusCode> {
+    let model = persist_model_with_metadata(
         state.store.as_ref(),
         &request.external_name,
         &request.provider_id,
         &request.capabilities,
         request.streaming,
         request.context_window,
-      )
-      .await
-      .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-      invalidate_catalog_cache_after_mutation().await;
-      Ok((StatusCode::CREATED, Json(model)))
-  }
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    invalidate_catalog_cache_after_mutation().await;
+    Ok((StatusCode::CREATED, Json(model)))
+}
 
 async fn delete_model_handler(
     _claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
     Path((external_name, provider_id)): Path<(String, String)>,
-  ) -> Result<StatusCode, StatusCode> {
-      let deleted = delete_model_variant(state.store.as_ref(), &external_name, &provider_id)
-          .await
-          .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-      if deleted {
-          invalidate_catalog_cache_after_mutation().await;
-          Ok(StatusCode::NO_CONTENT)
-      } else {
-          Err(StatusCode::NOT_FOUND)
-      }
-  }
+) -> Result<StatusCode, StatusCode> {
+    let deleted = delete_model_variant(state.store.as_ref(), &external_name, &provider_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if deleted {
+        invalidate_catalog_cache_after_mutation().await;
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(StatusCode::NOT_FOUND)
+    }
+}
 
 async fn list_model_prices_handler(
     _claims: AuthenticatedAdminClaims,
@@ -1917,7 +2125,7 @@ async fn create_model_price_handler(
     _claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
     Json(request): Json<CreateModelPriceRequest>,
-  ) -> Result<(StatusCode, Json<ModelPriceRecord>), StatusCode> {
+) -> Result<(StatusCode, Json<ModelPriceRecord>), StatusCode> {
     let record = persist_model_price_with_rates(
         state.store.as_ref(),
         &request.channel_id,
@@ -1931,33 +2139,33 @@ async fn create_model_price_handler(
         request.cache_write_price,
         request.request_price,
         request.is_active,
-      )
-      .await
-      .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-      invalidate_catalog_cache_after_mutation().await;
-      Ok((StatusCode::CREATED, Json(record)))
-  }
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    invalidate_catalog_cache_after_mutation().await;
+    Ok((StatusCode::CREATED, Json(record)))
+}
 
 async fn delete_model_price_handler(
     _claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
     Path((channel_id, model_id, proxy_provider_id)): Path<(String, String, String)>,
-  ) -> Result<StatusCode, StatusCode> {
-      let deleted = delete_catalog_model_price(
+) -> Result<StatusCode, StatusCode> {
+    let deleted = delete_catalog_model_price(
         state.store.as_ref(),
         &channel_id,
         &model_id,
         &proxy_provider_id,
-      )
-      .await
-      .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-      if deleted {
-          invalidate_catalog_cache_after_mutation().await;
-          Ok(StatusCode::NO_CONTENT)
-      } else {
-          Err(StatusCode::NOT_FOUND)
-      }
-  }
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if deleted {
+        invalidate_catalog_cache_after_mutation().await;
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(StatusCode::NOT_FOUND)
+    }
+}
 
 async fn list_tenants_handler(
     _claims: AuthenticatedAdminClaims,
@@ -2835,6 +3043,228 @@ async fn billing_summary_handler(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
+async fn list_payment_orders_handler(
+    _claims: AuthenticatedAdminClaims,
+    State(state): State<AdminApiState>,
+) -> Result<Json<Vec<PaymentOrderRecord>>, StatusCode> {
+    load_admin_payment_orders(state.store.as_ref())
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn get_payment_order_dossier_handler(
+    _claims: AuthenticatedAdminClaims,
+    State(state): State<AdminApiState>,
+    Path(payment_order_id): Path<String>,
+) -> Result<Json<AdminPaymentOrderDossier>, StatusCode> {
+    if let Some(sqlite_store) = state.store.as_any().downcast_ref::<SqliteAdminStore>() {
+        return load_admin_payment_order_dossier(sqlite_store, &payment_order_id)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .map(Json)
+            .ok_or(StatusCode::NOT_FOUND);
+    }
+    if let Some(postgres_store) = state.store.as_any().downcast_ref::<PostgresAdminStore>() {
+        return load_admin_payment_order_dossier(postgres_store, &payment_order_id)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .map(Json)
+            .ok_or(StatusCode::NOT_FOUND);
+    }
+
+    Err(StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn list_refund_orders_handler(
+    _claims: AuthenticatedAdminClaims,
+    State(state): State<AdminApiState>,
+    Query(query): Query<RefundOrderListQuery>,
+) -> Result<Json<Vec<RefundOrderRecord>>, StatusCode> {
+    let refund_status_filter = query
+        .refund_status
+        .as_deref()
+        .map(RefundOrderStatus::from_str)
+        .transpose()
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    load_admin_refund_orders(state.store.as_ref(), refund_status_filter)
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn approve_refund_order_handler(
+    _claims: AuthenticatedAdminClaims,
+    State(state): State<AdminApiState>,
+    Path(refund_order_id): Path<String>,
+    Json(request): Json<ApproveRefundOrderRequest>,
+) -> Result<Json<RefundOrderRecord>, StatusCode> {
+    if let Some(sqlite_store) = state.store.as_any().downcast_ref::<SqliteAdminStore>() {
+        return approve_refund_order_request(
+            sqlite_store,
+            &refund_order_id,
+            request.approved_amount_minor,
+            request.approved_at_ms,
+        )
+        .await
+        .map(Json)
+        .map_err(map_refund_request_action_error);
+    }
+    if let Some(postgres_store) = state.store.as_any().downcast_ref::<PostgresAdminStore>() {
+        return approve_refund_order_request(
+            postgres_store,
+            &refund_order_id,
+            request.approved_amount_minor,
+            request.approved_at_ms,
+        )
+        .await
+        .map(Json)
+        .map_err(map_refund_request_action_error);
+    }
+
+    Err(StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn cancel_refund_order_handler(
+    _claims: AuthenticatedAdminClaims,
+    State(state): State<AdminApiState>,
+    Path(refund_order_id): Path<String>,
+    Json(request): Json<CancelRefundOrderRequest>,
+) -> Result<Json<RefundOrderRecord>, StatusCode> {
+    if let Some(sqlite_store) = state.store.as_any().downcast_ref::<SqliteAdminStore>() {
+        return cancel_refund_order_request(sqlite_store, &refund_order_id, request.canceled_at_ms)
+            .await
+            .map(Json)
+            .map_err(map_refund_request_action_error);
+    }
+    if let Some(postgres_store) = state.store.as_any().downcast_ref::<PostgresAdminStore>() {
+        return cancel_refund_order_request(
+            postgres_store,
+            &refund_order_id,
+            request.canceled_at_ms,
+        )
+        .await
+        .map(Json)
+        .map_err(map_refund_request_action_error);
+    }
+
+    Err(StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn start_refund_order_handler(
+    _claims: AuthenticatedAdminClaims,
+    State(state): State<AdminApiState>,
+    Path(refund_order_id): Path<String>,
+    Json(request): Json<StartRefundOrderRequest>,
+) -> Result<Json<RefundOrderRecord>, StatusCode> {
+    if let Some(sqlite_store) = state.store.as_any().downcast_ref::<SqliteAdminStore>() {
+        return start_refund_order_execution(sqlite_store, &refund_order_id, request.started_at_ms)
+            .await
+            .map(Json)
+            .map_err(map_refund_request_action_error);
+    }
+    if let Some(postgres_store) = state.store.as_any().downcast_ref::<PostgresAdminStore>() {
+        return start_refund_order_execution(
+            postgres_store,
+            &refund_order_id,
+            request.started_at_ms,
+        )
+        .await
+        .map(Json)
+        .map_err(map_refund_request_action_error);
+    }
+
+    Err(StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn list_payment_gateway_accounts_handler(
+    _claims: AuthenticatedAdminClaims,
+    State(state): State<AdminApiState>,
+    Query(query): Query<PaymentGatewayAccountListQuery>,
+) -> Result<Json<Vec<PaymentGatewayAccountRecord>>, StatusCode> {
+    load_admin_payment_gateway_accounts(state.store.as_ref(), &query)
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn upsert_payment_gateway_account_handler(
+    _claims: AuthenticatedAdminClaims,
+    State(state): State<AdminApiState>,
+    Json(request): Json<UpsertPaymentGatewayAccountRequest>,
+) -> Result<(StatusCode, Json<PaymentGatewayAccountRecord>), StatusCode> {
+    let record = payment_gateway_account_record_from_request(request)
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let record = persist_admin_payment_gateway_account(state.store.as_ref(), &record)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok((StatusCode::CREATED, Json(record)))
+}
+
+async fn list_payment_channel_policies_handler(
+    _claims: AuthenticatedAdminClaims,
+    State(state): State<AdminApiState>,
+    Query(query): Query<PaymentChannelPolicyListQuery>,
+) -> Result<Json<Vec<PaymentChannelPolicyRecord>>, StatusCode> {
+    load_admin_payment_channel_policies(state.store.as_ref(), &query)
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn upsert_payment_channel_policy_handler(
+    _claims: AuthenticatedAdminClaims,
+    State(state): State<AdminApiState>,
+    Json(request): Json<UpsertPaymentChannelPolicyRequest>,
+) -> Result<(StatusCode, Json<PaymentChannelPolicyRecord>), StatusCode> {
+    let record =
+        payment_channel_policy_record_from_request(request).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let record = persist_admin_payment_channel_policy(state.store.as_ref(), &record)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok((StatusCode::CREATED, Json(record)))
+}
+
+async fn list_payment_reconciliation_lines_handler(
+    _claims: AuthenticatedAdminClaims,
+    State(state): State<AdminApiState>,
+    Query(query): Query<PaymentReconciliationListQuery>,
+) -> Result<Json<Vec<ReconciliationMatchSummaryRecord>>, StatusCode> {
+    let lifecycle = PaymentReconciliationLifecycle::parse(query.lifecycle.as_deref())
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    load_admin_payment_reconciliation_lines(state.store.as_ref(), lifecycle)
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn payment_reconciliation_summary_handler(
+    _claims: AuthenticatedAdminClaims,
+    State(state): State<AdminApiState>,
+) -> Result<Json<PaymentReconciliationSummaryResponse>, StatusCode> {
+    summarize_admin_payment_reconciliation(state.store.as_ref())
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn resolve_payment_reconciliation_line_handler(
+    _claims: AuthenticatedAdminClaims,
+    State(state): State<AdminApiState>,
+    Path(reconciliation_line_id): Path<String>,
+    Json(request): Json<ResolveReconciliationLineRequest>,
+) -> Result<Json<ReconciliationMatchSummaryRecord>, StatusCode> {
+    resolve_admin_payment_reconciliation_line(
+        state.store.as_ref(),
+        &reconciliation_line_id,
+        request.resolved_at_ms.unwrap_or_else(unix_timestamp_ms),
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .map(Json)
+    .ok_or(StatusCode::NOT_FOUND)
+}
+
 async fn list_quota_policies_handler(
     _claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
@@ -2907,6 +3337,597 @@ async fn create_rate_limit_policy_handler(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok((StatusCode::CREATED, Json(policy)))
+}
+
+fn payment_gateway_account_record_from_request(
+    request: UpsertPaymentGatewayAccountRequest,
+) -> anyhow::Result<PaymentGatewayAccountRecord> {
+    let provider_code = parse_admin_payment_provider_code(&request.provider_code)?;
+    ensure!(
+        !matches!(provider_code, PaymentProviderCode::Unspecified),
+        "provider_code must be a concrete payment provider"
+    );
+    ensure!(
+        !request.gateway_account_id.trim().is_empty(),
+        "gateway_account_id must not be empty"
+    );
+    ensure!(
+        !request.environment.trim().is_empty(),
+        "environment must not be empty"
+    );
+    ensure!(
+        !request.merchant_id.trim().is_empty(),
+        "merchant_id must not be empty"
+    );
+    let status = normalize_admin_payment_route_status(&request.status)?;
+    let updated_at_ms = request.updated_at_ms.unwrap_or_else(unix_timestamp_ms);
+    let created_at_ms = request.created_at_ms.unwrap_or(updated_at_ms);
+
+    Ok(PaymentGatewayAccountRecord::new(
+        request.gateway_account_id,
+        request.tenant_id,
+        request.organization_id,
+        provider_code,
+    )
+    .with_environment(request.environment.trim())
+    .with_merchant_id(request.merchant_id.trim())
+    .with_app_id(request.app_id.trim())
+    .with_status(status)
+    .with_priority(request.priority)
+    .with_created_at_ms(created_at_ms)
+    .with_updated_at_ms(updated_at_ms))
+}
+
+fn payment_channel_policy_record_from_request(
+    request: UpsertPaymentChannelPolicyRequest,
+) -> anyhow::Result<PaymentChannelPolicyRecord> {
+    let provider_code = parse_admin_payment_provider_code(&request.provider_code)?;
+    ensure!(
+        !matches!(provider_code, PaymentProviderCode::Unspecified),
+        "provider_code must be a concrete payment provider"
+    );
+    ensure!(
+        !request.channel_policy_id.trim().is_empty(),
+        "channel_policy_id must not be empty"
+    );
+    ensure!(
+        !request.method_code.trim().is_empty(),
+        "method_code must not be empty"
+    );
+    let status = normalize_admin_payment_route_status(&request.status)?;
+    let updated_at_ms = request.updated_at_ms.unwrap_or_else(unix_timestamp_ms);
+    let created_at_ms = request.created_at_ms.unwrap_or(updated_at_ms);
+
+    Ok(PaymentChannelPolicyRecord::new(
+        request.channel_policy_id,
+        request.tenant_id,
+        request.organization_id,
+        provider_code,
+        request.method_code.trim(),
+    )
+    .with_scene_code(request.scene_code.trim())
+    .with_country_code(request.country_code.trim())
+    .with_currency_code(request.currency_code.trim())
+    .with_client_kind(request.client_kind.trim())
+    .with_priority(request.priority)
+    .with_status(status)
+    .with_created_at_ms(created_at_ms)
+    .with_updated_at_ms(updated_at_ms))
+}
+
+fn parse_admin_payment_provider_code(raw: &str) -> anyhow::Result<PaymentProviderCode> {
+    PaymentProviderCode::from_str(raw.trim()).map_err(anyhow::Error::msg)
+}
+
+fn normalize_admin_payment_route_status(raw: &str) -> anyhow::Result<String> {
+    let normalized = raw.trim().to_ascii_lowercase();
+    ensure!(
+        matches!(normalized.as_str(), "active" | "inactive"),
+        "unsupported payment route status"
+    );
+    Ok(normalized)
+}
+
+async fn persist_admin_payment_gateway_account(
+    store: &dyn AdminStore,
+    record: &PaymentGatewayAccountRecord,
+) -> anyhow::Result<PaymentGatewayAccountRecord> {
+    if let Some(sqlite_store) = store.as_any().downcast_ref::<SqliteAdminStore>() {
+        return sqlite_store
+            .insert_payment_gateway_account_record(record)
+            .await;
+    }
+    if let Some(postgres_store) = store.as_any().downcast_ref::<PostgresAdminStore>() {
+        return postgres_store
+            .insert_payment_gateway_account_record(record)
+            .await;
+    }
+
+    Err(anyhow::anyhow!(
+        "admin payment gateway account management is unavailable for the current store type"
+    ))
+}
+
+async fn persist_admin_payment_channel_policy(
+    store: &dyn AdminStore,
+    record: &PaymentChannelPolicyRecord,
+) -> anyhow::Result<PaymentChannelPolicyRecord> {
+    if let Some(sqlite_store) = store.as_any().downcast_ref::<SqliteAdminStore>() {
+        return sqlite_store
+            .insert_payment_channel_policy_record(record)
+            .await;
+    }
+    if let Some(postgres_store) = store.as_any().downcast_ref::<PostgresAdminStore>() {
+        return postgres_store
+            .insert_payment_channel_policy_record(record)
+            .await;
+    }
+
+    Err(anyhow::anyhow!(
+        "admin payment channel policy management is unavailable for the current store type"
+    ))
+}
+
+async fn load_admin_payment_gateway_accounts(
+    store: &dyn AdminStore,
+    query: &PaymentGatewayAccountListQuery,
+) -> anyhow::Result<Vec<PaymentGatewayAccountRecord>> {
+    let mut records = if let Some(sqlite_store) = store.as_any().downcast_ref::<SqliteAdminStore>()
+    {
+        sqlite_store.list_payment_gateway_account_records().await?
+    } else if let Some(postgres_store) = store.as_any().downcast_ref::<PostgresAdminStore>() {
+        postgres_store
+            .list_payment_gateway_account_records()
+            .await?
+    } else {
+        return Err(anyhow::anyhow!(
+            "admin payment gateway account inspection is unavailable for the current store type"
+        ));
+    };
+
+    records.retain(|record| payment_gateway_account_matches_query(record, query));
+    records.sort_by(compare_payment_gateway_accounts);
+    Ok(records)
+}
+
+fn payment_gateway_account_matches_query(
+    record: &PaymentGatewayAccountRecord,
+    query: &PaymentGatewayAccountListQuery,
+) -> bool {
+    optional_string_filter_matches(
+        record.provider_code.as_str(),
+        query.provider_code.as_deref(),
+    ) && optional_string_filter_matches(&record.status, query.status.as_deref())
+        && optional_u64_filter_matches(record.tenant_id, query.tenant_id)
+        && optional_u64_filter_matches(record.organization_id, query.organization_id)
+}
+
+fn compare_payment_gateway_accounts(
+    left: &PaymentGatewayAccountRecord,
+    right: &PaymentGatewayAccountRecord,
+) -> std::cmp::Ordering {
+    right
+        .priority
+        .cmp(&left.priority)
+        .then_with(|| right.updated_at_ms.cmp(&left.updated_at_ms))
+        .then_with(|| left.gateway_account_id.cmp(&right.gateway_account_id))
+}
+
+async fn load_admin_payment_channel_policies(
+    store: &dyn AdminStore,
+    query: &PaymentChannelPolicyListQuery,
+) -> anyhow::Result<Vec<PaymentChannelPolicyRecord>> {
+    let mut records = if let Some(sqlite_store) = store.as_any().downcast_ref::<SqliteAdminStore>()
+    {
+        sqlite_store.list_payment_channel_policy_records().await?
+    } else if let Some(postgres_store) = store.as_any().downcast_ref::<PostgresAdminStore>() {
+        postgres_store.list_payment_channel_policy_records().await?
+    } else {
+        return Err(anyhow::anyhow!(
+            "admin payment channel policy inspection is unavailable for the current store type"
+        ));
+    };
+
+    records.retain(|record| payment_channel_policy_matches_query(record, query));
+    records.sort_by(compare_payment_channel_policies);
+    Ok(records)
+}
+
+fn payment_channel_policy_matches_query(
+    record: &PaymentChannelPolicyRecord,
+    query: &PaymentChannelPolicyListQuery,
+) -> bool {
+    optional_string_filter_matches(
+        record.provider_code.as_str(),
+        query.provider_code.as_deref(),
+    ) && optional_string_filter_matches(&record.status, query.status.as_deref())
+        && optional_u64_filter_matches(record.tenant_id, query.tenant_id)
+        && optional_u64_filter_matches(record.organization_id, query.organization_id)
+        && optional_string_filter_matches(&record.scene_code, query.scene_code.as_deref())
+        && optional_string_filter_matches(&record.currency_code, query.currency_code.as_deref())
+        && optional_string_filter_matches(&record.client_kind, query.client_kind.as_deref())
+}
+
+fn compare_payment_channel_policies(
+    left: &PaymentChannelPolicyRecord,
+    right: &PaymentChannelPolicyRecord,
+) -> std::cmp::Ordering {
+    right
+        .priority
+        .cmp(&left.priority)
+        .then_with(|| right.updated_at_ms.cmp(&left.updated_at_ms))
+        .then_with(|| left.channel_policy_id.cmp(&right.channel_policy_id))
+}
+
+fn optional_string_filter_matches(value: &str, expected: Option<&str>) -> bool {
+    expected
+        .map(|expected| value.eq_ignore_ascii_case(expected.trim()))
+        .unwrap_or(true)
+}
+
+fn optional_u64_filter_matches(value: u64, expected: Option<u64>) -> bool {
+    expected.map(|expected| value == expected).unwrap_or(true)
+}
+
+async fn load_admin_payment_orders(
+    store: &dyn AdminStore,
+) -> anyhow::Result<Vec<PaymentOrderRecord>> {
+    if let Some(sqlite_store) = store.as_any().downcast_ref::<SqliteAdminStore>() {
+        let mut orders = sqlite_store.list_payment_order_records().await?;
+        orders.sort_by(|left, right| {
+            right
+                .created_at_ms
+                .cmp(&left.created_at_ms)
+                .then_with(|| right.payment_order_id.cmp(&left.payment_order_id))
+        });
+        return Ok(orders);
+    }
+    if let Some(postgres_store) = store.as_any().downcast_ref::<PostgresAdminStore>() {
+        let mut orders = postgres_store.list_payment_order_records().await?;
+        orders.sort_by(|left, right| {
+            right
+                .created_at_ms
+                .cmp(&left.created_at_ms)
+                .then_with(|| right.payment_order_id.cmp(&left.payment_order_id))
+        });
+        return Ok(orders);
+    }
+
+    Err(anyhow::anyhow!(
+        "admin payment order inspection is unavailable for the current store type"
+    ))
+}
+
+async fn load_admin_refund_orders(
+    store: &dyn AdminStore,
+    refund_status_filter: Option<RefundOrderStatus>,
+) -> anyhow::Result<Vec<RefundOrderRecord>> {
+    let payment_orders = load_admin_payment_orders(store).await?;
+
+    if let Some(sqlite_store) = store.as_any().downcast_ref::<SqliteAdminStore>() {
+        let mut refunds = Vec::new();
+        for payment_order in &payment_orders {
+            let mut order_refunds = sqlite_store
+                .list_refund_order_records_for_payment_order(&payment_order.payment_order_id)
+                .await?;
+            refunds.append(&mut order_refunds);
+        }
+        refunds.sort_by(|left, right| {
+            right
+                .created_at_ms
+                .cmp(&left.created_at_ms)
+                .then_with(|| right.refund_order_id.cmp(&left.refund_order_id))
+        });
+        if let Some(refund_status_filter) = refund_status_filter {
+            refunds.retain(|refund| refund.refund_status == refund_status_filter);
+        }
+        return Ok(refunds);
+    }
+    if let Some(postgres_store) = store.as_any().downcast_ref::<PostgresAdminStore>() {
+        let mut refunds = Vec::new();
+        for payment_order in &payment_orders {
+            let mut order_refunds = postgres_store
+                .list_refund_order_records_for_payment_order(&payment_order.payment_order_id)
+                .await?;
+            refunds.append(&mut order_refunds);
+        }
+        refunds.sort_by(|left, right| {
+            right
+                .created_at_ms
+                .cmp(&left.created_at_ms)
+                .then_with(|| right.refund_order_id.cmp(&left.refund_order_id))
+        });
+        if let Some(refund_status_filter) = refund_status_filter {
+            refunds.retain(|refund| refund.refund_status == refund_status_filter);
+        }
+        return Ok(refunds);
+    }
+
+    Err(anyhow::anyhow!(
+        "admin refund order inspection is unavailable for the current store type"
+    ))
+}
+
+async fn load_admin_payment_reconciliation_lines(
+    store: &dyn AdminStore,
+    lifecycle: PaymentReconciliationLifecycle,
+) -> anyhow::Result<Vec<ReconciliationMatchSummaryRecord>> {
+    if let Some(sqlite_store) = store.as_any().downcast_ref::<SqliteAdminStore>() {
+        let mut lines = sqlite_store
+            .list_all_reconciliation_match_summary_records()
+            .await?;
+        apply_payment_reconciliation_queue_view(&mut lines, lifecycle);
+        return Ok(lines);
+    }
+    if let Some(postgres_store) = store.as_any().downcast_ref::<PostgresAdminStore>() {
+        let mut lines = postgres_store
+            .list_all_reconciliation_match_summary_records()
+            .await?;
+        apply_payment_reconciliation_queue_view(&mut lines, lifecycle);
+        return Ok(lines);
+    }
+
+    Err(anyhow::anyhow!(
+        "admin payment reconciliation inspection is unavailable for the current store type"
+    ))
+}
+
+fn apply_payment_reconciliation_queue_view(
+    lines: &mut Vec<ReconciliationMatchSummaryRecord>,
+    lifecycle: PaymentReconciliationLifecycle,
+) {
+    lines.retain(|line| lifecycle.matches(line));
+    lines.sort_by(compare_payment_reconciliation_lines);
+}
+
+fn compare_payment_reconciliation_lines(
+    left: &ReconciliationMatchSummaryRecord,
+    right: &ReconciliationMatchSummaryRecord,
+) -> std::cmp::Ordering {
+    matches!(left.match_status, ReconciliationMatchStatus::Resolved)
+        .cmp(&matches!(
+            right.match_status,
+            ReconciliationMatchStatus::Resolved
+        ))
+        .then_with(|| right.updated_at_ms.cmp(&left.updated_at_ms))
+        .then_with(|| right.created_at_ms.cmp(&left.created_at_ms))
+        .then_with(|| {
+            right
+                .reconciliation_line_id
+                .cmp(&left.reconciliation_line_id)
+        })
+}
+
+async fn summarize_admin_payment_reconciliation(
+    store: &dyn AdminStore,
+) -> anyhow::Result<PaymentReconciliationSummaryResponse> {
+    let lines =
+        load_admin_payment_reconciliation_lines(store, PaymentReconciliationLifecycle::All).await?;
+    let total_count = lines.len();
+    let latest_updated_at_ms = lines.iter().map(|line| line.updated_at_ms).max();
+    let active_lines = lines
+        .iter()
+        .filter(|line| !matches!(line.match_status, ReconciliationMatchStatus::Resolved))
+        .collect::<Vec<_>>();
+    let active_count = active_lines.len();
+    let resolved_count = total_count.saturating_sub(active_count);
+    let oldest_active_created_at_ms = active_lines.iter().map(|line| line.created_at_ms).min();
+
+    let mut breakdown = BTreeMap::<String, (usize, u64)>::new();
+    for line in active_lines {
+        let reason_code = line
+            .reason_code
+            .clone()
+            .unwrap_or_else(|| "unknown".to_owned());
+        let entry = breakdown
+            .entry(reason_code)
+            .or_insert((0usize, line.updated_at_ms));
+        entry.0 += 1;
+        entry.1 = entry.1.max(line.updated_at_ms);
+    }
+
+    let mut active_reason_breakdown = breakdown
+        .into_iter()
+        .map(|(reason_code, (count, latest_updated_at_ms))| {
+            PaymentReconciliationReasonBreakdownItem {
+                reason_code,
+                count,
+                latest_updated_at_ms,
+            }
+        })
+        .collect::<Vec<_>>();
+    active_reason_breakdown.sort_by(|left, right| {
+        right
+            .count
+            .cmp(&left.count)
+            .then_with(|| right.latest_updated_at_ms.cmp(&left.latest_updated_at_ms))
+            .then_with(|| left.reason_code.cmp(&right.reason_code))
+    });
+
+    Ok(PaymentReconciliationSummaryResponse {
+        total_count,
+        active_count,
+        resolved_count,
+        latest_updated_at_ms,
+        oldest_active_created_at_ms,
+        active_reason_breakdown,
+    })
+}
+
+async fn render_admin_metrics_payload(
+    metrics: &HttpMetricsRegistry,
+    store: &dyn AdminStore,
+) -> String {
+    let mut output = metrics.render_prometheus();
+    match summarize_admin_payment_reconciliation(store).await {
+        Ok(summary) => {
+            output.push_str(&render_payment_reconciliation_prometheus(
+                metrics.service(),
+                &summary,
+            ));
+            output.push_str(
+                "# HELP sdkwork_payment_reconciliation_metrics_scrape_error Whether reconciliation metric aggregation failed\n",
+            );
+            output.push_str("# TYPE sdkwork_payment_reconciliation_metrics_scrape_error gauge\n");
+            output.push_str(&format!(
+                "sdkwork_payment_reconciliation_metrics_scrape_error{{service=\"{}\"}} 0\n",
+                escape_prometheus_label_value(metrics.service())
+            ));
+        }
+        Err(_) => {
+            output.push_str(
+                "# HELP sdkwork_payment_reconciliation_metrics_scrape_error Whether reconciliation metric aggregation failed\n",
+            );
+            output.push_str("# TYPE sdkwork_payment_reconciliation_metrics_scrape_error gauge\n");
+            output.push_str(&format!(
+                "sdkwork_payment_reconciliation_metrics_scrape_error{{service=\"{}\"}} 1\n",
+                escape_prometheus_label_value(metrics.service())
+            ));
+        }
+    }
+    output
+}
+
+fn render_payment_reconciliation_prometheus(
+    service: &str,
+    summary: &PaymentReconciliationSummaryResponse,
+) -> String {
+    let mut output = String::new();
+    let service = escape_prometheus_label_value(service);
+
+    output.push_str(
+        "# HELP sdkwork_payment_reconciliation_total Total reconciliation lines observed\n",
+    );
+    output.push_str("# TYPE sdkwork_payment_reconciliation_total gauge\n");
+    output.push_str(&format!(
+        "sdkwork_payment_reconciliation_total{{service=\"{}\"}} {}\n",
+        service, summary.total_count
+    ));
+
+    output.push_str(
+        "# HELP sdkwork_payment_reconciliation_active_total Active reconciliation lines observed\n",
+    );
+    output.push_str("# TYPE sdkwork_payment_reconciliation_active_total gauge\n");
+    output.push_str(&format!(
+        "sdkwork_payment_reconciliation_active_total{{service=\"{}\"}} {}\n",
+        service, summary.active_count
+    ));
+
+    output.push_str(
+        "# HELP sdkwork_payment_reconciliation_resolved_total Resolved reconciliation lines observed\n",
+    );
+    output.push_str("# TYPE sdkwork_payment_reconciliation_resolved_total gauge\n");
+    output.push_str(&format!(
+        "sdkwork_payment_reconciliation_resolved_total{{service=\"{}\"}} {}\n",
+        service, summary.resolved_count
+    ));
+
+    output.push_str(
+        "# HELP sdkwork_payment_reconciliation_latest_updated_at_ms Latest reconciliation update timestamp in milliseconds\n",
+    );
+    output.push_str("# TYPE sdkwork_payment_reconciliation_latest_updated_at_ms gauge\n");
+    if let Some(value) = summary.latest_updated_at_ms {
+        output.push_str(&format!(
+            "sdkwork_payment_reconciliation_latest_updated_at_ms{{service=\"{}\"}} {}\n",
+            service, value
+        ));
+    }
+
+    output.push_str(
+        "# HELP sdkwork_payment_reconciliation_oldest_active_created_at_ms Oldest active reconciliation creation timestamp in milliseconds\n",
+    );
+    output.push_str("# TYPE sdkwork_payment_reconciliation_oldest_active_created_at_ms gauge\n");
+    if let Some(value) = summary.oldest_active_created_at_ms {
+        output.push_str(&format!(
+            "sdkwork_payment_reconciliation_oldest_active_created_at_ms{{service=\"{}\"}} {}\n",
+            service, value
+        ));
+    }
+
+    output.push_str(
+        "# HELP sdkwork_payment_reconciliation_active_reason_total Active reconciliation lines grouped by reason code\n",
+    );
+    output.push_str("# TYPE sdkwork_payment_reconciliation_active_reason_total gauge\n");
+    for item in &summary.active_reason_breakdown {
+        output.push_str(&format!(
+            "sdkwork_payment_reconciliation_active_reason_total{{service=\"{}\",reason_code=\"{}\"}} {}\n",
+            service,
+            escape_prometheus_label_value(&item.reason_code),
+            item.count
+        ));
+    }
+
+    output
+}
+
+fn escape_prometheus_label_value(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+}
+
+fn map_refund_request_action_error(error: anyhow::Error) -> StatusCode {
+    let message = error.to_string();
+    if message.contains("refund order not found") || message.contains("payment order not found") {
+        StatusCode::NOT_FOUND
+    } else {
+        StatusCode::BAD_REQUEST
+    }
+}
+
+async fn resolve_admin_payment_reconciliation_line(
+    store: &dyn AdminStore,
+    reconciliation_line_id: &str,
+    resolved_at_ms: u64,
+) -> anyhow::Result<Option<ReconciliationMatchSummaryRecord>> {
+    if let Some(sqlite_store) = store.as_any().downcast_ref::<SqliteAdminStore>() {
+        return resolve_payment_reconciliation_line_with_store(
+            sqlite_store,
+            reconciliation_line_id,
+            resolved_at_ms,
+        )
+        .await;
+    }
+    if let Some(postgres_store) = store.as_any().downcast_ref::<PostgresAdminStore>() {
+        return resolve_payment_reconciliation_line_with_store(
+            postgres_store,
+            reconciliation_line_id,
+            resolved_at_ms,
+        )
+        .await;
+    }
+
+    Err(anyhow::anyhow!(
+        "admin payment reconciliation resolution is unavailable for the current store type"
+    ))
+}
+
+async fn resolve_payment_reconciliation_line_with_store<S>(
+    store: &S,
+    reconciliation_line_id: &str,
+    resolved_at_ms: u64,
+) -> anyhow::Result<Option<ReconciliationMatchSummaryRecord>>
+where
+    S: PaymentKernelStore + ?Sized,
+{
+    let Some(existing) = store
+        .find_reconciliation_match_summary_record(reconciliation_line_id)
+        .await?
+    else {
+        return Ok(None);
+    };
+    if matches!(existing.match_status, ReconciliationMatchStatus::Resolved) {
+        return Ok(Some(existing));
+    }
+
+    let mut resolved = existing;
+    resolved.match_status = ReconciliationMatchStatus::Resolved;
+    resolved.updated_at_ms = resolved_at_ms.max(resolved.created_at_ms);
+    store
+        .insert_reconciliation_match_summary_record(&resolved)
+        .await
+        .map(Some)
 }
 
 fn provider_bindings_from_request(request: &CreateProviderRequest) -> Vec<ProviderChannelBinding> {

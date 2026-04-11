@@ -3,12 +3,22 @@ use sdkwork_api_domain_catalog::{
     Channel, ModelCatalogEntry, ProviderChannelBinding, ProxyProvider,
 };
 use sdkwork_api_domain_credential::UpstreamCredential;
+use sdkwork_api_domain_payment::{
+    FinanceDirection, FinanceEntryCode, FinanceJournalEntryRecord, FinanceJournalLineRecord,
+    PaymentAttemptRecord, PaymentAttemptStatus, PaymentCallbackEventRecord,
+    PaymentCallbackProcessingStatus, PaymentChannelPolicyRecord, PaymentGatewayAccountRecord,
+    PaymentOrderRecord, PaymentOrderStatus, PaymentProviderCode, PaymentSessionKind,
+    PaymentSessionRecord, PaymentSessionStatus, PaymentTransactionKind, PaymentTransactionRecord,
+    ReconciliationMatchStatus, ReconciliationMatchSummaryRecord, RefundOrderRecord,
+    RefundOrderStatus,
+};
 use sdkwork_api_domain_routing::{
     ProviderHealthSnapshot, RoutingCandidateAssessment, RoutingDecisionLog, RoutingDecisionSource,
     RoutingPolicy, RoutingStrategy,
 };
 use sdkwork_api_domain_usage::UsageRecord;
 use sdkwork_api_secret_core::encrypt;
+use sdkwork_api_storage_core::PaymentKernelStore;
 use sdkwork_api_storage_postgres::{run_migrations, PostgresAdminStore};
 use sqlx::PgPool;
 
@@ -252,6 +262,507 @@ async fn postgres_store_creates_canonical_account_kernel_tables_when_url_is_prov
             "missing index {index_name}"
         );
     }
+}
+
+#[tokio::test]
+async fn postgres_store_creates_canonical_payment_kernel_tables_when_url_is_provided() {
+    let Some(database_url) = std::env::var("SDKWORK_TEST_POSTGRES_URL").ok() else {
+        return;
+    };
+
+    let pool = run_migrations(&database_url).await.unwrap();
+
+    for table_name in [
+        "ai_payment_gateway_account",
+        "ai_payment_channel_policy",
+        "ai_payment_order",
+        "ai_payment_attempt",
+        "ai_payment_session",
+        "ai_payment_transaction",
+        "ai_payment_callback_event",
+        "ai_refund_order",
+        "ai_refund_attempt",
+        "ai_refund_order_processing_steps",
+        "ai_finance_journal_entry",
+        "ai_finance_journal_line",
+        "ai_payment_reconciliation_batch",
+        "ai_payment_reconciliation_line",
+    ] {
+        let row: (String,) = sqlx::query_as(
+            "select tablename
+             from pg_tables
+             where schemaname = 'public' and tablename = $1",
+        )
+        .bind(table_name)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row.0, table_name);
+    }
+}
+
+#[tokio::test]
+async fn postgres_payment_kernel_tables_keep_scope_and_money_columns_when_url_is_provided() {
+    let Some(database_url) = std::env::var("SDKWORK_TEST_POSTGRES_URL").ok() else {
+        return;
+    };
+
+    let pool = run_migrations(&database_url).await.unwrap();
+
+    assert_pg_column(
+        &pool,
+        "ai_payment_order",
+        "tenant_id",
+        "bigint",
+        false,
+        None,
+    )
+    .await;
+    assert_pg_column(
+        &pool,
+        "ai_payment_order",
+        "organization_id",
+        "bigint",
+        false,
+        Some("0"),
+    )
+    .await;
+    assert_pg_column(&pool, "ai_payment_order", "user_id", "bigint", false, None).await;
+    assert_pg_column(
+        &pool,
+        "ai_payment_order",
+        "payable_minor",
+        "bigint",
+        false,
+        Some("0"),
+    )
+    .await;
+    assert_pg_column(
+        &pool,
+        "ai_payment_order",
+        "captured_amount_minor",
+        "bigint",
+        false,
+        Some("0"),
+    )
+    .await;
+    assert_pg_column(
+        &pool,
+        "ai_refund_order",
+        "refund_reason_code",
+        "text",
+        false,
+        Some("''"),
+    )
+    .await;
+    assert_pg_column(
+        &pool,
+        "ai_refund_order",
+        "requested_by_type",
+        "text",
+        false,
+        Some("''"),
+    )
+    .await;
+    assert_pg_column(
+        &pool,
+        "ai_refund_order",
+        "requested_by_id",
+        "text",
+        false,
+        Some("''"),
+    )
+    .await;
+    assert_pg_column(
+        &pool,
+        "ai_refund_order",
+        "requested_amount_minor",
+        "bigint",
+        false,
+        Some("0"),
+    )
+    .await;
+    assert_pg_column(
+        &pool,
+        "ai_finance_journal_line",
+        "amount_minor",
+        "bigint",
+        false,
+        Some("0"),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn postgres_payment_kernel_tables_create_operational_indexes_when_url_is_provided() {
+    let Some(database_url) = std::env::var("SDKWORK_TEST_POSTGRES_URL").ok() else {
+        return;
+    };
+
+    let pool = run_migrations(&database_url).await.unwrap();
+
+    let index_names: Vec<(String,)> = sqlx::query_as(
+        "select indexname
+         from pg_indexes
+         where schemaname = 'public'
+           and tablename in (
+             'ai_payment_gateway_account',
+             'ai_payment_order',
+             'ai_payment_attempt',
+             'ai_payment_session',
+             'ai_payment_transaction',
+             'ai_payment_callback_event',
+             'ai_refund_order',
+             'ai_finance_journal_entry',
+             'ai_payment_reconciliation_line'
+           )
+         order by indexname",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let index_names = index_names
+        .into_iter()
+        .map(|(name,)| name)
+        .collect::<std::collections::HashSet<_>>();
+    for index_name in [
+        "idx_ai_payment_gateway_account_provider_status_priority",
+        "idx_ai_payment_order_user_created_at",
+        "idx_ai_payment_order_provider_status_updated_at",
+        "idx_ai_payment_attempt_order_attempt",
+        "idx_ai_payment_session_attempt",
+        "idx_ai_payment_transaction_order_occurred_at",
+        "idx_ai_payment_callback_event_processing_received_at",
+        "idx_ai_refund_order_payment_created_at",
+        "idx_ai_finance_journal_entry_source",
+        "idx_ai_payment_reconciliation_line_batch_status",
+    ] {
+        assert!(
+            index_names.contains(index_name),
+            "missing index {index_name}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn postgres_payment_store_round_trips_order_attempt_session_and_transaction_when_url_is_provided(
+) {
+    let Some(database_url) = std::env::var("SDKWORK_TEST_POSTGRES_URL").ok() else {
+        return;
+    };
+
+    let pool = run_migrations(&database_url).await.unwrap();
+    let store = PostgresAdminStore::new(pool);
+
+    let order = PaymentOrderRecord::new(
+        "payment-order-pg-1",
+        "commerce-order-pg-1",
+        1,
+        0,
+        7,
+        "project-1",
+        "recharge",
+        "workspace",
+        "project-1",
+        "USD",
+        12_000,
+    )
+    .with_payable_minor(10_500)
+    .with_provider_code(PaymentProviderCode::Stripe)
+    .with_method_code("checkout")
+    .with_payment_status(PaymentOrderStatus::AwaitingCustomer)
+    .with_created_at_ms(1_700_000_000)
+    .with_updated_at_ms(1_700_000_001);
+    store.insert_payment_order_record(&order).await.unwrap();
+
+    let attempt = PaymentAttemptRecord::new(
+        "payment-attempt-pg-1",
+        1,
+        0,
+        "payment-order-pg-1",
+        1,
+        "gateway-account-pg-1",
+        PaymentProviderCode::Stripe,
+        "checkout",
+        "portal_web",
+        "idem-pg-1",
+    )
+    .with_attempt_status(PaymentAttemptStatus::HandoffReady)
+    .with_request_payload_hash("hash-pg-1")
+    .with_created_at_ms(1_700_000_010)
+    .with_updated_at_ms(1_700_000_011);
+    store.insert_payment_attempt_record(&attempt).await.unwrap();
+
+    let session = PaymentSessionRecord::new(
+        "payment-session-pg-1",
+        1,
+        0,
+        "payment-attempt-pg-1",
+        PaymentSessionKind::HostedCheckout,
+        PaymentSessionStatus::Open,
+    )
+    .with_redirect_url(Some("https://checkout.example/session".to_owned()))
+    .with_expires_at_ms(1_700_000_600)
+    .with_created_at_ms(1_700_000_020)
+    .with_updated_at_ms(1_700_000_021);
+    store.insert_payment_session_record(&session).await.unwrap();
+
+    let transaction = PaymentTransactionRecord::new(
+        "payment-tx-pg-1",
+        1,
+        0,
+        "payment-order-pg-1",
+        PaymentTransactionKind::Sale,
+        PaymentProviderCode::Stripe,
+        "provider-tx-pg-1",
+        "USD",
+        10_500,
+        1_700_000_040,
+    )
+    .with_payment_attempt_id(Some("payment-attempt-pg-1".to_owned()))
+    .with_provider_status("succeeded")
+    .with_created_at_ms(1_700_000_041);
+    store
+        .insert_payment_transaction_record(&transaction)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        store
+            .find_payment_order_record("payment-order-pg-1")
+            .await
+            .unwrap()
+            .unwrap(),
+        order
+    );
+    assert_eq!(
+        store
+            .list_payment_attempt_records_for_order("payment-order-pg-1")
+            .await
+            .unwrap(),
+        vec![attempt]
+    );
+    assert_eq!(
+        store
+            .list_payment_session_records_for_attempt("payment-attempt-pg-1")
+            .await
+            .unwrap(),
+        vec![session]
+    );
+    assert_eq!(
+        store
+            .list_payment_transaction_records_for_order("payment-order-pg-1")
+            .await
+            .unwrap(),
+        vec![transaction]
+    );
+}
+
+#[tokio::test]
+async fn postgres_payment_store_round_trips_callback_refund_finance_and_reconciliation_when_url_is_provided(
+) {
+    let Some(database_url) = std::env::var("SDKWORK_TEST_POSTGRES_URL").ok() else {
+        return;
+    };
+
+    let pool = run_migrations(&database_url).await.unwrap();
+    let store = PostgresAdminStore::new(pool);
+
+    let order = PaymentOrderRecord::new(
+        "payment-order-pg-2",
+        "commerce-order-pg-2",
+        2,
+        0,
+        9,
+        "project-2",
+        "recharge",
+        "workspace",
+        "project-2",
+        "USD",
+        5_000,
+    )
+    .with_provider_code(PaymentProviderCode::Stripe)
+    .with_payment_status(PaymentOrderStatus::Captured)
+    .with_created_at_ms(1_710_000_000)
+    .with_updated_at_ms(1_710_000_001);
+    store.insert_payment_order_record(&order).await.unwrap();
+
+    let callback = PaymentCallbackEventRecord::new(
+        "callback-pg-1",
+        2,
+        0,
+        PaymentProviderCode::Stripe,
+        "gateway-account-pg-2",
+        "checkout.session.completed",
+        "evt_pg_123",
+        "dedupe_evt_pg_123",
+        1_710_000_010,
+    )
+    .with_payment_order_id(Some("payment-order-pg-2".to_owned()))
+    .with_processing_status(PaymentCallbackProcessingStatus::Processed)
+    .with_payload_json(Some("{\"id\":\"evt_pg_123\"}".to_owned()))
+    .with_processed_at_ms(Some(1_710_000_011));
+    store
+        .insert_payment_callback_event_record(&callback)
+        .await
+        .unwrap();
+
+    let refund = RefundOrderRecord::new(
+        "refund-order-pg-1",
+        2,
+        0,
+        "payment-order-pg-2",
+        "commerce-order-pg-2",
+        "buyer_request",
+        "portal_user",
+        "user-9",
+        "USD",
+        2_000,
+    )
+    .with_refunded_amount_minor(1_000)
+    .with_refund_status(RefundOrderStatus::Processing)
+    .with_created_at_ms(1_710_000_020)
+    .with_updated_at_ms(1_710_000_021);
+    store.insert_refund_order_record(&refund).await.unwrap();
+
+    let journal = FinanceJournalEntryRecord::new(
+        "journal-pg-1",
+        2,
+        0,
+        "payment_order",
+        "payment-order-pg-2",
+        FinanceEntryCode::CustomerPrepaidLiabilityIncrease,
+        "USD",
+        1_710_000_030,
+    )
+    .with_entry_status("posted")
+    .with_created_at_ms(1_710_000_031);
+    store
+        .insert_finance_journal_entry_record(&journal)
+        .await
+        .unwrap();
+
+    let journal_line = FinanceJournalLineRecord::new(
+        "journal-line-pg-1",
+        2,
+        0,
+        "journal-pg-1",
+        1,
+        "gateway_clearing_asset",
+        FinanceDirection::Debit,
+        5_000,
+    )
+    .with_party_type(Some("payment_order".to_owned()))
+    .with_party_id(Some("payment-order-pg-2".to_owned()));
+    store
+        .insert_finance_journal_line_record(&journal_line)
+        .await
+        .unwrap();
+
+    let reconciliation = ReconciliationMatchSummaryRecord::new(
+        "recon-line-pg-1",
+        2,
+        0,
+        "recon-batch-pg-1",
+        "provider-tx-pg-2",
+        ReconciliationMatchStatus::MismatchAmount,
+        5_000,
+    )
+    .with_local_amount_minor(Some(4_900))
+    .with_payment_order_id(Some("payment-order-pg-2".to_owned()))
+    .with_reason_code(Some("provider_fee_pending".to_owned()))
+    .with_created_at_ms(1_710_000_040)
+    .with_updated_at_ms(1_710_000_041);
+    store
+        .insert_reconciliation_match_summary_record(&reconciliation)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        store.list_payment_callback_event_records().await.unwrap(),
+        vec![callback]
+    );
+    assert_eq!(
+        store
+            .list_refund_order_records_for_payment_order("payment-order-pg-2")
+            .await
+            .unwrap(),
+        vec![refund]
+    );
+    assert_eq!(
+        store.list_finance_journal_entry_records().await.unwrap(),
+        vec![journal]
+    );
+    assert_eq!(
+        store
+            .list_finance_journal_line_records("journal-pg-1")
+            .await
+            .unwrap(),
+        vec![journal_line]
+    );
+    assert_eq!(
+        store
+            .list_reconciliation_match_summary_records("recon-batch-pg-1")
+            .await
+            .unwrap(),
+        vec![reconciliation.clone()]
+    );
+    assert_eq!(
+        store
+            .find_reconciliation_match_summary_record("recon-line-pg-1")
+            .await
+            .unwrap(),
+        Some(reconciliation)
+    );
+    assert_eq!(
+        store
+            .find_reconciliation_match_summary_record("recon-line-pg-missing")
+            .await
+            .unwrap(),
+        None
+    );
+
+    let gateway_account =
+        PaymentGatewayAccountRecord::new("gateway-account-pg-1", 2, 0, PaymentProviderCode::Stripe)
+            .with_environment("production")
+            .with_merchant_id("merchant-pg-1")
+            .with_app_id("app-pg-1")
+            .with_status("active")
+            .with_priority(100)
+            .with_created_at_ms(1_710_000_050)
+            .with_updated_at_ms(1_710_000_051);
+    store
+        .insert_payment_gateway_account_record(&gateway_account)
+        .await
+        .unwrap();
+
+    let channel_policy = PaymentChannelPolicyRecord::new(
+        "channel-policy-pg-1",
+        2,
+        0,
+        PaymentProviderCode::Stripe,
+        "hosted_checkout",
+    )
+    .with_scene_code("recharge_pack")
+    .with_currency_code("USD")
+    .with_client_kind("portal_web")
+    .with_status("active")
+    .with_priority(80)
+    .with_created_at_ms(1_710_000_052)
+    .with_updated_at_ms(1_710_000_053);
+    store
+        .insert_payment_channel_policy_record(&channel_policy)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        store.list_payment_gateway_account_records().await.unwrap(),
+        vec![gateway_account]
+    );
+    assert_eq!(
+        store.list_payment_channel_policy_records().await.unwrap(),
+        vec![channel_policy]
+    );
 }
 
 #[tokio::test]
