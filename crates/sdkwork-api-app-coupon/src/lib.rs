@@ -3,6 +3,10 @@ use sdkwork_api_domain_coupon::CouponCampaign;
 use sdkwork_api_storage_core::AdminStore;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Persists the compatibility-era coupon campaign model.
+///
+/// New commercial marketing work should move to the canonical marketing kernel
+/// instead of widening this legacy shape.
 pub async fn persist_coupon(
     store: &dyn AdminStore,
     coupon: &CouponCampaign,
@@ -20,6 +24,8 @@ pub async fn list_coupons(store: &dyn AdminStore) -> Result<Vec<CouponCampaign>>
     store.list_coupons().await
 }
 
+/// Lists only active compatibility campaigns that still have redeemable
+/// inventory according to the legacy coupon model.
 pub async fn list_active_coupons(store: &dyn AdminStore) -> Result<Vec<CouponCampaign>> {
     store.list_active_coupons().await
 }

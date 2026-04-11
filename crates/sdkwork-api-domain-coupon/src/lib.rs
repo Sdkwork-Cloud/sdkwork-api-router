@@ -1,5 +1,9 @@
 use serde::{Deserialize, Serialize};
 
+/// Compatibility-era coupon record.
+///
+/// This shape remains available while the canonical marketing system migrates
+/// toward template, batch, code, claim, and redemption records.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CouponCampaign {
     pub id: String,
@@ -15,6 +19,8 @@ pub struct CouponCampaign {
 }
 
 impl CouponCampaign {
+    /// Creates the legacy single-code campaign model that older admin and
+    /// portal flows still consume during the migration window.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: impl Into<String>,

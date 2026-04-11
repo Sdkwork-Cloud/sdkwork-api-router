@@ -1,16 +1,20 @@
 use anyhow::{ensure, Result};
 use async_trait::async_trait;
 use sdkwork_api_domain_billing::{
-    AccountBenefitLotRecord, AccountBenefitLotStatus, AccountBenefitType, AccountRecord,
+    AccountBenefitLotRecord, AccountBenefitLotStatus, AccountBenefitType,
+    AccountHoldAllocationRecord, AccountHoldRecord, AccountHoldStatus,
+    AccountLedgerAllocationRecord, AccountLedgerEntryRecord, AccountLedgerEntryType, AccountRecord,
     AccountStatus, AccountType, BillingEventAccountingModeSummary, BillingEventCapabilitySummary,
     BillingEventGroupSummary, BillingEventProjectSummary, BillingEventRecord, BillingEventSummary,
-    BillingSummary, LedgerEntry, ProjectBillingSummary,
+    BillingSummary, LedgerEntry, ProjectBillingSummary, RequestSettlementRecord,
+    RequestSettlementStatus,
 };
 use sdkwork_api_domain_identity::GatewayAuthSubject;
+use sdkwork_api_domain_usage::{RequestMeterFactRecord, RequestStatus, UsageCaptureStatus};
 use sdkwork_api_policy_quota::{
     builtin_quota_policy_registry, QuotaPolicyExecutionInput, STRICTEST_LIMIT_QUOTA_POLICY_ID,
 };
-use sdkwork_api_storage_core::{AccountKernelStore, AdminStore};
+use sdkwork_api_storage_core::{AccountKernelCommandBatch, AccountKernelStore, AdminStore};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub use sdkwork_api_domain_billing::{BillingAccountingMode, QuotaCheckResult, QuotaPolicy};
@@ -91,6 +95,46 @@ pub struct AccountHoldPlan {
     pub shortfall_quantity: f64,
     pub sufficient_balance: bool,
     pub allocations: Vec<PlannedHoldAllocation>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CreateAccountHoldInput {
+    pub hold_id: u64,
+    pub account_id: u64,
+    pub request_id: u64,
+    pub estimated_quantity: f64,
+    pub expires_at_ms: u64,
+    pub now_ms: u64,
+    pub request_meter_fact: RequestMeterFactRecord,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CaptureAccountHoldInput {
+    pub hold_id: u64,
+    pub captured_quantity: f64,
+    pub provider_cost_amount: f64,
+    pub retail_charge_amount: f64,
+    pub settled_at_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReleaseAccountHoldInput {
+    pub hold_id: u64,
+    pub settled_at_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CreatedAccountHold {
+    pub hold: AccountHoldRecord,
+    pub hold_allocations: Vec<AccountHoldAllocationRecord>,
+    pub request_meter_fact: RequestMeterFactRecord,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SettledAccountHold {
+    pub hold: AccountHoldRecord,
+    pub settlement: RequestSettlementRecord,
+    pub request_meter_fact: RequestMeterFactRecord,
 }
 
 pub fn create_quota_policy(
@@ -321,6 +365,221 @@ where
     })
 }
 
+pub async fn create_account_hold<S>(
+    store: &S,
+    input: CreateAccountHoldInput,
+) -> Result<CreatedAccountHold>
+where
+    S: AccountKernelStore + ?Sized,
+{
+    ensure!(
+        input.estimated_quantity > 0.0,
+        "estimated_quantity must be positive"
+    );
+    ensure!(
+        input.request_meter_fact.request_id == input.request_id,
+        "request meter fact request_id must match hold request_id"
+    );
+
+    let account = store
+        .find_account_record(input.account_id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("account {} does not exist", input.account_id))?;
+    ensure!(
+        account.status == AccountStatus::Active,
+        "account {} is not active",
+        account.account_id
+    );
+
+    if let Some(existing_hold) = store
+        .list_account_holds()
+        .await?
+        .into_iter()
+        .find(|hold| hold.hold_id == input.hold_id || hold.request_id == input.request_id)
+    {
+        let existing_allocations = store
+            .list_account_hold_allocations()
+            .await?
+            .into_iter()
+            .filter(|allocation| allocation.hold_id == existing_hold.hold_id)
+            .collect::<Vec<_>>();
+        let existing_request_meter_fact = store
+            .list_request_meter_facts()
+            .await?
+            .into_iter()
+            .find(|record| record.request_id == existing_hold.request_id)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "request meter fact {} missing for existing hold {}",
+                    existing_hold.request_id,
+                    existing_hold.hold_id
+                )
+            })?;
+        return Ok(CreatedAccountHold {
+            hold: existing_hold,
+            hold_allocations: existing_allocations,
+            request_meter_fact: existing_request_meter_fact,
+        });
+    }
+
+    let hold_plan = plan_account_hold(
+        store,
+        input.account_id,
+        input.estimated_quantity,
+        input.now_ms,
+    )
+    .await?;
+    ensure!(
+        hold_plan.sufficient_balance,
+        "account {} has insufficient balance for hold {}",
+        input.account_id,
+        input.estimated_quantity
+    );
+
+    let lots_by_id = store
+        .list_account_benefit_lots()
+        .await?
+        .into_iter()
+        .filter(|lot| lot.account_id == input.account_id)
+        .map(|lot| (lot.lot_id, lot))
+        .collect::<BTreeMap<_, _>>();
+
+    let mut updated_lots = Vec::new();
+    let mut hold_allocations = Vec::new();
+    for (index, allocation) in hold_plan.allocations.iter().enumerate() {
+        let mut lot = lots_by_id
+            .get(&allocation.lot_id)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("benefit lot {} does not exist", allocation.lot_id))?;
+        lot.held_quantity += allocation.quantity;
+        lot.updated_at_ms = input.now_ms;
+        updated_lots.push(lot);
+
+        hold_allocations.push(
+            AccountHoldAllocationRecord::new(
+                derived_allocation_id(input.hold_id, index)?,
+                account.tenant_id,
+                account.organization_id,
+                input.hold_id,
+                allocation.lot_id,
+            )
+            .with_allocated_quantity(allocation.quantity)
+            .with_created_at_ms(input.now_ms)
+            .with_updated_at_ms(input.now_ms),
+        );
+    }
+
+    let hold = AccountHoldRecord::new(
+        input.hold_id,
+        account.tenant_id,
+        account.organization_id,
+        account.account_id,
+        account.user_id,
+        input.request_id,
+    )
+    .with_status(AccountHoldStatus::Held)
+    .with_estimated_quantity(input.estimated_quantity)
+    .with_expires_at_ms(input.expires_at_ms)
+    .with_created_at_ms(input.now_ms)
+    .with_updated_at_ms(input.now_ms);
+
+    let request_meter_fact = prepare_request_meter_fact_for_hold(
+        &account,
+        input.request_meter_fact,
+        input.estimated_quantity,
+        input.now_ms,
+    )?;
+    let hold_create_ledger_entry = AccountLedgerEntryRecord::new(
+        hold_create_ledger_entry_id(input.request_id)?,
+        account.tenant_id,
+        account.organization_id,
+        account.account_id,
+        account.user_id,
+        AccountLedgerEntryType::HoldCreate,
+    )
+    .with_request_id(Some(input.request_id))
+    .with_hold_id(Some(input.hold_id))
+    .with_quantity(input.estimated_quantity)
+    .with_amount(input.estimated_quantity)
+    .with_created_at_ms(input.now_ms);
+
+    let batch = AccountKernelCommandBatch {
+        benefit_lot_records: updated_lots,
+        hold_records: vec![hold.clone()],
+        hold_allocation_records: hold_allocations.clone(),
+        ledger_entry_records: vec![hold_create_ledger_entry],
+        request_meter_fact_records: vec![request_meter_fact.clone()],
+        ..AccountKernelCommandBatch::default()
+    };
+    store.commit_account_kernel_batch(&batch).await?;
+
+    Ok(CreatedAccountHold {
+        hold,
+        hold_allocations,
+        request_meter_fact,
+    })
+}
+
+pub async fn capture_account_hold<S>(
+    store: &S,
+    input: CaptureAccountHoldInput,
+) -> Result<SettledAccountHold>
+where
+    S: AccountKernelStore + ?Sized,
+{
+    settle_account_hold(
+        store,
+        input.hold_id,
+        input.captured_quantity,
+        input.provider_cost_amount,
+        input.retail_charge_amount,
+        RequestStatus::Succeeded,
+        UsageCaptureStatus::Captured,
+        input.settled_at_ms,
+    )
+    .await
+}
+
+pub async fn reconcile_account_hold<S>(
+    store: &S,
+    input: CaptureAccountHoldInput,
+) -> Result<SettledAccountHold>
+where
+    S: AccountKernelStore + ?Sized,
+{
+    settle_account_hold(
+        store,
+        input.hold_id,
+        input.captured_quantity,
+        input.provider_cost_amount,
+        input.retail_charge_amount,
+        RequestStatus::Succeeded,
+        UsageCaptureStatus::Reconciled,
+        input.settled_at_ms,
+    )
+    .await
+}
+
+pub async fn release_account_hold<S>(
+    store: &S,
+    input: ReleaseAccountHoldInput,
+) -> Result<SettledAccountHold>
+where
+    S: AccountKernelStore + ?Sized,
+{
+    settle_account_hold(
+        store,
+        input.hold_id,
+        0.0,
+        0.0,
+        0.0,
+        RequestStatus::Failed,
+        UsageCaptureStatus::Failed,
+        input.settled_at_ms,
+    )
+    .await
+}
+
 pub async fn resolve_payable_account_for_gateway_subject<S>(
     store: &S,
     subject: &GatewayAuthSubject,
@@ -488,6 +747,8 @@ pub fn summarize_billing_snapshot(
         .map(|mut summary| {
             if let Some(limit_units) = summary.quota_limit_units {
                 let remaining_units = limit_units.saturating_sub(summary.used_units);
+                summary.balance_source = Some("quota_policy".to_owned());
+                summary.quota_remaining_units = Some(remaining_units);
                 summary.remaining_units = Some(remaining_units);
                 summary.exhausted = summary.used_units >= limit_units;
             }
@@ -738,6 +999,377 @@ pub async fn summarize_billing_events_from_store(
 ) -> Result<BillingEventSummary> {
     let events = list_billing_events(store).await?;
     Ok(summarize_billing_events(&events))
+}
+
+async fn settle_account_hold<S>(
+    store: &S,
+    hold_id: u64,
+    captured_quantity: f64,
+    provider_cost_amount: f64,
+    retail_charge_amount: f64,
+    request_status: RequestStatus,
+    usage_capture_status: UsageCaptureStatus,
+    settled_at_ms: u64,
+) -> Result<SettledAccountHold>
+where
+    S: AccountKernelStore + ?Sized,
+{
+    ensure!(
+        captured_quantity >= 0.0,
+        "captured_quantity must not be negative"
+    );
+    ensure!(
+        provider_cost_amount >= 0.0,
+        "provider_cost_amount must not be negative"
+    );
+    ensure!(
+        retail_charge_amount >= 0.0,
+        "retail_charge_amount must not be negative"
+    );
+
+    let holds = store.list_account_holds().await?;
+    let current_hold = holds
+        .into_iter()
+        .find(|hold| hold.hold_id == hold_id)
+        .ok_or_else(|| anyhow::anyhow!("hold {} does not exist", hold_id))?;
+
+    if let Some(existing_settlement) = store
+        .list_request_settlement_records()
+        .await?
+        .into_iter()
+        .find(|settlement| settlement.request_id == current_hold.request_id)
+    {
+        let request_meter_fact = store
+            .list_request_meter_facts()
+            .await?
+            .into_iter()
+            .find(|record| record.request_id == current_hold.request_id)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "request meter fact {} missing for hold {}",
+                    current_hold.request_id,
+                    current_hold.hold_id
+                )
+            })?;
+        return Ok(SettledAccountHold {
+            hold: current_hold,
+            settlement: existing_settlement,
+            request_meter_fact,
+        });
+    }
+
+    ensure!(
+        captured_quantity <= current_hold.estimated_quantity + f64::EPSILON,
+        "captured_quantity exceeds held quantity for hold {}",
+        current_hold.hold_id
+    );
+
+    let account = store
+        .find_account_record(current_hold.account_id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("account {} does not exist", current_hold.account_id))?;
+    let request_meter_fact = store
+        .list_request_meter_facts()
+        .await?
+        .into_iter()
+        .find(|record| record.request_id == current_hold.request_id)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "request meter fact {} does not exist",
+                current_hold.request_id
+            )
+        })?;
+    let hold_allocations = store
+        .list_account_hold_allocations()
+        .await?
+        .into_iter()
+        .filter(|allocation| allocation.hold_id == current_hold.hold_id)
+        .collect::<Vec<_>>();
+    ensure!(
+        !hold_allocations.is_empty(),
+        "hold {} has no allocation records",
+        current_hold.hold_id
+    );
+
+    let lots_by_id = store
+        .list_account_benefit_lots()
+        .await?
+        .into_iter()
+        .filter(|lot| lot.account_id == current_hold.account_id)
+        .map(|lot| (lot.lot_id, lot))
+        .collect::<BTreeMap<_, _>>();
+
+    let mut remaining_capture = captured_quantity;
+    let mut updated_allocations = Vec::new();
+    let mut updated_lots = Vec::new();
+    let mut capture_allocations = Vec::new();
+    let mut release_allocations = Vec::new();
+
+    for (index, allocation) in hold_allocations.iter().enumerate() {
+        let capture_amount = allocation.allocated_quantity.min(remaining_capture);
+        remaining_capture = (remaining_capture - capture_amount).max(0.0);
+        let release_amount = (allocation.allocated_quantity - capture_amount).max(0.0);
+
+        updated_allocations.push(
+            allocation
+                .clone()
+                .with_captured_quantity(capture_amount)
+                .with_released_quantity(release_amount)
+                .with_updated_at_ms(settled_at_ms),
+        );
+
+        let mut lot = lots_by_id
+            .get(&allocation.lot_id)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("benefit lot {} does not exist", allocation.lot_id))?;
+        ensure!(
+            lot.held_quantity + f64::EPSILON >= allocation.allocated_quantity,
+            "benefit lot {} does not have enough held balance for release",
+            lot.lot_id
+        );
+        lot.held_quantity = (lot.held_quantity - allocation.allocated_quantity).max(0.0);
+        lot.remaining_quantity = (lot.remaining_quantity - capture_amount).max(0.0);
+        if lot.remaining_quantity <= f64::EPSILON {
+            lot.remaining_quantity = 0.0;
+            lot.status = AccountBenefitLotStatus::Exhausted;
+        }
+        lot.updated_at_ms = settled_at_ms;
+        updated_lots.push(lot);
+
+        if capture_amount > f64::EPSILON {
+            capture_allocations.push(
+                AccountLedgerAllocationRecord::new(
+                    derived_allocation_id(
+                        settlement_capture_ledger_entry_id(current_hold.request_id)?,
+                        index,
+                    )?,
+                    account.tenant_id,
+                    account.organization_id,
+                    settlement_capture_ledger_entry_id(current_hold.request_id)?,
+                    allocation.lot_id,
+                )
+                .with_quantity_delta(-capture_amount)
+                .with_created_at_ms(settled_at_ms),
+            );
+        }
+        if release_amount > f64::EPSILON {
+            release_allocations.push(
+                AccountLedgerAllocationRecord::new(
+                    derived_allocation_id(
+                        settlement_release_ledger_entry_id(current_hold.request_id)?,
+                        index,
+                    )?,
+                    account.tenant_id,
+                    account.organization_id,
+                    settlement_release_ledger_entry_id(current_hold.request_id)?,
+                    allocation.lot_id,
+                )
+                .with_quantity_delta(release_amount)
+                .with_created_at_ms(settled_at_ms),
+            );
+        }
+    }
+
+    ensure!(
+        remaining_capture <= f64::EPSILON,
+        "captured_quantity exceeds allocated quantities for hold {}",
+        current_hold.hold_id
+    );
+
+    let released_quantity = (current_hold.estimated_quantity - captured_quantity).max(0.0);
+    let hold_status = hold_status_for_settlement(captured_quantity, released_quantity);
+    let settlement_status = settlement_status_for_settlement(captured_quantity, released_quantity);
+
+    let updated_hold = current_hold
+        .clone()
+        .with_status(hold_status)
+        .with_captured_quantity(captured_quantity)
+        .with_released_quantity(released_quantity)
+        .with_updated_at_ms(settled_at_ms);
+    let updated_request_meter_fact = request_meter_fact
+        .with_request_status(request_status)
+        .with_usage_capture_status(usage_capture_status)
+        .with_actual_credit_charge(Some(captured_quantity))
+        .with_actual_provider_cost(Some(provider_cost_amount))
+        .with_finished_at_ms(Some(settled_at_ms))
+        .with_updated_at_ms(settled_at_ms);
+    let settlement = RequestSettlementRecord::new(
+        request_settlement_id(current_hold.request_id),
+        account.tenant_id,
+        account.organization_id,
+        current_hold.request_id,
+        account.account_id,
+        account.user_id,
+    )
+    .with_hold_id(Some(current_hold.hold_id))
+    .with_status(settlement_status)
+    .with_estimated_credit_hold(current_hold.estimated_quantity)
+    .with_released_credit_amount(released_quantity)
+    .with_captured_credit_amount(captured_quantity)
+    .with_provider_cost_amount(provider_cost_amount)
+    .with_retail_charge_amount(retail_charge_amount)
+    .with_settled_at_ms(settled_at_ms)
+    .with_created_at_ms(settled_at_ms)
+    .with_updated_at_ms(settled_at_ms);
+
+    let mut ledger_entries = Vec::new();
+    let mut ledger_allocations = Vec::new();
+    if captured_quantity > f64::EPSILON {
+        ledger_entries.push(
+            AccountLedgerEntryRecord::new(
+                settlement_capture_ledger_entry_id(current_hold.request_id)?,
+                account.tenant_id,
+                account.organization_id,
+                account.account_id,
+                account.user_id,
+                AccountLedgerEntryType::SettlementCapture,
+            )
+            .with_request_id(Some(current_hold.request_id))
+            .with_hold_id(Some(current_hold.hold_id))
+            .with_quantity(captured_quantity)
+            .with_amount(captured_quantity)
+            .with_created_at_ms(settled_at_ms),
+        );
+        ledger_allocations.extend(capture_allocations);
+    }
+    if released_quantity > f64::EPSILON {
+        ledger_entries.push(
+            AccountLedgerEntryRecord::new(
+                settlement_release_ledger_entry_id(current_hold.request_id)?,
+                account.tenant_id,
+                account.organization_id,
+                account.account_id,
+                account.user_id,
+                AccountLedgerEntryType::HoldRelease,
+            )
+            .with_request_id(Some(current_hold.request_id))
+            .with_hold_id(Some(current_hold.hold_id))
+            .with_quantity(released_quantity)
+            .with_amount(released_quantity)
+            .with_created_at_ms(settled_at_ms),
+        );
+        ledger_allocations.extend(release_allocations);
+    }
+
+    let batch = AccountKernelCommandBatch {
+        benefit_lot_records: updated_lots,
+        hold_records: vec![updated_hold.clone()],
+        hold_allocation_records: updated_allocations,
+        ledger_entry_records: ledger_entries,
+        ledger_allocation_records: ledger_allocations,
+        request_meter_fact_records: vec![updated_request_meter_fact.clone()],
+        request_settlement_records: vec![settlement.clone()],
+        ..AccountKernelCommandBatch::default()
+    };
+    store.commit_account_kernel_batch(&batch).await?;
+
+    Ok(SettledAccountHold {
+        hold: updated_hold,
+        settlement,
+        request_meter_fact: updated_request_meter_fact,
+    })
+}
+
+fn prepare_request_meter_fact_for_hold(
+    account: &AccountRecord,
+    request_meter_fact: RequestMeterFactRecord,
+    estimated_credit_hold: f64,
+    now_ms: u64,
+) -> Result<RequestMeterFactRecord> {
+    ensure!(
+        request_meter_fact.account_id == account.account_id,
+        "request meter fact account_id must match hold account"
+    );
+    ensure!(
+        request_meter_fact.tenant_id == account.tenant_id,
+        "request meter fact tenant_id must match hold account"
+    );
+    ensure!(
+        request_meter_fact.organization_id == account.organization_id,
+        "request meter fact organization_id must match hold account"
+    );
+    ensure!(
+        request_meter_fact.user_id == account.user_id,
+        "request meter fact user_id must match hold account"
+    );
+
+    let started_at_ms = if request_meter_fact.started_at_ms == 0 {
+        now_ms
+    } else {
+        request_meter_fact.started_at_ms
+    };
+    let created_at_ms = if request_meter_fact.created_at_ms == 0 {
+        now_ms
+    } else {
+        request_meter_fact.created_at_ms
+    };
+
+    Ok(request_meter_fact
+        .with_request_status(RequestStatus::Pending)
+        .with_usage_capture_status(UsageCaptureStatus::Pending)
+        .with_estimated_credit_hold(estimated_credit_hold)
+        .with_actual_credit_charge(None)
+        .with_actual_provider_cost(None)
+        .with_started_at_ms(started_at_ms)
+        .with_created_at_ms(created_at_ms)
+        .with_updated_at_ms(now_ms))
+}
+
+fn hold_status_for_settlement(captured_quantity: f64, released_quantity: f64) -> AccountHoldStatus {
+    if captured_quantity <= f64::EPSILON {
+        AccountHoldStatus::Released
+    } else if released_quantity <= f64::EPSILON {
+        AccountHoldStatus::Captured
+    } else {
+        AccountHoldStatus::PartiallyReleased
+    }
+}
+
+fn settlement_status_for_settlement(
+    captured_quantity: f64,
+    released_quantity: f64,
+) -> RequestSettlementStatus {
+    if captured_quantity <= f64::EPSILON {
+        RequestSettlementStatus::Released
+    } else if released_quantity <= f64::EPSILON {
+        RequestSettlementStatus::Captured
+    } else {
+        RequestSettlementStatus::PartiallyReleased
+    }
+}
+
+fn request_settlement_id(request_id: u64) -> u64 {
+    request_id
+}
+
+fn hold_create_ledger_entry_id(request_id: u64) -> Result<u64> {
+    derived_child_id(request_id, 1)
+}
+
+fn settlement_capture_ledger_entry_id(request_id: u64) -> Result<u64> {
+    derived_child_id(request_id, 2)
+}
+
+fn settlement_release_ledger_entry_id(request_id: u64) -> Result<u64> {
+    derived_child_id(request_id, 3)
+}
+
+fn derived_child_id(parent_id: u64, suffix: u64) -> Result<u64> {
+    parent_id
+        .checked_mul(10)
+        .and_then(|value| value.checked_add(suffix))
+        .ok_or_else(|| anyhow::anyhow!("derived identifier overflow for {}", parent_id))
+}
+
+fn derived_allocation_id(parent_id: u64, index: usize) -> Result<u64> {
+    let offset = u64::try_from(index)
+        .ok()
+        .and_then(|value| value.checked_add(1))
+        .ok_or_else(|| anyhow::anyhow!("allocation index overflow for {}", parent_id))?;
+    parent_id
+        .checked_mul(100)
+        .and_then(|value| value.checked_add(offset))
+        .ok_or_else(|| anyhow::anyhow!("derived allocation identifier overflow for {}", parent_id))
 }
 
 fn eligible_lots_for_hold(

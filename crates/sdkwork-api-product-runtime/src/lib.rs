@@ -1,16 +1,18 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
 use sdkwork_api_app_credential::CredentialSecretManager;
 use sdkwork_api_app_gateway::{
     configure_capability_catalog_cache_store, configure_route_decision_cache_store,
 };
+use sdkwork_api_app_rate_limit::InMemoryGatewayTrafficController;
 use sdkwork_api_app_runtime::{
-    build_admin_store_from_config, build_cache_runtime_from_config, resolve_service_runtime_node_id,
-    start_extension_runtime_rollout_supervision, start_standalone_runtime_supervision,
-    StandaloneListenerHost, StandaloneRuntimeSupervision, StandaloneServiceKind,
-    StandaloneServiceReloadHandles,
+    build_admin_store_from_config, build_cache_runtime_from_config,
+    resolve_service_runtime_node_id, start_extension_runtime_rollout_supervision,
+    start_standalone_runtime_supervision, StandaloneListenerHost, StandaloneRuntimeSupervision,
+    StandaloneServiceKind, StandaloneServiceReloadHandles,
 };
 use sdkwork_api_config::{RuntimeMode, StandaloneConfig, StandaloneConfigLoader};
 use sdkwork_api_interface_admin::{admin_router_with_state, AdminApiState};
@@ -195,6 +197,7 @@ impl RouterProductRuntime {
         config: StandaloneConfig,
         options: RouterProductRuntimeOptions,
     ) -> Result<Self> {
+        config.validate_startup_security()?;
         let mode = product_mode_label(options.mode).to_owned();
         let roles = options
             .roles
@@ -226,6 +229,7 @@ impl RouterProductRuntime {
                         GatewayApiState::with_live_store_and_secret_manager_handle(
                             live_store.clone(),
                             live_secret_manager.clone(),
+                            Arc::new(InMemoryGatewayTrafficController::new()),
                         ),
                     ),
                 )
@@ -240,10 +244,11 @@ impl RouterProductRuntime {
                 StandaloneListenerHost::bind(
                     requested_local_bind(&config.admin_bind, options.mode),
                     admin_router_with_state(
-                        AdminApiState::with_live_store_and_secret_manager_handle_and_jwt_secret_handle(
+                        AdminApiState::with_live_store_and_secret_manager_handle_and_jwt_secret_handle_and_local_bootstrap(
                             live_store.clone(),
                             live_secret_manager.clone(),
                             live_admin_jwt.clone(),
+                            config.allow_local_dev_bootstrap,
                         ),
                     ),
                 )
@@ -258,9 +263,10 @@ impl RouterProductRuntime {
                 StandaloneListenerHost::bind(
                     requested_local_bind(&config.portal_bind, options.mode),
                     portal_router_with_state(
-                        PortalApiState::with_live_store_and_jwt_secret_handle(
+                        PortalApiState::with_live_store_and_jwt_secret_handle_and_local_bootstrap(
                             live_store.clone(),
                             live_portal_jwt.clone(),
+                            config.allow_local_dev_bootstrap,
                         ),
                     ),
                 )

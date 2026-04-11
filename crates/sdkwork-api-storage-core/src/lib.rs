@@ -13,8 +13,18 @@ use sdkwork_api_domain_commerce::{CommerceOrderRecord, ProjectMembershipRecord};
 use sdkwork_api_domain_coupon::CouponCampaign;
 use sdkwork_api_domain_credential::UpstreamCredential;
 use sdkwork_api_domain_identity::{
-    AdminUserRecord, ApiKeyGroupRecord, CanonicalApiKeyRecord, GatewayApiKeyRecord,
-    IdentityBindingRecord, IdentityUserRecord, PortalUserRecord,
+    AdminAuditEventRecord, AdminUserRecord, ApiKeyGroupRecord, CanonicalApiKeyRecord,
+    GatewayApiKeyRecord, IdentityBindingRecord, IdentityUserRecord, PortalUserRecord,
+    PortalWorkspaceMembershipRecord,
+};
+use sdkwork_api_domain_marketing::{
+    CouponBenefitRuleRecord, CouponClaimRecord, CouponCodeBatchRecord, CouponCodeRecord,
+    CouponRedemptionRecord, CouponTemplateRecord, MarketingAttributionTouchRecord,
+    MarketingCampaignRecord, ReferralInviteRecord, ReferralProgramRecord,
+};
+use sdkwork_api_domain_payment::{
+    DisputeRecord, PaymentAttemptRecord, PaymentOrderRecord, PaymentWebhookEventRecord,
+    RefundRecord,
 };
 use sdkwork_api_domain_rate_limit::{
     RateLimitCheckResult, RateLimitPolicy, RateLimitWindowSnapshot,
@@ -332,11 +342,16 @@ define_admin_store_facet!(IdentityStore {
     async fn find_portal_user_by_email(&self, email: &str) -> Option<PortalUserRecord>;
     async fn find_portal_user_by_id(&self, user_id: &str) -> Option<PortalUserRecord>;
     async fn delete_portal_user(&self, user_id: &str) -> bool;
+    async fn insert_portal_workspace_membership(&self, membership: &PortalWorkspaceMembershipRecord) -> PortalWorkspaceMembershipRecord;
+    async fn list_portal_workspace_memberships_for_user(&self, user_id: &str) -> Vec<PortalWorkspaceMembershipRecord>;
+    async fn find_portal_workspace_membership(&self, user_id: &str, tenant_id: &str, project_id: &str) -> Option<PortalWorkspaceMembershipRecord>;
     async fn insert_admin_user(&self, user: &AdminUserRecord) -> AdminUserRecord;
     async fn list_admin_users(&self) -> Vec<AdminUserRecord>;
     async fn find_admin_user_by_email(&self, email: &str) -> Option<AdminUserRecord>;
     async fn find_admin_user_by_id(&self, user_id: &str) -> Option<AdminUserRecord>;
     async fn delete_admin_user(&self, user_id: &str) -> bool;
+    async fn insert_admin_audit_event(&self, event: &AdminAuditEventRecord) -> AdminAuditEventRecord;
+    async fn list_admin_audit_events(&self) -> Vec<AdminAuditEventRecord>;
     async fn insert_gateway_api_key(&self, record: &GatewayApiKeyRecord) -> GatewayApiKeyRecord;
     async fn list_gateway_api_keys(&self) -> Vec<GatewayApiKeyRecord>;
     async fn find_gateway_api_key(&self, hashed_key: &str) -> Option<GatewayApiKeyRecord>;
@@ -345,6 +360,24 @@ define_admin_store_facet!(IdentityStore {
     async fn list_api_key_groups(&self) -> Vec<ApiKeyGroupRecord>;
     async fn find_api_key_group(&self, group_id: &str) -> Option<ApiKeyGroupRecord>;
     async fn delete_api_key_group(&self, group_id: &str) -> bool;
+    async fn insert_payment_order_record(&self, record: &PaymentOrderRecord) -> PaymentOrderRecord;
+    async fn find_payment_order_record(&self, payment_order_id: &str) -> Option<PaymentOrderRecord>;
+    async fn find_payment_order_record_by_commerce_order_id(&self, commerce_order_id: &str) -> Option<PaymentOrderRecord>;
+    async fn find_payment_order_record_by_provider_reference(&self, provider: &str, provider_reference_id: &str) -> Option<PaymentOrderRecord>;
+    async fn insert_payment_attempt_record(&self, record: &PaymentAttemptRecord) -> PaymentAttemptRecord;
+    async fn find_payment_attempt_record(&self, payment_attempt_id: &str) -> Option<PaymentAttemptRecord>;
+    async fn find_payment_attempt_record_by_provider_reference(&self, provider: &str, provider_attempt_id: &str) -> Option<PaymentAttemptRecord>;
+    async fn list_payment_attempt_records_for_payment_order(&self, payment_order_id: &str) -> Vec<PaymentAttemptRecord>;
+    async fn insert_refund_record(&self, record: &RefundRecord) -> RefundRecord;
+    async fn find_refund_record(&self, refund_id: &str) -> Option<RefundRecord>;
+    async fn find_refund_record_by_provider_reference(&self, provider: &str, provider_refund_id: &str) -> Option<RefundRecord>;
+    async fn list_refund_records_for_payment_order(&self, payment_order_id: &str) -> Vec<RefundRecord>;
+    async fn insert_dispute_record(&self, record: &DisputeRecord) -> DisputeRecord;
+    async fn find_dispute_record(&self, dispute_id: &str) -> Option<DisputeRecord>;
+    async fn find_dispute_record_by_provider_reference(&self, provider: &str, provider_dispute_id: &str) -> Option<DisputeRecord>;
+    async fn list_dispute_records_for_payment_order(&self, payment_order_id: &str) -> Vec<DisputeRecord>;
+    async fn insert_payment_webhook_event_record(&self, record: &PaymentWebhookEventRecord) -> PaymentWebhookEventRecord;
+    async fn find_payment_webhook_event_record(&self, provider: &str, provider_event_id: &str) -> Option<PaymentWebhookEventRecord>;
 });
 
 define_admin_store_facet!(TenantStore {
@@ -431,6 +464,35 @@ define_admin_store_facet!(BillingStore {
     async fn list_commerce_orders(&self) -> Vec<CommerceOrderRecord>;
 });
 
+define_admin_store_facet!(MarketingStore {
+    async fn insert_coupon_template_record(&self, record: &CouponTemplateRecord) -> CouponTemplateRecord;
+    async fn list_coupon_template_records(&self) -> Vec<CouponTemplateRecord>;
+    async fn find_coupon_template_record(&self, coupon_template_id: u64) -> Option<CouponTemplateRecord>;
+    async fn insert_coupon_benefit_rule_record(&self, record: &CouponBenefitRuleRecord) -> CouponBenefitRuleRecord;
+    async fn list_coupon_benefit_rule_records(&self) -> Vec<CouponBenefitRuleRecord>;
+    async fn insert_marketing_campaign_record(&self, record: &MarketingCampaignRecord) -> MarketingCampaignRecord;
+    async fn list_marketing_campaign_records(&self) -> Vec<MarketingCampaignRecord>;
+    async fn find_marketing_campaign_record(&self, marketing_campaign_id: u64) -> Option<MarketingCampaignRecord>;
+    async fn insert_coupon_code_batch_record(&self, record: &CouponCodeBatchRecord) -> CouponCodeBatchRecord;
+    async fn list_coupon_code_batch_records(&self) -> Vec<CouponCodeBatchRecord>;
+    async fn insert_coupon_code_record(&self, record: &CouponCodeRecord) -> CouponCodeRecord;
+    async fn list_coupon_code_records(&self) -> Vec<CouponCodeRecord>;
+    async fn find_coupon_code_record(&self, coupon_code_id: u64) -> Option<CouponCodeRecord>;
+    async fn find_coupon_code_record_by_lookup_hash(&self, code_lookup_hash: &str) -> Option<CouponCodeRecord>;
+    async fn list_coupon_code_records_for_subject(&self, claim_subject_type: &str, claim_subject_id: &str) -> Vec<CouponCodeRecord>;
+    async fn insert_coupon_claim_record(&self, record: &CouponClaimRecord) -> CouponClaimRecord;
+    async fn list_coupon_claim_records(&self) -> Vec<CouponClaimRecord>;
+    async fn insert_coupon_redemption_record(&self, record: &CouponRedemptionRecord) -> CouponRedemptionRecord;
+    async fn list_coupon_redemption_records(&self) -> Vec<CouponRedemptionRecord>;
+    async fn find_coupon_redemption_record_by_idempotency_key(&self, idempotency_key: &str) -> Option<CouponRedemptionRecord>;
+    async fn insert_referral_program_record(&self, record: &ReferralProgramRecord) -> ReferralProgramRecord;
+    async fn list_referral_program_records(&self) -> Vec<ReferralProgramRecord>;
+    async fn insert_referral_invite_record(&self, record: &ReferralInviteRecord) -> ReferralInviteRecord;
+    async fn list_referral_invite_records(&self) -> Vec<ReferralInviteRecord>;
+    async fn insert_marketing_attribution_touch_record(&self, record: &MarketingAttributionTouchRecord) -> MarketingAttributionTouchRecord;
+    async fn list_marketing_attribution_touch_records(&self) -> Vec<MarketingAttributionTouchRecord>;
+});
+
 define_admin_store_facet!(ExtensionStore {
     async fn insert_extension_installation(&self, installation: &ExtensionInstallation) -> ExtensionInstallation;
     async fn list_extension_installations(&self) -> Vec<ExtensionInstallation>;
@@ -457,6 +519,14 @@ define_admin_store_facet!(ExtensionStore {
 #[async_trait]
 pub trait AdminStore: Send + Sync {
     fn dialect(&self) -> StorageDialect;
+
+    fn identity_kernel(&self) -> Option<&dyn IdentityKernelStore> {
+        None
+    }
+
+    fn account_kernel(&self) -> Option<&dyn AccountKernelStore> {
+        None
+    }
 
     async fn insert_channel(&self, channel: &Channel) -> Result<Channel>;
     async fn list_channels(&self) -> Result<Vec<Channel>>;
@@ -750,16 +820,243 @@ pub trait AdminStore: Send + Sync {
         project_id: &str,
     ) -> Result<Option<ProjectMembershipRecord>>;
 
+    async fn insert_coupon_template_record(
+        &self,
+        _record: &CouponTemplateRecord,
+    ) -> Result<CouponTemplateRecord> {
+        Err(unsupported_marketing_store_method(
+            self.dialect(),
+            "insert_coupon_template_record",
+        ))
+    }
+    async fn list_coupon_template_records(&self) -> Result<Vec<CouponTemplateRecord>> {
+        Err(unsupported_marketing_store_method(
+            self.dialect(),
+            "list_coupon_template_records",
+        ))
+    }
+    async fn find_coupon_template_record(
+        &self,
+        _coupon_template_id: u64,
+    ) -> Result<Option<CouponTemplateRecord>> {
+        Err(unsupported_marketing_store_method(
+            self.dialect(),
+            "find_coupon_template_record",
+        ))
+    }
+    async fn insert_coupon_benefit_rule_record(
+        &self,
+        _record: &CouponBenefitRuleRecord,
+    ) -> Result<CouponBenefitRuleRecord> {
+        Err(unsupported_marketing_store_method(
+            self.dialect(),
+            "insert_coupon_benefit_rule_record",
+        ))
+    }
+    async fn list_coupon_benefit_rule_records(&self) -> Result<Vec<CouponBenefitRuleRecord>> {
+        Err(unsupported_marketing_store_method(
+            self.dialect(),
+            "list_coupon_benefit_rule_records",
+        ))
+    }
+    async fn insert_marketing_campaign_record(
+        &self,
+        _record: &MarketingCampaignRecord,
+    ) -> Result<MarketingCampaignRecord> {
+        Err(unsupported_marketing_store_method(
+            self.dialect(),
+            "insert_marketing_campaign_record",
+        ))
+    }
+    async fn list_marketing_campaign_records(&self) -> Result<Vec<MarketingCampaignRecord>> {
+        Err(unsupported_marketing_store_method(
+            self.dialect(),
+            "list_marketing_campaign_records",
+        ))
+    }
+    async fn find_marketing_campaign_record(
+        &self,
+        _marketing_campaign_id: u64,
+    ) -> Result<Option<MarketingCampaignRecord>> {
+        Err(unsupported_marketing_store_method(
+            self.dialect(),
+            "find_marketing_campaign_record",
+        ))
+    }
+    async fn insert_coupon_code_batch_record(
+        &self,
+        _record: &CouponCodeBatchRecord,
+    ) -> Result<CouponCodeBatchRecord> {
+        Err(unsupported_marketing_store_method(
+            self.dialect(),
+            "insert_coupon_code_batch_record",
+        ))
+    }
+    async fn list_coupon_code_batch_records(&self) -> Result<Vec<CouponCodeBatchRecord>> {
+        Err(unsupported_marketing_store_method(
+            self.dialect(),
+            "list_coupon_code_batch_records",
+        ))
+    }
+    async fn insert_coupon_code_record(
+        &self,
+        _record: &CouponCodeRecord,
+    ) -> Result<CouponCodeRecord> {
+        Err(unsupported_marketing_store_method(
+            self.dialect(),
+            "insert_coupon_code_record",
+        ))
+    }
+    async fn list_coupon_code_records(&self) -> Result<Vec<CouponCodeRecord>> {
+        Err(unsupported_marketing_store_method(
+            self.dialect(),
+            "list_coupon_code_records",
+        ))
+    }
+    async fn find_coupon_code_record(
+        &self,
+        _coupon_code_id: u64,
+    ) -> Result<Option<CouponCodeRecord>> {
+        Err(unsupported_marketing_store_method(
+            self.dialect(),
+            "find_coupon_code_record",
+        ))
+    }
+    async fn find_coupon_code_record_by_lookup_hash(
+        &self,
+        _code_lookup_hash: &str,
+    ) -> Result<Option<CouponCodeRecord>> {
+        Err(unsupported_marketing_store_method(
+            self.dialect(),
+            "find_coupon_code_record_by_lookup_hash",
+        ))
+    }
+    async fn list_coupon_code_records_for_subject(
+        &self,
+        _claim_subject_type: &str,
+        _claim_subject_id: &str,
+    ) -> Result<Vec<CouponCodeRecord>> {
+        Err(unsupported_marketing_store_method(
+            self.dialect(),
+            "list_coupon_code_records_for_subject",
+        ))
+    }
+    async fn insert_coupon_claim_record(
+        &self,
+        _record: &CouponClaimRecord,
+    ) -> Result<CouponClaimRecord> {
+        Err(unsupported_marketing_store_method(
+            self.dialect(),
+            "insert_coupon_claim_record",
+        ))
+    }
+    async fn list_coupon_claim_records(&self) -> Result<Vec<CouponClaimRecord>> {
+        Err(unsupported_marketing_store_method(
+            self.dialect(),
+            "list_coupon_claim_records",
+        ))
+    }
+    async fn insert_coupon_redemption_record(
+        &self,
+        _record: &CouponRedemptionRecord,
+    ) -> Result<CouponRedemptionRecord> {
+        Err(unsupported_marketing_store_method(
+            self.dialect(),
+            "insert_coupon_redemption_record",
+        ))
+    }
+    async fn list_coupon_redemption_records(&self) -> Result<Vec<CouponRedemptionRecord>> {
+        Err(unsupported_marketing_store_method(
+            self.dialect(),
+            "list_coupon_redemption_records",
+        ))
+    }
+    async fn find_coupon_redemption_record_by_idempotency_key(
+        &self,
+        _idempotency_key: &str,
+    ) -> Result<Option<CouponRedemptionRecord>> {
+        Err(unsupported_marketing_store_method(
+            self.dialect(),
+            "find_coupon_redemption_record_by_idempotency_key",
+        ))
+    }
+    async fn insert_referral_program_record(
+        &self,
+        _record: &ReferralProgramRecord,
+    ) -> Result<ReferralProgramRecord> {
+        Err(unsupported_marketing_store_method(
+            self.dialect(),
+            "insert_referral_program_record",
+        ))
+    }
+    async fn list_referral_program_records(&self) -> Result<Vec<ReferralProgramRecord>> {
+        Err(unsupported_marketing_store_method(
+            self.dialect(),
+            "list_referral_program_records",
+        ))
+    }
+    async fn insert_referral_invite_record(
+        &self,
+        _record: &ReferralInviteRecord,
+    ) -> Result<ReferralInviteRecord> {
+        Err(unsupported_marketing_store_method(
+            self.dialect(),
+            "insert_referral_invite_record",
+        ))
+    }
+    async fn list_referral_invite_records(&self) -> Result<Vec<ReferralInviteRecord>> {
+        Err(unsupported_marketing_store_method(
+            self.dialect(),
+            "list_referral_invite_records",
+        ))
+    }
+    async fn insert_marketing_attribution_touch_record(
+        &self,
+        _record: &MarketingAttributionTouchRecord,
+    ) -> Result<MarketingAttributionTouchRecord> {
+        Err(unsupported_marketing_store_method(
+            self.dialect(),
+            "insert_marketing_attribution_touch_record",
+        ))
+    }
+    async fn list_marketing_attribution_touch_records(
+        &self,
+    ) -> Result<Vec<MarketingAttributionTouchRecord>> {
+        Err(unsupported_marketing_store_method(
+            self.dialect(),
+            "list_marketing_attribution_touch_records",
+        ))
+    }
+
     async fn insert_portal_user(&self, user: &PortalUserRecord) -> Result<PortalUserRecord>;
     async fn list_portal_users(&self) -> Result<Vec<PortalUserRecord>>;
     async fn find_portal_user_by_email(&self, email: &str) -> Result<Option<PortalUserRecord>>;
     async fn find_portal_user_by_id(&self, user_id: &str) -> Result<Option<PortalUserRecord>>;
     async fn delete_portal_user(&self, user_id: &str) -> Result<bool>;
+    async fn insert_portal_workspace_membership(
+        &self,
+        membership: &PortalWorkspaceMembershipRecord,
+    ) -> Result<PortalWorkspaceMembershipRecord>;
+    async fn list_portal_workspace_memberships_for_user(
+        &self,
+        user_id: &str,
+    ) -> Result<Vec<PortalWorkspaceMembershipRecord>>;
+    async fn find_portal_workspace_membership(
+        &self,
+        user_id: &str,
+        tenant_id: &str,
+        project_id: &str,
+    ) -> Result<Option<PortalWorkspaceMembershipRecord>>;
     async fn insert_admin_user(&self, user: &AdminUserRecord) -> Result<AdminUserRecord>;
     async fn list_admin_users(&self) -> Result<Vec<AdminUserRecord>>;
     async fn find_admin_user_by_email(&self, email: &str) -> Result<Option<AdminUserRecord>>;
     async fn find_admin_user_by_id(&self, user_id: &str) -> Result<Option<AdminUserRecord>>;
     async fn delete_admin_user(&self, user_id: &str) -> Result<bool>;
+    async fn insert_admin_audit_event(
+        &self,
+        event: &AdminAuditEventRecord,
+    ) -> Result<AdminAuditEventRecord>;
+    async fn list_admin_audit_events(&self) -> Result<Vec<AdminAuditEventRecord>>;
 
     async fn insert_gateway_api_key(
         &self,
@@ -772,6 +1069,71 @@ pub trait AdminStore: Send + Sync {
     async fn list_api_key_groups(&self) -> Result<Vec<ApiKeyGroupRecord>>;
     async fn find_api_key_group(&self, group_id: &str) -> Result<Option<ApiKeyGroupRecord>>;
     async fn delete_api_key_group(&self, group_id: &str) -> Result<bool>;
+    async fn insert_payment_order_record(
+        &self,
+        record: &PaymentOrderRecord,
+    ) -> Result<PaymentOrderRecord>;
+    async fn find_payment_order_record(
+        &self,
+        payment_order_id: &str,
+    ) -> Result<Option<PaymentOrderRecord>>;
+    async fn find_payment_order_record_by_commerce_order_id(
+        &self,
+        commerce_order_id: &str,
+    ) -> Result<Option<PaymentOrderRecord>>;
+    async fn find_payment_order_record_by_provider_reference(
+        &self,
+        provider: &str,
+        provider_reference_id: &str,
+    ) -> Result<Option<PaymentOrderRecord>>;
+    async fn insert_payment_attempt_record(
+        &self,
+        record: &PaymentAttemptRecord,
+    ) -> Result<PaymentAttemptRecord>;
+    async fn find_payment_attempt_record(
+        &self,
+        payment_attempt_id: &str,
+    ) -> Result<Option<PaymentAttemptRecord>>;
+    async fn find_payment_attempt_record_by_provider_reference(
+        &self,
+        provider: &str,
+        provider_attempt_id: &str,
+    ) -> Result<Option<PaymentAttemptRecord>>;
+    async fn list_payment_attempt_records_for_payment_order(
+        &self,
+        payment_order_id: &str,
+    ) -> Result<Vec<PaymentAttemptRecord>>;
+    async fn insert_refund_record(&self, record: &RefundRecord) -> Result<RefundRecord>;
+    async fn find_refund_record(&self, refund_id: &str) -> Result<Option<RefundRecord>>;
+    async fn find_refund_record_by_provider_reference(
+        &self,
+        provider: &str,
+        provider_refund_id: &str,
+    ) -> Result<Option<RefundRecord>>;
+    async fn list_refund_records_for_payment_order(
+        &self,
+        payment_order_id: &str,
+    ) -> Result<Vec<RefundRecord>>;
+    async fn insert_dispute_record(&self, record: &DisputeRecord) -> Result<DisputeRecord>;
+    async fn find_dispute_record(&self, dispute_id: &str) -> Result<Option<DisputeRecord>>;
+    async fn find_dispute_record_by_provider_reference(
+        &self,
+        provider: &str,
+        provider_dispute_id: &str,
+    ) -> Result<Option<DisputeRecord>>;
+    async fn list_dispute_records_for_payment_order(
+        &self,
+        payment_order_id: &str,
+    ) -> Result<Vec<DisputeRecord>>;
+    async fn insert_payment_webhook_event_record(
+        &self,
+        record: &PaymentWebhookEventRecord,
+    ) -> Result<PaymentWebhookEventRecord>;
+    async fn find_payment_webhook_event_record(
+        &self,
+        provider: &str,
+        provider_event_id: &str,
+    ) -> Result<Option<PaymentWebhookEventRecord>>;
 
     async fn insert_extension_installation(
         &self,
@@ -872,6 +1234,41 @@ fn unsupported_identity_kernel_method(dialect: StorageDialect, method: &str) -> 
     )
 }
 
+fn unsupported_marketing_store_method(dialect: StorageDialect, method: &str) -> anyhow::Error {
+    anyhow::anyhow!(
+        "storage dialect {} does not implement canonical marketing store method {} yet",
+        dialect.as_str(),
+        method
+    )
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct AccountKernelCommandBatch {
+    pub account_records: Vec<AccountRecord>,
+    pub benefit_lot_records: Vec<AccountBenefitLotRecord>,
+    pub hold_records: Vec<AccountHoldRecord>,
+    pub hold_allocation_records: Vec<AccountHoldAllocationRecord>,
+    pub ledger_entry_records: Vec<AccountLedgerEntryRecord>,
+    pub ledger_allocation_records: Vec<AccountLedgerAllocationRecord>,
+    pub request_meter_fact_records: Vec<RequestMeterFactRecord>,
+    pub request_meter_metric_records: Vec<RequestMeterMetricRecord>,
+    pub request_settlement_records: Vec<RequestSettlementRecord>,
+}
+
+impl AccountKernelCommandBatch {
+    pub fn is_empty(&self) -> bool {
+        self.account_records.is_empty()
+            && self.benefit_lot_records.is_empty()
+            && self.hold_records.is_empty()
+            && self.hold_allocation_records.is_empty()
+            && self.ledger_entry_records.is_empty()
+            && self.ledger_allocation_records.is_empty()
+            && self.request_meter_fact_records.is_empty()
+            && self.request_meter_metric_records.is_empty()
+            && self.request_settlement_records.is_empty()
+    }
+}
+
 #[async_trait]
 pub trait IdentityKernelStore: AdminStore {
     async fn insert_identity_user_record(
@@ -937,6 +1334,13 @@ pub trait IdentityKernelStore: AdminStore {
         Err(unsupported_identity_kernel_method(
             self.dialect(),
             "find_identity_binding_record",
+        ))
+    }
+
+    async fn list_identity_binding_records(&self) -> Result<Vec<IdentityBindingRecord>> {
+        Err(unsupported_identity_kernel_method(
+            self.dialect(),
+            "list_identity_binding_records",
         ))
     }
 }
@@ -1141,6 +1545,13 @@ pub trait AccountKernelStore: AdminStore {
         Err(unsupported_account_kernel_method(
             self.dialect(),
             "list_request_settlement_records",
+        ))
+    }
+
+    async fn commit_account_kernel_batch(&self, _batch: &AccountKernelCommandBatch) -> Result<()> {
+        Err(unsupported_account_kernel_method(
+            self.dialect(),
+            "commit_account_kernel_batch",
         ))
     }
 }

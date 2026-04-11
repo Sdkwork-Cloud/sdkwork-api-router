@@ -1,7 +1,13 @@
 use axum::body::{to_bytes, Body};
 use axum::http::{Request, StatusCode};
 use axum::Router;
+use sdkwork_api_domain_billing::{
+    AccountBenefitLotRecord, AccountBenefitSourceType, AccountBenefitType, AccountRecord,
+    AccountType,
+};
+use sdkwork_api_domain_identity::IdentityBindingRecord;
 use sdkwork_api_storage_core::ServiceRuntimeNodeRecord;
+use sdkwork_api_storage_core::{AccountKernelStore, IdentityKernelStore};
 use serde_json::{json, Value};
 use serial_test::serial;
 use sqlx::SqlitePool;
@@ -319,6 +325,7 @@ async fn list_and_manage_operator_users_from_admin_api() {
     let created_json = read_json(created).await;
     let user_id = created_json["id"].as_str().unwrap().to_owned();
     assert_eq!(created_json["email"], "ops@example.com");
+    assert_eq!(created_json["role"], "platform_operator");
     assert_eq!(created_json["active"], true);
 
     let duplicate = app
@@ -409,6 +416,7 @@ async fn list_and_manage_operator_users_from_admin_api() {
     .await
     .unwrap();
     assert_eq!(session.user.email, "ops@example.com");
+    assert_eq!(session.user.role.as_str(), "platform_operator");
 
     let delete_response = app
         .clone()
@@ -1082,6 +1090,562 @@ async fn create_update_list_and_delete_coupons() {
 
 #[serial(extension_env)]
 #[tokio::test]
+async fn list_marketing_redemptions_from_admin_api() {
+    let pool = memory_pool().await;
+    let store = sdkwork_api_storage_sqlite::SqliteAdminStore::new(pool.clone());
+    store
+        .insert_coupon_redemption_record(
+            &sdkwork_api_domain_marketing::CouponRedemptionRecord::new(
+                701,
+                1001,
+                2002,
+                501,
+                101,
+                Some(301),
+                "user",
+                "user_1",
+                1_710_000_100,
+            )
+            .with_status(sdkwork_api_domain_marketing::CouponRedemptionStatus::Fulfilled)
+            .with_project_id(Some("project_alpha".to_owned()))
+            .with_order_id(Some("order_alpha".to_owned()))
+            .with_payment_order_id(Some("stripe_pi_alpha".to_owned()))
+            .with_idempotency_key(Some(
+                "marketing_coupon_redemption:order_alpha:PAID15".to_owned(),
+            ))
+            .with_updated_at_ms(1_710_000_200),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_coupon_redemption_record(
+            &sdkwork_api_domain_marketing::CouponRedemptionRecord::new(
+                702,
+                1001,
+                2002,
+                502,
+                101,
+                Some(301),
+                "user",
+                "user_2",
+                1_710_000_101,
+            )
+            .with_status(sdkwork_api_domain_marketing::CouponRedemptionStatus::Fulfilled)
+            .with_project_id(Some("project_beta".to_owned()))
+            .with_order_id(Some("order_beta".to_owned()))
+            .with_updated_at_ms(1_710_000_150),
+        )
+        .await
+        .unwrap();
+
+    let app = sdkwork_api_interface_admin::admin_router_with_pool(pool);
+    let token = login_token(app.clone()).await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/admin/marketing/redemptions")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let json = read_json(response).await;
+    let items = json.as_array().unwrap();
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0]["coupon_redemption_id"], 701);
+    assert_eq!(items[0]["subject_type"], "user");
+    assert_eq!(items[0]["subject_id"], "user_1");
+    assert_eq!(items[0]["order_id"], "order_alpha");
+    assert_eq!(items[0]["payment_order_id"], "stripe_pi_alpha");
+    assert_eq!(items[1]["coupon_redemption_id"], 702);
+}
+
+#[serial(extension_env)]
+#[tokio::test]
+async fn admin_marketing_redemptions_support_filters_summary_and_detail() {
+    let pool = memory_pool().await;
+    let store = sdkwork_api_storage_sqlite::SqliteAdminStore::new(pool.clone());
+    store
+        .insert_coupon_redemption_record(
+            &sdkwork_api_domain_marketing::CouponRedemptionRecord::new(
+                801,
+                1001,
+                2002,
+                501,
+                101,
+                Some(301),
+                "user",
+                "user_alpha",
+                1_710_000_100,
+            )
+            .with_status(sdkwork_api_domain_marketing::CouponRedemptionStatus::Fulfilled)
+            .with_project_id(Some("project_alpha".to_owned()))
+            .with_order_id(Some("order_alpha".to_owned()))
+            .with_payment_order_id(Some("stripe_pi_alpha".to_owned()))
+            .with_subsidy_amount(Some(12.5))
+            .with_currency_code(Some("USD".to_owned()))
+            .with_updated_at_ms(1_710_000_200),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_coupon_redemption_record(
+            &sdkwork_api_domain_marketing::CouponRedemptionRecord::new(
+                802,
+                1001,
+                2002,
+                502,
+                101,
+                Some(301),
+                "user",
+                "user_alpha",
+                1_710_000_110,
+            )
+            .with_status(sdkwork_api_domain_marketing::CouponRedemptionStatus::Failed)
+            .with_project_id(Some("project_alpha".to_owned()))
+            .with_order_id(Some("order_beta".to_owned()))
+            .with_updated_at_ms(1_710_000_210),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_coupon_redemption_record(
+            &sdkwork_api_domain_marketing::CouponRedemptionRecord::new(
+                803,
+                1001,
+                2002,
+                503,
+                102,
+                Some(302),
+                "user",
+                "user_beta",
+                1_710_000_120,
+            )
+            .with_status(sdkwork_api_domain_marketing::CouponRedemptionStatus::Fulfilled)
+            .with_project_id(Some("project_beta".to_owned()))
+            .with_order_id(Some("order_gamma".to_owned()))
+            .with_updated_at_ms(1_710_000_220),
+        )
+        .await
+        .unwrap();
+
+    let app = sdkwork_api_interface_admin::admin_router_with_pool(pool);
+    let token = login_token(app.clone()).await;
+
+    let filtered_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/admin/marketing/redemptions?project_id=project_alpha&status=fulfilled")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(filtered_response.status(), StatusCode::OK);
+    let filtered_json = read_json(filtered_response).await;
+    let filtered_items = filtered_json.as_array().unwrap();
+    assert_eq!(filtered_items.len(), 1);
+    assert_eq!(filtered_items[0]["coupon_redemption_id"], 801);
+
+    let summary_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/admin/marketing/redemptions/summary?project_id=project_alpha")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(summary_response.status(), StatusCode::OK);
+    let summary_json = read_json(summary_response).await;
+    assert_eq!(summary_json["total_count"], 2);
+    assert_eq!(summary_json["fulfilled_count"], 1);
+    assert_eq!(summary_json["failed_count"], 1);
+    assert_eq!(summary_json["payment_linked_count"], 1);
+    assert_eq!(summary_json["subsidized_count"], 1);
+    assert_eq!(summary_json["total_subsidy_amount"], 12.5);
+
+    let detail_response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/admin/marketing/redemptions/801")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(detail_response.status(), StatusCode::OK);
+    let detail_json = read_json(detail_response).await;
+    assert_eq!(detail_json["coupon_redemption_id"], 801);
+    assert_eq!(detail_json["payment_order_id"], "stripe_pi_alpha");
+}
+
+#[serial(extension_env)]
+#[tokio::test]
+async fn admin_marketing_codes_support_subject_and_status_filters() {
+    let pool = memory_pool().await;
+    let store = sdkwork_api_storage_sqlite::SqliteAdminStore::new(pool.clone());
+    store
+        .insert_coupon_code_record(
+            &sdkwork_api_domain_marketing::CouponCodeRecord::new(
+                901,
+                1001,
+                2002,
+                301,
+                101,
+                Some(401),
+                "hash:admin-code-1",
+                sdkwork_api_domain_marketing::CouponCodeKind::SingleUseUnique,
+                1_710_000_100,
+            )
+            .with_status(sdkwork_api_domain_marketing::CouponCodeStatus::Claimed)
+            .with_claim_subject_type(Some("user".to_owned()))
+            .with_claim_subject_id(Some("1001:2002:user_alpha".to_owned()))
+            .with_updated_at_ms(1_710_000_200),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_coupon_code_record(
+            &sdkwork_api_domain_marketing::CouponCodeRecord::new(
+                902,
+                1001,
+                2002,
+                301,
+                101,
+                Some(401),
+                "hash:admin-code-2",
+                sdkwork_api_domain_marketing::CouponCodeKind::SingleUseUnique,
+                1_710_000_110,
+            )
+            .with_status(sdkwork_api_domain_marketing::CouponCodeStatus::Redeemed)
+            .with_claim_subject_type(Some("user".to_owned()))
+            .with_claim_subject_id(Some("1001:2002:user_alpha".to_owned()))
+            .with_updated_at_ms(1_710_000_210),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_coupon_code_record(
+            &sdkwork_api_domain_marketing::CouponCodeRecord::new(
+                903,
+                1001,
+                2002,
+                302,
+                102,
+                Some(402),
+                "hash:admin-code-3",
+                sdkwork_api_domain_marketing::CouponCodeKind::SingleUseUnique,
+                1_710_000_120,
+            )
+            .with_status(sdkwork_api_domain_marketing::CouponCodeStatus::Claimed)
+            .with_claim_subject_type(Some("user".to_owned()))
+            .with_claim_subject_id(Some("1001:2002:user_beta".to_owned()))
+            .with_updated_at_ms(1_710_000_220),
+        )
+        .await
+        .unwrap();
+
+    let app = sdkwork_api_interface_admin::admin_router_with_pool(pool);
+    let token = login_token(app.clone()).await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(
+                    "/admin/marketing/codes?subject_type=user&subject_id=user_alpha&status=claimed",
+                )
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let json = read_json(response).await;
+    let items = json.as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["coupon_code_id"], 901);
+    assert_eq!(items[0]["status"], "claimed");
+}
+
+#[serial(extension_env)]
+#[tokio::test]
+async fn admin_marketing_inventory_routes_return_templates_batches_claims_and_campaigns() {
+    let pool = memory_pool().await;
+    let store = sdkwork_api_storage_sqlite::SqliteAdminStore::new(pool.clone());
+    store
+        .insert_marketing_campaign_record(
+            &sdkwork_api_domain_marketing::MarketingCampaignRecord::new(
+                401,
+                1001,
+                2002,
+                "campaign_alpha",
+                "Campaign Alpha",
+                sdkwork_api_domain_marketing::MarketingCampaignKind::Launch,
+                1_710_000_100,
+            )
+            .with_status(sdkwork_api_domain_marketing::MarketingCampaignStatus::Active)
+            .with_updated_at_ms(1_710_000_200),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_coupon_template_record(
+            &sdkwork_api_domain_marketing::CouponTemplateRecord::new(
+                101,
+                1001,
+                2002,
+                "template_alpha",
+                "Template Alpha",
+                sdkwork_api_domain_marketing::CouponBenefitKind::PercentageDiscount,
+                sdkwork_api_domain_marketing::CouponDistributionKind::UniqueCode,
+                1_710_000_110,
+            )
+            .with_status(sdkwork_api_domain_marketing::CouponTemplateStatus::Active)
+            .with_updated_at_ms(1_710_000_210),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_coupon_code_batch_record(
+            &sdkwork_api_domain_marketing::CouponCodeBatchRecord::new(
+                301,
+                1001,
+                2002,
+                101,
+                Some(401),
+                sdkwork_api_domain_marketing::CouponCodeGenerationMode::BulkRandom,
+                1_710_000_120,
+            )
+            .with_status(sdkwork_api_domain_marketing::CouponCodeBatchStatus::Active)
+            .with_updated_at_ms(1_710_000_220),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_coupon_claim_record(
+            &sdkwork_api_domain_marketing::CouponClaimRecord::new(
+                501,
+                1001,
+                2002,
+                901,
+                101,
+                "user",
+                "user_alpha",
+                1_710_000_130,
+            )
+            .with_status(sdkwork_api_domain_marketing::CouponClaimStatus::Claimed)
+            .with_project_id(Some("project_alpha".to_owned()))
+            .with_updated_at_ms(1_710_000_230),
+        )
+        .await
+        .unwrap();
+
+    let app = sdkwork_api_interface_admin::admin_router_with_pool(pool);
+    let token = login_token(app.clone()).await;
+
+    for (path, id_field, expected) in [
+        (
+            "/admin/marketing/campaigns",
+            "marketing_campaign_id",
+            401_u64,
+        ),
+        ("/admin/marketing/templates", "coupon_template_id", 101_u64),
+        ("/admin/marketing/batches", "coupon_code_batch_id", 301_u64),
+        ("/admin/marketing/claims", "coupon_claim_id", 501_u64),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(path)
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = read_json(response).await;
+        let items = json.as_array().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0][id_field], expected);
+    }
+}
+
+#[serial(extension_env)]
+#[tokio::test]
+async fn admin_marketing_code_summary_and_overview_report_inventory_counts() {
+    let pool = memory_pool().await;
+    let store = sdkwork_api_storage_sqlite::SqliteAdminStore::new(pool.clone());
+    store
+        .insert_marketing_campaign_record(
+            &sdkwork_api_domain_marketing::MarketingCampaignRecord::new(
+                401,
+                1001,
+                2002,
+                "campaign_alpha",
+                "Campaign Alpha",
+                sdkwork_api_domain_marketing::MarketingCampaignKind::Launch,
+                1_710_000_100,
+            )
+            .with_status(sdkwork_api_domain_marketing::MarketingCampaignStatus::Active)
+            .with_updated_at_ms(1_710_000_200),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_coupon_template_record(
+            &sdkwork_api_domain_marketing::CouponTemplateRecord::new(
+                101,
+                1001,
+                2002,
+                "template_alpha",
+                "Template Alpha",
+                sdkwork_api_domain_marketing::CouponBenefitKind::PercentageDiscount,
+                sdkwork_api_domain_marketing::CouponDistributionKind::UniqueCode,
+                1_710_000_110,
+            )
+            .with_status(sdkwork_api_domain_marketing::CouponTemplateStatus::Active)
+            .with_updated_at_ms(1_710_000_210),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_coupon_code_batch_record(
+            &sdkwork_api_domain_marketing::CouponCodeBatchRecord::new(
+                301,
+                1001,
+                2002,
+                101,
+                Some(401),
+                sdkwork_api_domain_marketing::CouponCodeGenerationMode::BulkRandom,
+                1_710_000_120,
+            )
+            .with_status(sdkwork_api_domain_marketing::CouponCodeBatchStatus::Active)
+            .with_updated_at_ms(1_710_000_220),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_coupon_code_record(
+            &sdkwork_api_domain_marketing::CouponCodeRecord::new(
+                901,
+                1001,
+                2002,
+                301,
+                101,
+                Some(401),
+                "hash:summary-code-1",
+                sdkwork_api_domain_marketing::CouponCodeKind::SingleUseUnique,
+                1_710_000_130,
+            )
+            .with_status(sdkwork_api_domain_marketing::CouponCodeStatus::Claimed)
+            .with_claim_subject_type(Some("user".to_owned()))
+            .with_claim_subject_id(Some("1001:2002:user_alpha".to_owned()))
+            .with_updated_at_ms(1_710_000_230),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_coupon_claim_record(
+            &sdkwork_api_domain_marketing::CouponClaimRecord::new(
+                501,
+                1001,
+                2002,
+                901,
+                101,
+                "user",
+                "user_alpha",
+                1_710_000_140,
+            )
+            .with_status(sdkwork_api_domain_marketing::CouponClaimStatus::Claimed)
+            .with_updated_at_ms(1_710_000_240),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_coupon_redemption_record(
+            &sdkwork_api_domain_marketing::CouponRedemptionRecord::new(
+                701,
+                1001,
+                2002,
+                901,
+                101,
+                Some(401),
+                "user",
+                "user_alpha",
+                1_710_000_150,
+            )
+            .with_status(sdkwork_api_domain_marketing::CouponRedemptionStatus::Pending)
+            .with_updated_at_ms(1_710_000_250),
+        )
+        .await
+        .unwrap();
+
+    let app = sdkwork_api_interface_admin::admin_router_with_pool(pool);
+    let token = login_token(app.clone()).await;
+
+    let code_summary_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/admin/marketing/codes/summary?subject_type=user&subject_id=user_alpha")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(code_summary_response.status(), StatusCode::OK);
+    let code_summary_json = read_json(code_summary_response).await;
+    assert_eq!(code_summary_json["total_count"], 1);
+    assert_eq!(code_summary_json["claimed_count"], 1);
+    assert_eq!(code_summary_json["reserved_count"], 1);
+
+    let overview_response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/admin/marketing/overview")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(overview_response.status(), StatusCode::OK);
+    let overview_json = read_json(overview_response).await;
+    assert_eq!(overview_json["campaign_count"], 1);
+    assert_eq!(overview_json["active_campaign_count"], 1);
+    assert_eq!(overview_json["template_count"], 1);
+    assert_eq!(overview_json["batch_count"], 1);
+    assert_eq!(overview_json["code_summary"]["reserved_count"], 1);
+    assert_eq!(overview_json["claim_count"], 1);
+    assert_eq!(overview_json["redemption_summary"]["pending_count"], 1);
+}
+
+#[serial(extension_env)]
+#[tokio::test]
 async fn delete_model_keeps_same_external_name_on_other_provider() {
     let pool = memory_pool().await;
     let app = sdkwork_api_interface_admin::admin_router_with_pool(pool);
@@ -1436,8 +2000,8 @@ async fn delete_gateway_api_key_from_admin_api() {
 
     assert_eq!(created.status(), StatusCode::CREATED);
     let created_json = read_json(created).await;
-    let plaintext_key = created_json["plaintext"].as_str().unwrap().to_owned();
     let hashed_key = created_json["hashed"].as_str().unwrap().to_owned();
+    let plaintext_key = created_json["plaintext"].as_str().unwrap().to_owned();
 
     let request_context =
         sdkwork_api_app_identity::resolve_gateway_request_context(&store, &plaintext_key)
@@ -1484,7 +2048,7 @@ async fn delete_gateway_api_key_from_admin_api() {
 
 #[serial(extension_env)]
 #[tokio::test]
-async fn gateway_api_keys_persist_raw_key_in_canonical_ai_app_api_keys_table() {
+async fn gateway_api_keys_do_not_persist_or_serialize_raw_key_after_create() {
     let pool = memory_pool().await;
     let app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
     let token = login_token(app.clone()).await;
@@ -1530,7 +2094,6 @@ async fn gateway_api_keys_persist_raw_key_in_canonical_ai_app_api_keys_table() {
 
     assert_eq!(created.status(), StatusCode::CREATED);
     let created_json = read_json(created).await;
-    let plaintext_key = created_json["plaintext"].as_str().unwrap().to_owned();
     let hashed_key = created_json["hashed"].as_str().unwrap().to_owned();
 
     let listed = app
@@ -1548,19 +2111,19 @@ async fn gateway_api_keys_persist_raw_key_in_canonical_ai_app_api_keys_table() {
 
     assert_eq!(listed.status(), StatusCode::OK);
     let listed_json = read_json(listed).await;
-    assert_eq!(listed_json[0]["raw_key"], plaintext_key);
+    assert!(listed_json[0].get("raw_key").is_none());
     assert_eq!(listed_json[0]["label"], "Production App Key");
     assert_eq!(listed_json[0]["notes"], "retained for admin inventory");
     assert_eq!(listed_json[0]["expires_at_ms"], 4102444800000_u64);
 
-    let stored_row: (String, Option<String>, Option<i64>) = sqlx::query_as(
+    let stored_row: (Option<String>, Option<String>, Option<i64>) = sqlx::query_as(
         "SELECT raw_key, notes, expires_at_ms FROM ai_app_api_keys WHERE hashed_key = ?",
     )
     .bind(&hashed_key)
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(stored_row.0, plaintext_key);
+    assert_eq!(stored_row.0, None);
     assert_eq!(
         stored_row.1.as_deref(),
         Some("retained for admin inventory")
@@ -1617,7 +2180,6 @@ async fn update_gateway_api_key_metadata_from_admin_api() {
     assert_eq!(created.status(), StatusCode::CREATED);
     let created_json = read_json(created).await;
     let hashed_key = created_json["hashed"].as_str().unwrap().to_owned();
-    let plaintext_key = created_json["plaintext"].as_str().unwrap().to_owned();
 
     let updated = app
         .clone()
@@ -1638,7 +2200,7 @@ async fn update_gateway_api_key_metadata_from_admin_api() {
     assert_eq!(updated.status(), StatusCode::OK);
     let updated_json = read_json(updated).await;
     assert_eq!(updated_json["hashed_key"], hashed_key);
-    assert_eq!(updated_json["raw_key"], plaintext_key);
+    assert!(updated_json.get("raw_key").is_none());
     assert_eq!(updated_json["label"], "Production Key Updated");
     assert_eq!(updated_json["notes"], "rotated by operator");
     assert_eq!(updated_json["expires_at_ms"], 4105123200000_u64);
@@ -3624,6 +4186,92 @@ async fn billing_summary_from_admin_api_reports_quota_posture() {
 
 #[serial(extension_env)]
 #[tokio::test]
+async fn billing_summary_from_admin_api_prefers_canonical_project_balance_when_present() {
+    let pool = memory_pool().await;
+    let store = sdkwork_api_storage_sqlite::SqliteAdminStore::new(pool.clone());
+    store
+        .insert_ledger_entry(&sdkwork_api_domain_billing::LedgerEntry::new(
+            "project-1",
+            240,
+            0.42,
+        ))
+        .await
+        .unwrap();
+    store
+        .insert_quota_policy(&sdkwork_api_domain_billing::QuotaPolicy::new(
+            "quota-project-1",
+            "project-1",
+            500,
+        ))
+        .await
+        .unwrap();
+    store
+        .insert_identity_binding_record(
+            &IdentityBindingRecord::new(8101, 1001, 2002, 9001, "portal_workspace_user")
+                .with_issuer(Some("sdkwork-api-portal".to_owned()))
+                .with_subject(Some("tenant-1:project-1:user_owner".to_owned()))
+                .with_owner(Some("project-1".to_owned()))
+                .with_created_at_ms(10)
+                .with_updated_at_ms(10),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_account_record(
+            &AccountRecord::new(8201, 1001, 2002, 9001, AccountType::Primary)
+                .with_created_at_ms(11)
+                .with_updated_at_ms(11),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_account_benefit_lot(
+            &AccountBenefitLotRecord::new(
+                8301,
+                1001,
+                2002,
+                8201,
+                9001,
+                AccountBenefitType::CashCredit,
+            )
+            .with_source_type(AccountBenefitSourceType::Recharge)
+            .with_original_quantity(100_000.0)
+            .with_remaining_quantity(100_000.0)
+            .with_created_at_ms(12)
+            .with_updated_at_ms(12),
+        )
+        .await
+        .unwrap();
+
+    let app = sdkwork_api_interface_admin::admin_router_with_pool(pool);
+    let token = login_token(app.clone()).await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/admin/billing/summary")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let json = read_json(response).await;
+    assert_eq!(json["projects"][0]["project_id"], "project-1");
+    assert_eq!(json["projects"][0]["balance_source"], "canonical_account");
+    assert_eq!(json["projects"][0]["remaining_units"], 100000);
+    assert_eq!(json["projects"][0]["canonical_available_balance"], 100000.0);
+    assert_eq!(json["projects"][0]["canonical_grant_balance"], 100000.0);
+    assert_eq!(json["projects"][0]["canonical_consumed_balance"], 0.0);
+    assert_eq!(json["projects"][0]["canonical_held_balance"], 0.0);
+    assert_eq!(json["projects"][0]["quota_remaining_units"], 260);
+}
+
+#[serial(extension_env)]
+#[tokio::test]
 async fn billing_events_from_admin_api_report_group_and_capability_aggregates() {
     let pool = memory_pool().await;
     let store = sdkwork_api_storage_sqlite::SqliteAdminStore::new(pool.clone());
@@ -3642,12 +4290,7 @@ async fn billing_events_from_admin_api_report_group_and_capability_aggregates() 
             )
             .with_api_key_group_id("group-blue")
             .with_operation("responses.create", "text")
-            .with_request_facts(
-                Some("key-live"),
-                Some("openai"),
-                Some("resp_1"),
-                Some(650),
-            )
+            .with_request_facts(Some("key-live"), Some("openai"), Some("resp_1"), Some(650))
             .with_units(240)
             .with_token_usage(120, 80, 200)
             .with_financials(0.42, 0.89)
@@ -3670,12 +4313,7 @@ async fn billing_events_from_admin_api_report_group_and_capability_aggregates() 
             )
             .with_api_key_group_id("group-blue")
             .with_operation("images.generate", "image")
-            .with_request_facts(
-                Some("key-live"),
-                Some("openai"),
-                Some("img_1"),
-                Some(900),
-            )
+            .with_request_facts(Some("key-live"), Some("openai"), Some("img_1"), Some(900))
             .with_units(40)
             .with_request_count(1)
             .with_media_usage(2, 0.0, 0.0, 0.0)
@@ -3702,12 +4340,7 @@ async fn billing_events_from_admin_api_report_group_and_capability_aggregates() 
                 300,
             )
             .with_operation("audio.transcriptions.create", "audio")
-            .with_request_facts(
-                Some("key-byok"),
-                Some("openai"),
-                Some("aud_1"),
-                Some(1200),
-            )
+            .with_request_facts(Some("key-byok"), Some("openai"), Some("aud_1"), Some(1200))
             .with_units(60)
             .with_request_count(2)
             .with_media_usage(0, 35.0, 0.0, 0.0)
@@ -3767,8 +4400,14 @@ async fn billing_events_from_admin_api_report_group_and_capability_aggregates() 
     assert_eq!(summary_json["capabilities"][0]["capability"], "audio");
     assert_eq!(summary_json["capabilities"][1]["capability"], "images");
     assert_eq!(summary_json["capabilities"][2]["capability"], "responses");
-    assert_eq!(summary_json["accounting_modes"][0]["accounting_mode"], "platform_credit");
-    assert_eq!(summary_json["accounting_modes"][1]["accounting_mode"], "byok");
+    assert_eq!(
+        summary_json["accounting_modes"][0]["accounting_mode"],
+        "platform_credit"
+    );
+    assert_eq!(
+        summary_json["accounting_modes"][1]["accounting_mode"],
+        "byok"
+    );
 }
 
 #[serial(extension_env)]

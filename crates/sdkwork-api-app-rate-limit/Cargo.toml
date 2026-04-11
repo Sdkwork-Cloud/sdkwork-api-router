@@ -9,6 +9,7 @@ anyhow.workspace = true
 async-trait.workspace = true
 sdkwork-api-domain-rate-limit = { path = "../sdkwork-api-domain-rate-limit" }
 sdkwork-api-storage-core = { path = "../sdkwork-api-storage-core" }
+tokio.workspace = true
 
 [lib]
 path = "src/lib.rs"

@@ -291,7 +291,12 @@ async fn portal_billing_event_views_are_project_scoped() {
                 300,
             )
             .with_operation("audio.transcriptions.create", "audio")
-            .with_request_facts(Some("key-foreign"), Some("openai"), Some("aud_1"), Some(900))
+            .with_request_facts(
+                Some("key-foreign"),
+                Some("openai"),
+                Some("aud_1"),
+                Some(900),
+            )
             .with_units(60)
             .with_request_count(2)
             .with_media_usage(0, 35.0, 0.0, 0.0)
@@ -342,10 +347,22 @@ async fn portal_billing_event_views_are_project_scoped() {
     assert_eq!(billing_summary_json["total_tokens"], 120);
     assert_eq!(billing_summary_json["total_image_count"], 2);
     assert_eq!(billing_summary_json["total_audio_seconds"], 0.0);
-    assert_eq!(billing_summary_json["projects"][0]["project_id"], project_id);
-    assert_eq!(billing_summary_json["groups"][0]["api_key_group_id"], "group-live");
-    assert_eq!(billing_summary_json["accounting_modes"][0]["accounting_mode"], "platform_credit");
-    assert_eq!(billing_summary_json["accounting_modes"][1]["accounting_mode"], "byok");
+    assert_eq!(
+        billing_summary_json["projects"][0]["project_id"],
+        project_id
+    );
+    assert_eq!(
+        billing_summary_json["groups"][0]["api_key_group_id"],
+        "group-live"
+    );
+    assert_eq!(
+        billing_summary_json["accounting_modes"][0]["accounting_mode"],
+        "platform_credit"
+    );
+    assert_eq!(
+        billing_summary_json["accounting_modes"][1]["accounting_mode"],
+        "byok"
+    );
 }
 
 #[tokio::test]

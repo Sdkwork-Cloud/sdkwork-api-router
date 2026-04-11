@@ -1,7 +1,7 @@
 use sdkwork_api_app_identity::{
     change_portal_password, create_portal_api_key, list_portal_api_keys,
-    load_portal_workspace_summary, login_portal_user, register_portal_user, verify_portal_jwt,
-    PortalIdentityError,
+    load_portal_workspace_summary, login_portal_user, login_portal_user_with_bootstrap,
+    register_portal_user, verify_portal_jwt, PortalIdentityError,
 };
 use sdkwork_api_storage_sqlite::{run_migrations, SqliteAdminStore};
 
@@ -176,4 +176,25 @@ async fn portal_password_change_rejects_old_password_and_accepts_new_password() 
     .await
     .unwrap();
     assert_eq!(new_session.user.id, session.user.id);
+}
+
+#[tokio::test]
+async fn disabled_portal_bootstrap_does_not_seed_default_credentials() {
+    let store = memory_store().await;
+
+    let error = login_portal_user_with_bootstrap(
+        &store,
+        "portal@sdkwork.local",
+        "ChangeMe123!",
+        "portal-test-secret",
+        false,
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(error, PortalIdentityError::InvalidCredentials));
+    assert!(store
+        .find_portal_user_by_email("portal@sdkwork.local")
+        .await
+        .unwrap()
+        .is_none());
 }

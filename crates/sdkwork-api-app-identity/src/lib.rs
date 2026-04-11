@@ -7,8 +7,8 @@ use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, 
 use rand_core::OsRng;
 use sdkwork_api_domain_billing::BillingAccountingMode;
 use sdkwork_api_domain_identity::{
-    AdminUserProfile, AdminUserRecord, ApiKeyGroupRecord, GatewayApiKeyRecord, GatewayAuthSubject,
-    PortalUserProfile, PortalUserRecord,
+    AdminUserProfile, AdminUserRecord, AdminUserRole, ApiKeyGroupRecord, GatewayApiKeyRecord,
+    GatewayAuthSubject, PortalUserProfile, PortalUserRecord, PortalWorkspaceMembershipRecord,
 };
 use sdkwork_api_domain_tenant::{Project, Tenant};
 use sdkwork_api_storage_core::{AdminStore, IdentityKernelStore};
@@ -70,6 +70,8 @@ pub struct GatewayRequestContext {
     pub api_key_hash: String,
     pub api_key_group_id: Option<String>,
 }
+
+const CANONICAL_GATEWAY_COMPAT_ENVIRONMENT: &str = "live";
 
 impl GatewayRequestContext {
     pub fn tenant_id(&self) -> &str {
@@ -167,6 +169,16 @@ pub struct PortalWorkspaceSummary {
     pub project: Project,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PortalWorkspaceMembershipSummary {
+    pub membership_id: String,
+    pub role: String,
+    pub current: bool,
+    pub created_at_ms: u64,
+    pub tenant: Tenant,
+    pub project: Project,
+}
+
 #[derive(Debug)]
 pub enum PortalIdentityError {
     InvalidInput(String),
@@ -253,6 +265,10 @@ pub fn hash_gateway_api_key(value: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+pub fn gateway_api_key_prefix(value: &str) -> String {
+    value.chars().take(16).collect()
+}
+
 pub fn issue_jwt(subject: &str, signing_secret: &str) -> Result<String> {
     let issued_at = now_epoch_secs()?;
     let claims = Claims {
@@ -299,8 +315,18 @@ pub async fn login_admin_user(
     password: &str,
     signing_secret: &str,
 ) -> AdminResult<AdminAuthSession> {
+    login_admin_user_with_bootstrap(store, email, password, signing_secret, true).await
+}
+
+pub async fn login_admin_user_with_bootstrap(
+    store: &dyn AdminStore,
+    email: &str,
+    password: &str,
+    signing_secret: &str,
+    allow_default_bootstrap: bool,
+) -> AdminResult<AdminAuthSession> {
     validate_login_password(password).map_err(AdminIdentityError::InvalidInput)?;
-    let _ = ensure_default_admin_user(store).await?;
+    let _ = ensure_default_admin_user_if_allowed(store, allow_default_bootstrap).await?;
 
     let normalized_email = normalize_email(email);
     let Some(user) = store
@@ -338,7 +364,14 @@ pub async fn load_admin_user_profile(
 pub async fn list_admin_user_profiles(
     store: &dyn AdminStore,
 ) -> AdminResult<Vec<AdminUserProfile>> {
-    let _ = ensure_default_admin_user(store).await?;
+    list_admin_user_profiles_with_bootstrap(store, true).await
+}
+
+pub async fn list_admin_user_profiles_with_bootstrap(
+    store: &dyn AdminStore,
+    allow_default_bootstrap: bool,
+) -> AdminResult<Vec<AdminUserProfile>> {
+    let _ = ensure_default_admin_user_if_allowed(store, allow_default_bootstrap).await?;
     store
         .list_admin_users()
         .await
@@ -352,6 +385,7 @@ pub async fn upsert_admin_user(
     email: &str,
     display_name: &str,
     password: Option<&str>,
+    role: Option<&str>,
     active: bool,
 ) -> AdminResult<AdminUserProfile> {
     validate_identity_profile_input(email, display_name)
@@ -416,12 +450,15 @@ pub async fn upsert_admin_user(
         .as_ref()
         .map(|user| user.created_at_ms)
         .unwrap_or(now_epoch_millis().map_err(AdminIdentityError::from)?);
+    let role = resolve_admin_user_role(role, existing_by_id.as_ref())
+        .map_err(AdminIdentityError::InvalidInput)?;
     let record = AdminUserRecord::new(
         target_id,
         normalized_email,
         display_name.trim(),
         password_salt,
         password_hash,
+        role,
         active,
         created_at_ms,
     );
@@ -430,6 +467,19 @@ pub async fn upsert_admin_user(
         .await
         .map_err(map_admin_store_error)?;
     Ok(AdminUserProfile::from(&saved))
+}
+
+fn resolve_admin_user_role(
+    requested_role: Option<&str>,
+    existing_user: Option<&AdminUserRecord>,
+) -> std::result::Result<AdminUserRole, String> {
+    match normalize_optional_value(requested_role) {
+        Some(role) => AdminUserRole::from_str(role),
+        None => existing_user
+            .map(|user| user.role)
+            .or(Some(AdminUserRole::PlatformOperator))
+            .ok_or_else(|| "admin role is required".to_owned()),
+    }
 }
 
 pub async fn set_admin_user_active(
@@ -453,6 +503,7 @@ pub async fn set_admin_user_active(
         user.display_name,
         user.password_salt,
         user.password_hash,
+        user.role,
         active,
         user.created_at_ms,
     );
@@ -488,6 +539,7 @@ pub async fn reset_admin_user_password(
         user.display_name,
         password_salt,
         password_hash,
+        user.role,
         user.active,
         user.created_at_ms,
     );
@@ -535,6 +587,7 @@ pub async fn change_admin_password(
         user.display_name,
         password_salt,
         password_hash,
+        user.role,
         user.active,
         user.created_at_ms,
     );
@@ -546,7 +599,15 @@ pub async fn change_admin_password(
 }
 
 pub async fn delete_admin_user(store: &dyn AdminStore, user_id: &str) -> AdminResult<bool> {
-    let _ = ensure_default_admin_user(store).await?;
+    delete_admin_user_with_bootstrap(store, user_id, true).await
+}
+
+pub async fn delete_admin_user_with_bootstrap(
+    store: &dyn AdminStore,
+    user_id: &str,
+    allow_default_bootstrap: bool,
+) -> AdminResult<bool> {
+    let _ = ensure_default_admin_user_if_allowed(store, allow_default_bootstrap).await?;
 
     let Some(user) = store
         .find_admin_user_by_id(user_id)
@@ -556,7 +617,9 @@ pub async fn delete_admin_user(store: &dyn AdminStore, user_id: &str) -> AdminRe
         return Ok(false);
     };
 
-    if user.id == DEFAULT_ADMIN_USER_ID || user.email == DEFAULT_ADMIN_EMAIL {
+    if allow_default_bootstrap
+        && (user.id == DEFAULT_ADMIN_USER_ID || user.email == DEFAULT_ADMIN_EMAIL)
+    {
         return Err(AdminIdentityError::Protected(
             "default bootstrap admin cannot be deleted".to_owned(),
         ));
@@ -872,7 +935,7 @@ pub async fn persist_gateway_api_key_with_metadata(
     created.api_key_group_id = validated_group_id.clone();
     let record =
         GatewayApiKeyRecord::new(tenant_id, project_id, environment, created.hashed.clone())
-            .with_raw_key(created.plaintext.clone())
+            .with_key_prefix(gateway_api_key_prefix(&created.plaintext))
             .with_api_key_group_id_option(validated_group_id)
             .with_label(created.label.clone())
             .with_notes_option(created.notes.clone())
@@ -1010,6 +1073,32 @@ pub async fn resolve_gateway_request_context(
     }))
 }
 
+pub async fn resolve_gateway_request_context_from_auth_subject(
+    store: &dyn AdminStore,
+    subject: &GatewayAuthSubject,
+) -> Result<Option<GatewayRequestContext>> {
+    let tenant_id = subject.tenant_id.to_string();
+    let Some(_tenant) = store.find_tenant(&tenant_id).await? else {
+        return Ok(None);
+    };
+
+    let projects = store.list_projects().await?;
+    let Some(project) = select_gateway_compat_project(&projects, &tenant_id) else {
+        return Ok(None);
+    };
+
+    Ok(Some(GatewayRequestContext {
+        tenant_id,
+        project_id: project.id.clone(),
+        environment: CANONICAL_GATEWAY_COMPAT_ENVIRONMENT.to_owned(),
+        api_key_hash: subject
+            .api_key_hash
+            .clone()
+            .unwrap_or_else(|| subject.request_principal.clone()),
+        api_key_group_id: None,
+    }))
+}
+
 pub async fn resolve_gateway_auth_subject_from_api_key<S>(
     store: &S,
     plaintext_key: &str,
@@ -1056,6 +1145,33 @@ where
         record.api_key_id,
         hashed_key,
     )))
+}
+
+fn select_gateway_compat_project<'a>(
+    projects: &'a [Project],
+    tenant_id: &str,
+) -> Option<&'a Project> {
+    let candidates: Vec<&Project> = projects
+        .iter()
+        .filter(|project| project.tenant_id == tenant_id)
+        .collect();
+    match candidates.as_slice() {
+        [] => None,
+        [project] => Some(*project),
+        _ => {
+            let default_candidates: Vec<&Project> = candidates
+                .into_iter()
+                .filter(|project| {
+                    project.id.eq_ignore_ascii_case("default")
+                        || project.name.eq_ignore_ascii_case("default")
+                })
+                .collect();
+            match default_candidates.as_slice() {
+                [project] => Some(*project),
+                _ => None,
+            }
+        }
+    }
 }
 
 pub async fn register_portal_user(
@@ -1110,6 +1226,14 @@ pub async fn register_portal_user(
         .insert_portal_user(&user)
         .await
         .map_err(map_portal_store_error)?;
+    let user = ensure_portal_workspace_membership(
+        store,
+        &user,
+        &user.workspace_tenant_id,
+        &user.workspace_project_id,
+        "owner",
+    )
+    .await?;
     portal_session_from_user(&user, signing_secret)
 }
 
@@ -1119,8 +1243,18 @@ pub async fn login_portal_user(
     password: &str,
     signing_secret: &str,
 ) -> PortalResult<PortalAuthSession> {
+    login_portal_user_with_bootstrap(store, email, password, signing_secret, true).await
+}
+
+pub async fn login_portal_user_with_bootstrap(
+    store: &dyn AdminStore,
+    email: &str,
+    password: &str,
+    signing_secret: &str,
+    allow_default_bootstrap: bool,
+) -> PortalResult<PortalAuthSession> {
     validate_login_password(password).map_err(PortalIdentityError::InvalidInput)?;
-    let _ = ensure_default_portal_user(store).await?;
+    let _ = ensure_default_portal_user_if_allowed(store, allow_default_bootstrap).await?;
 
     let normalized_email = normalize_email(email);
     let Some(user) = store
@@ -1158,7 +1292,14 @@ pub async fn load_portal_user_profile(
 pub async fn list_portal_user_profiles(
     store: &dyn AdminStore,
 ) -> PortalResult<Vec<PortalUserProfile>> {
-    let _ = ensure_default_portal_user(store).await?;
+    list_portal_user_profiles_with_bootstrap(store, true).await
+}
+
+pub async fn list_portal_user_profiles_with_bootstrap(
+    store: &dyn AdminStore,
+    allow_default_bootstrap: bool,
+) -> PortalResult<Vec<PortalUserProfile>> {
+    let _ = ensure_default_portal_user_if_allowed(store, allow_default_bootstrap).await?;
     store
         .list_portal_users()
         .await
@@ -1254,6 +1395,14 @@ pub async fn upsert_portal_user(
         .insert_portal_user(&record)
         .await
         .map_err(map_portal_store_error)?;
+    let saved = ensure_portal_workspace_membership(
+        store,
+        &saved,
+        workspace_tenant_id.trim(),
+        workspace_project_id.trim(),
+        "member",
+    )
+    .await?;
     Ok(PortalUserProfile::from(&saved))
 }
 
@@ -1328,7 +1477,15 @@ pub async fn reset_portal_user_password(
 }
 
 pub async fn delete_portal_user(store: &dyn AdminStore, user_id: &str) -> PortalResult<bool> {
-    let _ = ensure_default_portal_user(store).await?;
+    delete_portal_user_with_bootstrap(store, user_id, true).await
+}
+
+pub async fn delete_portal_user_with_bootstrap(
+    store: &dyn AdminStore,
+    user_id: &str,
+    allow_default_bootstrap: bool,
+) -> PortalResult<bool> {
+    let _ = ensure_default_portal_user_if_allowed(store, allow_default_bootstrap).await?;
 
     let Some(user) = store
         .find_portal_user_by_id(user_id)
@@ -1338,7 +1495,9 @@ pub async fn delete_portal_user(store: &dyn AdminStore, user_id: &str) -> Portal
         return Ok(false);
     };
 
-    if user.id == DEFAULT_PORTAL_USER_ID || user.email == DEFAULT_PORTAL_EMAIL {
+    if allow_default_bootstrap
+        && (user.id == DEFAULT_PORTAL_USER_ID || user.email == DEFAULT_PORTAL_EMAIL)
+    {
         return Err(PortalIdentityError::Protected(
             "default demo portal user cannot be deleted".to_owned(),
         ));
@@ -1361,6 +1520,7 @@ pub async fn load_portal_workspace_summary(
     else {
         return Ok(None);
     };
+    let user = ensure_portal_workspace_membership_seeded(store, user).await?;
 
     let Some(tenant) = store
         .find_tenant(&user.workspace_tenant_id)
@@ -1389,6 +1549,90 @@ pub async fn load_portal_workspace_summary(
     }))
 }
 
+pub async fn list_portal_workspace_memberships(
+    store: &dyn AdminStore,
+    user_id: &str,
+) -> PortalResult<Vec<PortalWorkspaceMembershipSummary>> {
+    let user = load_portal_user_record(store, user_id).await?;
+    let memberships = load_portal_workspace_memberships_for_user(store, &user).await?;
+    let mut summaries = Vec::with_capacity(memberships.len());
+    for membership in memberships {
+        let tenant = store
+            .find_tenant(&membership.tenant_id)
+            .await
+            .map_err(PortalIdentityError::from)?
+            .ok_or_else(|| {
+                PortalIdentityError::NotFound("portal workspace tenant not found".to_owned())
+            })?;
+        let project = store
+            .find_project(&membership.project_id)
+            .await
+            .map_err(PortalIdentityError::from)?
+            .ok_or_else(|| {
+                PortalIdentityError::NotFound("portal workspace project not found".to_owned())
+            })?;
+        summaries.push(PortalWorkspaceMembershipSummary {
+            membership_id: membership.membership_id,
+            role: membership.role,
+            current: membership.tenant_id == user.workspace_tenant_id
+                && membership.project_id == user.workspace_project_id,
+            created_at_ms: membership.created_at_ms,
+            tenant,
+            project,
+        });
+    }
+    summaries.sort_by(|left, right| {
+        right
+            .current
+            .cmp(&left.current)
+            .then_with(|| left.tenant.id.cmp(&right.tenant.id))
+            .then_with(|| left.project.id.cmp(&right.project.id))
+            .then_with(|| left.membership_id.cmp(&right.membership_id))
+    });
+    Ok(summaries)
+}
+
+pub async fn select_portal_workspace(
+    store: &dyn AdminStore,
+    user_id: &str,
+    workspace_tenant_id: &str,
+    workspace_project_id: &str,
+    signing_secret: &str,
+) -> PortalResult<PortalAuthSession> {
+    validate_workspace_scope(store, workspace_tenant_id, workspace_project_id).await?;
+    let user = load_portal_user_record(store, user_id).await?;
+    let _ = load_portal_workspace_memberships_for_user(store, &user).await?;
+    let workspace_tenant_id = workspace_tenant_id.trim();
+    let workspace_project_id = workspace_project_id.trim();
+    if store
+        .find_portal_workspace_membership(&user.id, workspace_tenant_id, workspace_project_id)
+        .await
+        .map_err(PortalIdentityError::from)?
+        .is_none()
+    {
+        return Err(PortalIdentityError::NotFound(
+            "portal workspace membership not found".to_owned(),
+        ));
+    }
+
+    let updated = PortalUserRecord::new(
+        user.id,
+        user.email,
+        user.display_name,
+        user.password_salt,
+        user.password_hash,
+        workspace_tenant_id,
+        workspace_project_id,
+        user.active,
+        user.created_at_ms,
+    );
+    let saved = store
+        .insert_portal_user(&updated)
+        .await
+        .map_err(PortalIdentityError::from)?;
+    portal_session_from_user(&saved, signing_secret)
+}
+
 async fn load_portal_user_record(
     store: &dyn AdminStore,
     user_id: &str,
@@ -1398,6 +1642,75 @@ async fn load_portal_user_record(
         .await
         .map_err(PortalIdentityError::from)?
         .ok_or_else(|| PortalIdentityError::NotFound("portal user not found".to_owned()))
+}
+
+async fn load_portal_workspace_memberships_for_user(
+    store: &dyn AdminStore,
+    user: &PortalUserRecord,
+) -> PortalResult<Vec<PortalWorkspaceMembershipRecord>> {
+    let memberships = store
+        .list_portal_workspace_memberships_for_user(&user.id)
+        .await
+        .map_err(PortalIdentityError::from)?;
+    if !memberships.is_empty() {
+        return Ok(memberships);
+    }
+
+    let _ = ensure_portal_workspace_membership(
+        store,
+        user,
+        &user.workspace_tenant_id,
+        &user.workspace_project_id,
+        "owner",
+    )
+    .await?;
+    store
+        .list_portal_workspace_memberships_for_user(&user.id)
+        .await
+        .map_err(PortalIdentityError::from)
+}
+
+async fn ensure_portal_workspace_membership_seeded(
+    store: &dyn AdminStore,
+    user: PortalUserRecord,
+) -> PortalResult<PortalUserRecord> {
+    let _ = load_portal_workspace_memberships_for_user(store, &user).await?;
+    Ok(user)
+}
+
+async fn ensure_portal_workspace_membership(
+    store: &dyn AdminStore,
+    user: &PortalUserRecord,
+    tenant_id: &str,
+    project_id: &str,
+    role: &str,
+) -> PortalResult<PortalUserRecord> {
+    let tenant_id = tenant_id.trim();
+    let project_id = project_id.trim();
+    if store
+        .find_portal_workspace_membership(&user.id, tenant_id, project_id)
+        .await
+        .map_err(PortalIdentityError::from)?
+        .is_none()
+    {
+        let membership = PortalWorkspaceMembershipRecord::new(
+            generate_entity_id("membership").map_err(PortalIdentityError::from)?,
+            &user.id,
+            tenant_id,
+            project_id,
+            user.created_at_ms,
+        )
+        .with_role(role);
+        match store.insert_portal_workspace_membership(&membership).await {
+            Ok(_) => {}
+            Err(error) => {
+                if !looks_like_duplicate_error(&error) {
+                    return Err(PortalIdentityError::Storage(error));
+                }
+            }
+        }
+    }
+    Ok(user.clone())
 }
 
 async fn find_portal_scoped_api_key(
@@ -1718,6 +2031,7 @@ async fn ensure_default_admin_user(store: &dyn AdminStore) -> AdminResult<AdminU
         DEFAULT_ADMIN_DISPLAY_NAME,
         password_salt,
         password_hash,
+        AdminUserRole::SuperAdmin,
         true,
         created_at_ms,
     );
@@ -1738,13 +2052,31 @@ async fn ensure_default_admin_user(store: &dyn AdminStore) -> AdminResult<AdminU
     }
 }
 
+async fn ensure_default_admin_user_if_allowed(
+    store: &dyn AdminStore,
+    allow_default_bootstrap: bool,
+) -> AdminResult<Option<AdminUserRecord>> {
+    if allow_default_bootstrap {
+        ensure_default_admin_user(store).await.map(Some)
+    } else {
+        Ok(None)
+    }
+}
+
 async fn ensure_default_portal_user(store: &dyn AdminStore) -> PortalResult<PortalUserRecord> {
     if let Some(user) = store
         .find_portal_user_by_email(DEFAULT_PORTAL_EMAIL)
         .await
         .map_err(PortalIdentityError::from)?
     {
-        return Ok(user);
+        return ensure_portal_workspace_membership(
+            store,
+            &user,
+            &user.workspace_tenant_id,
+            &user.workspace_project_id,
+            "owner",
+        )
+        .await;
     }
 
     let tenant = Tenant::new(DEFAULT_PORTAL_TENANT_ID, "Portal Demo Workspace");
@@ -1779,18 +2111,46 @@ async fn ensure_default_portal_user(store: &dyn AdminStore) -> PortalResult<Port
     );
 
     match store.insert_portal_user(&user).await {
-        Ok(saved) => Ok(saved),
+        Ok(saved) => {
+            ensure_portal_workspace_membership(
+                store,
+                &saved,
+                &saved.workspace_tenant_id,
+                &saved.workspace_project_id,
+                "owner",
+            )
+            .await
+        }
         Err(error) => {
             if looks_like_duplicate_error(&error) {
-                store
+                let user = store
                     .find_portal_user_by_email(DEFAULT_PORTAL_EMAIL)
                     .await
                     .map_err(PortalIdentityError::from)?
-                    .ok_or_else(|| PortalIdentityError::Storage(error))
+                    .ok_or_else(|| PortalIdentityError::Storage(error))?;
+                ensure_portal_workspace_membership(
+                    store,
+                    &user,
+                    &user.workspace_tenant_id,
+                    &user.workspace_project_id,
+                    "owner",
+                )
+                .await
             } else {
                 Err(map_portal_store_error(error))
             }
         }
+    }
+}
+
+async fn ensure_default_portal_user_if_allowed(
+    store: &dyn AdminStore,
+    allow_default_bootstrap: bool,
+) -> PortalResult<Option<PortalUserRecord>> {
+    if allow_default_bootstrap {
+        ensure_default_portal_user(store).await.map(Some)
+    } else {
+        Ok(None)
     }
 }
 

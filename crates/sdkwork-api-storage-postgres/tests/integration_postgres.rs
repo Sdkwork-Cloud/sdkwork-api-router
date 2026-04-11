@@ -1,14 +1,27 @@
-use sdkwork_api_domain_billing::{BillingAccountingMode, BillingEventRecord, QuotaPolicy};
+use sdkwork_api_domain_billing::{
+    AccountBenefitLotRecord, AccountBenefitSourceType, AccountBenefitType,
+    AccountHoldAllocationRecord, AccountHoldRecord, AccountLedgerAllocationRecord,
+    AccountLedgerEntryRecord, AccountLedgerEntryType, AccountRecord, AccountType,
+    BillingAccountingMode, BillingEventRecord, PricingPlanRecord, PricingRateRecord, QuotaPolicy,
+    RequestSettlementRecord, RequestSettlementStatus,
+};
 use sdkwork_api_domain_catalog::{
     Channel, ModelCatalogEntry, ProviderChannelBinding, ProxyProvider,
 };
 use sdkwork_api_domain_credential::UpstreamCredential;
+use sdkwork_api_domain_identity::{
+    CanonicalApiKeyRecord, IdentityBindingRecord, IdentityUserRecord,
+};
 use sdkwork_api_domain_routing::{
     ProviderHealthSnapshot, RoutingCandidateAssessment, RoutingDecisionLog, RoutingDecisionSource,
     RoutingPolicy, RoutingStrategy,
 };
-use sdkwork_api_domain_usage::UsageRecord;
+use sdkwork_api_domain_usage::{
+    RequestMeterFactRecord, RequestMeterMetricRecord, RequestStatus, UsageCaptureStatus,
+    UsageRecord,
+};
 use sdkwork_api_secret_core::encrypt;
+use sdkwork_api_storage_core::{AccountKernelCommandBatch, AccountKernelStore, IdentityKernelStore};
 use sdkwork_api_storage_postgres::{run_migrations, PostgresAdminStore};
 use sqlx::PgPool;
 
@@ -329,6 +342,227 @@ async fn postgres_store_creates_canonical_identity_kernel_tables_when_url_is_pro
             "missing index {index_name}"
         );
     }
+}
+
+#[tokio::test]
+async fn postgres_store_round_trips_canonical_identity_kernel_records_when_url_is_provided() {
+    let Some(database_url) = std::env::var("SDKWORK_TEST_POSTGRES_URL").ok() else {
+        return;
+    };
+
+    let pool = run_migrations(&database_url).await.unwrap();
+    let store = PostgresAdminStore::new(pool);
+
+    let user = IdentityUserRecord::new(7101, 8101, 9101)
+        .with_external_user_ref(Some("ext-user-7101".to_owned()))
+        .with_username(Some("identity-user".to_owned()))
+        .with_display_name(Some("Identity User".to_owned()))
+        .with_email(Some("identity@example.com".to_owned()))
+        .with_created_at_ms(1_710_000_000_100)
+        .with_updated_at_ms(1_710_000_000_200);
+    store.insert_identity_user_record(&user).await.unwrap();
+
+    let api_key = CanonicalApiKeyRecord::new(7201, 8101, 9101, 7101, "hash-identity-7201")
+        .with_key_prefix("sk-router")
+        .with_display_name("Primary canonical key")
+        .with_last_used_at_ms(Some(1_710_000_000_300))
+        .with_created_at_ms(1_710_000_000_100)
+        .with_updated_at_ms(1_710_000_000_300);
+    store.insert_canonical_api_key_record(&api_key).await.unwrap();
+
+    let binding = IdentityBindingRecord::new(7301, 8101, 9101, 7101, "oauth")
+        .with_issuer(Some("https://issuer.example.com".to_owned()))
+        .with_subject(Some("sub-7101".to_owned()))
+        .with_platform(Some("portal".to_owned()))
+        .with_owner(Some("workspace".to_owned()))
+        .with_external_ref(Some("binding-ext-7301".to_owned()))
+        .with_created_at_ms(1_710_000_000_400)
+        .with_updated_at_ms(1_710_000_000_500);
+    store.insert_identity_binding_record(&binding).await.unwrap();
+
+    let users = store.list_identity_user_records().await.unwrap();
+    assert_eq!(users, vec![user.clone()]);
+
+    let found_user = store.find_identity_user_record(user.user_id).await.unwrap();
+    assert_eq!(found_user, Some(user));
+
+    let found_key = store
+        .find_canonical_api_key_record_by_hash(&api_key.key_hash)
+        .await
+        .unwrap();
+    assert_eq!(found_key, Some(api_key));
+
+    let found_binding = store
+        .find_identity_binding_record("oauth", Some("https://issuer.example.com"), Some("sub-7101"))
+        .await
+        .unwrap();
+    assert_eq!(found_binding, Some(binding));
+}
+
+#[tokio::test]
+async fn postgres_store_round_trips_account_kernel_records_when_url_is_provided() {
+    let Some(database_url) = std::env::var("SDKWORK_TEST_POSTGRES_URL").ok() else {
+        return;
+    };
+
+    let pool = run_migrations(&database_url).await.unwrap();
+    let store = PostgresAdminStore::new(pool);
+
+    let account = AccountRecord::new(7401, 8101, 9101, 7101, AccountType::Primary)
+        .with_allow_overdraft(true)
+        .with_overdraft_limit(25.0)
+        .with_created_at_ms(1_710_000_001_000)
+        .with_updated_at_ms(1_710_000_001_100);
+    let lot = AccountBenefitLotRecord::new(
+        7402,
+        8101,
+        9101,
+        7401,
+        7101,
+        AccountBenefitType::CashCredit,
+    )
+    .with_source_type(AccountBenefitSourceType::Recharge)
+    .with_original_quantity(120.0)
+    .with_remaining_quantity(120.0)
+    .with_held_quantity(20.0)
+    .with_created_at_ms(1_710_000_001_200)
+    .with_updated_at_ms(1_710_000_001_300);
+    let hold = AccountHoldRecord::new(7403, 8101, 9101, 7401, 7101, 7407)
+        .with_estimated_quantity(20.0)
+        .with_captured_quantity(15.0)
+        .with_released_quantity(5.0)
+        .with_expires_at_ms(1_710_000_002_000)
+        .with_created_at_ms(1_710_000_001_400)
+        .with_updated_at_ms(1_710_000_001_500);
+    let hold_allocation = AccountHoldAllocationRecord::new(7404, 8101, 9101, 7403, 7402)
+        .with_allocated_quantity(20.0)
+        .with_captured_quantity(15.0)
+        .with_released_quantity(5.0)
+        .with_created_at_ms(1_710_000_001_600)
+        .with_updated_at_ms(1_710_000_001_700);
+    let ledger_entry = AccountLedgerEntryRecord::new(
+        7405,
+        8101,
+        9101,
+        7401,
+        7101,
+        AccountLedgerEntryType::SettlementCapture,
+    )
+    .with_request_id(Some(7407))
+    .with_hold_id(Some(7403))
+    .with_benefit_type(Some("cash_credit".to_owned()))
+    .with_quantity(15.0)
+    .with_amount(15.0)
+    .with_created_at_ms(1_710_000_001_800);
+    let ledger_allocation = AccountLedgerAllocationRecord::new(7406, 8101, 9101, 7405, 7402)
+        .with_quantity_delta(15.0)
+        .with_created_at_ms(1_710_000_001_900);
+    let request_fact = RequestMeterFactRecord::new(
+        7407,
+        8101,
+        9101,
+        7101,
+        7401,
+        "api_key",
+        "responses",
+        "openai",
+        "gpt-4.1",
+        "provider-openai-official",
+    )
+    .with_api_key_id(Some(7201))
+    .with_api_key_hash(Some("hash-identity-7201".to_owned()))
+    .with_protocol_family("openai")
+    .with_request_status(RequestStatus::Succeeded)
+    .with_usage_capture_status(UsageCaptureStatus::Captured)
+    .with_estimated_credit_hold(20.0)
+    .with_actual_credit_charge(Some(15.0))
+    .with_actual_provider_cost(Some(4.5))
+    .with_started_at_ms(1_710_000_001_000)
+    .with_finished_at_ms(Some(1_710_000_001_950))
+    .with_created_at_ms(1_710_000_001_000)
+    .with_updated_at_ms(1_710_000_001_950);
+    let request_metric = RequestMeterMetricRecord::new(7408, 8101, 9101, 7407, "total_tokens", 512.0)
+        .with_provider_field(Some("usage.total_tokens".to_owned()))
+        .with_capture_stage("final")
+        .with_captured_at_ms(1_710_000_001_960);
+    let settlement = RequestSettlementRecord::new(7409, 8101, 9101, 7407, 7401, 7101)
+        .with_hold_id(Some(7403))
+        .with_status(RequestSettlementStatus::PartiallyReleased)
+        .with_estimated_credit_hold(20.0)
+        .with_released_credit_amount(5.0)
+        .with_captured_credit_amount(15.0)
+        .with_provider_cost_amount(4.5)
+        .with_retail_charge_amount(15.0)
+        .with_settled_at_ms(1_710_000_001_970)
+        .with_created_at_ms(1_710_000_001_970)
+        .with_updated_at_ms(1_710_000_001_980);
+
+    store
+        .commit_account_kernel_batch(&AccountKernelCommandBatch {
+            account_records: vec![account.clone()],
+            benefit_lot_records: vec![lot.clone()],
+            hold_records: vec![hold.clone()],
+            hold_allocation_records: vec![hold_allocation.clone()],
+            ledger_entry_records: vec![ledger_entry.clone()],
+            ledger_allocation_records: vec![ledger_allocation.clone()],
+            request_meter_fact_records: vec![request_fact.clone()],
+            request_meter_metric_records: vec![request_metric.clone()],
+            request_settlement_records: vec![settlement.clone()],
+        })
+        .await
+        .unwrap();
+
+    let pricing_plan = PricingPlanRecord::new(7410, 8101, 9101, "standard", 1)
+        .with_display_name("Standard")
+        .with_status("published")
+        .with_created_at_ms(1_710_000_002_000)
+        .with_updated_at_ms(1_710_000_002_100);
+    store.insert_pricing_plan_record(&pricing_plan).await.unwrap();
+
+    let pricing_rate = PricingRateRecord::new(7411, 8101, 9101, 7410, "tokens.input")
+        .with_model_code(Some("gpt-4.1".to_owned()))
+        .with_provider_code(Some("provider-openai-official".to_owned()))
+        .with_quantity_step(1_000.0)
+        .with_unit_price(0.25)
+        .with_created_at_ms(1_710_000_002_200);
+    store.insert_pricing_rate_record(&pricing_rate).await.unwrap();
+
+    assert_eq!(
+        store.find_account_record(account.account_id).await.unwrap(),
+        Some(account.clone())
+    );
+    assert_eq!(
+        store
+            .find_account_record_by_owner(8101, 9101, 7101, AccountType::Primary)
+            .await
+            .unwrap(),
+        Some(account)
+    );
+    assert_eq!(store.list_account_benefit_lots().await.unwrap(), vec![lot]);
+    assert_eq!(store.list_account_holds().await.unwrap(), vec![hold]);
+    assert_eq!(
+        store.list_account_hold_allocations().await.unwrap(),
+        vec![hold_allocation]
+    );
+    assert_eq!(
+        store.list_account_ledger_entry_records().await.unwrap(),
+        vec![ledger_entry]
+    );
+    assert_eq!(
+        store.list_account_ledger_allocations().await.unwrap(),
+        vec![ledger_allocation]
+    );
+    assert_eq!(store.list_request_meter_facts().await.unwrap(), vec![request_fact]);
+    assert_eq!(
+        store.list_request_meter_metrics().await.unwrap(),
+        vec![request_metric]
+    );
+    assert_eq!(
+        store.list_request_settlement_records().await.unwrap(),
+        vec![settlement]
+    );
+    assert_eq!(store.list_pricing_plan_records().await.unwrap(), vec![pricing_plan]);
+    assert_eq!(store.list_pricing_rate_records().await.unwrap(), vec![pricing_rate]);
 }
 
 #[tokio::test]

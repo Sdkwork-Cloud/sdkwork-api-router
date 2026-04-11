@@ -1,7 +1,12 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use sdkwork_api_domain_billing::{
-    BillingAccountingMode, BillingEventRecord, LedgerEntry, QuotaPolicy,
+    AccountBenefitLotRecord, AccountBenefitLotStatus, AccountBenefitSourceType, AccountBenefitType,
+    AccountHoldAllocationRecord, AccountHoldRecord, AccountHoldStatus,
+    AccountLedgerAllocationRecord, AccountLedgerEntryRecord, AccountLedgerEntryType, AccountRecord,
+    AccountStatus, AccountType, BillingAccountingMode, BillingEventRecord, LedgerEntry,
+    PricingPlanRecord, PricingRateRecord, QuotaPolicy, RequestSettlementRecord,
+    RequestSettlementStatus,
 };
 use sdkwork_api_domain_catalog::{
     normalize_provider_extension_id, Channel, ChannelModelRecord, ModelCapability,
@@ -11,7 +16,18 @@ use sdkwork_api_domain_commerce::{CommerceOrderRecord, ProjectMembershipRecord};
 use sdkwork_api_domain_coupon::CouponCampaign;
 use sdkwork_api_domain_credential::UpstreamCredential;
 use sdkwork_api_domain_identity::{
-    AdminUserRecord, ApiKeyGroupRecord, GatewayApiKeyRecord, PortalUserRecord,
+    AdminAuditEventRecord, AdminUserRecord, AdminUserRole, ApiKeyGroupRecord,
+    CanonicalApiKeyRecord, GatewayApiKeyRecord, IdentityBindingRecord, IdentityUserRecord,
+    PortalUserRecord, PortalWorkspaceMembershipRecord,
+};
+use sdkwork_api_domain_marketing::{
+    CouponBenefitRuleRecord, CouponClaimRecord, CouponCodeBatchRecord, CouponCodeRecord,
+    CouponRedemptionRecord, CouponTemplateRecord, MarketingAttributionTouchRecord,
+    MarketingCampaignRecord, ReferralInviteRecord, ReferralProgramRecord,
+};
+use sdkwork_api_domain_payment::{
+    DisputeRecord, PaymentAttemptRecord, PaymentOrderRecord, PaymentWebhookEventRecord,
+    RefundRecord,
 };
 use sdkwork_api_domain_rate_limit::{
     RateLimitCheckResult, RateLimitPolicy, RateLimitWindowSnapshot,
@@ -22,18 +38,23 @@ use sdkwork_api_domain_routing::{
     RoutingProfileRecord, RoutingStrategy,
 };
 use sdkwork_api_domain_tenant::{Project, Tenant};
-use sdkwork_api_domain_usage::UsageRecord;
+use sdkwork_api_domain_usage::{
+    RequestMeterFactRecord, RequestMeterMetricRecord, RequestStatus, UsageCaptureStatus,
+    UsageRecord,
+};
 use sdkwork_api_extension_core::{ExtensionInstallation, ExtensionInstance, ExtensionRuntime};
 use sdkwork_api_secret_core::SecretEnvelope;
 use sdkwork_api_storage_core::{
-    AccountKernelStore, AdminStore, ExtensionRuntimeRolloutParticipantRecord,
-    ExtensionRuntimeRolloutRecord, ServiceRuntimeNodeRecord,
-    StandaloneConfigRolloutParticipantRecord, StandaloneConfigRolloutRecord, StorageDialect,
+    AccountKernelCommandBatch, AccountKernelStore, AdminStore,
+    ExtensionRuntimeRolloutParticipantRecord, ExtensionRuntimeRolloutRecord, IdentityKernelStore,
+    ServiceRuntimeNodeRecord, StandaloneConfigRolloutParticipantRecord,
+    StandaloneConfigRolloutRecord, StorageDialect,
 };
+use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
 use sqlx::{
     postgres::{PgPoolOptions, PgRow},
-    PgPool, Row,
+    Executor, PgPool, Postgres, Row,
 };
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -238,6 +259,14 @@ fn decode_string_list(values_json: &str) -> Result<Vec<String>> {
     Ok(serde_json::from_str(values_json)?)
 }
 
+fn encode_json_record<T: Serialize>(record: &T) -> Result<String> {
+    Ok(serde_json::to_string(record)?)
+}
+
+fn decode_json_record<T: DeserializeOwned>(record_json: String) -> Result<T> {
+    Ok(serde_json::from_str(&record_json)?)
+}
+
 fn decode_billing_event_row(row: &PgRow) -> Result<BillingEventRecord> {
     Ok(BillingEventRecord {
         event_id: row.try_get("event_id")?,
@@ -300,7 +329,90 @@ type PortalUserRow = (
     i64,
 );
 
-type AdminUserRow = (String, String, String, String, String, bool, i64);
+type PortalWorkspaceMembershipRow = (String, String, String, String, String, i64);
+type PaymentOrderRow = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    i64,
+    String,
+    String,
+    String,
+    i64,
+    i64,
+);
+type PaymentWebhookEventRow = (
+    String,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    String,
+    String,
+    String,
+    i64,
+);
+type PaymentAttemptRow = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    i64,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    i64,
+    i64,
+);
+type RefundRow = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    i64,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    i64,
+    i64,
+);
+type DisputeRow = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    i64,
+    Option<i64>,
+    i64,
+    i64,
+);
+
+type AdminUserRow = (String, String, String, String, String, String, bool, i64);
+type AdminAuditEventRow = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    i64,
+);
 
 type CouponRow = (
     String,
@@ -369,18 +481,247 @@ fn decode_portal_user_row(row: Option<PortalUserRow>) -> Result<Option<PortalUse
     .transpose()
 }
 
+fn decode_portal_workspace_membership_row(
+    row: Option<PortalWorkspaceMembershipRow>,
+) -> Result<Option<PortalWorkspaceMembershipRecord>> {
+    row.map(
+        |(membership_id, user_id, tenant_id, project_id, role, created_at_ms)| {
+            Ok(PortalWorkspaceMembershipRecord {
+                membership_id,
+                user_id,
+                tenant_id,
+                project_id,
+                role,
+                created_at_ms: u64::try_from(created_at_ms)?,
+            })
+        },
+    )
+    .transpose()
+}
+
+fn decode_payment_order_row(row: Option<PaymentOrderRow>) -> Result<Option<PaymentOrderRecord>> {
+    row.map(
+        |(
+            payment_order_id,
+            commerce_order_id,
+            project_id,
+            user_id,
+            provider,
+            currency_code,
+            amount_cents,
+            status,
+            provider_reference_id,
+            checkout_url,
+            created_at_ms,
+            updated_at_ms,
+        )| {
+            Ok(PaymentOrderRecord {
+                payment_order_id,
+                commerce_order_id,
+                project_id,
+                user_id,
+                provider,
+                currency_code,
+                amount_cents: u64::try_from(amount_cents)?,
+                status,
+                provider_reference_id,
+                checkout_url,
+                created_at_ms: u64::try_from(created_at_ms)?,
+                updated_at_ms: u64::try_from(updated_at_ms)?,
+            })
+        },
+    )
+    .transpose()
+}
+
+fn decode_payment_webhook_event_row(
+    row: Option<PaymentWebhookEventRow>,
+) -> Result<Option<PaymentWebhookEventRecord>> {
+    row.map(
+        |(
+            payment_webhook_event_id,
+            provider,
+            provider_event_id,
+            payment_order_id,
+            commerce_order_id,
+            event_type,
+            status,
+            payload_json,
+            created_at_ms,
+        )| {
+            Ok(PaymentWebhookEventRecord {
+                payment_webhook_event_id,
+                provider,
+                provider_event_id,
+                payment_order_id,
+                commerce_order_id,
+                event_type,
+                status,
+                payload_json,
+                created_at_ms: u64::try_from(created_at_ms)?,
+            })
+        },
+    )
+    .transpose()
+}
+
+fn decode_payment_attempt_row(
+    row: Option<PaymentAttemptRow>,
+) -> Result<Option<PaymentAttemptRecord>> {
+    row.map(
+        |(
+            payment_attempt_id,
+            payment_order_id,
+            provider,
+            provider_attempt_id,
+            attempt_kind,
+            status,
+            currency_code,
+            amount_cents,
+            idempotency_key,
+            error_code,
+            error_message,
+            created_at_ms,
+            updated_at_ms,
+        )| {
+            Ok(PaymentAttemptRecord {
+                payment_attempt_id,
+                payment_order_id,
+                provider,
+                provider_attempt_id,
+                attempt_kind,
+                status,
+                currency_code,
+                amount_cents: u64::try_from(amount_cents)?,
+                idempotency_key,
+                error_code,
+                error_message,
+                created_at_ms: u64::try_from(created_at_ms)?,
+                updated_at_ms: u64::try_from(updated_at_ms)?,
+            })
+        },
+    )
+    .transpose()
+}
+
+fn decode_refund_row(row: Option<RefundRow>) -> Result<Option<RefundRecord>> {
+    row.map(
+        |(
+            refund_id,
+            payment_order_id,
+            provider,
+            provider_refund_id,
+            status,
+            currency_code,
+            amount_cents,
+            reason,
+            failure_code,
+            failure_message,
+            created_at_ms,
+            updated_at_ms,
+        )| {
+            Ok(RefundRecord {
+                refund_id,
+                payment_order_id,
+                provider,
+                provider_refund_id,
+                status,
+                currency_code,
+                amount_cents: u64::try_from(amount_cents)?,
+                reason,
+                failure_code,
+                failure_message,
+                created_at_ms: u64::try_from(created_at_ms)?,
+                updated_at_ms: u64::try_from(updated_at_ms)?,
+            })
+        },
+    )
+    .transpose()
+}
+
+fn decode_dispute_row(row: Option<DisputeRow>) -> Result<Option<DisputeRecord>> {
+    row.map(
+        |(
+            dispute_id,
+            payment_order_id,
+            provider,
+            provider_dispute_id,
+            status,
+            reason,
+            currency_code,
+            amount_cents,
+            evidence_due_at_ms,
+            created_at_ms,
+            updated_at_ms,
+        )| {
+            Ok(DisputeRecord {
+                dispute_id,
+                payment_order_id,
+                provider,
+                provider_dispute_id,
+                status,
+                reason,
+                currency_code,
+                amount_cents: u64::try_from(amount_cents)?,
+                evidence_due_at_ms: evidence_due_at_ms.map(u64::try_from).transpose()?,
+                created_at_ms: u64::try_from(created_at_ms)?,
+                updated_at_ms: u64::try_from(updated_at_ms)?,
+            })
+        },
+    )
+    .transpose()
+}
+
 fn decode_admin_user_row(row: Option<AdminUserRow>) -> Result<Option<AdminUserRecord>> {
     row.map(
-        |(id, email, display_name, password_salt, password_hash, active, created_at_ms)| {
+        |(id, email, display_name, password_salt, password_hash, role, active, created_at_ms)| {
             Ok(AdminUserRecord {
                 id,
                 email,
                 display_name,
                 password_salt,
                 password_hash,
+                role: role.parse::<AdminUserRole>().unwrap_or_default(),
                 active,
                 created_at_ms: u64::try_from(created_at_ms)?,
             })
+        },
+    )
+    .transpose()
+}
+
+fn decode_admin_audit_event_row(
+    row: Option<AdminAuditEventRow>,
+) -> Result<Option<AdminAuditEventRecord>> {
+    row.map(
+        |(
+            event_id,
+            actor_user_id,
+            actor_email,
+            actor_role,
+            action,
+            resource_type,
+            resource_id,
+            approval_scope,
+            target_tenant_id,
+            target_project_id,
+            target_provider_id,
+            created_at_ms,
+        )| {
+            Ok(AdminAuditEventRecord::new(
+                event_id,
+                actor_user_id,
+                actor_email,
+                actor_role.parse::<AdminUserRole>().unwrap_or_default(),
+                action,
+                resource_type,
+                resource_id,
+                approval_scope,
+                u64::try_from(created_at_ms)?,
+            )
+            .with_target_tenant_id_option(target_tenant_id)
+            .with_target_project_id_option(target_project_id)
+            .with_target_provider_id_option(target_provider_id))
         },
     )
     .transpose()
@@ -742,12 +1083,451 @@ pub async fn run_migrations(url: &str) -> Result<PgPool> {
     .execute(&pool)
     .await?;
     sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_portal_workspace_memberships (
+            membership_id TEXT PRIMARY KEY NOT NULL,
+            user_id TEXT NOT NULL,
+            tenant_id TEXT NOT NULL,
+            project_id TEXT NOT NULL,
+            role TEXT NOT NULL DEFAULT 'member',
+            created_at_ms BIGINT NOT NULL DEFAULT 0
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_portal_workspace_memberships ADD COLUMN IF NOT EXISTS user_id TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_portal_workspace_memberships ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_portal_workspace_memberships ADD COLUMN IF NOT EXISTS project_id TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_portal_workspace_memberships ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'member'",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_portal_workspace_memberships ADD COLUMN IF NOT EXISTS created_at_ms BIGINT NOT NULL DEFAULT 0",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_portal_workspace_memberships_scope
+         ON ai_portal_workspace_memberships (user_id, tenant_id, project_id)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_portal_workspace_memberships_user
+         ON ai_portal_workspace_memberships (user_id)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_payment_orders (
+            payment_order_id TEXT PRIMARY KEY NOT NULL,
+            commerce_order_id TEXT NOT NULL UNIQUE,
+            project_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            currency_code TEXT NOT NULL DEFAULT 'usd',
+            amount_cents BIGINT NOT NULL DEFAULT 0,
+            status TEXT NOT NULL,
+            provider_reference_id TEXT NOT NULL DEFAULT '',
+            checkout_url TEXT NOT NULL DEFAULT '',
+            created_at_ms BIGINT NOT NULL DEFAULT 0,
+            updated_at_ms BIGINT NOT NULL DEFAULT 0
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_orders ADD COLUMN IF NOT EXISTS commerce_order_id TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_orders ADD COLUMN IF NOT EXISTS project_id TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_orders ADD COLUMN IF NOT EXISTS user_id TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_orders ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_orders ADD COLUMN IF NOT EXISTS currency_code TEXT NOT NULL DEFAULT 'usd'",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_orders ADD COLUMN IF NOT EXISTS amount_cents BIGINT NOT NULL DEFAULT 0",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_orders ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_orders ADD COLUMN IF NOT EXISTS provider_reference_id TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_orders ADD COLUMN IF NOT EXISTS checkout_url TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_orders ADD COLUMN IF NOT EXISTS created_at_ms BIGINT NOT NULL DEFAULT 0",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_orders ADD COLUMN IF NOT EXISTS updated_at_ms BIGINT NOT NULL DEFAULT 0",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_payment_orders_commerce_order
+         ON ai_payment_orders (commerce_order_id)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_payment_orders_provider_reference
+         ON ai_payment_orders (provider, provider_reference_id)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_payment_attempts (
+            payment_attempt_id TEXT PRIMARY KEY NOT NULL,
+            payment_order_id TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            provider_attempt_id TEXT NOT NULL,
+            attempt_kind TEXT NOT NULL,
+            status TEXT NOT NULL,
+            currency_code TEXT NOT NULL DEFAULT 'usd',
+            amount_cents BIGINT NOT NULL DEFAULT 0,
+            idempotency_key TEXT,
+            error_code TEXT,
+            error_message TEXT,
+            created_at_ms BIGINT NOT NULL DEFAULT 0,
+            updated_at_ms BIGINT NOT NULL DEFAULT 0
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_attempts ADD COLUMN IF NOT EXISTS payment_order_id TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_attempts ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_attempts ADD COLUMN IF NOT EXISTS provider_attempt_id TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_attempts ADD COLUMN IF NOT EXISTS attempt_kind TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_attempts ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_attempts ADD COLUMN IF NOT EXISTS currency_code TEXT NOT NULL DEFAULT 'usd'",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_attempts ADD COLUMN IF NOT EXISTS amount_cents BIGINT NOT NULL DEFAULT 0",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query("ALTER TABLE ai_payment_attempts ADD COLUMN IF NOT EXISTS idempotency_key TEXT")
+        .execute(&pool)
+        .await?;
+    sqlx::query("ALTER TABLE ai_payment_attempts ADD COLUMN IF NOT EXISTS error_code TEXT")
+        .execute(&pool)
+        .await?;
+    sqlx::query("ALTER TABLE ai_payment_attempts ADD COLUMN IF NOT EXISTS error_message TEXT")
+        .execute(&pool)
+        .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_attempts ADD COLUMN IF NOT EXISTS created_at_ms BIGINT NOT NULL DEFAULT 0",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_attempts ADD COLUMN IF NOT EXISTS updated_at_ms BIGINT NOT NULL DEFAULT 0",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_payment_attempts_payment_order
+         ON ai_payment_attempts (payment_order_id, created_at_ms DESC)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_payment_attempts_provider_reference
+         ON ai_payment_attempts (provider, provider_attempt_id)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_payment_refunds (
+            refund_id TEXT PRIMARY KEY NOT NULL,
+            payment_order_id TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            provider_refund_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            currency_code TEXT NOT NULL DEFAULT 'usd',
+            amount_cents BIGINT NOT NULL DEFAULT 0,
+            reason TEXT,
+            failure_code TEXT,
+            failure_message TEXT,
+            created_at_ms BIGINT NOT NULL DEFAULT 0,
+            updated_at_ms BIGINT NOT NULL DEFAULT 0
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_refunds ADD COLUMN IF NOT EXISTS payment_order_id TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_refunds ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_refunds ADD COLUMN IF NOT EXISTS provider_refund_id TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_refunds ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_refunds ADD COLUMN IF NOT EXISTS currency_code TEXT NOT NULL DEFAULT 'usd'",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_refunds ADD COLUMN IF NOT EXISTS amount_cents BIGINT NOT NULL DEFAULT 0",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query("ALTER TABLE ai_payment_refunds ADD COLUMN IF NOT EXISTS reason TEXT")
+        .execute(&pool)
+        .await?;
+    sqlx::query("ALTER TABLE ai_payment_refunds ADD COLUMN IF NOT EXISTS failure_code TEXT")
+        .execute(&pool)
+        .await?;
+    sqlx::query("ALTER TABLE ai_payment_refunds ADD COLUMN IF NOT EXISTS failure_message TEXT")
+        .execute(&pool)
+        .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_refunds ADD COLUMN IF NOT EXISTS created_at_ms BIGINT NOT NULL DEFAULT 0",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_refunds ADD COLUMN IF NOT EXISTS updated_at_ms BIGINT NOT NULL DEFAULT 0",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_payment_refunds_payment_order
+         ON ai_payment_refunds (payment_order_id, created_at_ms DESC)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_payment_refunds_provider_reference
+         ON ai_payment_refunds (provider, provider_refund_id)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_payment_disputes (
+            dispute_id TEXT PRIMARY KEY NOT NULL,
+            payment_order_id TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            provider_dispute_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            reason TEXT NOT NULL DEFAULT '',
+            currency_code TEXT NOT NULL DEFAULT 'usd',
+            amount_cents BIGINT NOT NULL DEFAULT 0,
+            evidence_due_at_ms BIGINT,
+            created_at_ms BIGINT NOT NULL DEFAULT 0,
+            updated_at_ms BIGINT NOT NULL DEFAULT 0
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_disputes ADD COLUMN IF NOT EXISTS payment_order_id TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_disputes ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_disputes ADD COLUMN IF NOT EXISTS provider_dispute_id TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_disputes ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_disputes ADD COLUMN IF NOT EXISTS reason TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_disputes ADD COLUMN IF NOT EXISTS currency_code TEXT NOT NULL DEFAULT 'usd'",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_disputes ADD COLUMN IF NOT EXISTS amount_cents BIGINT NOT NULL DEFAULT 0",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_disputes ADD COLUMN IF NOT EXISTS evidence_due_at_ms BIGINT",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_disputes ADD COLUMN IF NOT EXISTS created_at_ms BIGINT NOT NULL DEFAULT 0",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_disputes ADD COLUMN IF NOT EXISTS updated_at_ms BIGINT NOT NULL DEFAULT 0",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_payment_disputes_payment_order
+         ON ai_payment_disputes (payment_order_id, created_at_ms DESC)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_payment_disputes_provider_reference
+         ON ai_payment_disputes (provider, provider_dispute_id)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_payment_webhook_events (
+            payment_webhook_event_id TEXT PRIMARY KEY NOT NULL,
+            provider TEXT NOT NULL,
+            provider_event_id TEXT NOT NULL,
+            payment_order_id TEXT,
+            commerce_order_id TEXT,
+            event_type TEXT NOT NULL,
+            status TEXT NOT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at_ms BIGINT NOT NULL DEFAULT 0
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_webhook_events ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_webhook_events ADD COLUMN IF NOT EXISTS provider_event_id TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_webhook_events ADD COLUMN IF NOT EXISTS payment_order_id TEXT",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_webhook_events ADD COLUMN IF NOT EXISTS commerce_order_id TEXT",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_webhook_events ADD COLUMN IF NOT EXISTS event_type TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_webhook_events ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_webhook_events ADD COLUMN IF NOT EXISTS payload_json TEXT NOT NULL DEFAULT '{}'",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_payment_webhook_events ADD COLUMN IF NOT EXISTS created_at_ms BIGINT NOT NULL DEFAULT 0",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_payment_webhook_events_provider_event
+         ON ai_payment_webhook_events (provider, provider_event_id)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
         "CREATE TABLE IF NOT EXISTS ai_admin_users (
             id TEXT PRIMARY KEY NOT NULL,
             email TEXT NOT NULL,
             display_name TEXT NOT NULL DEFAULT '',
             password_salt TEXT NOT NULL DEFAULT '',
             password_hash TEXT NOT NULL DEFAULT '',
+            role TEXT NOT NULL DEFAULT 'super_admin',
             active BOOLEAN NOT NULL DEFAULT TRUE,
             created_at_ms BIGINT NOT NULL DEFAULT 0
         )",
@@ -770,6 +1550,11 @@ pub async fn run_migrations(url: &str) -> Result<PgPool> {
     .execute(&pool)
     .await?;
     sqlx::query(
+        "ALTER TABLE ai_admin_users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'super_admin'",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
         "ALTER TABLE ai_admin_users ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE",
     )
     .execute(&pool)
@@ -781,6 +1566,36 @@ pub async fn run_migrations(url: &str) -> Result<PgPool> {
     .await?;
     sqlx::query(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_admin_users_email ON ai_admin_users (email)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_admin_audit_events (
+            event_id TEXT PRIMARY KEY NOT NULL,
+            actor_user_id TEXT NOT NULL,
+            actor_email TEXT NOT NULL,
+            actor_role TEXT NOT NULL,
+            action TEXT NOT NULL,
+            resource_type TEXT NOT NULL,
+            resource_id TEXT NOT NULL,
+            approval_scope TEXT NOT NULL,
+            target_tenant_id TEXT,
+            target_project_id TEXT,
+            target_provider_id TEXT,
+            created_at_ms BIGINT NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_admin_audit_events_created_at
+         ON ai_admin_audit_events (created_at_ms DESC, event_id DESC)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_admin_audit_events_resource
+         ON ai_admin_audit_events (resource_type, resource_id, created_at_ms DESC)",
     )
     .execute(&pool)
     .await?;
@@ -908,6 +1723,293 @@ pub async fn run_migrations(url: &str) -> Result<PgPool> {
     sqlx::query(
         "CREATE INDEX IF NOT EXISTS idx_ai_coupon_campaigns_active_remaining_created
          ON ai_coupon_campaigns (active, remaining, created_at_ms DESC, code)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_marketing_coupon_template (
+            coupon_template_id BIGINT PRIMARY KEY,
+            tenant_id BIGINT NOT NULL,
+            organization_id BIGINT NOT NULL DEFAULT 0,
+            template_code TEXT NOT NULL,
+            status TEXT NOT NULL,
+            benefit_kind TEXT NOT NULL,
+            distribution_kind TEXT NOT NULL,
+            exclusive_group TEXT,
+            created_at_ms BIGINT NOT NULL DEFAULT 0,
+            updated_at_ms BIGINT NOT NULL DEFAULT 0,
+            record_json JSONB NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_marketing_coupon_template_code
+         ON ai_marketing_coupon_template (tenant_id, organization_id, template_code)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_marketing_coupon_template_scope_status
+         ON ai_marketing_coupon_template (tenant_id, organization_id, status, updated_at_ms DESC, coupon_template_id)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_marketing_coupon_benefit_rule (
+            coupon_benefit_rule_id BIGINT PRIMARY KEY,
+            tenant_id BIGINT NOT NULL,
+            organization_id BIGINT NOT NULL DEFAULT 0,
+            coupon_template_id BIGINT NOT NULL,
+            benefit_kind TEXT NOT NULL,
+            created_at_ms BIGINT NOT NULL DEFAULT 0,
+            updated_at_ms BIGINT NOT NULL DEFAULT 0,
+            record_json JSONB NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_marketing_coupon_benefit_rule_template
+         ON ai_marketing_coupon_benefit_rule (coupon_template_id, updated_at_ms DESC, coupon_benefit_rule_id)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_marketing_campaign (
+            marketing_campaign_id BIGINT PRIMARY KEY,
+            tenant_id BIGINT NOT NULL,
+            organization_id BIGINT NOT NULL DEFAULT 0,
+            campaign_code TEXT NOT NULL,
+            status TEXT NOT NULL,
+            campaign_kind TEXT NOT NULL,
+            owner_user_id BIGINT,
+            created_at_ms BIGINT NOT NULL DEFAULT 0,
+            updated_at_ms BIGINT NOT NULL DEFAULT 0,
+            record_json JSONB NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_marketing_campaign_code
+         ON ai_marketing_campaign (tenant_id, organization_id, campaign_code)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_marketing_campaign_scope_status
+         ON ai_marketing_campaign (tenant_id, organization_id, status, updated_at_ms DESC, marketing_campaign_id)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_marketing_coupon_code_batch (
+            coupon_code_batch_id BIGINT PRIMARY KEY,
+            tenant_id BIGINT NOT NULL,
+            organization_id BIGINT NOT NULL DEFAULT 0,
+            coupon_template_id BIGINT NOT NULL,
+            marketing_campaign_id BIGINT,
+            generation_mode TEXT NOT NULL,
+            status TEXT NOT NULL,
+            code_prefix TEXT,
+            expires_at_ms BIGINT,
+            created_at_ms BIGINT NOT NULL DEFAULT 0,
+            updated_at_ms BIGINT NOT NULL DEFAULT 0,
+            record_json JSONB NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_marketing_coupon_code_batch_template_status
+         ON ai_marketing_coupon_code_batch (coupon_template_id, status, updated_at_ms DESC, coupon_code_batch_id)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_marketing_coupon_code (
+            coupon_code_id BIGINT PRIMARY KEY,
+            tenant_id BIGINT NOT NULL,
+            organization_id BIGINT NOT NULL DEFAULT 0,
+            coupon_code_batch_id BIGINT NOT NULL,
+            coupon_template_id BIGINT NOT NULL,
+            marketing_campaign_id BIGINT,
+            code_lookup_hash TEXT NOT NULL,
+            code_kind TEXT NOT NULL,
+            status TEXT NOT NULL,
+            display_code_prefix TEXT,
+            display_code_suffix TEXT,
+            claim_subject_type TEXT,
+            claim_subject_id TEXT,
+            expires_at_ms BIGINT,
+            created_at_ms BIGINT NOT NULL DEFAULT 0,
+            updated_at_ms BIGINT NOT NULL DEFAULT 0,
+            record_json JSONB NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_marketing_coupon_code_lookup_hash
+         ON ai_marketing_coupon_code (code_lookup_hash)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_marketing_coupon_code_status
+         ON ai_marketing_coupon_code (status, expires_at_ms, updated_at_ms DESC, coupon_code_id)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_marketing_coupon_code_subject
+         ON ai_marketing_coupon_code (claim_subject_type, claim_subject_id, status, updated_at_ms DESC, coupon_code_id)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_marketing_coupon_claim (
+            coupon_claim_id BIGINT PRIMARY KEY,
+            tenant_id BIGINT NOT NULL,
+            organization_id BIGINT NOT NULL DEFAULT 0,
+            coupon_code_id BIGINT NOT NULL,
+            coupon_template_id BIGINT NOT NULL,
+            subject_type TEXT NOT NULL,
+            subject_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            account_id BIGINT,
+            project_id TEXT,
+            expires_at_ms BIGINT,
+            created_at_ms BIGINT NOT NULL DEFAULT 0,
+            updated_at_ms BIGINT NOT NULL DEFAULT 0,
+            record_json JSONB NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_marketing_coupon_claim_subject_status
+         ON ai_marketing_coupon_claim (tenant_id, organization_id, subject_type, subject_id, status, updated_at_ms DESC, coupon_claim_id)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_marketing_coupon_redemption (
+            coupon_redemption_id BIGINT PRIMARY KEY,
+            tenant_id BIGINT NOT NULL,
+            organization_id BIGINT NOT NULL DEFAULT 0,
+            coupon_code_id BIGINT NOT NULL,
+            coupon_template_id BIGINT NOT NULL,
+            marketing_campaign_id BIGINT,
+            subject_type TEXT NOT NULL,
+            subject_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            idempotency_key TEXT,
+            created_at_ms BIGINT NOT NULL DEFAULT 0,
+            updated_at_ms BIGINT NOT NULL DEFAULT 0,
+            record_json JSONB NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_marketing_coupon_claim ADD COLUMN IF NOT EXISTS subject_type TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_marketing_coupon_claim ADD COLUMN IF NOT EXISTS subject_id TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_marketing_coupon_redemption ADD COLUMN IF NOT EXISTS subject_type TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "ALTER TABLE ai_marketing_coupon_redemption ADD COLUMN IF NOT EXISTS subject_id TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_marketing_coupon_redemption_lineage
+         ON ai_marketing_coupon_redemption (coupon_code_id, coupon_template_id, marketing_campaign_id, created_at_ms DESC, coupon_redemption_id)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_marketing_coupon_redemption_idempotency
+         ON ai_marketing_coupon_redemption (idempotency_key)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_marketing_referral_program (
+            referral_program_id BIGINT PRIMARY KEY,
+            tenant_id BIGINT NOT NULL,
+            organization_id BIGINT NOT NULL DEFAULT 0,
+            program_code TEXT NOT NULL,
+            status TEXT NOT NULL,
+            created_at_ms BIGINT NOT NULL DEFAULT 0,
+            updated_at_ms BIGINT NOT NULL DEFAULT 0,
+            record_json JSONB NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_marketing_referral_program_code
+         ON ai_marketing_referral_program (tenant_id, organization_id, program_code)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_marketing_referral_invite (
+            referral_invite_id BIGINT PRIMARY KEY,
+            tenant_id BIGINT NOT NULL,
+            organization_id BIGINT NOT NULL DEFAULT 0,
+            referral_program_id BIGINT NOT NULL,
+            referrer_user_id BIGINT NOT NULL,
+            status TEXT NOT NULL,
+            coupon_code_id BIGINT,
+            source_code TEXT,
+            referred_user_id BIGINT,
+            created_at_ms BIGINT NOT NULL DEFAULT 0,
+            updated_at_ms BIGINT NOT NULL DEFAULT 0,
+            record_json JSONB NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_marketing_referral_invite_program_referrer
+         ON ai_marketing_referral_invite (referral_program_id, referrer_user_id, updated_at_ms DESC, referral_invite_id)",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ai_marketing_attribution_touch (
+            attribution_touch_id BIGINT PRIMARY KEY,
+            tenant_id BIGINT NOT NULL,
+            organization_id BIGINT NOT NULL DEFAULT 0,
+            source_kind TEXT NOT NULL,
+            source_code TEXT,
+            partner_id TEXT,
+            referrer_user_id BIGINT,
+            invite_code_id BIGINT,
+            conversion_subject_id TEXT,
+            created_at_ms BIGINT NOT NULL DEFAULT 0,
+            updated_at_ms BIGINT NOT NULL DEFAULT 0,
+            record_json JSONB NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_ai_marketing_attribution_touch_source
+         ON ai_marketing_attribution_touch (source_kind, source_code, updated_at_ms DESC, attribution_touch_id)",
     )
     .execute(&pool)
     .await?;
@@ -1911,6 +3013,7 @@ pub async fn run_migrations(url: &str) -> Result<PgPool> {
             project_id TEXT NOT NULL,
             environment TEXT NOT NULL,
             api_key_group_id TEXT,
+            key_prefix TEXT NOT NULL DEFAULT '',
             label TEXT NOT NULL DEFAULT '',
             notes TEXT,
             created_at_ms BIGINT NOT NULL DEFAULT 0,
@@ -2110,6 +3213,14 @@ pub async fn run_migrations(url: &str) -> Result<PgPool> {
     .execute(&pool)
     .await?;
     sqlx::query("ALTER TABLE ai_app_api_keys ADD COLUMN IF NOT EXISTS raw_key TEXT")
+        .execute(&pool)
+        .await?;
+    sqlx::query(
+        "ALTER TABLE ai_app_api_keys ADD COLUMN IF NOT EXISTS key_prefix TEXT NOT NULL DEFAULT ''",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query("UPDATE ai_app_api_keys SET raw_key = NULL WHERE raw_key IS NOT NULL")
         .execute(&pool)
         .await?;
     sqlx::query("ALTER TABLE ai_app_api_keys ADD COLUMN IF NOT EXISTS api_key_group_id TEXT")
@@ -2675,11 +3786,11 @@ pub async fn run_migrations(url: &str) -> Result<PgPool> {
         sqlx::query(
             "INSERT INTO ai_app_api_keys (
                 hashed_key,
-                raw_key,
                 tenant_id,
                 project_id,
                 environment,
                 api_key_group_id,
+                key_prefix,
                 label,
                 notes,
                 created_at_ms,
@@ -2689,11 +3800,11 @@ pub async fn run_migrations(url: &str) -> Result<PgPool> {
             )
             SELECT
                 hashed_key,
-                NULL,
                 tenant_id,
                 project_id,
                 environment,
                 NULL,
+                '',
                 label,
                 notes,
                 created_at_ms,
@@ -5208,6 +6319,623 @@ impl PostgresAdminStore {
         Ok(result.rows_affected() > 0)
     }
 
+    pub async fn insert_coupon_template_record(
+        &self,
+        record: &CouponTemplateRecord,
+    ) -> Result<CouponTemplateRecord> {
+        let record_json = encode_json_record(record)?;
+        sqlx::query(
+            "INSERT INTO ai_marketing_coupon_template (
+                coupon_template_id, tenant_id, organization_id, template_code, status,
+                benefit_kind, distribution_kind, exclusive_group, created_at_ms, updated_at_ms,
+                record_json
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CAST($11 AS JSONB))
+             ON CONFLICT(coupon_template_id) DO UPDATE SET
+                tenant_id = excluded.tenant_id,
+                organization_id = excluded.organization_id,
+                template_code = excluded.template_code,
+                status = excluded.status,
+                benefit_kind = excluded.benefit_kind,
+                distribution_kind = excluded.distribution_kind,
+                exclusive_group = excluded.exclusive_group,
+                created_at_ms = excluded.created_at_ms,
+                updated_at_ms = excluded.updated_at_ms,
+                record_json = excluded.record_json",
+        )
+        .bind(i64::try_from(record.coupon_template_id)?)
+        .bind(i64::try_from(record.tenant_id)?)
+        .bind(i64::try_from(record.organization_id)?)
+        .bind(&record.template_code)
+        .bind(format!("{:?}", record.status).to_ascii_lowercase())
+        .bind(format!("{:?}", record.benefit_kind).to_ascii_lowercase())
+        .bind(format!("{:?}", record.distribution_kind).to_ascii_lowercase())
+        .bind(&record.exclusive_group)
+        .bind(i64::try_from(record.created_at_ms)?)
+        .bind(i64::try_from(record.updated_at_ms)?)
+        .bind(record_json)
+        .execute(&self.pool)
+        .await?;
+        Ok(record.clone())
+    }
+
+    pub async fn list_coupon_template_records(&self) -> Result<Vec<CouponTemplateRecord>> {
+        let rows = sqlx::query_scalar::<_, String>(
+            "SELECT record_json::text
+             FROM ai_marketing_coupon_template
+             ORDER BY updated_at_ms DESC, coupon_template_id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter().map(decode_json_record).collect()
+    }
+
+    pub async fn find_coupon_template_record(
+        &self,
+        coupon_template_id: u64,
+    ) -> Result<Option<CouponTemplateRecord>> {
+        let row = sqlx::query_scalar::<_, String>(
+            "SELECT record_json::text
+             FROM ai_marketing_coupon_template
+             WHERE coupon_template_id = $1",
+        )
+        .bind(i64::try_from(coupon_template_id)?)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(decode_json_record).transpose()
+    }
+
+    pub async fn insert_coupon_benefit_rule_record(
+        &self,
+        record: &CouponBenefitRuleRecord,
+    ) -> Result<CouponBenefitRuleRecord> {
+        let record_json = encode_json_record(record)?;
+        sqlx::query(
+            "INSERT INTO ai_marketing_coupon_benefit_rule (
+                coupon_benefit_rule_id, tenant_id, organization_id, coupon_template_id,
+                benefit_kind, created_at_ms, updated_at_ms, record_json
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, CAST($8 AS JSONB))
+             ON CONFLICT(coupon_benefit_rule_id) DO UPDATE SET
+                tenant_id = excluded.tenant_id,
+                organization_id = excluded.organization_id,
+                coupon_template_id = excluded.coupon_template_id,
+                benefit_kind = excluded.benefit_kind,
+                created_at_ms = excluded.created_at_ms,
+                updated_at_ms = excluded.updated_at_ms,
+                record_json = excluded.record_json",
+        )
+        .bind(i64::try_from(record.coupon_benefit_rule_id)?)
+        .bind(i64::try_from(record.tenant_id)?)
+        .bind(i64::try_from(record.organization_id)?)
+        .bind(i64::try_from(record.coupon_template_id)?)
+        .bind(format!("{:?}", record.benefit_kind).to_ascii_lowercase())
+        .bind(i64::try_from(record.created_at_ms)?)
+        .bind(i64::try_from(record.updated_at_ms)?)
+        .bind(record_json)
+        .execute(&self.pool)
+        .await?;
+        Ok(record.clone())
+    }
+
+    pub async fn list_coupon_benefit_rule_records(&self) -> Result<Vec<CouponBenefitRuleRecord>> {
+        let rows = sqlx::query_scalar::<_, String>(
+            "SELECT record_json::text
+             FROM ai_marketing_coupon_benefit_rule
+             ORDER BY updated_at_ms DESC, coupon_benefit_rule_id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter().map(decode_json_record).collect()
+    }
+
+    pub async fn insert_marketing_campaign_record(
+        &self,
+        record: &MarketingCampaignRecord,
+    ) -> Result<MarketingCampaignRecord> {
+        let record_json = encode_json_record(record)?;
+        sqlx::query(
+            "INSERT INTO ai_marketing_campaign (
+                marketing_campaign_id, tenant_id, organization_id, campaign_code, status,
+                campaign_kind, owner_user_id, created_at_ms, updated_at_ms, record_json
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, CAST($10 AS JSONB))
+             ON CONFLICT(marketing_campaign_id) DO UPDATE SET
+                tenant_id = excluded.tenant_id,
+                organization_id = excluded.organization_id,
+                campaign_code = excluded.campaign_code,
+                status = excluded.status,
+                campaign_kind = excluded.campaign_kind,
+                owner_user_id = excluded.owner_user_id,
+                created_at_ms = excluded.created_at_ms,
+                updated_at_ms = excluded.updated_at_ms,
+                record_json = excluded.record_json",
+        )
+        .bind(i64::try_from(record.marketing_campaign_id)?)
+        .bind(i64::try_from(record.tenant_id)?)
+        .bind(i64::try_from(record.organization_id)?)
+        .bind(&record.campaign_code)
+        .bind(format!("{:?}", record.status).to_ascii_lowercase())
+        .bind(format!("{:?}", record.campaign_kind).to_ascii_lowercase())
+        .bind(record.owner_user_id.map(i64::try_from).transpose()?)
+        .bind(i64::try_from(record.created_at_ms)?)
+        .bind(i64::try_from(record.updated_at_ms)?)
+        .bind(record_json)
+        .execute(&self.pool)
+        .await?;
+        Ok(record.clone())
+    }
+
+    pub async fn list_marketing_campaign_records(&self) -> Result<Vec<MarketingCampaignRecord>> {
+        let rows = sqlx::query_scalar::<_, String>(
+            "SELECT record_json::text
+             FROM ai_marketing_campaign
+             ORDER BY updated_at_ms DESC, marketing_campaign_id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter().map(decode_json_record).collect()
+    }
+
+    pub async fn find_marketing_campaign_record(
+        &self,
+        marketing_campaign_id: u64,
+    ) -> Result<Option<MarketingCampaignRecord>> {
+        let row = sqlx::query_scalar::<_, String>(
+            "SELECT record_json::text
+             FROM ai_marketing_campaign
+             WHERE marketing_campaign_id = $1",
+        )
+        .bind(i64::try_from(marketing_campaign_id)?)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(decode_json_record).transpose()
+    }
+
+    pub async fn insert_coupon_code_batch_record(
+        &self,
+        record: &CouponCodeBatchRecord,
+    ) -> Result<CouponCodeBatchRecord> {
+        let record_json = encode_json_record(record)?;
+        sqlx::query(
+            "INSERT INTO ai_marketing_coupon_code_batch (
+                coupon_code_batch_id, tenant_id, organization_id, coupon_template_id,
+                marketing_campaign_id, generation_mode, status, code_prefix, expires_at_ms,
+                created_at_ms, updated_at_ms, record_json
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, CAST($12 AS JSONB))
+             ON CONFLICT(coupon_code_batch_id) DO UPDATE SET
+                tenant_id = excluded.tenant_id,
+                organization_id = excluded.organization_id,
+                coupon_template_id = excluded.coupon_template_id,
+                marketing_campaign_id = excluded.marketing_campaign_id,
+                generation_mode = excluded.generation_mode,
+                status = excluded.status,
+                code_prefix = excluded.code_prefix,
+                expires_at_ms = excluded.expires_at_ms,
+                created_at_ms = excluded.created_at_ms,
+                updated_at_ms = excluded.updated_at_ms,
+                record_json = excluded.record_json",
+        )
+        .bind(i64::try_from(record.coupon_code_batch_id)?)
+        .bind(i64::try_from(record.tenant_id)?)
+        .bind(i64::try_from(record.organization_id)?)
+        .bind(i64::try_from(record.coupon_template_id)?)
+        .bind(
+            record
+                .marketing_campaign_id
+                .map(i64::try_from)
+                .transpose()?,
+        )
+        .bind(format!("{:?}", record.generation_mode).to_ascii_lowercase())
+        .bind(format!("{:?}", record.status).to_ascii_lowercase())
+        .bind(&record.code_prefix)
+        .bind(record.expires_at_ms.map(i64::try_from).transpose()?)
+        .bind(i64::try_from(record.created_at_ms)?)
+        .bind(i64::try_from(record.updated_at_ms)?)
+        .bind(record_json)
+        .execute(&self.pool)
+        .await?;
+        Ok(record.clone())
+    }
+
+    pub async fn list_coupon_code_batch_records(&self) -> Result<Vec<CouponCodeBatchRecord>> {
+        let rows = sqlx::query_scalar::<_, String>(
+            "SELECT record_json::text
+             FROM ai_marketing_coupon_code_batch
+             ORDER BY updated_at_ms DESC, coupon_code_batch_id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter().map(decode_json_record).collect()
+    }
+
+    pub async fn insert_coupon_code_record(
+        &self,
+        record: &CouponCodeRecord,
+    ) -> Result<CouponCodeRecord> {
+        let record_json = encode_json_record(record)?;
+        sqlx::query(
+            "INSERT INTO ai_marketing_coupon_code (
+                coupon_code_id, tenant_id, organization_id, coupon_code_batch_id,
+                coupon_template_id, marketing_campaign_id, code_lookup_hash, code_kind, status,
+                display_code_prefix, display_code_suffix, claim_subject_type, claim_subject_id,
+                expires_at_ms, created_at_ms, updated_at_ms, record_json
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, CAST($17 AS JSONB))
+             ON CONFLICT(coupon_code_id) DO UPDATE SET
+                tenant_id = excluded.tenant_id,
+                organization_id = excluded.organization_id,
+                coupon_code_batch_id = excluded.coupon_code_batch_id,
+                coupon_template_id = excluded.coupon_template_id,
+                marketing_campaign_id = excluded.marketing_campaign_id,
+                code_lookup_hash = excluded.code_lookup_hash,
+                code_kind = excluded.code_kind,
+                status = excluded.status,
+                display_code_prefix = excluded.display_code_prefix,
+                display_code_suffix = excluded.display_code_suffix,
+                claim_subject_type = excluded.claim_subject_type,
+                claim_subject_id = excluded.claim_subject_id,
+                expires_at_ms = excluded.expires_at_ms,
+                created_at_ms = excluded.created_at_ms,
+                updated_at_ms = excluded.updated_at_ms,
+                record_json = excluded.record_json",
+        )
+        .bind(i64::try_from(record.coupon_code_id)?)
+        .bind(i64::try_from(record.tenant_id)?)
+        .bind(i64::try_from(record.organization_id)?)
+        .bind(i64::try_from(record.coupon_code_batch_id)?)
+        .bind(i64::try_from(record.coupon_template_id)?)
+        .bind(record.marketing_campaign_id.map(i64::try_from).transpose()?)
+        .bind(&record.code_lookup_hash)
+        .bind(format!("{:?}", record.code_kind).to_ascii_lowercase())
+        .bind(format!("{:?}", record.status).to_ascii_lowercase())
+        .bind(&record.display_code_prefix)
+        .bind(&record.display_code_suffix)
+        .bind(&record.claim_subject_type)
+        .bind(&record.claim_subject_id)
+        .bind(record.expires_at_ms.map(i64::try_from).transpose()?)
+        .bind(i64::try_from(record.created_at_ms)?)
+        .bind(i64::try_from(record.updated_at_ms)?)
+        .bind(record_json)
+        .execute(&self.pool)
+        .await?;
+        Ok(record.clone())
+    }
+
+    pub async fn list_coupon_code_records(&self) -> Result<Vec<CouponCodeRecord>> {
+        let rows = sqlx::query_scalar::<_, String>(
+            "SELECT record_json::text
+             FROM ai_marketing_coupon_code
+             ORDER BY updated_at_ms DESC, coupon_code_id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter().map(decode_json_record).collect()
+    }
+
+    pub async fn find_coupon_code_record(
+        &self,
+        coupon_code_id: u64,
+    ) -> Result<Option<CouponCodeRecord>> {
+        let row = sqlx::query_scalar::<_, String>(
+            "SELECT record_json::text
+             FROM ai_marketing_coupon_code
+             WHERE coupon_code_id = $1",
+        )
+        .bind(i64::try_from(coupon_code_id)?)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(decode_json_record).transpose()
+    }
+
+    pub async fn find_coupon_code_record_by_lookup_hash(
+        &self,
+        code_lookup_hash: &str,
+    ) -> Result<Option<CouponCodeRecord>> {
+        let row = sqlx::query_scalar::<_, String>(
+            "SELECT record_json::text
+             FROM ai_marketing_coupon_code
+             WHERE code_lookup_hash = $1",
+        )
+        .bind(code_lookup_hash)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(decode_json_record).transpose()
+    }
+
+    pub async fn list_coupon_code_records_for_subject(
+        &self,
+        claim_subject_type: &str,
+        claim_subject_id: &str,
+    ) -> Result<Vec<CouponCodeRecord>> {
+        let rows = sqlx::query_scalar::<_, String>(
+            "SELECT record_json::text
+             FROM ai_marketing_coupon_code
+             WHERE claim_subject_type = $1 AND claim_subject_id = $2
+             ORDER BY updated_at_ms DESC, coupon_code_id",
+        )
+        .bind(claim_subject_type)
+        .bind(claim_subject_id)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter().map(decode_json_record).collect()
+    }
+
+    pub async fn insert_coupon_claim_record(
+        &self,
+        record: &CouponClaimRecord,
+    ) -> Result<CouponClaimRecord> {
+        let record_json = encode_json_record(record)?;
+        sqlx::query(
+            "INSERT INTO ai_marketing_coupon_claim (
+                coupon_claim_id, tenant_id, organization_id, coupon_code_id, coupon_template_id,
+                subject_type, subject_id, status, account_id, project_id, expires_at_ms,
+                created_at_ms, updated_at_ms, record_json
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, CAST($14 AS JSONB))
+             ON CONFLICT(coupon_claim_id) DO UPDATE SET
+                tenant_id = excluded.tenant_id,
+                organization_id = excluded.organization_id,
+                coupon_code_id = excluded.coupon_code_id,
+                coupon_template_id = excluded.coupon_template_id,
+                subject_type = excluded.subject_type,
+                subject_id = excluded.subject_id,
+                status = excluded.status,
+                account_id = excluded.account_id,
+                project_id = excluded.project_id,
+                expires_at_ms = excluded.expires_at_ms,
+                created_at_ms = excluded.created_at_ms,
+                updated_at_ms = excluded.updated_at_ms,
+                record_json = excluded.record_json",
+        )
+        .bind(i64::try_from(record.coupon_claim_id)?)
+        .bind(i64::try_from(record.tenant_id)?)
+        .bind(i64::try_from(record.organization_id)?)
+        .bind(i64::try_from(record.coupon_code_id)?)
+        .bind(i64::try_from(record.coupon_template_id)?)
+        .bind(&record.subject_type)
+        .bind(&record.subject_id)
+        .bind(format!("{:?}", record.status).to_ascii_lowercase())
+        .bind(record.account_id.map(i64::try_from).transpose()?)
+        .bind(&record.project_id)
+        .bind(record.expires_at_ms.map(i64::try_from).transpose()?)
+        .bind(i64::try_from(record.created_at_ms)?)
+        .bind(i64::try_from(record.updated_at_ms)?)
+        .bind(record_json)
+        .execute(&self.pool)
+        .await?;
+        Ok(record.clone())
+    }
+
+    pub async fn list_coupon_claim_records(&self) -> Result<Vec<CouponClaimRecord>> {
+        let rows = sqlx::query_scalar::<_, String>(
+            "SELECT record_json::text
+             FROM ai_marketing_coupon_claim
+             ORDER BY updated_at_ms DESC, coupon_claim_id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter().map(decode_json_record).collect()
+    }
+
+    pub async fn insert_coupon_redemption_record(
+        &self,
+        record: &CouponRedemptionRecord,
+    ) -> Result<CouponRedemptionRecord> {
+        let record_json = encode_json_record(record)?;
+        sqlx::query(
+            "INSERT INTO ai_marketing_coupon_redemption (
+                coupon_redemption_id, tenant_id, organization_id, coupon_code_id,
+                coupon_template_id, marketing_campaign_id, subject_type, subject_id, status,
+                idempotency_key, created_at_ms, updated_at_ms, record_json
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, CAST($13 AS JSONB))
+             ON CONFLICT(coupon_redemption_id) DO UPDATE SET
+                tenant_id = excluded.tenant_id,
+                organization_id = excluded.organization_id,
+                coupon_code_id = excluded.coupon_code_id,
+                coupon_template_id = excluded.coupon_template_id,
+                marketing_campaign_id = excluded.marketing_campaign_id,
+                subject_type = excluded.subject_type,
+                subject_id = excluded.subject_id,
+                status = excluded.status,
+                idempotency_key = excluded.idempotency_key,
+                created_at_ms = excluded.created_at_ms,
+                updated_at_ms = excluded.updated_at_ms,
+                record_json = excluded.record_json",
+        )
+        .bind(i64::try_from(record.coupon_redemption_id)?)
+        .bind(i64::try_from(record.tenant_id)?)
+        .bind(i64::try_from(record.organization_id)?)
+        .bind(i64::try_from(record.coupon_code_id)?)
+        .bind(i64::try_from(record.coupon_template_id)?)
+        .bind(
+            record
+                .marketing_campaign_id
+                .map(i64::try_from)
+                .transpose()?,
+        )
+        .bind(&record.subject_type)
+        .bind(&record.subject_id)
+        .bind(format!("{:?}", record.status).to_ascii_lowercase())
+        .bind(&record.idempotency_key)
+        .bind(i64::try_from(record.created_at_ms)?)
+        .bind(i64::try_from(record.updated_at_ms)?)
+        .bind(record_json)
+        .execute(&self.pool)
+        .await?;
+        Ok(record.clone())
+    }
+
+    pub async fn list_coupon_redemption_records(&self) -> Result<Vec<CouponRedemptionRecord>> {
+        let rows = sqlx::query_scalar::<_, String>(
+            "SELECT record_json::text
+             FROM ai_marketing_coupon_redemption
+             ORDER BY updated_at_ms DESC, coupon_redemption_id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter().map(decode_json_record).collect()
+    }
+
+    pub async fn find_coupon_redemption_record_by_idempotency_key(
+        &self,
+        idempotency_key: &str,
+    ) -> Result<Option<CouponRedemptionRecord>> {
+        let row = sqlx::query_scalar::<_, String>(
+            "SELECT record_json::text
+             FROM ai_marketing_coupon_redemption
+             WHERE idempotency_key = $1",
+        )
+        .bind(idempotency_key)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(decode_json_record).transpose()
+    }
+
+    pub async fn insert_referral_program_record(
+        &self,
+        record: &ReferralProgramRecord,
+    ) -> Result<ReferralProgramRecord> {
+        let record_json = encode_json_record(record)?;
+        sqlx::query(
+            "INSERT INTO ai_marketing_referral_program (
+                referral_program_id, tenant_id, organization_id, program_code, status,
+                created_at_ms, updated_at_ms, record_json
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, CAST($8 AS JSONB))
+             ON CONFLICT(referral_program_id) DO UPDATE SET
+                tenant_id = excluded.tenant_id,
+                organization_id = excluded.organization_id,
+                program_code = excluded.program_code,
+                status = excluded.status,
+                created_at_ms = excluded.created_at_ms,
+                updated_at_ms = excluded.updated_at_ms,
+                record_json = excluded.record_json",
+        )
+        .bind(i64::try_from(record.referral_program_id)?)
+        .bind(i64::try_from(record.tenant_id)?)
+        .bind(i64::try_from(record.organization_id)?)
+        .bind(&record.program_code)
+        .bind(format!("{:?}", record.status).to_ascii_lowercase())
+        .bind(i64::try_from(record.created_at_ms)?)
+        .bind(i64::try_from(record.updated_at_ms)?)
+        .bind(record_json)
+        .execute(&self.pool)
+        .await?;
+        Ok(record.clone())
+    }
+
+    pub async fn list_referral_program_records(&self) -> Result<Vec<ReferralProgramRecord>> {
+        let rows = sqlx::query_scalar::<_, String>(
+            "SELECT record_json::text
+             FROM ai_marketing_referral_program
+             ORDER BY updated_at_ms DESC, referral_program_id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter().map(decode_json_record).collect()
+    }
+
+    pub async fn insert_referral_invite_record(
+        &self,
+        record: &ReferralInviteRecord,
+    ) -> Result<ReferralInviteRecord> {
+        let record_json = encode_json_record(record)?;
+        sqlx::query(
+            "INSERT INTO ai_marketing_referral_invite (
+                referral_invite_id, tenant_id, organization_id, referral_program_id,
+                referrer_user_id, status, coupon_code_id, source_code, referred_user_id,
+                created_at_ms, updated_at_ms, record_json
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, CAST($12 AS JSONB))
+             ON CONFLICT(referral_invite_id) DO UPDATE SET
+                tenant_id = excluded.tenant_id,
+                organization_id = excluded.organization_id,
+                referral_program_id = excluded.referral_program_id,
+                referrer_user_id = excluded.referrer_user_id,
+                status = excluded.status,
+                coupon_code_id = excluded.coupon_code_id,
+                source_code = excluded.source_code,
+                referred_user_id = excluded.referred_user_id,
+                created_at_ms = excluded.created_at_ms,
+                updated_at_ms = excluded.updated_at_ms,
+                record_json = excluded.record_json",
+        )
+        .bind(i64::try_from(record.referral_invite_id)?)
+        .bind(i64::try_from(record.tenant_id)?)
+        .bind(i64::try_from(record.organization_id)?)
+        .bind(i64::try_from(record.referral_program_id)?)
+        .bind(i64::try_from(record.referrer_user_id)?)
+        .bind(format!("{:?}", record.status).to_ascii_lowercase())
+        .bind(record.coupon_code_id.map(i64::try_from).transpose()?)
+        .bind(&record.source_code)
+        .bind(record.referred_user_id.map(i64::try_from).transpose()?)
+        .bind(i64::try_from(record.created_at_ms)?)
+        .bind(i64::try_from(record.updated_at_ms)?)
+        .bind(record_json)
+        .execute(&self.pool)
+        .await?;
+        Ok(record.clone())
+    }
+
+    pub async fn list_referral_invite_records(&self) -> Result<Vec<ReferralInviteRecord>> {
+        let rows = sqlx::query_scalar::<_, String>(
+            "SELECT record_json::text
+             FROM ai_marketing_referral_invite
+             ORDER BY updated_at_ms DESC, referral_invite_id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter().map(decode_json_record).collect()
+    }
+
+    pub async fn insert_marketing_attribution_touch_record(
+        &self,
+        record: &MarketingAttributionTouchRecord,
+    ) -> Result<MarketingAttributionTouchRecord> {
+        let record_json = encode_json_record(record)?;
+        sqlx::query(
+            "INSERT INTO ai_marketing_attribution_touch (
+                attribution_touch_id, tenant_id, organization_id, source_kind, source_code,
+                partner_id, referrer_user_id, invite_code_id, conversion_subject_id,
+                created_at_ms, updated_at_ms, record_json
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, CAST($12 AS JSONB))
+             ON CONFLICT(attribution_touch_id) DO UPDATE SET
+                tenant_id = excluded.tenant_id,
+                organization_id = excluded.organization_id,
+                source_kind = excluded.source_kind,
+                source_code = excluded.source_code,
+                partner_id = excluded.partner_id,
+                referrer_user_id = excluded.referrer_user_id,
+                invite_code_id = excluded.invite_code_id,
+                conversion_subject_id = excluded.conversion_subject_id,
+                created_at_ms = excluded.created_at_ms,
+                updated_at_ms = excluded.updated_at_ms,
+                record_json = excluded.record_json",
+        )
+        .bind(i64::try_from(record.attribution_touch_id)?)
+        .bind(i64::try_from(record.tenant_id)?)
+        .bind(i64::try_from(record.organization_id)?)
+        .bind(format!("{:?}", record.source_kind).to_ascii_lowercase())
+        .bind(&record.source_code)
+        .bind(&record.partner_id)
+        .bind(record.referrer_user_id.map(i64::try_from).transpose()?)
+        .bind(record.invite_code_id.map(i64::try_from).transpose()?)
+        .bind(&record.conversion_subject_id)
+        .bind(i64::try_from(record.created_at_ms)?)
+        .bind(i64::try_from(record.updated_at_ms)?)
+        .bind(record_json)
+        .execute(&self.pool)
+        .await?;
+        Ok(record.clone())
+    }
+
+    pub async fn list_marketing_attribution_touch_records(
+        &self,
+    ) -> Result<Vec<MarketingAttributionTouchRecord>> {
+        let rows = sqlx::query_scalar::<_, String>(
+            "SELECT record_json::text
+             FROM ai_marketing_attribution_touch
+             ORDER BY updated_at_ms DESC, attribution_touch_id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter().map(decode_json_record).collect()
+    }
+
     pub async fn insert_commerce_order(
         &self,
         order: &CommerceOrderRecord,
@@ -5523,6 +7251,540 @@ impl PostgresAdminStore {
         .transpose()
     }
 
+    pub async fn insert_portal_workspace_membership(
+        &self,
+        membership: &PortalWorkspaceMembershipRecord,
+    ) -> Result<PortalWorkspaceMembershipRecord> {
+        sqlx::query(
+            "INSERT INTO ai_portal_workspace_memberships (
+                membership_id,
+                user_id,
+                tenant_id,
+                project_id,
+                role,
+                created_at_ms
+            ) VALUES ($1, $2, $3, $4, $5, $6)
+            ON CONFLICT(user_id, tenant_id, project_id) DO UPDATE SET
+                role = excluded.role,
+                created_at_ms = excluded.created_at_ms",
+        )
+        .bind(&membership.membership_id)
+        .bind(&membership.user_id)
+        .bind(&membership.tenant_id)
+        .bind(&membership.project_id)
+        .bind(&membership.role)
+        .bind(i64::try_from(membership.created_at_ms)?)
+        .execute(&self.pool)
+        .await?;
+
+        self.find_portal_workspace_membership(
+            &membership.user_id,
+            &membership.tenant_id,
+            &membership.project_id,
+        )
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("portal workspace membership was not persisted"))
+    }
+
+    pub async fn list_portal_workspace_memberships_for_user(
+        &self,
+        user_id: &str,
+    ) -> Result<Vec<PortalWorkspaceMembershipRecord>> {
+        let rows = sqlx::query_as::<_, PortalWorkspaceMembershipRow>(
+            "SELECT membership_id, user_id, tenant_id, project_id, role, created_at_ms
+             FROM ai_portal_workspace_memberships
+             WHERE user_id = $1
+             ORDER BY created_at_ms, membership_id",
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|row| {
+                decode_portal_workspace_membership_row(Some(row))?
+                    .ok_or_else(|| anyhow::anyhow!("portal workspace membership row should decode"))
+            })
+            .collect()
+    }
+
+    pub async fn find_portal_workspace_membership(
+        &self,
+        user_id: &str,
+        tenant_id: &str,
+        project_id: &str,
+    ) -> Result<Option<PortalWorkspaceMembershipRecord>> {
+        let row = sqlx::query_as::<_, PortalWorkspaceMembershipRow>(
+            "SELECT membership_id, user_id, tenant_id, project_id, role, created_at_ms
+             FROM ai_portal_workspace_memberships
+             WHERE user_id = $1
+               AND tenant_id = $2
+               AND project_id = $3",
+        )
+        .bind(user_id)
+        .bind(tenant_id)
+        .bind(project_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        decode_portal_workspace_membership_row(row)
+    }
+
+    pub async fn insert_payment_order_record(
+        &self,
+        record: &PaymentOrderRecord,
+    ) -> Result<PaymentOrderRecord> {
+        sqlx::query(
+            "INSERT INTO ai_payment_orders (
+                payment_order_id,
+                commerce_order_id,
+                project_id,
+                user_id,
+                provider,
+                currency_code,
+                amount_cents,
+                status,
+                provider_reference_id,
+                checkout_url,
+                created_at_ms,
+                updated_at_ms
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            ON CONFLICT(payment_order_id) DO UPDATE SET
+                commerce_order_id = excluded.commerce_order_id,
+                project_id = excluded.project_id,
+                user_id = excluded.user_id,
+                provider = excluded.provider,
+                currency_code = excluded.currency_code,
+                amount_cents = excluded.amount_cents,
+                status = excluded.status,
+                provider_reference_id = excluded.provider_reference_id,
+                checkout_url = excluded.checkout_url,
+                created_at_ms = excluded.created_at_ms,
+                updated_at_ms = excluded.updated_at_ms",
+        )
+        .bind(&record.payment_order_id)
+        .bind(&record.commerce_order_id)
+        .bind(&record.project_id)
+        .bind(&record.user_id)
+        .bind(&record.provider)
+        .bind(&record.currency_code)
+        .bind(i64::try_from(record.amount_cents)?)
+        .bind(&record.status)
+        .bind(&record.provider_reference_id)
+        .bind(&record.checkout_url)
+        .bind(i64::try_from(record.created_at_ms)?)
+        .bind(i64::try_from(record.updated_at_ms)?)
+        .execute(&self.pool)
+        .await?;
+        self.find_payment_order_record(&record.payment_order_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("payment order was not persisted"))
+    }
+
+    pub async fn find_payment_order_record(
+        &self,
+        payment_order_id: &str,
+    ) -> Result<Option<PaymentOrderRecord>> {
+        let row = sqlx::query_as::<_, PaymentOrderRow>(
+            "SELECT payment_order_id, commerce_order_id, project_id, user_id, provider, currency_code, amount_cents, status, provider_reference_id, checkout_url, created_at_ms, updated_at_ms
+             FROM ai_payment_orders
+             WHERE payment_order_id = $1",
+        )
+        .bind(payment_order_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        decode_payment_order_row(row)
+    }
+
+    pub async fn find_payment_order_record_by_commerce_order_id(
+        &self,
+        commerce_order_id: &str,
+    ) -> Result<Option<PaymentOrderRecord>> {
+        let row = sqlx::query_as::<_, PaymentOrderRow>(
+            "SELECT payment_order_id, commerce_order_id, project_id, user_id, provider, currency_code, amount_cents, status, provider_reference_id, checkout_url, created_at_ms, updated_at_ms
+             FROM ai_payment_orders
+             WHERE commerce_order_id = $1",
+        )
+        .bind(commerce_order_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        decode_payment_order_row(row)
+    }
+
+    pub async fn find_payment_order_record_by_provider_reference(
+        &self,
+        provider: &str,
+        provider_reference_id: &str,
+    ) -> Result<Option<PaymentOrderRecord>> {
+        let row = sqlx::query_as::<_, PaymentOrderRow>(
+            "SELECT payment_order_id, commerce_order_id, project_id, user_id, provider, currency_code, amount_cents, status, provider_reference_id, checkout_url, created_at_ms, updated_at_ms
+             FROM ai_payment_orders
+             WHERE provider = $1
+               AND provider_reference_id = $2",
+        )
+        .bind(provider)
+        .bind(provider_reference_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        decode_payment_order_row(row)
+    }
+
+    pub async fn insert_payment_attempt_record(
+        &self,
+        record: &PaymentAttemptRecord,
+    ) -> Result<PaymentAttemptRecord> {
+        sqlx::query(
+            "INSERT INTO ai_payment_attempts (
+                payment_attempt_id,
+                payment_order_id,
+                provider,
+                provider_attempt_id,
+                attempt_kind,
+                status,
+                currency_code,
+                amount_cents,
+                idempotency_key,
+                error_code,
+                error_message,
+                created_at_ms,
+                updated_at_ms
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            ON CONFLICT(payment_attempt_id) DO UPDATE SET
+                payment_order_id = excluded.payment_order_id,
+                provider = excluded.provider,
+                provider_attempt_id = excluded.provider_attempt_id,
+                attempt_kind = excluded.attempt_kind,
+                status = excluded.status,
+                currency_code = excluded.currency_code,
+                amount_cents = excluded.amount_cents,
+                idempotency_key = excluded.idempotency_key,
+                error_code = excluded.error_code,
+                error_message = excluded.error_message,
+                created_at_ms = excluded.created_at_ms,
+                updated_at_ms = excluded.updated_at_ms",
+        )
+        .bind(&record.payment_attempt_id)
+        .bind(&record.payment_order_id)
+        .bind(&record.provider)
+        .bind(&record.provider_attempt_id)
+        .bind(&record.attempt_kind)
+        .bind(&record.status)
+        .bind(&record.currency_code)
+        .bind(i64::try_from(record.amount_cents)?)
+        .bind(&record.idempotency_key)
+        .bind(&record.error_code)
+        .bind(&record.error_message)
+        .bind(i64::try_from(record.created_at_ms)?)
+        .bind(i64::try_from(record.updated_at_ms)?)
+        .execute(&self.pool)
+        .await?;
+        self.find_payment_attempt_record(&record.payment_attempt_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("payment attempt was not persisted"))
+    }
+
+    pub async fn find_payment_attempt_record(
+        &self,
+        payment_attempt_id: &str,
+    ) -> Result<Option<PaymentAttemptRecord>> {
+        let row = sqlx::query_as::<_, PaymentAttemptRow>(
+            "SELECT payment_attempt_id, payment_order_id, provider, provider_attempt_id, attempt_kind, status, currency_code, amount_cents, idempotency_key, error_code, error_message, created_at_ms, updated_at_ms
+             FROM ai_payment_attempts
+             WHERE payment_attempt_id = $1",
+        )
+        .bind(payment_attempt_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        decode_payment_attempt_row(row)
+    }
+
+    pub async fn find_payment_attempt_record_by_provider_reference(
+        &self,
+        provider: &str,
+        provider_attempt_id: &str,
+    ) -> Result<Option<PaymentAttemptRecord>> {
+        let row = sqlx::query_as::<_, PaymentAttemptRow>(
+            "SELECT payment_attempt_id, payment_order_id, provider, provider_attempt_id, attempt_kind, status, currency_code, amount_cents, idempotency_key, error_code, error_message, created_at_ms, updated_at_ms
+             FROM ai_payment_attempts
+             WHERE provider = $1
+               AND provider_attempt_id = $2",
+        )
+        .bind(provider)
+        .bind(provider_attempt_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        decode_payment_attempt_row(row)
+    }
+
+    pub async fn list_payment_attempt_records_for_payment_order(
+        &self,
+        payment_order_id: &str,
+    ) -> Result<Vec<PaymentAttemptRecord>> {
+        let rows = sqlx::query_as::<_, PaymentAttemptRow>(
+            "SELECT payment_attempt_id, payment_order_id, provider, provider_attempt_id, attempt_kind, status, currency_code, amount_cents, idempotency_key, error_code, error_message, created_at_ms, updated_at_ms
+             FROM ai_payment_attempts
+             WHERE payment_order_id = $1
+             ORDER BY created_at_ms ASC, payment_attempt_id ASC",
+        )
+        .bind(payment_order_id)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(Some)
+            .map(decode_payment_attempt_row)
+            .collect::<Result<Vec<_>>>()
+            .map(|records| records.into_iter().flatten().collect())
+    }
+
+    pub async fn insert_refund_record(&self, record: &RefundRecord) -> Result<RefundRecord> {
+        sqlx::query(
+            "INSERT INTO ai_payment_refunds (
+                refund_id,
+                payment_order_id,
+                provider,
+                provider_refund_id,
+                status,
+                currency_code,
+                amount_cents,
+                reason,
+                failure_code,
+                failure_message,
+                created_at_ms,
+                updated_at_ms
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            ON CONFLICT(refund_id) DO UPDATE SET
+                payment_order_id = excluded.payment_order_id,
+                provider = excluded.provider,
+                provider_refund_id = excluded.provider_refund_id,
+                status = excluded.status,
+                currency_code = excluded.currency_code,
+                amount_cents = excluded.amount_cents,
+                reason = excluded.reason,
+                failure_code = excluded.failure_code,
+                failure_message = excluded.failure_message,
+                created_at_ms = excluded.created_at_ms,
+                updated_at_ms = excluded.updated_at_ms",
+        )
+        .bind(&record.refund_id)
+        .bind(&record.payment_order_id)
+        .bind(&record.provider)
+        .bind(&record.provider_refund_id)
+        .bind(&record.status)
+        .bind(&record.currency_code)
+        .bind(i64::try_from(record.amount_cents)?)
+        .bind(&record.reason)
+        .bind(&record.failure_code)
+        .bind(&record.failure_message)
+        .bind(i64::try_from(record.created_at_ms)?)
+        .bind(i64::try_from(record.updated_at_ms)?)
+        .execute(&self.pool)
+        .await?;
+        self.find_refund_record(&record.refund_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("refund record was not persisted"))
+    }
+
+    pub async fn find_refund_record(&self, refund_id: &str) -> Result<Option<RefundRecord>> {
+        let row = sqlx::query_as::<_, RefundRow>(
+            "SELECT refund_id, payment_order_id, provider, provider_refund_id, status, currency_code, amount_cents, reason, failure_code, failure_message, created_at_ms, updated_at_ms
+             FROM ai_payment_refunds
+             WHERE refund_id = $1",
+        )
+        .bind(refund_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        decode_refund_row(row)
+    }
+
+    pub async fn find_refund_record_by_provider_reference(
+        &self,
+        provider: &str,
+        provider_refund_id: &str,
+    ) -> Result<Option<RefundRecord>> {
+        let row = sqlx::query_as::<_, RefundRow>(
+            "SELECT refund_id, payment_order_id, provider, provider_refund_id, status, currency_code, amount_cents, reason, failure_code, failure_message, created_at_ms, updated_at_ms
+             FROM ai_payment_refunds
+             WHERE provider = $1
+               AND provider_refund_id = $2",
+        )
+        .bind(provider)
+        .bind(provider_refund_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        decode_refund_row(row)
+    }
+
+    pub async fn list_refund_records_for_payment_order(
+        &self,
+        payment_order_id: &str,
+    ) -> Result<Vec<RefundRecord>> {
+        let rows = sqlx::query_as::<_, RefundRow>(
+            "SELECT refund_id, payment_order_id, provider, provider_refund_id, status, currency_code, amount_cents, reason, failure_code, failure_message, created_at_ms, updated_at_ms
+             FROM ai_payment_refunds
+             WHERE payment_order_id = $1
+             ORDER BY created_at_ms ASC, refund_id ASC",
+        )
+        .bind(payment_order_id)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(Some)
+            .map(decode_refund_row)
+            .collect::<Result<Vec<_>>>()
+            .map(|records| records.into_iter().flatten().collect())
+    }
+
+    pub async fn insert_dispute_record(&self, record: &DisputeRecord) -> Result<DisputeRecord> {
+        sqlx::query(
+            "INSERT INTO ai_payment_disputes (
+                dispute_id,
+                payment_order_id,
+                provider,
+                provider_dispute_id,
+                status,
+                reason,
+                currency_code,
+                amount_cents,
+                evidence_due_at_ms,
+                created_at_ms,
+                updated_at_ms
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            ON CONFLICT(dispute_id) DO UPDATE SET
+                payment_order_id = excluded.payment_order_id,
+                provider = excluded.provider,
+                provider_dispute_id = excluded.provider_dispute_id,
+                status = excluded.status,
+                reason = excluded.reason,
+                currency_code = excluded.currency_code,
+                amount_cents = excluded.amount_cents,
+                evidence_due_at_ms = excluded.evidence_due_at_ms,
+                created_at_ms = excluded.created_at_ms,
+                updated_at_ms = excluded.updated_at_ms",
+        )
+        .bind(&record.dispute_id)
+        .bind(&record.payment_order_id)
+        .bind(&record.provider)
+        .bind(&record.provider_dispute_id)
+        .bind(&record.status)
+        .bind(&record.reason)
+        .bind(&record.currency_code)
+        .bind(i64::try_from(record.amount_cents)?)
+        .bind(record.evidence_due_at_ms.map(i64::try_from).transpose()?)
+        .bind(i64::try_from(record.created_at_ms)?)
+        .bind(i64::try_from(record.updated_at_ms)?)
+        .execute(&self.pool)
+        .await?;
+        self.find_dispute_record(&record.dispute_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("dispute record was not persisted"))
+    }
+
+    pub async fn find_dispute_record(&self, dispute_id: &str) -> Result<Option<DisputeRecord>> {
+        let row = sqlx::query_as::<_, DisputeRow>(
+            "SELECT dispute_id, payment_order_id, provider, provider_dispute_id, status, reason, currency_code, amount_cents, evidence_due_at_ms, created_at_ms, updated_at_ms
+             FROM ai_payment_disputes
+             WHERE dispute_id = $1",
+        )
+        .bind(dispute_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        decode_dispute_row(row)
+    }
+
+    pub async fn find_dispute_record_by_provider_reference(
+        &self,
+        provider: &str,
+        provider_dispute_id: &str,
+    ) -> Result<Option<DisputeRecord>> {
+        let row = sqlx::query_as::<_, DisputeRow>(
+            "SELECT dispute_id, payment_order_id, provider, provider_dispute_id, status, reason, currency_code, amount_cents, evidence_due_at_ms, created_at_ms, updated_at_ms
+             FROM ai_payment_disputes
+             WHERE provider = $1
+               AND provider_dispute_id = $2",
+        )
+        .bind(provider)
+        .bind(provider_dispute_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        decode_dispute_row(row)
+    }
+
+    pub async fn list_dispute_records_for_payment_order(
+        &self,
+        payment_order_id: &str,
+    ) -> Result<Vec<DisputeRecord>> {
+        let rows = sqlx::query_as::<_, DisputeRow>(
+            "SELECT dispute_id, payment_order_id, provider, provider_dispute_id, status, reason, currency_code, amount_cents, evidence_due_at_ms, created_at_ms, updated_at_ms
+             FROM ai_payment_disputes
+             WHERE payment_order_id = $1
+             ORDER BY created_at_ms ASC, dispute_id ASC",
+        )
+        .bind(payment_order_id)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(Some)
+            .map(decode_dispute_row)
+            .collect::<Result<Vec<_>>>()
+            .map(|records| records.into_iter().flatten().collect())
+    }
+
+    pub async fn insert_payment_webhook_event_record(
+        &self,
+        record: &PaymentWebhookEventRecord,
+    ) -> Result<PaymentWebhookEventRecord> {
+        sqlx::query(
+            "INSERT INTO ai_payment_webhook_events (
+                payment_webhook_event_id,
+                provider,
+                provider_event_id,
+                payment_order_id,
+                commerce_order_id,
+                event_type,
+                status,
+                payload_json,
+                created_at_ms
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            ON CONFLICT(provider, provider_event_id) DO UPDATE SET
+                payment_order_id = excluded.payment_order_id,
+                commerce_order_id = excluded.commerce_order_id,
+                event_type = excluded.event_type,
+                status = excluded.status,
+                payload_json = excluded.payload_json,
+                created_at_ms = excluded.created_at_ms",
+        )
+        .bind(&record.payment_webhook_event_id)
+        .bind(&record.provider)
+        .bind(&record.provider_event_id)
+        .bind(&record.payment_order_id)
+        .bind(&record.commerce_order_id)
+        .bind(&record.event_type)
+        .bind(&record.status)
+        .bind(&record.payload_json)
+        .bind(i64::try_from(record.created_at_ms)?)
+        .execute(&self.pool)
+        .await?;
+        self.find_payment_webhook_event_record(&record.provider, &record.provider_event_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("payment webhook event was not persisted"))
+    }
+
+    pub async fn find_payment_webhook_event_record(
+        &self,
+        provider: &str,
+        provider_event_id: &str,
+    ) -> Result<Option<PaymentWebhookEventRecord>> {
+        let row = sqlx::query_as::<_, PaymentWebhookEventRow>(
+            "SELECT payment_webhook_event_id, provider, provider_event_id, payment_order_id, commerce_order_id, event_type, status, payload_json, created_at_ms
+             FROM ai_payment_webhook_events
+             WHERE provider = $1
+               AND provider_event_id = $2",
+        )
+        .bind(provider)
+        .bind(provider_event_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        decode_payment_webhook_event_row(row)
+    }
+
     pub async fn insert_portal_user(&self, user: &PortalUserRecord) -> Result<PortalUserRecord> {
         sqlx::query(
             "INSERT INTO ai_portal_users (id, email, display_name, password_salt, password_hash, workspace_tenant_id, workspace_project_id, active, created_at_ms)
@@ -5602,21 +7864,23 @@ impl PostgresAdminStore {
 
     pub async fn insert_admin_user(&self, user: &AdminUserRecord) -> Result<AdminUserRecord> {
         sqlx::query(
-            "INSERT INTO ai_admin_users (id, email, display_name, password_salt, password_hash, active, created_at_ms)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)
+            "INSERT INTO ai_admin_users (id, email, display_name, password_salt, password_hash, role, active, created_at_ms)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
              ON CONFLICT(id) DO UPDATE SET
-             email = excluded.email,
-             display_name = excluded.display_name,
-             password_salt = excluded.password_salt,
-             password_hash = excluded.password_hash,
-             active = excluded.active,
-             created_at_ms = excluded.created_at_ms",
+              email = excluded.email,
+              display_name = excluded.display_name,
+              password_salt = excluded.password_salt,
+              password_hash = excluded.password_hash,
+              role = excluded.role,
+              active = excluded.active,
+              created_at_ms = excluded.created_at_ms",
         )
         .bind(&user.id)
         .bind(&user.email)
         .bind(&user.display_name)
         .bind(&user.password_salt)
         .bind(&user.password_hash)
+        .bind(user.role.as_str())
         .bind(user.active)
         .bind(i64::try_from(user.created_at_ms)?)
         .execute(&self.pool)
@@ -5626,7 +7890,7 @@ impl PostgresAdminStore {
 
     pub async fn list_admin_users(&self) -> Result<Vec<AdminUserRecord>> {
         let rows = sqlx::query_as::<_, AdminUserRow>(
-            "SELECT id, email, display_name, password_salt, password_hash, active, created_at_ms
+            "SELECT id, email, display_name, password_salt, password_hash, role, active, created_at_ms
              FROM ai_admin_users
              ORDER BY created_at_ms DESC, email ASC",
         )
@@ -5643,7 +7907,7 @@ impl PostgresAdminStore {
 
     pub async fn find_admin_user_by_email(&self, email: &str) -> Result<Option<AdminUserRecord>> {
         let row = sqlx::query_as::<_, AdminUserRow>(
-            "SELECT id, email, display_name, password_salt, password_hash, active, created_at_ms
+            "SELECT id, email, display_name, password_salt, password_hash, role, active, created_at_ms
              FROM ai_admin_users
              WHERE email = $1",
         )
@@ -5655,7 +7919,7 @@ impl PostgresAdminStore {
 
     pub async fn find_admin_user_by_id(&self, user_id: &str) -> Result<Option<AdminUserRecord>> {
         let row = sqlx::query_as::<_, AdminUserRow>(
-            "SELECT id, email, display_name, password_salt, password_hash, active, created_at_ms
+            "SELECT id, email, display_name, password_salt, password_hash, role, active, created_at_ms
              FROM ai_admin_users
              WHERE id = $1",
         )
@@ -5673,6 +7937,74 @@ impl PostgresAdminStore {
         Ok(result.rows_affected() > 0)
     }
 
+    pub async fn insert_admin_audit_event(
+        &self,
+        event: &AdminAuditEventRecord,
+    ) -> Result<AdminAuditEventRecord> {
+        sqlx::query(
+            "INSERT INTO ai_admin_audit_events (
+                event_id,
+                actor_user_id,
+                actor_email,
+                actor_role,
+                action,
+                resource_type,
+                resource_id,
+                approval_scope,
+                target_tenant_id,
+                target_project_id,
+                target_provider_id,
+                created_at_ms
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+             ON CONFLICT(event_id) DO UPDATE SET
+                actor_user_id = EXCLUDED.actor_user_id,
+                actor_email = EXCLUDED.actor_email,
+                actor_role = EXCLUDED.actor_role,
+                action = EXCLUDED.action,
+                resource_type = EXCLUDED.resource_type,
+                resource_id = EXCLUDED.resource_id,
+                approval_scope = EXCLUDED.approval_scope,
+                target_tenant_id = EXCLUDED.target_tenant_id,
+                target_project_id = EXCLUDED.target_project_id,
+                target_provider_id = EXCLUDED.target_provider_id,
+                created_at_ms = EXCLUDED.created_at_ms",
+        )
+        .bind(&event.event_id)
+        .bind(&event.actor_user_id)
+        .bind(&event.actor_email)
+        .bind(event.actor_role.as_str())
+        .bind(&event.action)
+        .bind(&event.resource_type)
+        .bind(&event.resource_id)
+        .bind(&event.approval_scope)
+        .bind(&event.target_tenant_id)
+        .bind(&event.target_project_id)
+        .bind(&event.target_provider_id)
+        .bind(i64::try_from(event.created_at_ms)?)
+        .execute(&self.pool)
+        .await?;
+        Ok(event.clone())
+    }
+
+    pub async fn list_admin_audit_events(&self) -> Result<Vec<AdminAuditEventRecord>> {
+        let rows = sqlx::query_as::<_, AdminAuditEventRow>(
+            "SELECT event_id, actor_user_id, actor_email, actor_role, action, resource_type, resource_id, approval_scope, target_tenant_id, target_project_id, target_provider_id, created_at_ms
+             FROM ai_admin_audit_events
+             ORDER BY created_at_ms DESC, event_id DESC",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter()
+            .map(|row| decode_admin_audit_event_row(Some(row)))
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .map(|row| {
+                row.ok_or_else(|| anyhow::anyhow!("admin audit event row decode returned empty"))
+            })
+            .collect()
+    }
+
     pub async fn insert_gateway_api_key(
         &self,
         record: &GatewayApiKeyRecord,
@@ -5680,11 +8012,11 @@ impl PostgresAdminStore {
         sqlx::query(
             "INSERT INTO ai_app_api_keys (
                 hashed_key,
-                raw_key,
                 tenant_id,
                 project_id,
                 environment,
                 api_key_group_id,
+                key_prefix,
                 label,
                 notes,
                 created_at_ms,
@@ -5693,11 +8025,12 @@ impl PostgresAdminStore {
                 active
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
              ON CONFLICT(hashed_key) DO UPDATE SET
-                raw_key = excluded.raw_key,
+                raw_key = NULL,
                 tenant_id = excluded.tenant_id,
                 project_id = excluded.project_id,
                 environment = excluded.environment,
                 api_key_group_id = excluded.api_key_group_id,
+                key_prefix = excluded.key_prefix,
                 label = excluded.label,
                 notes = excluded.notes,
                 created_at_ms = excluded.created_at_ms,
@@ -5706,11 +8039,11 @@ impl PostgresAdminStore {
                 active = excluded.active",
         )
         .bind(&record.hashed_key)
-        .bind(&record.raw_key)
         .bind(&record.tenant_id)
         .bind(&record.project_id)
         .bind(&record.environment)
         .bind(&record.api_key_group_id)
+        .bind(&record.key_prefix)
         .bind(&record.label)
         .bind(&record.notes)
         .bind(i64::try_from(record.created_at_ms).unwrap_or(i64::MAX))
@@ -5731,8 +8064,8 @@ impl PostgresAdminStore {
     }
 
     pub async fn list_gateway_api_keys(&self) -> Result<Vec<GatewayApiKeyRecord>> {
-        let rows = sqlx::query_as::<_, (String, Option<String>, String, String, String, Option<String>, String, Option<String>, i64, Option<i64>, Option<i64>, bool)>(
-            "SELECT hashed_key, raw_key, tenant_id, project_id, environment, api_key_group_id, label, notes, created_at_ms, last_used_at_ms, expires_at_ms, active
+        let rows = sqlx::query_as::<_, (String, String, String, String, String, Option<String>, String, Option<String>, i64, Option<i64>, Option<i64>, bool)>(
+            "SELECT hashed_key, key_prefix, tenant_id, project_id, environment, api_key_group_id, label, notes, created_at_ms, last_used_at_ms, expires_at_ms, active
              FROM ai_app_api_keys
              ORDER BY created_at_ms DESC, hashed_key",
         )
@@ -5743,7 +8076,7 @@ impl PostgresAdminStore {
             .map(
                 |(
                     hashed_key,
-                    raw_key,
+                    key_prefix,
                     tenant_id,
                     project_id,
                     environment,
@@ -5759,8 +8092,8 @@ impl PostgresAdminStore {
                     project_id,
                     environment,
                     hashed_key,
-                    raw_key,
                     api_key_group_id,
+                    key_prefix,
                     label,
                     notes,
                     created_at_ms: u64::try_from(created_at_ms).unwrap_or_default(),
@@ -5776,8 +8109,8 @@ impl PostgresAdminStore {
         &self,
         hashed_key: &str,
     ) -> Result<Option<GatewayApiKeyRecord>> {
-        let row = sqlx::query_as::<_, (String, Option<String>, String, String, String, Option<String>, String, Option<String>, i64, Option<i64>, Option<i64>, bool)>(
-            "SELECT hashed_key, raw_key, tenant_id, project_id, environment, api_key_group_id, label, notes, created_at_ms, last_used_at_ms, expires_at_ms, active
+        let row = sqlx::query_as::<_, (String, String, String, String, String, Option<String>, String, Option<String>, i64, Option<i64>, Option<i64>, bool)>(
+            "SELECT hashed_key, key_prefix, tenant_id, project_id, environment, api_key_group_id, label, notes, created_at_ms, last_used_at_ms, expires_at_ms, active
              FROM ai_app_api_keys
              WHERE hashed_key = $1",
         )
@@ -5788,7 +8121,7 @@ impl PostgresAdminStore {
         Ok(row.map(
             |(
                 hashed_key,
-                raw_key,
+                key_prefix,
                 tenant_id,
                 project_id,
                 environment,
@@ -5805,8 +8138,8 @@ impl PostgresAdminStore {
                     project_id,
                     environment,
                     hashed_key,
-                    raw_key,
                     api_key_group_id,
+                    key_prefix,
                     label,
                     notes,
                     created_at_ms: u64::try_from(created_at_ms).unwrap_or_default(),
@@ -6602,6 +8935,14 @@ impl AdminStore for PostgresAdminStore {
         StorageDialect::Postgres
     }
 
+    fn identity_kernel(&self) -> Option<&dyn IdentityKernelStore> {
+        Some(self)
+    }
+
+    fn account_kernel(&self) -> Option<&dyn AccountKernelStore> {
+        Some(self)
+    }
+
     async fn insert_channel(&self, channel: &Channel) -> Result<Channel> {
         PostgresAdminStore::insert_channel(self, channel).await
     }
@@ -7023,6 +9364,167 @@ impl AdminStore for PostgresAdminStore {
         PostgresAdminStore::find_project_membership(self, project_id).await
     }
 
+    async fn insert_coupon_template_record(
+        &self,
+        record: &CouponTemplateRecord,
+    ) -> Result<CouponTemplateRecord> {
+        PostgresAdminStore::insert_coupon_template_record(self, record).await
+    }
+
+    async fn list_coupon_template_records(&self) -> Result<Vec<CouponTemplateRecord>> {
+        PostgresAdminStore::list_coupon_template_records(self).await
+    }
+
+    async fn find_coupon_template_record(
+        &self,
+        coupon_template_id: u64,
+    ) -> Result<Option<CouponTemplateRecord>> {
+        PostgresAdminStore::find_coupon_template_record(self, coupon_template_id).await
+    }
+
+    async fn insert_coupon_benefit_rule_record(
+        &self,
+        record: &CouponBenefitRuleRecord,
+    ) -> Result<CouponBenefitRuleRecord> {
+        PostgresAdminStore::insert_coupon_benefit_rule_record(self, record).await
+    }
+
+    async fn list_coupon_benefit_rule_records(&self) -> Result<Vec<CouponBenefitRuleRecord>> {
+        PostgresAdminStore::list_coupon_benefit_rule_records(self).await
+    }
+
+    async fn insert_marketing_campaign_record(
+        &self,
+        record: &MarketingCampaignRecord,
+    ) -> Result<MarketingCampaignRecord> {
+        PostgresAdminStore::insert_marketing_campaign_record(self, record).await
+    }
+
+    async fn list_marketing_campaign_records(&self) -> Result<Vec<MarketingCampaignRecord>> {
+        PostgresAdminStore::list_marketing_campaign_records(self).await
+    }
+
+    async fn find_marketing_campaign_record(
+        &self,
+        marketing_campaign_id: u64,
+    ) -> Result<Option<MarketingCampaignRecord>> {
+        PostgresAdminStore::find_marketing_campaign_record(self, marketing_campaign_id).await
+    }
+
+    async fn insert_coupon_code_batch_record(
+        &self,
+        record: &CouponCodeBatchRecord,
+    ) -> Result<CouponCodeBatchRecord> {
+        PostgresAdminStore::insert_coupon_code_batch_record(self, record).await
+    }
+
+    async fn list_coupon_code_batch_records(&self) -> Result<Vec<CouponCodeBatchRecord>> {
+        PostgresAdminStore::list_coupon_code_batch_records(self).await
+    }
+
+    async fn insert_coupon_code_record(
+        &self,
+        record: &CouponCodeRecord,
+    ) -> Result<CouponCodeRecord> {
+        PostgresAdminStore::insert_coupon_code_record(self, record).await
+    }
+
+    async fn list_coupon_code_records(&self) -> Result<Vec<CouponCodeRecord>> {
+        PostgresAdminStore::list_coupon_code_records(self).await
+    }
+
+    async fn find_coupon_code_record(
+        &self,
+        coupon_code_id: u64,
+    ) -> Result<Option<CouponCodeRecord>> {
+        PostgresAdminStore::find_coupon_code_record(self, coupon_code_id).await
+    }
+
+    async fn find_coupon_code_record_by_lookup_hash(
+        &self,
+        code_lookup_hash: &str,
+    ) -> Result<Option<CouponCodeRecord>> {
+        PostgresAdminStore::find_coupon_code_record_by_lookup_hash(self, code_lookup_hash).await
+    }
+
+    async fn list_coupon_code_records_for_subject(
+        &self,
+        claim_subject_type: &str,
+        claim_subject_id: &str,
+    ) -> Result<Vec<CouponCodeRecord>> {
+        PostgresAdminStore::list_coupon_code_records_for_subject(
+            self,
+            claim_subject_type,
+            claim_subject_id,
+        )
+        .await
+    }
+
+    async fn insert_coupon_claim_record(
+        &self,
+        record: &CouponClaimRecord,
+    ) -> Result<CouponClaimRecord> {
+        PostgresAdminStore::insert_coupon_claim_record(self, record).await
+    }
+
+    async fn list_coupon_claim_records(&self) -> Result<Vec<CouponClaimRecord>> {
+        PostgresAdminStore::list_coupon_claim_records(self).await
+    }
+
+    async fn insert_coupon_redemption_record(
+        &self,
+        record: &CouponRedemptionRecord,
+    ) -> Result<CouponRedemptionRecord> {
+        PostgresAdminStore::insert_coupon_redemption_record(self, record).await
+    }
+
+    async fn list_coupon_redemption_records(&self) -> Result<Vec<CouponRedemptionRecord>> {
+        PostgresAdminStore::list_coupon_redemption_records(self).await
+    }
+
+    async fn find_coupon_redemption_record_by_idempotency_key(
+        &self,
+        idempotency_key: &str,
+    ) -> Result<Option<CouponRedemptionRecord>> {
+        PostgresAdminStore::find_coupon_redemption_record_by_idempotency_key(self, idempotency_key)
+            .await
+    }
+
+    async fn insert_referral_program_record(
+        &self,
+        record: &ReferralProgramRecord,
+    ) -> Result<ReferralProgramRecord> {
+        PostgresAdminStore::insert_referral_program_record(self, record).await
+    }
+
+    async fn list_referral_program_records(&self) -> Result<Vec<ReferralProgramRecord>> {
+        PostgresAdminStore::list_referral_program_records(self).await
+    }
+
+    async fn insert_referral_invite_record(
+        &self,
+        record: &ReferralInviteRecord,
+    ) -> Result<ReferralInviteRecord> {
+        PostgresAdminStore::insert_referral_invite_record(self, record).await
+    }
+
+    async fn list_referral_invite_records(&self) -> Result<Vec<ReferralInviteRecord>> {
+        PostgresAdminStore::list_referral_invite_records(self).await
+    }
+
+    async fn insert_marketing_attribution_touch_record(
+        &self,
+        record: &MarketingAttributionTouchRecord,
+    ) -> Result<MarketingAttributionTouchRecord> {
+        PostgresAdminStore::insert_marketing_attribution_touch_record(self, record).await
+    }
+
+    async fn list_marketing_attribution_touch_records(
+        &self,
+    ) -> Result<Vec<MarketingAttributionTouchRecord>> {
+        PostgresAdminStore::list_marketing_attribution_touch_records(self).await
+    }
+
     async fn insert_portal_user(&self, user: &PortalUserRecord) -> Result<PortalUserRecord> {
         PostgresAdminStore::insert_portal_user(self, user).await
     }
@@ -7043,6 +9545,172 @@ impl AdminStore for PostgresAdminStore {
         PostgresAdminStore::delete_portal_user(self, user_id).await
     }
 
+    async fn insert_portal_workspace_membership(
+        &self,
+        membership: &PortalWorkspaceMembershipRecord,
+    ) -> Result<PortalWorkspaceMembershipRecord> {
+        PostgresAdminStore::insert_portal_workspace_membership(self, membership).await
+    }
+
+    async fn list_portal_workspace_memberships_for_user(
+        &self,
+        user_id: &str,
+    ) -> Result<Vec<PortalWorkspaceMembershipRecord>> {
+        PostgresAdminStore::list_portal_workspace_memberships_for_user(self, user_id).await
+    }
+
+    async fn find_portal_workspace_membership(
+        &self,
+        user_id: &str,
+        tenant_id: &str,
+        project_id: &str,
+    ) -> Result<Option<PortalWorkspaceMembershipRecord>> {
+        PostgresAdminStore::find_portal_workspace_membership(self, user_id, tenant_id, project_id)
+            .await
+    }
+
+    async fn insert_payment_order_record(
+        &self,
+        record: &PaymentOrderRecord,
+    ) -> Result<PaymentOrderRecord> {
+        PostgresAdminStore::insert_payment_order_record(self, record).await
+    }
+
+    async fn find_payment_order_record(
+        &self,
+        payment_order_id: &str,
+    ) -> Result<Option<PaymentOrderRecord>> {
+        PostgresAdminStore::find_payment_order_record(self, payment_order_id).await
+    }
+
+    async fn find_payment_order_record_by_commerce_order_id(
+        &self,
+        commerce_order_id: &str,
+    ) -> Result<Option<PaymentOrderRecord>> {
+        PostgresAdminStore::find_payment_order_record_by_commerce_order_id(self, commerce_order_id)
+            .await
+    }
+
+    async fn find_payment_order_record_by_provider_reference(
+        &self,
+        provider: &str,
+        provider_reference_id: &str,
+    ) -> Result<Option<PaymentOrderRecord>> {
+        PostgresAdminStore::find_payment_order_record_by_provider_reference(
+            self,
+            provider,
+            provider_reference_id,
+        )
+        .await
+    }
+
+    async fn insert_payment_attempt_record(
+        &self,
+        record: &PaymentAttemptRecord,
+    ) -> Result<PaymentAttemptRecord> {
+        PostgresAdminStore::insert_payment_attempt_record(self, record).await
+    }
+
+    async fn find_payment_attempt_record(
+        &self,
+        payment_attempt_id: &str,
+    ) -> Result<Option<PaymentAttemptRecord>> {
+        PostgresAdminStore::find_payment_attempt_record(self, payment_attempt_id).await
+    }
+
+    async fn find_payment_attempt_record_by_provider_reference(
+        &self,
+        provider: &str,
+        provider_attempt_id: &str,
+    ) -> Result<Option<PaymentAttemptRecord>> {
+        PostgresAdminStore::find_payment_attempt_record_by_provider_reference(
+            self,
+            provider,
+            provider_attempt_id,
+        )
+        .await
+    }
+
+    async fn list_payment_attempt_records_for_payment_order(
+        &self,
+        payment_order_id: &str,
+    ) -> Result<Vec<PaymentAttemptRecord>> {
+        PostgresAdminStore::list_payment_attempt_records_for_payment_order(self, payment_order_id)
+            .await
+    }
+
+    async fn insert_refund_record(&self, record: &RefundRecord) -> Result<RefundRecord> {
+        PostgresAdminStore::insert_refund_record(self, record).await
+    }
+
+    async fn find_refund_record(&self, refund_id: &str) -> Result<Option<RefundRecord>> {
+        PostgresAdminStore::find_refund_record(self, refund_id).await
+    }
+
+    async fn find_refund_record_by_provider_reference(
+        &self,
+        provider: &str,
+        provider_refund_id: &str,
+    ) -> Result<Option<RefundRecord>> {
+        PostgresAdminStore::find_refund_record_by_provider_reference(
+            self,
+            provider,
+            provider_refund_id,
+        )
+        .await
+    }
+
+    async fn list_refund_records_for_payment_order(
+        &self,
+        payment_order_id: &str,
+    ) -> Result<Vec<RefundRecord>> {
+        PostgresAdminStore::list_refund_records_for_payment_order(self, payment_order_id).await
+    }
+
+    async fn insert_dispute_record(&self, record: &DisputeRecord) -> Result<DisputeRecord> {
+        PostgresAdminStore::insert_dispute_record(self, record).await
+    }
+
+    async fn find_dispute_record(&self, dispute_id: &str) -> Result<Option<DisputeRecord>> {
+        PostgresAdminStore::find_dispute_record(self, dispute_id).await
+    }
+
+    async fn find_dispute_record_by_provider_reference(
+        &self,
+        provider: &str,
+        provider_dispute_id: &str,
+    ) -> Result<Option<DisputeRecord>> {
+        PostgresAdminStore::find_dispute_record_by_provider_reference(
+            self,
+            provider,
+            provider_dispute_id,
+        )
+        .await
+    }
+
+    async fn list_dispute_records_for_payment_order(
+        &self,
+        payment_order_id: &str,
+    ) -> Result<Vec<DisputeRecord>> {
+        PostgresAdminStore::list_dispute_records_for_payment_order(self, payment_order_id).await
+    }
+
+    async fn insert_payment_webhook_event_record(
+        &self,
+        record: &PaymentWebhookEventRecord,
+    ) -> Result<PaymentWebhookEventRecord> {
+        PostgresAdminStore::insert_payment_webhook_event_record(self, record).await
+    }
+
+    async fn find_payment_webhook_event_record(
+        &self,
+        provider: &str,
+        provider_event_id: &str,
+    ) -> Result<Option<PaymentWebhookEventRecord>> {
+        PostgresAdminStore::find_payment_webhook_event_record(self, provider, provider_event_id)
+            .await
+    }
+
     async fn insert_admin_user(&self, user: &AdminUserRecord) -> Result<AdminUserRecord> {
         PostgresAdminStore::insert_admin_user(self, user).await
     }
@@ -7061,6 +9729,17 @@ impl AdminStore for PostgresAdminStore {
 
     async fn delete_admin_user(&self, user_id: &str) -> Result<bool> {
         PostgresAdminStore::delete_admin_user(self, user_id).await
+    }
+
+    async fn insert_admin_audit_event(
+        &self,
+        event: &AdminAuditEventRecord,
+    ) -> Result<AdminAuditEventRecord> {
+        PostgresAdminStore::insert_admin_audit_event(self, event).await
+    }
+
+    async fn list_admin_audit_events(&self) -> Result<Vec<AdminAuditEventRecord>> {
+        PostgresAdminStore::list_admin_audit_events(self).await
     }
 
     async fn insert_gateway_api_key(
@@ -7259,4 +9938,1616 @@ impl AdminStore for PostgresAdminStore {
 }
 
 #[async_trait]
-impl AccountKernelStore for PostgresAdminStore {}
+impl IdentityKernelStore for PostgresAdminStore {
+    async fn insert_identity_user_record(
+        &self,
+        record: &IdentityUserRecord,
+    ) -> Result<IdentityUserRecord> {
+        upsert_identity_user_record_executor(&self.pool, record).await?;
+        Ok(record.clone())
+    }
+
+    async fn list_identity_user_records(&self) -> Result<Vec<IdentityUserRecord>> {
+        let query = postgres_bind_query(
+            "SELECT user_id, tenant_id, organization_id, external_user_ref, username,
+                    display_name, email, status, created_at_ms, updated_at_ms
+             FROM ai_user
+             ORDER BY created_at_ms DESC, user_id",
+        );
+        let rows = sqlx::query(&query).fetch_all(&self.pool).await?;
+        rows.into_iter().map(decode_identity_user_row).collect()
+    }
+
+    async fn find_identity_user_record(&self, user_id: u64) -> Result<Option<IdentityUserRecord>> {
+        let query = postgres_bind_query(
+            "SELECT user_id, tenant_id, organization_id, external_user_ref, username,
+                    display_name, email, status, created_at_ms, updated_at_ms
+             FROM ai_user
+             WHERE user_id = ?",
+        );
+        let row = sqlx::query(&query)
+            .bind(i64::try_from(user_id)?)
+            .fetch_optional(&self.pool)
+            .await?;
+        row.map(decode_identity_user_row).transpose()
+    }
+
+    async fn insert_canonical_api_key_record(
+        &self,
+        record: &CanonicalApiKeyRecord,
+    ) -> Result<CanonicalApiKeyRecord> {
+        upsert_canonical_api_key_record_executor(&self.pool, record).await?;
+        Ok(record.clone())
+    }
+
+    async fn find_canonical_api_key_record_by_hash(
+        &self,
+        key_hash: &str,
+    ) -> Result<Option<CanonicalApiKeyRecord>> {
+        let query = postgres_bind_query(
+            "SELECT api_key_id, tenant_id, organization_id, user_id, key_prefix, key_hash,
+                    display_name, status, expires_at_ms, last_used_at_ms,
+                    rotated_from_api_key_id, created_at_ms, updated_at_ms
+             FROM ai_api_key
+             WHERE key_hash = ?",
+        );
+        let row = sqlx::query(&query)
+            .bind(key_hash)
+            .fetch_optional(&self.pool)
+            .await?;
+        row.map(decode_canonical_api_key_row).transpose()
+    }
+
+    async fn insert_identity_binding_record(
+        &self,
+        record: &IdentityBindingRecord,
+    ) -> Result<IdentityBindingRecord> {
+        upsert_identity_binding_record_executor(&self.pool, record).await?;
+        Ok(record.clone())
+    }
+
+    async fn find_identity_binding_record(
+        &self,
+        binding_type: &str,
+        issuer: Option<&str>,
+        subject: Option<&str>,
+    ) -> Result<Option<IdentityBindingRecord>> {
+        let query = postgres_bind_query(
+            "SELECT identity_binding_id, tenant_id, organization_id, user_id, binding_type,
+                    issuer, subject, platform, owner, external_ref, status, created_at_ms, updated_at_ms
+             FROM ai_identity_binding
+             WHERE binding_type = ?
+               AND ((issuer IS NULL AND ? IS NULL) OR issuer = ?)
+               AND ((subject IS NULL AND ? IS NULL) OR subject = ?)
+             ORDER BY updated_at_ms DESC, identity_binding_id DESC
+             LIMIT 1",
+        );
+        let row = sqlx::query(&query)
+            .bind(binding_type)
+            .bind(issuer)
+            .bind(issuer)
+            .bind(subject)
+            .bind(subject)
+            .fetch_optional(&self.pool)
+            .await?;
+        row.map(decode_identity_binding_row).transpose()
+    }
+
+    async fn list_identity_binding_records(&self) -> Result<Vec<IdentityBindingRecord>> {
+        let query = postgres_bind_query(
+            "SELECT identity_binding_id, tenant_id, organization_id, user_id, binding_type,
+                    issuer, subject, platform, owner, external_ref, status, created_at_ms, updated_at_ms
+             FROM ai_identity_binding
+             ORDER BY updated_at_ms DESC, identity_binding_id DESC",
+        );
+        let rows = sqlx::query(&query).fetch_all(&self.pool).await?;
+        rows.into_iter().map(decode_identity_binding_row).collect()
+    }
+}
+
+#[async_trait]
+impl AccountKernelStore for PostgresAdminStore {
+    async fn insert_account_record(&self, record: &AccountRecord) -> Result<AccountRecord> {
+        upsert_account_record_executor(&self.pool, record).await?;
+        Ok(record.clone())
+    }
+
+    async fn list_account_records(&self) -> Result<Vec<AccountRecord>> {
+        let query = postgres_bind_query(
+            "SELECT account_id, tenant_id, organization_id, user_id, account_type,
+                    currency_code, credit_unit_code, status, allow_overdraft, overdraft_limit,
+                    created_at_ms, updated_at_ms
+             FROM ai_account
+             ORDER BY created_at_ms DESC, account_id",
+        );
+        let rows = sqlx::query(&query).fetch_all(&self.pool).await?;
+        rows.into_iter().map(decode_account_record_row).collect()
+    }
+
+    async fn find_account_record(&self, account_id: u64) -> Result<Option<AccountRecord>> {
+        let query = postgres_bind_query(
+            "SELECT account_id, tenant_id, organization_id, user_id, account_type,
+                    currency_code, credit_unit_code, status, allow_overdraft, overdraft_limit,
+                    created_at_ms, updated_at_ms
+             FROM ai_account
+             WHERE account_id = ?",
+        );
+        let row = sqlx::query(&query)
+            .bind(i64::try_from(account_id)?)
+            .fetch_optional(&self.pool)
+            .await?;
+        row.map(decode_account_record_row).transpose()
+    }
+
+    async fn find_account_record_by_owner(
+        &self,
+        tenant_id: u64,
+        organization_id: u64,
+        user_id: u64,
+        account_type: AccountType,
+    ) -> Result<Option<AccountRecord>> {
+        let query = postgres_bind_query(
+            "SELECT account_id, tenant_id, organization_id, user_id, account_type,
+                    currency_code, credit_unit_code, status, allow_overdraft, overdraft_limit,
+                    created_at_ms, updated_at_ms
+             FROM ai_account
+             WHERE tenant_id = ?
+               AND organization_id = ?
+               AND user_id = ?
+               AND account_type = ?",
+        );
+        let row = sqlx::query(&query)
+            .bind(i64::try_from(tenant_id)?)
+            .bind(i64::try_from(organization_id)?)
+            .bind(i64::try_from(user_id)?)
+            .bind(account_type_as_str(account_type))
+            .fetch_optional(&self.pool)
+            .await?;
+        row.map(decode_account_record_row).transpose()
+    }
+
+    async fn insert_account_benefit_lot(
+        &self,
+        record: &AccountBenefitLotRecord,
+    ) -> Result<AccountBenefitLotRecord> {
+        upsert_account_benefit_lot_executor(&self.pool, record).await?;
+        Ok(record.clone())
+    }
+
+    async fn list_account_benefit_lots(&self) -> Result<Vec<AccountBenefitLotRecord>> {
+        let query = postgres_bind_query(
+            "SELECT lot_id, tenant_id, organization_id, account_id, user_id, benefit_type,
+                    source_type, source_id, scope_json, original_quantity, remaining_quantity,
+                    held_quantity, priority, acquired_unit_cost, issued_at_ms, expires_at_ms,
+                    status, created_at_ms, updated_at_ms
+             FROM ai_account_benefit_lot
+             ORDER BY created_at_ms DESC, lot_id",
+        );
+        let rows = sqlx::query(&query).fetch_all(&self.pool).await?;
+        rows.into_iter()
+            .map(decode_account_benefit_lot_row)
+            .collect()
+    }
+
+    async fn insert_account_hold(&self, record: &AccountHoldRecord) -> Result<AccountHoldRecord> {
+        upsert_account_hold_executor(&self.pool, record).await?;
+        Ok(record.clone())
+    }
+
+    async fn list_account_holds(&self) -> Result<Vec<AccountHoldRecord>> {
+        let query = postgres_bind_query(
+            "SELECT hold_id, tenant_id, organization_id, account_id, user_id, request_id,
+                    hold_status, estimated_quantity, captured_quantity, released_quantity,
+                    expires_at_ms, created_at_ms, updated_at_ms
+             FROM ai_account_hold
+             ORDER BY created_at_ms DESC, hold_id",
+        );
+        let rows = sqlx::query(&query).fetch_all(&self.pool).await?;
+        rows.into_iter().map(decode_account_hold_row).collect()
+    }
+
+    async fn insert_account_hold_allocation(
+        &self,
+        record: &AccountHoldAllocationRecord,
+    ) -> Result<AccountHoldAllocationRecord> {
+        upsert_account_hold_allocation_executor(&self.pool, record).await?;
+        Ok(record.clone())
+    }
+
+    async fn list_account_hold_allocations(&self) -> Result<Vec<AccountHoldAllocationRecord>> {
+        let query = postgres_bind_query(
+            "SELECT hold_allocation_id, tenant_id, organization_id, hold_id, lot_id,
+                    allocated_quantity, captured_quantity, released_quantity,
+                    created_at_ms, updated_at_ms
+             FROM ai_account_hold_allocation
+             ORDER BY created_at_ms DESC, hold_allocation_id",
+        );
+        let rows = sqlx::query(&query).fetch_all(&self.pool).await?;
+        rows.into_iter()
+            .map(decode_account_hold_allocation_row)
+            .collect()
+    }
+
+    async fn insert_account_ledger_entry_record(
+        &self,
+        record: &AccountLedgerEntryRecord,
+    ) -> Result<AccountLedgerEntryRecord> {
+        upsert_account_ledger_entry_executor(&self.pool, record).await?;
+        Ok(record.clone())
+    }
+
+    async fn list_account_ledger_entry_records(&self) -> Result<Vec<AccountLedgerEntryRecord>> {
+        let query = postgres_bind_query(
+            "SELECT ledger_entry_id, tenant_id, organization_id, account_id, user_id,
+                    request_id, hold_id, entry_type, benefit_type, quantity, amount, created_at_ms
+             FROM ai_account_ledger_entry
+             ORDER BY created_at_ms DESC, ledger_entry_id",
+        );
+        let rows = sqlx::query(&query).fetch_all(&self.pool).await?;
+        rows.into_iter()
+            .map(decode_account_ledger_entry_row)
+            .collect()
+    }
+
+    async fn insert_account_ledger_allocation(
+        &self,
+        record: &AccountLedgerAllocationRecord,
+    ) -> Result<AccountLedgerAllocationRecord> {
+        upsert_account_ledger_allocation_executor(&self.pool, record).await?;
+        Ok(record.clone())
+    }
+
+    async fn list_account_ledger_allocations(&self) -> Result<Vec<AccountLedgerAllocationRecord>> {
+        let query = postgres_bind_query(
+            "SELECT ledger_allocation_id, tenant_id, organization_id, ledger_entry_id, lot_id,
+                    quantity_delta, created_at_ms
+             FROM ai_account_ledger_allocation
+             ORDER BY created_at_ms DESC, ledger_allocation_id",
+        );
+        let rows = sqlx::query(&query).fetch_all(&self.pool).await?;
+        rows.into_iter()
+            .map(decode_account_ledger_allocation_row)
+            .collect()
+    }
+
+    async fn insert_request_meter_fact(
+        &self,
+        record: &RequestMeterFactRecord,
+    ) -> Result<RequestMeterFactRecord> {
+        upsert_request_meter_fact_executor(&self.pool, record).await?;
+        Ok(record.clone())
+    }
+
+    async fn list_request_meter_facts(&self) -> Result<Vec<RequestMeterFactRecord>> {
+        let query = postgres_bind_query(
+            "SELECT request_id, tenant_id, organization_id, user_id, account_id, api_key_id,
+                    api_key_hash, auth_type, jwt_subject, platform, owner, request_trace_id,
+                    gateway_request_ref, upstream_request_ref, protocol_family, capability_code,
+                    channel_code, model_code, provider_code, request_status, usage_capture_status,
+                    cost_pricing_plan_id, retail_pricing_plan_id, estimated_credit_hold,
+                    actual_credit_charge, actual_provider_cost, started_at_ms, finished_at_ms,
+                    created_at_ms, updated_at_ms
+             FROM ai_request_meter_fact
+             ORDER BY created_at_ms DESC, request_id",
+        );
+        let rows = sqlx::query(&query).fetch_all(&self.pool).await?;
+        rows.into_iter()
+            .map(decode_request_meter_fact_row)
+            .collect()
+    }
+
+    async fn insert_request_meter_metric(
+        &self,
+        record: &RequestMeterMetricRecord,
+    ) -> Result<RequestMeterMetricRecord> {
+        upsert_request_meter_metric_executor(&self.pool, record).await?;
+        Ok(record.clone())
+    }
+
+    async fn list_request_meter_metrics(&self) -> Result<Vec<RequestMeterMetricRecord>> {
+        let query = postgres_bind_query(
+            "SELECT request_metric_id, tenant_id, organization_id, request_id, metric_code,
+                    quantity, provider_field, source_kind, capture_stage, is_billable, captured_at_ms
+             FROM ai_request_meter_metric
+             ORDER BY captured_at_ms DESC, request_metric_id",
+        );
+        let rows = sqlx::query(&query).fetch_all(&self.pool).await?;
+        rows.into_iter()
+            .map(decode_request_meter_metric_row)
+            .collect()
+    }
+
+    async fn insert_pricing_plan_record(
+        &self,
+        record: &PricingPlanRecord,
+    ) -> Result<PricingPlanRecord> {
+        let query = postgres_bind_query(
+            "INSERT INTO ai_pricing_plan (
+                pricing_plan_id, tenant_id, organization_id, plan_code, plan_version,
+                display_name, currency_code, credit_unit_code, status, created_at_ms, updated_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(pricing_plan_id) DO UPDATE SET
+                tenant_id = excluded.tenant_id,
+                organization_id = excluded.organization_id,
+                plan_code = excluded.plan_code,
+                plan_version = excluded.plan_version,
+                display_name = excluded.display_name,
+                currency_code = excluded.currency_code,
+                credit_unit_code = excluded.credit_unit_code,
+                status = excluded.status,
+                created_at_ms = excluded.created_at_ms,
+                updated_at_ms = excluded.updated_at_ms",
+        );
+        sqlx::query(&query)
+            .bind(i64::try_from(record.pricing_plan_id)?)
+            .bind(i64::try_from(record.tenant_id)?)
+            .bind(i64::try_from(record.organization_id)?)
+            .bind(&record.plan_code)
+            .bind(i64::try_from(record.plan_version)?)
+            .bind(&record.display_name)
+            .bind(&record.currency_code)
+            .bind(&record.credit_unit_code)
+            .bind(&record.status)
+            .bind(i64::try_from(record.created_at_ms)?)
+            .bind(i64::try_from(record.updated_at_ms)?)
+            .execute(&self.pool)
+            .await?;
+        Ok(record.clone())
+    }
+
+    async fn list_pricing_plan_records(&self) -> Result<Vec<PricingPlanRecord>> {
+        let query = postgres_bind_query(
+            "SELECT pricing_plan_id, tenant_id, organization_id, plan_code, plan_version,
+                    display_name, currency_code, credit_unit_code, status, created_at_ms, updated_at_ms
+             FROM ai_pricing_plan
+             ORDER BY updated_at_ms DESC, pricing_plan_id",
+        );
+        let rows = sqlx::query(&query).fetch_all(&self.pool).await?;
+        rows.into_iter().map(decode_pricing_plan_row).collect()
+    }
+
+    async fn insert_pricing_rate_record(
+        &self,
+        record: &PricingRateRecord,
+    ) -> Result<PricingRateRecord> {
+        let query = postgres_bind_query(
+            "INSERT INTO ai_pricing_rate (
+                pricing_rate_id, tenant_id, organization_id, pricing_plan_id, metric_code,
+                model_code, provider_code, quantity_step, unit_price, created_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(pricing_rate_id) DO UPDATE SET
+                tenant_id = excluded.tenant_id,
+                organization_id = excluded.organization_id,
+                pricing_plan_id = excluded.pricing_plan_id,
+                metric_code = excluded.metric_code,
+                model_code = excluded.model_code,
+                provider_code = excluded.provider_code,
+                quantity_step = excluded.quantity_step,
+                unit_price = excluded.unit_price,
+                created_at_ms = excluded.created_at_ms",
+        );
+        sqlx::query(&query)
+            .bind(i64::try_from(record.pricing_rate_id)?)
+            .bind(i64::try_from(record.tenant_id)?)
+            .bind(i64::try_from(record.organization_id)?)
+            .bind(i64::try_from(record.pricing_plan_id)?)
+            .bind(&record.metric_code)
+            .bind(&record.model_code)
+            .bind(&record.provider_code)
+            .bind(record.quantity_step)
+            .bind(record.unit_price)
+            .bind(i64::try_from(record.created_at_ms)?)
+            .execute(&self.pool)
+            .await?;
+        Ok(record.clone())
+    }
+
+    async fn list_pricing_rate_records(&self) -> Result<Vec<PricingRateRecord>> {
+        let query = postgres_bind_query(
+            "SELECT pricing_rate_id, tenant_id, organization_id, pricing_plan_id, metric_code,
+                    model_code, provider_code, quantity_step, unit_price, created_at_ms
+             FROM ai_pricing_rate
+             ORDER BY created_at_ms DESC, pricing_rate_id",
+        );
+        let rows = sqlx::query(&query).fetch_all(&self.pool).await?;
+        rows.into_iter().map(decode_pricing_rate_row).collect()
+    }
+
+    async fn insert_request_settlement_record(
+        &self,
+        record: &RequestSettlementRecord,
+    ) -> Result<RequestSettlementRecord> {
+        upsert_request_settlement_executor(&self.pool, record).await?;
+        Ok(record.clone())
+    }
+
+    async fn list_request_settlement_records(&self) -> Result<Vec<RequestSettlementRecord>> {
+        let query = postgres_bind_query(
+            "SELECT request_settlement_id, tenant_id, organization_id, request_id, account_id,
+                    user_id, hold_id, settlement_status, estimated_credit_hold,
+                    released_credit_amount, captured_credit_amount, provider_cost_amount,
+                    retail_charge_amount, shortfall_amount, refunded_amount, settled_at_ms,
+                    created_at_ms, updated_at_ms
+             FROM ai_request_settlement
+             ORDER BY updated_at_ms DESC, request_settlement_id",
+        );
+        let rows = sqlx::query(&query).fetch_all(&self.pool).await?;
+        rows.into_iter()
+            .map(decode_request_settlement_row)
+            .collect()
+    }
+
+    async fn commit_account_kernel_batch(&self, batch: &AccountKernelCommandBatch) -> Result<()> {
+        if batch.is_empty() {
+            return Ok(());
+        }
+
+        let mut tx = self.pool.begin().await?;
+
+        for record in &batch.account_records {
+            upsert_account_record_executor(&mut *tx, record).await?;
+        }
+        for record in &batch.benefit_lot_records {
+            upsert_account_benefit_lot_executor(&mut *tx, record).await?;
+        }
+        for record in &batch.hold_records {
+            upsert_account_hold_executor(&mut *tx, record).await?;
+        }
+        for record in &batch.hold_allocation_records {
+            upsert_account_hold_allocation_executor(&mut *tx, record).await?;
+        }
+        for record in &batch.ledger_entry_records {
+            upsert_account_ledger_entry_executor(&mut *tx, record).await?;
+        }
+        for record in &batch.ledger_allocation_records {
+            upsert_account_ledger_allocation_executor(&mut *tx, record).await?;
+        }
+        for record in &batch.request_meter_fact_records {
+            upsert_request_meter_fact_executor(&mut *tx, record).await?;
+        }
+        for record in &batch.request_meter_metric_records {
+            upsert_request_meter_metric_executor(&mut *tx, record).await?;
+        }
+        for record in &batch.request_settlement_records {
+            upsert_request_settlement_executor(&mut *tx, record).await?;
+        }
+
+        tx.commit().await?;
+        Ok(())
+    }
+}
+
+fn postgres_bind_query(query: &str) -> String {
+    let mut rewritten = String::with_capacity(query.len() + 16);
+    let mut bind_index = 1_u32;
+    for ch in query.chars() {
+        if ch == '?' {
+            rewritten.push('$');
+            rewritten.push_str(&bind_index.to_string());
+            bind_index += 1;
+        } else {
+            rewritten.push(ch);
+        }
+    }
+    rewritten
+}
+
+fn account_type_as_str(value: AccountType) -> &'static str {
+    match value {
+        AccountType::Primary => "primary",
+        AccountType::Grant => "grant",
+        AccountType::Postpaid => "postpaid",
+    }
+}
+
+fn parse_account_type(value: &str) -> Result<AccountType> {
+    match value {
+        "primary" => Ok(AccountType::Primary),
+        "grant" => Ok(AccountType::Grant),
+        "postpaid" => Ok(AccountType::Postpaid),
+        other => Err(anyhow::anyhow!("unknown account_type: {other}")),
+    }
+}
+
+fn account_status_as_str(value: AccountStatus) -> &'static str {
+    match value {
+        AccountStatus::Active => "active",
+        AccountStatus::Suspended => "suspended",
+        AccountStatus::Closed => "closed",
+    }
+}
+
+fn parse_account_status(value: &str) -> Result<AccountStatus> {
+    match value {
+        "active" => Ok(AccountStatus::Active),
+        "suspended" => Ok(AccountStatus::Suspended),
+        "closed" => Ok(AccountStatus::Closed),
+        other => Err(anyhow::anyhow!("unknown account_status: {other}")),
+    }
+}
+
+fn account_benefit_type_as_str(value: AccountBenefitType) -> &'static str {
+    match value {
+        AccountBenefitType::CashCredit => "cash_credit",
+        AccountBenefitType::PromoCredit => "promo_credit",
+        AccountBenefitType::RequestAllowance => "request_allowance",
+        AccountBenefitType::TokenAllowance => "token_allowance",
+        AccountBenefitType::ImageAllowance => "image_allowance",
+        AccountBenefitType::AudioAllowance => "audio_allowance",
+        AccountBenefitType::VideoAllowance => "video_allowance",
+        AccountBenefitType::MusicAllowance => "music_allowance",
+    }
+}
+
+fn parse_account_benefit_type(value: &str) -> Result<AccountBenefitType> {
+    match value {
+        "cash_credit" => Ok(AccountBenefitType::CashCredit),
+        "promo_credit" => Ok(AccountBenefitType::PromoCredit),
+        "request_allowance" => Ok(AccountBenefitType::RequestAllowance),
+        "token_allowance" => Ok(AccountBenefitType::TokenAllowance),
+        "image_allowance" => Ok(AccountBenefitType::ImageAllowance),
+        "audio_allowance" => Ok(AccountBenefitType::AudioAllowance),
+        "video_allowance" => Ok(AccountBenefitType::VideoAllowance),
+        "music_allowance" => Ok(AccountBenefitType::MusicAllowance),
+        other => Err(anyhow::anyhow!("unknown account_benefit_type: {other}")),
+    }
+}
+
+fn account_benefit_source_type_as_str(value: AccountBenefitSourceType) -> &'static str {
+    match value {
+        AccountBenefitSourceType::Recharge => "recharge",
+        AccountBenefitSourceType::Coupon => "coupon",
+        AccountBenefitSourceType::Grant => "grant",
+        AccountBenefitSourceType::Order => "order",
+        AccountBenefitSourceType::ManualAdjustment => "manual_adjustment",
+    }
+}
+
+fn parse_account_benefit_source_type(value: &str) -> Result<AccountBenefitSourceType> {
+    match value {
+        "recharge" => Ok(AccountBenefitSourceType::Recharge),
+        "coupon" => Ok(AccountBenefitSourceType::Coupon),
+        "grant" => Ok(AccountBenefitSourceType::Grant),
+        "order" => Ok(AccountBenefitSourceType::Order),
+        "manual_adjustment" => Ok(AccountBenefitSourceType::ManualAdjustment),
+        other => Err(anyhow::anyhow!(
+            "unknown account_benefit_source_type: {other}"
+        )),
+    }
+}
+
+fn account_benefit_lot_status_as_str(value: AccountBenefitLotStatus) -> &'static str {
+    match value {
+        AccountBenefitLotStatus::Active => "active",
+        AccountBenefitLotStatus::Exhausted => "exhausted",
+        AccountBenefitLotStatus::Expired => "expired",
+        AccountBenefitLotStatus::Disabled => "disabled",
+    }
+}
+
+fn parse_account_benefit_lot_status(value: &str) -> Result<AccountBenefitLotStatus> {
+    match value {
+        "active" => Ok(AccountBenefitLotStatus::Active),
+        "exhausted" => Ok(AccountBenefitLotStatus::Exhausted),
+        "expired" => Ok(AccountBenefitLotStatus::Expired),
+        "disabled" => Ok(AccountBenefitLotStatus::Disabled),
+        other => Err(anyhow::anyhow!(
+            "unknown account_benefit_lot_status: {other}"
+        )),
+    }
+}
+
+fn account_hold_status_as_str(value: AccountHoldStatus) -> &'static str {
+    match value {
+        AccountHoldStatus::Held => "held",
+        AccountHoldStatus::Captured => "captured",
+        AccountHoldStatus::PartiallyReleased => "partially_released",
+        AccountHoldStatus::Released => "released",
+        AccountHoldStatus::Expired => "expired",
+        AccountHoldStatus::Failed => "failed",
+    }
+}
+
+fn parse_account_hold_status(value: &str) -> Result<AccountHoldStatus> {
+    match value {
+        "held" => Ok(AccountHoldStatus::Held),
+        "captured" => Ok(AccountHoldStatus::Captured),
+        "partially_released" => Ok(AccountHoldStatus::PartiallyReleased),
+        "released" => Ok(AccountHoldStatus::Released),
+        "expired" => Ok(AccountHoldStatus::Expired),
+        "failed" => Ok(AccountHoldStatus::Failed),
+        other => Err(anyhow::anyhow!("unknown account_hold_status: {other}")),
+    }
+}
+
+fn account_ledger_entry_type_as_str(value: AccountLedgerEntryType) -> &'static str {
+    match value {
+        AccountLedgerEntryType::HoldCreate => "hold_create",
+        AccountLedgerEntryType::HoldRelease => "hold_release",
+        AccountLedgerEntryType::SettlementCapture => "settlement_capture",
+        AccountLedgerEntryType::GrantIssue => "grant_issue",
+        AccountLedgerEntryType::ManualAdjustment => "manual_adjustment",
+        AccountLedgerEntryType::Refund => "refund",
+    }
+}
+
+fn parse_account_ledger_entry_type(value: &str) -> Result<AccountLedgerEntryType> {
+    match value {
+        "hold_create" => Ok(AccountLedgerEntryType::HoldCreate),
+        "hold_release" => Ok(AccountLedgerEntryType::HoldRelease),
+        "settlement_capture" => Ok(AccountLedgerEntryType::SettlementCapture),
+        "grant_issue" => Ok(AccountLedgerEntryType::GrantIssue),
+        "manual_adjustment" => Ok(AccountLedgerEntryType::ManualAdjustment),
+        "refund" => Ok(AccountLedgerEntryType::Refund),
+        other => Err(anyhow::anyhow!(
+            "unknown account_ledger_entry_type: {other}"
+        )),
+    }
+}
+
+fn request_status_as_str(value: RequestStatus) -> &'static str {
+    match value {
+        RequestStatus::Pending => "pending",
+        RequestStatus::Running => "running",
+        RequestStatus::Succeeded => "succeeded",
+        RequestStatus::Failed => "failed",
+        RequestStatus::Cancelled => "cancelled",
+    }
+}
+
+fn parse_request_status(value: &str) -> Result<RequestStatus> {
+    match value {
+        "pending" => Ok(RequestStatus::Pending),
+        "running" => Ok(RequestStatus::Running),
+        "succeeded" => Ok(RequestStatus::Succeeded),
+        "failed" => Ok(RequestStatus::Failed),
+        "cancelled" => Ok(RequestStatus::Cancelled),
+        other => Err(anyhow::anyhow!("unknown request_status: {other}")),
+    }
+}
+
+fn usage_capture_status_as_str(value: UsageCaptureStatus) -> &'static str {
+    match value {
+        UsageCaptureStatus::Pending => "pending",
+        UsageCaptureStatus::Estimated => "estimated",
+        UsageCaptureStatus::Captured => "captured",
+        UsageCaptureStatus::Reconciled => "reconciled",
+        UsageCaptureStatus::Failed => "failed",
+    }
+}
+
+fn parse_usage_capture_status(value: &str) -> Result<UsageCaptureStatus> {
+    match value {
+        "pending" => Ok(UsageCaptureStatus::Pending),
+        "estimated" => Ok(UsageCaptureStatus::Estimated),
+        "captured" => Ok(UsageCaptureStatus::Captured),
+        "reconciled" => Ok(UsageCaptureStatus::Reconciled),
+        "failed" => Ok(UsageCaptureStatus::Failed),
+        other => Err(anyhow::anyhow!("unknown usage_capture_status: {other}")),
+    }
+}
+
+fn request_settlement_status_as_str(value: RequestSettlementStatus) -> &'static str {
+    match value {
+        RequestSettlementStatus::Pending => "pending",
+        RequestSettlementStatus::Captured => "captured",
+        RequestSettlementStatus::PartiallyReleased => "partially_released",
+        RequestSettlementStatus::Released => "released",
+        RequestSettlementStatus::Refunded => "refunded",
+        RequestSettlementStatus::Failed => "failed",
+    }
+}
+
+fn parse_request_settlement_status(value: &str) -> Result<RequestSettlementStatus> {
+    match value {
+        "pending" => Ok(RequestSettlementStatus::Pending),
+        "captured" => Ok(RequestSettlementStatus::Captured),
+        "partially_released" => Ok(RequestSettlementStatus::PartiallyReleased),
+        "released" => Ok(RequestSettlementStatus::Released),
+        "refunded" => Ok(RequestSettlementStatus::Refunded),
+        "failed" => Ok(RequestSettlementStatus::Failed),
+        other => Err(anyhow::anyhow!(
+            "unknown request_settlement_status: {other}"
+        )),
+    }
+}
+
+async fn upsert_identity_user_record_executor<'e, E>(
+    executor: E,
+    record: &IdentityUserRecord,
+) -> Result<()>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    let query = postgres_bind_query(
+        "INSERT INTO ai_user (
+            user_id, tenant_id, organization_id, external_user_ref, username,
+            display_name, email, status, created_at_ms, updated_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(user_id) DO UPDATE SET
+            tenant_id = excluded.tenant_id,
+            organization_id = excluded.organization_id,
+            external_user_ref = excluded.external_user_ref,
+            username = excluded.username,
+            display_name = excluded.display_name,
+            email = excluded.email,
+            status = excluded.status,
+            created_at_ms = excluded.created_at_ms,
+            updated_at_ms = excluded.updated_at_ms",
+    );
+    sqlx::query(&query)
+        .bind(i64::try_from(record.user_id)?)
+        .bind(i64::try_from(record.tenant_id)?)
+        .bind(i64::try_from(record.organization_id)?)
+        .bind(&record.external_user_ref)
+        .bind(&record.username)
+        .bind(&record.display_name)
+        .bind(&record.email)
+        .bind(&record.status)
+        .bind(i64::try_from(record.created_at_ms)?)
+        .bind(i64::try_from(record.updated_at_ms)?)
+        .execute(executor)
+        .await?;
+    Ok(())
+}
+
+async fn upsert_canonical_api_key_record_executor<'e, E>(
+    executor: E,
+    record: &CanonicalApiKeyRecord,
+) -> Result<()>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    let query = postgres_bind_query(
+        "INSERT INTO ai_api_key (
+            api_key_id, tenant_id, organization_id, user_id, key_prefix, key_hash,
+            display_name, status, expires_at_ms, last_used_at_ms, rotated_from_api_key_id,
+            created_at_ms, updated_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(api_key_id) DO UPDATE SET
+            tenant_id = excluded.tenant_id,
+            organization_id = excluded.organization_id,
+            user_id = excluded.user_id,
+            key_prefix = excluded.key_prefix,
+            key_hash = excluded.key_hash,
+            display_name = excluded.display_name,
+            status = excluded.status,
+            expires_at_ms = excluded.expires_at_ms,
+            last_used_at_ms = excluded.last_used_at_ms,
+            rotated_from_api_key_id = excluded.rotated_from_api_key_id,
+            created_at_ms = excluded.created_at_ms,
+            updated_at_ms = excluded.updated_at_ms",
+    );
+    sqlx::query(&query)
+        .bind(i64::try_from(record.api_key_id)?)
+        .bind(i64::try_from(record.tenant_id)?)
+        .bind(i64::try_from(record.organization_id)?)
+        .bind(i64::try_from(record.user_id)?)
+        .bind(&record.key_prefix)
+        .bind(&record.key_hash)
+        .bind(&record.display_name)
+        .bind(&record.status)
+        .bind(record.expires_at_ms.map(i64::try_from).transpose()?)
+        .bind(record.last_used_at_ms.map(i64::try_from).transpose()?)
+        .bind(
+            record
+                .rotated_from_api_key_id
+                .map(i64::try_from)
+                .transpose()?,
+        )
+        .bind(i64::try_from(record.created_at_ms)?)
+        .bind(i64::try_from(record.updated_at_ms)?)
+        .execute(executor)
+        .await?;
+    Ok(())
+}
+
+async fn upsert_identity_binding_record_executor<'e, E>(
+    executor: E,
+    record: &IdentityBindingRecord,
+) -> Result<()>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    let query = postgres_bind_query(
+        "INSERT INTO ai_identity_binding (
+            identity_binding_id, tenant_id, organization_id, user_id, binding_type,
+            issuer, subject, platform, owner, external_ref, status, created_at_ms, updated_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(identity_binding_id) DO UPDATE SET
+            tenant_id = excluded.tenant_id,
+            organization_id = excluded.organization_id,
+            user_id = excluded.user_id,
+            binding_type = excluded.binding_type,
+            issuer = excluded.issuer,
+            subject = excluded.subject,
+            platform = excluded.platform,
+            owner = excluded.owner,
+            external_ref = excluded.external_ref,
+            status = excluded.status,
+            created_at_ms = excluded.created_at_ms,
+            updated_at_ms = excluded.updated_at_ms",
+    );
+    sqlx::query(&query)
+        .bind(i64::try_from(record.identity_binding_id)?)
+        .bind(i64::try_from(record.tenant_id)?)
+        .bind(i64::try_from(record.organization_id)?)
+        .bind(i64::try_from(record.user_id)?)
+        .bind(&record.binding_type)
+        .bind(&record.issuer)
+        .bind(&record.subject)
+        .bind(&record.platform)
+        .bind(&record.owner)
+        .bind(&record.external_ref)
+        .bind(&record.status)
+        .bind(i64::try_from(record.created_at_ms)?)
+        .bind(i64::try_from(record.updated_at_ms)?)
+        .execute(executor)
+        .await?;
+    Ok(())
+}
+
+async fn upsert_account_record_executor<'e, E>(executor: E, record: &AccountRecord) -> Result<()>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    let query = postgres_bind_query(
+        "INSERT INTO ai_account (
+            account_id, tenant_id, organization_id, user_id, account_type,
+            currency_code, credit_unit_code, status, allow_overdraft, overdraft_limit,
+            created_at_ms, updated_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(account_id) DO UPDATE SET
+            tenant_id = excluded.tenant_id,
+            organization_id = excluded.organization_id,
+            user_id = excluded.user_id,
+            account_type = excluded.account_type,
+            currency_code = excluded.currency_code,
+            credit_unit_code = excluded.credit_unit_code,
+            status = excluded.status,
+            allow_overdraft = excluded.allow_overdraft,
+            overdraft_limit = excluded.overdraft_limit,
+            created_at_ms = excluded.created_at_ms,
+            updated_at_ms = excluded.updated_at_ms",
+    );
+    sqlx::query(&query)
+        .bind(i64::try_from(record.account_id)?)
+        .bind(i64::try_from(record.tenant_id)?)
+        .bind(i64::try_from(record.organization_id)?)
+        .bind(i64::try_from(record.user_id)?)
+        .bind(account_type_as_str(record.account_type))
+        .bind(&record.currency_code)
+        .bind(&record.credit_unit_code)
+        .bind(account_status_as_str(record.status))
+        .bind(record.allow_overdraft)
+        .bind(record.overdraft_limit)
+        .bind(i64::try_from(record.created_at_ms)?)
+        .bind(i64::try_from(record.updated_at_ms)?)
+        .execute(executor)
+        .await?;
+    Ok(())
+}
+
+async fn upsert_account_benefit_lot_executor<'e, E>(
+    executor: E,
+    record: &AccountBenefitLotRecord,
+) -> Result<()>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    let query = postgres_bind_query(
+        "INSERT INTO ai_account_benefit_lot (
+            lot_id, tenant_id, organization_id, account_id, user_id, benefit_type,
+            source_type, source_id, scope_json, original_quantity, remaining_quantity,
+            held_quantity, priority, acquired_unit_cost, issued_at_ms, expires_at_ms, status,
+            created_at_ms, updated_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(lot_id) DO UPDATE SET
+            tenant_id = excluded.tenant_id,
+            organization_id = excluded.organization_id,
+            account_id = excluded.account_id,
+            user_id = excluded.user_id,
+            benefit_type = excluded.benefit_type,
+            source_type = excluded.source_type,
+            source_id = excluded.source_id,
+            scope_json = excluded.scope_json,
+            original_quantity = excluded.original_quantity,
+            remaining_quantity = excluded.remaining_quantity,
+            held_quantity = excluded.held_quantity,
+            priority = excluded.priority,
+            acquired_unit_cost = excluded.acquired_unit_cost,
+            issued_at_ms = excluded.issued_at_ms,
+            expires_at_ms = excluded.expires_at_ms,
+            status = excluded.status,
+            created_at_ms = excluded.created_at_ms,
+            updated_at_ms = excluded.updated_at_ms",
+    );
+    sqlx::query(&query)
+        .bind(i64::try_from(record.lot_id)?)
+        .bind(i64::try_from(record.tenant_id)?)
+        .bind(i64::try_from(record.organization_id)?)
+        .bind(i64::try_from(record.account_id)?)
+        .bind(i64::try_from(record.user_id)?)
+        .bind(account_benefit_type_as_str(record.benefit_type))
+        .bind(account_benefit_source_type_as_str(record.source_type))
+        .bind(record.source_id.map(i64::try_from).transpose()?)
+        .bind(&record.scope_json)
+        .bind(record.original_quantity)
+        .bind(record.remaining_quantity)
+        .bind(record.held_quantity)
+        .bind(record.priority)
+        .bind(record.acquired_unit_cost)
+        .bind(i64::try_from(record.issued_at_ms)?)
+        .bind(record.expires_at_ms.map(i64::try_from).transpose()?)
+        .bind(account_benefit_lot_status_as_str(record.status))
+        .bind(i64::try_from(record.created_at_ms)?)
+        .bind(i64::try_from(record.updated_at_ms)?)
+        .execute(executor)
+        .await?;
+    Ok(())
+}
+
+async fn upsert_account_hold_executor<'e, E>(executor: E, record: &AccountHoldRecord) -> Result<()>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    let query = postgres_bind_query(
+        "INSERT INTO ai_account_hold (
+            hold_id, tenant_id, organization_id, account_id, user_id, request_id,
+            hold_status, estimated_quantity, captured_quantity, released_quantity,
+            expires_at_ms, created_at_ms, updated_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(hold_id) DO UPDATE SET
+            tenant_id = excluded.tenant_id,
+            organization_id = excluded.organization_id,
+            account_id = excluded.account_id,
+            user_id = excluded.user_id,
+            request_id = excluded.request_id,
+            hold_status = excluded.hold_status,
+            estimated_quantity = excluded.estimated_quantity,
+            captured_quantity = excluded.captured_quantity,
+            released_quantity = excluded.released_quantity,
+            expires_at_ms = excluded.expires_at_ms,
+            created_at_ms = excluded.created_at_ms,
+            updated_at_ms = excluded.updated_at_ms",
+    );
+    sqlx::query(&query)
+        .bind(i64::try_from(record.hold_id)?)
+        .bind(i64::try_from(record.tenant_id)?)
+        .bind(i64::try_from(record.organization_id)?)
+        .bind(i64::try_from(record.account_id)?)
+        .bind(i64::try_from(record.user_id)?)
+        .bind(i64::try_from(record.request_id)?)
+        .bind(account_hold_status_as_str(record.status))
+        .bind(record.estimated_quantity)
+        .bind(record.captured_quantity)
+        .bind(record.released_quantity)
+        .bind(i64::try_from(record.expires_at_ms)?)
+        .bind(i64::try_from(record.created_at_ms)?)
+        .bind(i64::try_from(record.updated_at_ms)?)
+        .execute(executor)
+        .await?;
+    Ok(())
+}
+
+async fn upsert_account_hold_allocation_executor<'e, E>(
+    executor: E,
+    record: &AccountHoldAllocationRecord,
+) -> Result<()>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    let query = postgres_bind_query(
+        "INSERT INTO ai_account_hold_allocation (
+            hold_allocation_id, tenant_id, organization_id, hold_id, lot_id,
+            allocated_quantity, captured_quantity, released_quantity,
+            created_at_ms, updated_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(hold_allocation_id) DO UPDATE SET
+            tenant_id = excluded.tenant_id,
+            organization_id = excluded.organization_id,
+            hold_id = excluded.hold_id,
+            lot_id = excluded.lot_id,
+            allocated_quantity = excluded.allocated_quantity,
+            captured_quantity = excluded.captured_quantity,
+            released_quantity = excluded.released_quantity,
+            created_at_ms = excluded.created_at_ms,
+            updated_at_ms = excluded.updated_at_ms",
+    );
+    sqlx::query(&query)
+        .bind(i64::try_from(record.hold_allocation_id)?)
+        .bind(i64::try_from(record.tenant_id)?)
+        .bind(i64::try_from(record.organization_id)?)
+        .bind(i64::try_from(record.hold_id)?)
+        .bind(i64::try_from(record.lot_id)?)
+        .bind(record.allocated_quantity)
+        .bind(record.captured_quantity)
+        .bind(record.released_quantity)
+        .bind(i64::try_from(record.created_at_ms)?)
+        .bind(i64::try_from(record.updated_at_ms)?)
+        .execute(executor)
+        .await?;
+    Ok(())
+}
+
+async fn upsert_account_ledger_entry_executor<'e, E>(
+    executor: E,
+    record: &AccountLedgerEntryRecord,
+) -> Result<()>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    let query = postgres_bind_query(
+        "INSERT INTO ai_account_ledger_entry (
+            ledger_entry_id, tenant_id, organization_id, account_id, user_id,
+            request_id, hold_id, entry_type, benefit_type, quantity, amount, created_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(ledger_entry_id) DO UPDATE SET
+            tenant_id = excluded.tenant_id,
+            organization_id = excluded.organization_id,
+            account_id = excluded.account_id,
+            user_id = excluded.user_id,
+            request_id = excluded.request_id,
+            hold_id = excluded.hold_id,
+            entry_type = excluded.entry_type,
+            benefit_type = excluded.benefit_type,
+            quantity = excluded.quantity,
+            amount = excluded.amount,
+            created_at_ms = excluded.created_at_ms",
+    );
+    sqlx::query(&query)
+        .bind(i64::try_from(record.ledger_entry_id)?)
+        .bind(i64::try_from(record.tenant_id)?)
+        .bind(i64::try_from(record.organization_id)?)
+        .bind(i64::try_from(record.account_id)?)
+        .bind(i64::try_from(record.user_id)?)
+        .bind(record.request_id.map(i64::try_from).transpose()?)
+        .bind(record.hold_id.map(i64::try_from).transpose()?)
+        .bind(account_ledger_entry_type_as_str(record.entry_type))
+        .bind(&record.benefit_type)
+        .bind(record.quantity)
+        .bind(record.amount)
+        .bind(i64::try_from(record.created_at_ms)?)
+        .execute(executor)
+        .await?;
+    Ok(())
+}
+
+async fn upsert_account_ledger_allocation_executor<'e, E>(
+    executor: E,
+    record: &AccountLedgerAllocationRecord,
+) -> Result<()>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    let query = postgres_bind_query(
+        "INSERT INTO ai_account_ledger_allocation (
+            ledger_allocation_id, tenant_id, organization_id, ledger_entry_id, lot_id,
+            quantity_delta, created_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(ledger_allocation_id) DO UPDATE SET
+            tenant_id = excluded.tenant_id,
+            organization_id = excluded.organization_id,
+            ledger_entry_id = excluded.ledger_entry_id,
+            lot_id = excluded.lot_id,
+            quantity_delta = excluded.quantity_delta,
+            created_at_ms = excluded.created_at_ms",
+    );
+    sqlx::query(&query)
+        .bind(i64::try_from(record.ledger_allocation_id)?)
+        .bind(i64::try_from(record.tenant_id)?)
+        .bind(i64::try_from(record.organization_id)?)
+        .bind(i64::try_from(record.ledger_entry_id)?)
+        .bind(i64::try_from(record.lot_id)?)
+        .bind(record.quantity_delta)
+        .bind(i64::try_from(record.created_at_ms)?)
+        .execute(executor)
+        .await?;
+    Ok(())
+}
+
+async fn upsert_request_meter_fact_executor<'e, E>(
+    executor: E,
+    record: &RequestMeterFactRecord,
+) -> Result<()>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    let query = postgres_bind_query(
+        "INSERT INTO ai_request_meter_fact (
+            request_id, tenant_id, organization_id, user_id, account_id, api_key_id,
+            api_key_hash, auth_type, jwt_subject, platform, owner, request_trace_id,
+            gateway_request_ref, upstream_request_ref, protocol_family, capability_code,
+            channel_code, model_code, provider_code, request_status, usage_capture_status,
+            cost_pricing_plan_id, retail_pricing_plan_id, estimated_credit_hold,
+            actual_credit_charge, actual_provider_cost, started_at_ms, finished_at_ms,
+            created_at_ms, updated_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(request_id) DO UPDATE SET
+            tenant_id = excluded.tenant_id,
+            organization_id = excluded.organization_id,
+            user_id = excluded.user_id,
+            account_id = excluded.account_id,
+            api_key_id = excluded.api_key_id,
+            api_key_hash = excluded.api_key_hash,
+            auth_type = excluded.auth_type,
+            jwt_subject = excluded.jwt_subject,
+            platform = excluded.platform,
+            owner = excluded.owner,
+            request_trace_id = excluded.request_trace_id,
+            gateway_request_ref = excluded.gateway_request_ref,
+            upstream_request_ref = excluded.upstream_request_ref,
+            protocol_family = excluded.protocol_family,
+            capability_code = excluded.capability_code,
+            channel_code = excluded.channel_code,
+            model_code = excluded.model_code,
+            provider_code = excluded.provider_code,
+            request_status = excluded.request_status,
+            usage_capture_status = excluded.usage_capture_status,
+            cost_pricing_plan_id = excluded.cost_pricing_plan_id,
+            retail_pricing_plan_id = excluded.retail_pricing_plan_id,
+            estimated_credit_hold = excluded.estimated_credit_hold,
+            actual_credit_charge = excluded.actual_credit_charge,
+            actual_provider_cost = excluded.actual_provider_cost,
+            started_at_ms = excluded.started_at_ms,
+            finished_at_ms = excluded.finished_at_ms,
+            created_at_ms = excluded.created_at_ms,
+            updated_at_ms = excluded.updated_at_ms",
+    );
+    sqlx::query(&query)
+        .bind(i64::try_from(record.request_id)?)
+        .bind(i64::try_from(record.tenant_id)?)
+        .bind(i64::try_from(record.organization_id)?)
+        .bind(i64::try_from(record.user_id)?)
+        .bind(i64::try_from(record.account_id)?)
+        .bind(record.api_key_id.map(i64::try_from).transpose()?)
+        .bind(&record.api_key_hash)
+        .bind(&record.auth_type)
+        .bind(&record.jwt_subject)
+        .bind(&record.platform)
+        .bind(&record.owner)
+        .bind(&record.request_trace_id)
+        .bind(&record.gateway_request_ref)
+        .bind(&record.upstream_request_ref)
+        .bind(&record.protocol_family)
+        .bind(&record.capability_code)
+        .bind(&record.channel_code)
+        .bind(&record.model_code)
+        .bind(&record.provider_code)
+        .bind(request_status_as_str(record.request_status))
+        .bind(usage_capture_status_as_str(record.usage_capture_status))
+        .bind(record.cost_pricing_plan_id.map(i64::try_from).transpose()?)
+        .bind(
+            record
+                .retail_pricing_plan_id
+                .map(i64::try_from)
+                .transpose()?,
+        )
+        .bind(record.estimated_credit_hold)
+        .bind(record.actual_credit_charge)
+        .bind(record.actual_provider_cost)
+        .bind(i64::try_from(record.started_at_ms)?)
+        .bind(record.finished_at_ms.map(i64::try_from).transpose()?)
+        .bind(i64::try_from(record.created_at_ms)?)
+        .bind(i64::try_from(record.updated_at_ms)?)
+        .execute(executor)
+        .await?;
+    Ok(())
+}
+
+async fn upsert_request_meter_metric_executor<'e, E>(
+    executor: E,
+    record: &RequestMeterMetricRecord,
+) -> Result<()>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    let query = postgres_bind_query(
+        "INSERT INTO ai_request_meter_metric (
+            request_metric_id, tenant_id, organization_id, request_id, metric_code, quantity,
+            provider_field, source_kind, capture_stage, is_billable, captured_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(request_metric_id) DO UPDATE SET
+            tenant_id = excluded.tenant_id,
+            organization_id = excluded.organization_id,
+            request_id = excluded.request_id,
+            metric_code = excluded.metric_code,
+            quantity = excluded.quantity,
+            provider_field = excluded.provider_field,
+            source_kind = excluded.source_kind,
+            capture_stage = excluded.capture_stage,
+            is_billable = excluded.is_billable,
+            captured_at_ms = excluded.captured_at_ms",
+    );
+    sqlx::query(&query)
+        .bind(i64::try_from(record.request_metric_id)?)
+        .bind(i64::try_from(record.tenant_id)?)
+        .bind(i64::try_from(record.organization_id)?)
+        .bind(i64::try_from(record.request_id)?)
+        .bind(&record.metric_code)
+        .bind(record.quantity)
+        .bind(&record.provider_field)
+        .bind(&record.source_kind)
+        .bind(&record.capture_stage)
+        .bind(record.is_billable)
+        .bind(i64::try_from(record.captured_at_ms)?)
+        .execute(executor)
+        .await?;
+    Ok(())
+}
+
+async fn upsert_request_settlement_executor<'e, E>(
+    executor: E,
+    record: &RequestSettlementRecord,
+) -> Result<()>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    let query = postgres_bind_query(
+        "INSERT INTO ai_request_settlement (
+            request_settlement_id, tenant_id, organization_id, request_id, account_id, user_id,
+            hold_id, settlement_status, estimated_credit_hold, released_credit_amount,
+            captured_credit_amount, provider_cost_amount, retail_charge_amount, shortfall_amount,
+            refunded_amount, settled_at_ms, created_at_ms, updated_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(request_settlement_id) DO UPDATE SET
+            tenant_id = excluded.tenant_id,
+            organization_id = excluded.organization_id,
+            request_id = excluded.request_id,
+            account_id = excluded.account_id,
+            user_id = excluded.user_id,
+            hold_id = excluded.hold_id,
+            settlement_status = excluded.settlement_status,
+            estimated_credit_hold = excluded.estimated_credit_hold,
+            released_credit_amount = excluded.released_credit_amount,
+            captured_credit_amount = excluded.captured_credit_amount,
+            provider_cost_amount = excluded.provider_cost_amount,
+            retail_charge_amount = excluded.retail_charge_amount,
+            shortfall_amount = excluded.shortfall_amount,
+            refunded_amount = excluded.refunded_amount,
+            settled_at_ms = excluded.settled_at_ms,
+            created_at_ms = excluded.created_at_ms,
+            updated_at_ms = excluded.updated_at_ms",
+    );
+    sqlx::query(&query)
+        .bind(i64::try_from(record.request_settlement_id)?)
+        .bind(i64::try_from(record.tenant_id)?)
+        .bind(i64::try_from(record.organization_id)?)
+        .bind(i64::try_from(record.request_id)?)
+        .bind(i64::try_from(record.account_id)?)
+        .bind(i64::try_from(record.user_id)?)
+        .bind(record.hold_id.map(i64::try_from).transpose()?)
+        .bind(request_settlement_status_as_str(record.status))
+        .bind(record.estimated_credit_hold)
+        .bind(record.released_credit_amount)
+        .bind(record.captured_credit_amount)
+        .bind(record.provider_cost_amount)
+        .bind(record.retail_charge_amount)
+        .bind(record.shortfall_amount)
+        .bind(record.refunded_amount)
+        .bind(i64::try_from(record.settled_at_ms)?)
+        .bind(i64::try_from(record.created_at_ms)?)
+        .bind(i64::try_from(record.updated_at_ms)?)
+        .execute(executor)
+        .await?;
+    Ok(())
+}
+
+fn decode_account_record_row(row: PgRow) -> Result<AccountRecord> {
+    Ok(AccountRecord::new(
+        u64::try_from(row.try_get::<i64, _>("account_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("tenant_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("organization_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("user_id")?)?,
+        parse_account_type(&row.try_get::<String, _>("account_type")?)?,
+    )
+    .with_currency_code(row.try_get::<String, _>("currency_code")?)
+    .with_credit_unit_code(row.try_get::<String, _>("credit_unit_code")?)
+    .with_status(parse_account_status(&row.try_get::<String, _>("status")?)?)
+    .with_allow_overdraft(row.try_get::<bool, _>("allow_overdraft")?)
+    .with_overdraft_limit(row.try_get::<f64, _>("overdraft_limit")?)
+    .with_created_at_ms(u64::try_from(row.try_get::<i64, _>("created_at_ms")?)?)
+    .with_updated_at_ms(u64::try_from(row.try_get::<i64, _>("updated_at_ms")?)?))
+}
+
+fn decode_identity_user_row(row: PgRow) -> Result<IdentityUserRecord> {
+    Ok(IdentityUserRecord::new(
+        u64::try_from(row.try_get::<i64, _>("user_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("tenant_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("organization_id")?)?,
+    )
+    .with_external_user_ref(row.try_get::<Option<String>, _>("external_user_ref")?)
+    .with_username(row.try_get::<Option<String>, _>("username")?)
+    .with_display_name(row.try_get::<Option<String>, _>("display_name")?)
+    .with_email(row.try_get::<Option<String>, _>("email")?)
+    .with_status(row.try_get::<String, _>("status")?)
+    .with_created_at_ms(u64::try_from(row.try_get::<i64, _>("created_at_ms")?)?)
+    .with_updated_at_ms(u64::try_from(row.try_get::<i64, _>("updated_at_ms")?)?))
+}
+
+fn decode_canonical_api_key_row(row: PgRow) -> Result<CanonicalApiKeyRecord> {
+    Ok(CanonicalApiKeyRecord::new(
+        u64::try_from(row.try_get::<i64, _>("api_key_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("tenant_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("organization_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("user_id")?)?,
+        row.try_get::<String, _>("key_hash")?,
+    )
+    .with_key_prefix(row.try_get::<String, _>("key_prefix")?)
+    .with_display_name(row.try_get::<String, _>("display_name")?)
+    .with_status(row.try_get::<String, _>("status")?)
+    .with_expires_at_ms(
+        row.try_get::<Option<i64>, _>("expires_at_ms")?
+            .map(u64::try_from)
+            .transpose()?,
+    )
+    .with_last_used_at_ms(
+        row.try_get::<Option<i64>, _>("last_used_at_ms")?
+            .map(u64::try_from)
+            .transpose()?,
+    )
+    .with_rotated_from_api_key_id(
+        row.try_get::<Option<i64>, _>("rotated_from_api_key_id")?
+            .map(u64::try_from)
+            .transpose()?,
+    )
+    .with_created_at_ms(u64::try_from(row.try_get::<i64, _>("created_at_ms")?)?)
+    .with_updated_at_ms(u64::try_from(row.try_get::<i64, _>("updated_at_ms")?)?))
+}
+
+fn decode_identity_binding_row(row: PgRow) -> Result<IdentityBindingRecord> {
+    Ok(IdentityBindingRecord::new(
+        u64::try_from(row.try_get::<i64, _>("identity_binding_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("tenant_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("organization_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("user_id")?)?,
+        row.try_get::<String, _>("binding_type")?,
+    )
+    .with_issuer(row.try_get::<Option<String>, _>("issuer")?)
+    .with_subject(row.try_get::<Option<String>, _>("subject")?)
+    .with_platform(row.try_get::<Option<String>, _>("platform")?)
+    .with_owner(row.try_get::<Option<String>, _>("owner")?)
+    .with_external_ref(row.try_get::<Option<String>, _>("external_ref")?)
+    .with_status(row.try_get::<String, _>("status")?)
+    .with_created_at_ms(u64::try_from(row.try_get::<i64, _>("created_at_ms")?)?)
+    .with_updated_at_ms(u64::try_from(row.try_get::<i64, _>("updated_at_ms")?)?))
+}
+
+fn decode_account_benefit_lot_row(row: PgRow) -> Result<AccountBenefitLotRecord> {
+    Ok(AccountBenefitLotRecord::new(
+        u64::try_from(row.try_get::<i64, _>("lot_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("tenant_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("organization_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("account_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("user_id")?)?,
+        parse_account_benefit_type(&row.try_get::<String, _>("benefit_type")?)?,
+    )
+    .with_source_type(parse_account_benefit_source_type(
+        &row.try_get::<String, _>("source_type")?,
+    )?)
+    .with_source_id(
+        row.try_get::<Option<i64>, _>("source_id")?
+            .map(u64::try_from)
+            .transpose()?,
+    )
+    .with_scope_json(row.try_get::<Option<String>, _>("scope_json")?)
+    .with_original_quantity(row.try_get::<f64, _>("original_quantity")?)
+    .with_remaining_quantity(row.try_get::<f64, _>("remaining_quantity")?)
+    .with_held_quantity(row.try_get::<f64, _>("held_quantity")?)
+    .with_priority(row.try_get::<i32, _>("priority")?)
+    .with_acquired_unit_cost(row.try_get::<Option<f64>, _>("acquired_unit_cost")?)
+    .with_issued_at_ms(u64::try_from(row.try_get::<i64, _>("issued_at_ms")?)?)
+    .with_expires_at_ms(
+        row.try_get::<Option<i64>, _>("expires_at_ms")?
+            .map(u64::try_from)
+            .transpose()?,
+    )
+    .with_status(parse_account_benefit_lot_status(
+        &row.try_get::<String, _>("status")?,
+    )?)
+    .with_created_at_ms(u64::try_from(row.try_get::<i64, _>("created_at_ms")?)?)
+    .with_updated_at_ms(u64::try_from(row.try_get::<i64, _>("updated_at_ms")?)?))
+}
+
+fn decode_account_hold_row(row: PgRow) -> Result<AccountHoldRecord> {
+    Ok(AccountHoldRecord::new(
+        u64::try_from(row.try_get::<i64, _>("hold_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("tenant_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("organization_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("account_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("user_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("request_id")?)?,
+    )
+    .with_status(parse_account_hold_status(
+        &row.try_get::<String, _>("hold_status")?,
+    )?)
+    .with_estimated_quantity(row.try_get::<f64, _>("estimated_quantity")?)
+    .with_captured_quantity(row.try_get::<f64, _>("captured_quantity")?)
+    .with_released_quantity(row.try_get::<f64, _>("released_quantity")?)
+    .with_expires_at_ms(u64::try_from(row.try_get::<i64, _>("expires_at_ms")?)?)
+    .with_created_at_ms(u64::try_from(row.try_get::<i64, _>("created_at_ms")?)?)
+    .with_updated_at_ms(u64::try_from(row.try_get::<i64, _>("updated_at_ms")?)?))
+}
+
+fn decode_account_hold_allocation_row(row: PgRow) -> Result<AccountHoldAllocationRecord> {
+    Ok(AccountHoldAllocationRecord::new(
+        u64::try_from(row.try_get::<i64, _>("hold_allocation_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("tenant_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("organization_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("hold_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("lot_id")?)?,
+    )
+    .with_allocated_quantity(row.try_get::<f64, _>("allocated_quantity")?)
+    .with_captured_quantity(row.try_get::<f64, _>("captured_quantity")?)
+    .with_released_quantity(row.try_get::<f64, _>("released_quantity")?)
+    .with_created_at_ms(u64::try_from(row.try_get::<i64, _>("created_at_ms")?)?)
+    .with_updated_at_ms(u64::try_from(row.try_get::<i64, _>("updated_at_ms")?)?))
+}
+
+fn decode_account_ledger_entry_row(row: PgRow) -> Result<AccountLedgerEntryRecord> {
+    Ok(AccountLedgerEntryRecord::new(
+        u64::try_from(row.try_get::<i64, _>("ledger_entry_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("tenant_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("organization_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("account_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("user_id")?)?,
+        parse_account_ledger_entry_type(&row.try_get::<String, _>("entry_type")?)?,
+    )
+    .with_request_id(
+        row.try_get::<Option<i64>, _>("request_id")?
+            .map(u64::try_from)
+            .transpose()?,
+    )
+    .with_hold_id(
+        row.try_get::<Option<i64>, _>("hold_id")?
+            .map(u64::try_from)
+            .transpose()?,
+    )
+    .with_benefit_type(row.try_get::<Option<String>, _>("benefit_type")?)
+    .with_quantity(row.try_get::<f64, _>("quantity")?)
+    .with_amount(row.try_get::<f64, _>("amount")?)
+    .with_created_at_ms(u64::try_from(row.try_get::<i64, _>("created_at_ms")?)?))
+}
+
+fn decode_account_ledger_allocation_row(row: PgRow) -> Result<AccountLedgerAllocationRecord> {
+    Ok(AccountLedgerAllocationRecord::new(
+        u64::try_from(row.try_get::<i64, _>("ledger_allocation_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("tenant_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("organization_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("ledger_entry_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("lot_id")?)?,
+    )
+    .with_quantity_delta(row.try_get::<f64, _>("quantity_delta")?)
+    .with_created_at_ms(u64::try_from(row.try_get::<i64, _>("created_at_ms")?)?))
+}
+
+fn decode_request_meter_fact_row(row: PgRow) -> Result<RequestMeterFactRecord> {
+    Ok(RequestMeterFactRecord::new(
+        u64::try_from(row.try_get::<i64, _>("request_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("tenant_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("organization_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("user_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("account_id")?)?,
+        row.try_get::<String, _>("auth_type")?,
+        row.try_get::<String, _>("capability_code")?,
+        row.try_get::<String, _>("channel_code")?,
+        row.try_get::<String, _>("model_code")?,
+        row.try_get::<String, _>("provider_code")?,
+    )
+    .with_api_key_id(
+        row.try_get::<Option<i64>, _>("api_key_id")?
+            .map(u64::try_from)
+            .transpose()?,
+    )
+    .with_api_key_hash(row.try_get::<Option<String>, _>("api_key_hash")?)
+    .with_jwt_subject(row.try_get::<Option<String>, _>("jwt_subject")?)
+    .with_platform(row.try_get::<Option<String>, _>("platform")?)
+    .with_owner(row.try_get::<Option<String>, _>("owner")?)
+    .with_request_trace_id(row.try_get::<Option<String>, _>("request_trace_id")?)
+    .with_gateway_request_ref(row.try_get::<Option<String>, _>("gateway_request_ref")?)
+    .with_upstream_request_ref(row.try_get::<Option<String>, _>("upstream_request_ref")?)
+    .with_protocol_family(row.try_get::<String, _>("protocol_family")?)
+    .with_request_status(parse_request_status(
+        &row.try_get::<String, _>("request_status")?,
+    )?)
+    .with_usage_capture_status(parse_usage_capture_status(
+        &row.try_get::<String, _>("usage_capture_status")?,
+    )?)
+    .with_cost_pricing_plan_id(
+        row.try_get::<Option<i64>, _>("cost_pricing_plan_id")?
+            .map(u64::try_from)
+            .transpose()?,
+    )
+    .with_retail_pricing_plan_id(
+        row.try_get::<Option<i64>, _>("retail_pricing_plan_id")?
+            .map(u64::try_from)
+            .transpose()?,
+    )
+    .with_estimated_credit_hold(row.try_get::<f64, _>("estimated_credit_hold")?)
+    .with_actual_credit_charge(row.try_get::<Option<f64>, _>("actual_credit_charge")?)
+    .with_actual_provider_cost(row.try_get::<Option<f64>, _>("actual_provider_cost")?)
+    .with_started_at_ms(u64::try_from(row.try_get::<i64, _>("started_at_ms")?)?)
+    .with_finished_at_ms(
+        row.try_get::<Option<i64>, _>("finished_at_ms")?
+            .map(u64::try_from)
+            .transpose()?,
+    )
+    .with_created_at_ms(u64::try_from(row.try_get::<i64, _>("created_at_ms")?)?)
+    .with_updated_at_ms(u64::try_from(row.try_get::<i64, _>("updated_at_ms")?)?))
+}
+
+fn decode_request_meter_metric_row(row: PgRow) -> Result<RequestMeterMetricRecord> {
+    Ok(RequestMeterMetricRecord::new(
+        u64::try_from(row.try_get::<i64, _>("request_metric_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("tenant_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("organization_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("request_id")?)?,
+        row.try_get::<String, _>("metric_code")?,
+        row.try_get::<f64, _>("quantity")?,
+    )
+    .with_provider_field(row.try_get::<Option<String>, _>("provider_field")?)
+    .with_source_kind(row.try_get::<String, _>("source_kind")?)
+    .with_capture_stage(row.try_get::<String, _>("capture_stage")?)
+    .with_is_billable(row.try_get::<bool, _>("is_billable")?)
+    .with_captured_at_ms(u64::try_from(row.try_get::<i64, _>("captured_at_ms")?)?))
+}
+
+fn decode_pricing_plan_row(row: PgRow) -> Result<PricingPlanRecord> {
+    Ok(PricingPlanRecord::new(
+        u64::try_from(row.try_get::<i64, _>("pricing_plan_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("tenant_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("organization_id")?)?,
+        row.try_get::<String, _>("plan_code")?,
+        u64::try_from(row.try_get::<i64, _>("plan_version")?)?,
+    )
+    .with_display_name(row.try_get::<String, _>("display_name")?)
+    .with_currency_code(row.try_get::<String, _>("currency_code")?)
+    .with_credit_unit_code(row.try_get::<String, _>("credit_unit_code")?)
+    .with_status(row.try_get::<String, _>("status")?)
+    .with_created_at_ms(u64::try_from(row.try_get::<i64, _>("created_at_ms")?)?)
+    .with_updated_at_ms(u64::try_from(row.try_get::<i64, _>("updated_at_ms")?)?))
+}
+
+fn decode_pricing_rate_row(row: PgRow) -> Result<PricingRateRecord> {
+    Ok(PricingRateRecord::new(
+        u64::try_from(row.try_get::<i64, _>("pricing_rate_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("tenant_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("organization_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("pricing_plan_id")?)?,
+        row.try_get::<String, _>("metric_code")?,
+    )
+    .with_model_code(row.try_get::<Option<String>, _>("model_code")?)
+    .with_provider_code(row.try_get::<Option<String>, _>("provider_code")?)
+    .with_quantity_step(row.try_get::<f64, _>("quantity_step")?)
+    .with_unit_price(row.try_get::<f64, _>("unit_price")?)
+    .with_created_at_ms(u64::try_from(row.try_get::<i64, _>("created_at_ms")?)?))
+}
+
+fn decode_request_settlement_row(row: PgRow) -> Result<RequestSettlementRecord> {
+    Ok(RequestSettlementRecord::new(
+        u64::try_from(row.try_get::<i64, _>("request_settlement_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("tenant_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("organization_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("request_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("account_id")?)?,
+        u64::try_from(row.try_get::<i64, _>("user_id")?)?,
+    )
+    .with_hold_id(
+        row.try_get::<Option<i64>, _>("hold_id")?
+            .map(u64::try_from)
+            .transpose()?,
+    )
+    .with_status(parse_request_settlement_status(
+        &row.try_get::<String, _>("settlement_status")?,
+    )?)
+    .with_estimated_credit_hold(row.try_get::<f64, _>("estimated_credit_hold")?)
+    .with_released_credit_amount(row.try_get::<f64, _>("released_credit_amount")?)
+    .with_captured_credit_amount(row.try_get::<f64, _>("captured_credit_amount")?)
+    .with_provider_cost_amount(row.try_get::<f64, _>("provider_cost_amount")?)
+    .with_retail_charge_amount(row.try_get::<f64, _>("retail_charge_amount")?)
+    .with_shortfall_amount(row.try_get::<f64, _>("shortfall_amount")?)
+    .with_refunded_amount(row.try_get::<f64, _>("refunded_amount")?)
+    .with_settled_at_ms(u64::try_from(row.try_get::<i64, _>("settled_at_ms")?)?)
+    .with_created_at_ms(u64::try_from(row.try_get::<i64, _>("created_at_ms")?)?)
+    .with_updated_at_ms(u64::try_from(row.try_get::<i64, _>("updated_at_ms")?)?))
+}

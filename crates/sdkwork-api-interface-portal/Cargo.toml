@@ -10,11 +10,15 @@ sdkwork-api-app-billing = { path = "../sdkwork-api-app-billing" }
 sdkwork-api-app-commerce = { path = "../sdkwork-api-app-commerce" }
 sdkwork-api-app-coupon = { path = "../sdkwork-api-app-coupon" }
 sdkwork-api-app-identity = { path = "../sdkwork-api-app-identity" }
+sdkwork-api-app-marketing = { path = "../sdkwork-api-app-marketing" }
+sdkwork-api-app-payment = { path = "../sdkwork-api-app-payment" }
+sdkwork-api-app-rate-limit = { path = "../sdkwork-api-app-rate-limit" }
 sdkwork-api-app-routing = { path = "../sdkwork-api-app-routing" }
 sdkwork-api-app-usage = { path = "../sdkwork-api-app-usage" }
 sdkwork-api-domain-billing = { path = "../sdkwork-api-domain-billing" }
 sdkwork-api-domain-catalog = { path = "../sdkwork-api-domain-catalog" }
 sdkwork-api-domain-identity = { path = "../sdkwork-api-domain-identity" }
+sdkwork-api-domain-marketing = { path = "../sdkwork-api-domain-marketing" }
 sdkwork-api-domain-rate-limit = { path = "../sdkwork-api-domain-rate-limit" }
 sdkwork-api-domain-routing = { path = "../sdkwork-api-domain-routing" }
 sdkwork-api-domain-usage = { path = "../sdkwork-api-domain-usage" }
@@ -27,8 +31,13 @@ tower-http.workspace = true
 
 [dev-dependencies]
 sdkwork-api-domain-catalog = { path = "../sdkwork-api-domain-catalog" }
+sdkwork-api-domain-marketing = { path = "../sdkwork-api-domain-marketing" }
+sdkwork-api-domain-payment = { path = "../sdkwork-api-domain-payment" }
 sdkwork-api-domain-routing = { path = "../sdkwork-api-domain-routing" }
+sdkwork-api-domain-tenant = { path = "../sdkwork-api-domain-tenant" }
+serial_test.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 tokio.workspace = true
 tower.workspace = true
 

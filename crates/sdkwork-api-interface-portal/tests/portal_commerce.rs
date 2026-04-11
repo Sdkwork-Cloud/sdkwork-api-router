@@ -1,6 +1,13 @@
-﻿use axum::body::{to_bytes, Body};
+use axum::body::{to_bytes, Body};
 use axum::http::{Request, StatusCode};
+use sdkwork_api_domain_marketing::{
+    CouponBenefitKind, CouponBenefitRuleRecord, CouponCodeBatchRecord, CouponCodeBatchStatus,
+    CouponCodeGenerationMode, CouponCodeKind, CouponCodeRecord, CouponCodeStatus,
+    CouponDistributionKind, CouponTemplateRecord, CouponTemplateStatus,
+};
 use serde_json::Value;
+use serial_test::serial;
+use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 use tower::ServiceExt;
 
@@ -52,6 +59,32 @@ async fn portal_workspace(app: axum::Router, token: &str) -> Value {
 
     assert_eq!(response.status(), StatusCode::OK);
     read_json(response).await
+}
+
+fn hash_coupon_code_for_lookup(value: &str) -> String {
+    let normalized = value.trim().to_ascii_uppercase();
+    let mut hasher = Sha256::new();
+    hasher.update(normalized.as_bytes());
+    format!("sha256:{:x}", hasher.finalize())
+}
+
+fn payment_callback_secret_env_guard(value: &str) -> PaymentCallbackSecretEnvGuard {
+    let previous = std::env::var("SDKWORK_PORTAL_PAYMENT_CALLBACK_SECRET").ok();
+    std::env::set_var("SDKWORK_PORTAL_PAYMENT_CALLBACK_SECRET", value);
+    PaymentCallbackSecretEnvGuard { previous }
+}
+
+struct PaymentCallbackSecretEnvGuard {
+    previous: Option<String>,
+}
+
+impl Drop for PaymentCallbackSecretEnvGuard {
+    fn drop(&mut self) {
+        match self.previous.as_deref() {
+            Some(value) => std::env::set_var("SDKWORK_PORTAL_PAYMENT_CALLBACK_SECRET", value),
+            None => std::env::remove_var("SDKWORK_PORTAL_PAYMENT_CALLBACK_SECRET"),
+        }
+    }
 }
 
 #[tokio::test]
@@ -152,7 +185,10 @@ async fn portal_commerce_catalog_exposes_server_managed_recharge_options_and_cus
     assert_eq!(json["custom_recharge_policy"]["enabled"], true);
     assert_eq!(json["custom_recharge_policy"]["min_amount_cents"], 1000);
     assert_eq!(json["custom_recharge_policy"]["step_amount_cents"], 500);
-    assert_eq!(json["custom_recharge_policy"]["suggested_amount_cents"], 5000);
+    assert_eq!(
+        json["custom_recharge_policy"]["suggested_amount_cents"],
+        5000
+    );
     assert_eq!(
         json["custom_recharge_policy"]["rules"][1]["effective_ratio_label"],
         "2,800 units / $1"
@@ -252,7 +288,669 @@ async fn portal_commerce_quote_prices_recharge_and_coupon_redemption() {
 }
 
 #[tokio::test]
-async fn portal_commerce_quote_and_order_support_custom_recharge_from_server_policy() {
+async fn portal_commerce_quote_supports_canonical_marketing_discount_codes() {
+    let pool = memory_pool().await;
+    let store = sdkwork_api_storage_sqlite::SqliteAdminStore::new(pool.clone());
+
+    let template = CouponTemplateRecord::new(
+        100,
+        1001,
+        2002,
+        "growth-discount",
+        "Growth recharge discount",
+        CouponBenefitKind::PercentageDiscount,
+        CouponDistributionKind::UniqueCode,
+        1_710_000_000,
+    )
+    .with_status(CouponTemplateStatus::Active)
+    .with_claim_required(false)
+    .with_updated_at_ms(1_710_000_100);
+    store
+        .insert_coupon_template_record(&template)
+        .await
+        .unwrap();
+
+    let rule = CouponBenefitRuleRecord::new(
+        200,
+        1001,
+        2002,
+        template.coupon_template_id,
+        CouponBenefitKind::PercentageDiscount,
+        1_710_000_010,
+    )
+    .with_target_order_kind(Some("recharge_pack".to_owned()))
+    .with_percentage_off(Some(15.0))
+    .with_updated_at_ms(1_710_000_101);
+    store
+        .insert_coupon_benefit_rule_record(&rule)
+        .await
+        .unwrap();
+
+    let batch = CouponCodeBatchRecord::new(
+        300,
+        1001,
+        2002,
+        template.coupon_template_id,
+        None,
+        CouponCodeGenerationMode::BulkRandom,
+        1_710_000_020,
+    )
+    .with_status(CouponCodeBatchStatus::Active)
+    .with_issued_count(1)
+    .with_updated_at_ms(1_710_000_102);
+    store.insert_coupon_code_batch_record(&batch).await.unwrap();
+
+    let code = CouponCodeRecord::new(
+        400,
+        1001,
+        2002,
+        batch.coupon_code_batch_id,
+        template.coupon_template_id,
+        None,
+        hash_coupon_code_for_lookup("SPRING15"),
+        CouponCodeKind::SingleUseUnique,
+        1_710_000_030,
+    )
+    .with_status(CouponCodeStatus::Issued)
+    .with_updated_at_ms(1_710_000_103);
+    store.insert_coupon_code_record(&code).await.unwrap();
+
+    let app = sdkwork_api_interface_portal::portal_router_with_pool(pool);
+    let token = portal_token(app.clone()).await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/portal/commerce/quote")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"target_kind\":\"recharge_pack\",\"target_id\":\"pack-100k\",\"coupon_code\":\"SPRING15\",\"current_remaining_units\":5000}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let json = read_json(response).await;
+    assert_eq!(json["target_kind"], "recharge_pack");
+    assert_eq!(json["payable_price_label"], "$34.00");
+    assert_eq!(json["projected_remaining_units"], 105000);
+    assert_eq!(json["applied_coupon"]["code"], "SPRING15");
+    assert_eq!(json["applied_coupon"]["source"], "marketing");
+}
+
+#[tokio::test]
+async fn portal_commerce_zero_pay_marketing_discount_fulfills_immediately() {
+    let pool = memory_pool().await;
+    let store = sdkwork_api_storage_sqlite::SqliteAdminStore::new(pool.clone());
+    let app = sdkwork_api_interface_portal::portal_router_with_pool(pool.clone());
+    let token = portal_token(app.clone()).await;
+    let workspace = portal_workspace(app.clone(), &token).await;
+    let project_id = workspace["project"]["id"].as_str().unwrap().to_owned();
+    let user_id = workspace["user"]["id"].as_str().unwrap().to_owned();
+
+    let template = CouponTemplateRecord::new(
+        101,
+        1001,
+        2002,
+        "free-workspace-discount",
+        "Zero pay workspace recharge discount",
+        CouponBenefitKind::FixedAmountDiscount,
+        CouponDistributionKind::UniqueCode,
+        1_710_000_000,
+    )
+    .with_status(CouponTemplateStatus::Active)
+    .with_claim_required(true)
+    .with_updated_at_ms(1_710_000_100);
+    store
+        .insert_coupon_template_record(&template)
+        .await
+        .unwrap();
+
+    let rule = CouponBenefitRuleRecord::new(
+        201,
+        1001,
+        2002,
+        template.coupon_template_id,
+        CouponBenefitKind::FixedAmountDiscount,
+        1_710_000_010,
+    )
+    .with_target_order_kind(Some("recharge_pack".to_owned()))
+    .with_fixed_discount_amount(Some(40.0))
+    .with_currency_code(Some("USD".to_owned()))
+    .with_updated_at_ms(1_710_000_101);
+    store
+        .insert_coupon_benefit_rule_record(&rule)
+        .await
+        .unwrap();
+
+    let batch = CouponCodeBatchRecord::new(
+        301,
+        1001,
+        2002,
+        template.coupon_template_id,
+        None,
+        CouponCodeGenerationMode::BulkRandom,
+        1_710_000_020,
+    )
+    .with_status(CouponCodeBatchStatus::Active)
+    .with_issued_count(1)
+    .with_updated_at_ms(1_710_000_102);
+    store.insert_coupon_code_batch_record(&batch).await.unwrap();
+
+    let code = CouponCodeRecord::new(
+        401,
+        1001,
+        2002,
+        batch.coupon_code_batch_id,
+        template.coupon_template_id,
+        None,
+        hash_coupon_code_for_lookup("FREE100"),
+        CouponCodeKind::SingleUseUnique,
+        1_710_000_030,
+    )
+    .with_status(CouponCodeStatus::Claimed)
+    .with_claim_subject_type(Some("user".to_owned()))
+    .with_claim_subject_id(Some(format!("1001:2002:{user_id}")))
+    .with_claimed_at_ms(Some(1_710_000_031))
+    .with_updated_at_ms(1_710_000_103);
+    store.insert_coupon_code_record(&code).await.unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/portal/commerce/orders")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"target_kind\":\"recharge_pack\",\"target_id\":\"pack-100k\",\"coupon_code\":\"FREE100\"}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let json = read_json(response).await;
+    assert_eq!(json["project_id"], project_id);
+    assert_eq!(json["user_id"], user_id);
+    assert_eq!(json["status"], "fulfilled");
+    assert_eq!(json["payable_price_label"], "$0.00");
+
+    let order_id = json["order_id"].as_str().unwrap().to_owned();
+    let redemptions = store.list_coupon_redemption_records().await.unwrap();
+    assert_eq!(redemptions.len(), 1);
+    assert_eq!(redemptions[0].subject_type, "user");
+    assert_eq!(redemptions[0].subject_id, user_id);
+    assert_eq!(
+        redemptions[0].project_id.as_deref(),
+        Some(project_id.as_str())
+    );
+    assert_eq!(redemptions[0].order_id.as_deref(), Some(order_id.as_str()));
+
+    let stored_code = store
+        .find_coupon_code_record_by_lookup_hash(&hash_coupon_code_for_lookup("FREE100"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored_code.status, CouponCodeStatus::Redeemed);
+}
+
+#[tokio::test]
+#[serial]
+async fn portal_commerce_provider_callback_writes_payment_order_id_to_marketing_redemption() {
+    let pool = memory_pool().await;
+    let store = sdkwork_api_storage_sqlite::SqliteAdminStore::new(pool.clone());
+    let _callback_secret_guard = payment_callback_secret_env_guard("test-payment-callback-secret");
+    let app = sdkwork_api_interface_portal::portal_router_with_pool(pool.clone());
+    let token = portal_token(app.clone()).await;
+    let workspace = portal_workspace(app.clone(), &token).await;
+    let project_id = workspace["project"]["id"].as_str().unwrap().to_owned();
+    let user_id = workspace["user"]["id"].as_str().unwrap().to_owned();
+
+    sqlx::query(
+        "INSERT INTO ai_billing_quota_policies (policy_id, project_id, max_units, enabled)
+         VALUES (?, ?, ?, ?)",
+    )
+    .bind("quota-portal")
+    .bind(&project_id)
+    .bind(500_i64)
+    .bind(1_i64)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let template = CouponTemplateRecord::new(
+        102,
+        1001,
+        2002,
+        "paid-marketing-discount",
+        "Paid marketing recharge discount",
+        CouponBenefitKind::PercentageDiscount,
+        CouponDistributionKind::UniqueCode,
+        1_710_000_000,
+    )
+    .with_status(CouponTemplateStatus::Active)
+    .with_claim_required(true)
+    .with_updated_at_ms(1_710_000_100);
+    store
+        .insert_coupon_template_record(&template)
+        .await
+        .unwrap();
+
+    let rule = CouponBenefitRuleRecord::new(
+        202,
+        1001,
+        2002,
+        template.coupon_template_id,
+        CouponBenefitKind::PercentageDiscount,
+        1_710_000_010,
+    )
+    .with_target_order_kind(Some("recharge_pack".to_owned()))
+    .with_percentage_off(Some(15.0))
+    .with_updated_at_ms(1_710_000_101);
+    store
+        .insert_coupon_benefit_rule_record(&rule)
+        .await
+        .unwrap();
+
+    let batch = CouponCodeBatchRecord::new(
+        302,
+        1001,
+        2002,
+        template.coupon_template_id,
+        None,
+        CouponCodeGenerationMode::BulkRandom,
+        1_710_000_020,
+    )
+    .with_status(CouponCodeBatchStatus::Active)
+    .with_issued_count(1)
+    .with_updated_at_ms(1_710_000_102);
+    store.insert_coupon_code_batch_record(&batch).await.unwrap();
+
+    let code = CouponCodeRecord::new(
+        402,
+        1001,
+        2002,
+        batch.coupon_code_batch_id,
+        template.coupon_template_id,
+        None,
+        hash_coupon_code_for_lookup("PAID15"),
+        CouponCodeKind::SingleUseUnique,
+        1_710_000_030,
+    )
+    .with_status(CouponCodeStatus::Claimed)
+    .with_claim_subject_type(Some("user".to_owned()))
+    .with_claim_subject_id(Some(format!("1001:2002:{user_id}")))
+    .with_claimed_at_ms(Some(1_710_000_031))
+    .with_updated_at_ms(1_710_000_103);
+    store.insert_coupon_code_record(&code).await.unwrap();
+
+    let create_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/portal/commerce/orders")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"target_kind\":\"recharge_pack\",\"target_id\":\"pack-100k\",\"coupon_code\":\"PAID15\"}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(create_response.status(), StatusCode::CREATED);
+    let create_json = read_json(create_response).await;
+    assert_eq!(create_json["status"], "pending_payment");
+    let order_id = create_json["order_id"].as_str().unwrap().to_owned();
+
+    let settle_response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(&format!(
+                    "/portal/internal/commerce/orders/{order_id}/payment-events"
+                ))
+                .header(
+                    "x-sdkwork-payment-callback-secret",
+                    "test-payment-callback-secret",
+                )
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"event_type\":\"settled\",\"payment_order_id\":\"stripe_pi_123\"}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(settle_response.status(), StatusCode::OK);
+    let settle_json = read_json(settle_response).await;
+    assert_eq!(settle_json["status"], "fulfilled");
+
+    let redemptions = store.list_coupon_redemption_records().await.unwrap();
+    assert_eq!(redemptions.len(), 1);
+    assert_eq!(redemptions[0].subject_id, user_id);
+    assert_eq!(redemptions[0].order_id.as_deref(), Some(order_id.as_str()));
+    assert_eq!(
+        redemptions[0].payment_order_id.as_deref(),
+        Some("stripe_pi_123")
+    );
+}
+
+#[tokio::test]
+async fn portal_marketing_redemptions_return_current_user_history_and_summary() {
+    let pool = memory_pool().await;
+    let store = sdkwork_api_storage_sqlite::SqliteAdminStore::new(pool.clone());
+    let app = sdkwork_api_interface_portal::portal_router_with_pool(pool);
+    let token = portal_token(app.clone()).await;
+    let workspace = portal_workspace(app.clone(), &token).await;
+    let user_id = workspace["user"]["id"].as_str().unwrap().to_owned();
+    let project_id = workspace["project"]["id"].as_str().unwrap().to_owned();
+
+    store
+        .insert_coupon_redemption_record(
+            &sdkwork_api_domain_marketing::CouponRedemptionRecord::new(
+                801,
+                1001,
+                2002,
+                501,
+                101,
+                Some(301),
+                "user",
+                &user_id,
+                1_710_000_100,
+            )
+            .with_status(sdkwork_api_domain_marketing::CouponRedemptionStatus::Fulfilled)
+            .with_project_id(Some(project_id.clone()))
+            .with_order_id(Some("order_alpha".to_owned()))
+            .with_payment_order_id(Some("stripe_pi_alpha".to_owned()))
+            .with_subsidy_amount(Some(8.5))
+            .with_currency_code(Some("USD".to_owned()))
+            .with_updated_at_ms(1_710_000_200),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_coupon_redemption_record(
+            &sdkwork_api_domain_marketing::CouponRedemptionRecord::new(
+                802,
+                1001,
+                2002,
+                502,
+                101,
+                Some(301),
+                "user",
+                &user_id,
+                1_710_000_120,
+            )
+            .with_status(sdkwork_api_domain_marketing::CouponRedemptionStatus::Failed)
+            .with_project_id(Some(project_id.clone()))
+            .with_order_id(Some("order_beta".to_owned()))
+            .with_updated_at_ms(1_710_000_220),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_coupon_redemption_record(
+            &sdkwork_api_domain_marketing::CouponRedemptionRecord::new(
+                803,
+                1001,
+                2002,
+                503,
+                101,
+                Some(301),
+                "user",
+                "other_user",
+                1_710_000_130,
+            )
+            .with_status(sdkwork_api_domain_marketing::CouponRedemptionStatus::Fulfilled)
+            .with_project_id(Some(project_id))
+            .with_order_id(Some("order_gamma".to_owned()))
+            .with_updated_at_ms(1_710_000_230),
+        )
+        .await
+        .unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/portal/marketing/redemptions")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let json = read_json(response).await;
+    let items = json["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0]["coupon_redemption_id"], 802);
+    assert_eq!(items[1]["coupon_redemption_id"], 801);
+    assert_eq!(json["summary"]["total_count"], 2);
+    assert_eq!(json["summary"]["fulfilled_count"], 1);
+    assert_eq!(json["summary"]["failed_count"], 1);
+    assert_eq!(json["summary"]["payment_linked_count"], 1);
+    assert_eq!(json["summary"]["subsidized_count"], 1);
+    assert_eq!(json["summary"]["total_subsidy_amount"], 8.5);
+}
+
+#[tokio::test]
+async fn portal_marketing_codes_return_current_user_wallet_and_latest_redemption() {
+    let pool = memory_pool().await;
+    let store = sdkwork_api_storage_sqlite::SqliteAdminStore::new(pool.clone());
+    let app = sdkwork_api_interface_portal::portal_router_with_pool(pool);
+    let token = portal_token(app.clone()).await;
+    let workspace = portal_workspace(app.clone(), &token).await;
+    let user_id = workspace["user"]["id"].as_str().unwrap().to_owned();
+
+    store
+        .insert_coupon_code_record(
+            &sdkwork_api_domain_marketing::CouponCodeRecord::new(
+                901,
+                1001,
+                2002,
+                301,
+                101,
+                Some(401),
+                hash_coupon_code_for_lookup("WALLET15"),
+                sdkwork_api_domain_marketing::CouponCodeKind::SingleUseUnique,
+                1_710_000_100,
+            )
+            .with_status(sdkwork_api_domain_marketing::CouponCodeStatus::Claimed)
+            .with_claim_subject_type(Some("user".to_owned()))
+            .with_claim_subject_id(Some(format!("1001:2002:{user_id}")))
+            .with_display_code_prefix(Some("WAL".to_owned()))
+            .with_display_code_suffix(Some("15".to_owned()))
+            .with_updated_at_ms(1_710_000_200),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_coupon_redemption_record(
+            &sdkwork_api_domain_marketing::CouponRedemptionRecord::new(
+                951,
+                1001,
+                2002,
+                901,
+                101,
+                Some(401),
+                "user",
+                &user_id,
+                1_710_000_210,
+            )
+            .with_status(sdkwork_api_domain_marketing::CouponRedemptionStatus::Pending)
+            .with_order_id(Some("order_wallet".to_owned()))
+            .with_updated_at_ms(1_710_000_220),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_coupon_code_record(
+            &sdkwork_api_domain_marketing::CouponCodeRecord::new(
+                902,
+                1001,
+                2002,
+                301,
+                101,
+                Some(401),
+                hash_coupon_code_for_lookup("DONE20"),
+                sdkwork_api_domain_marketing::CouponCodeKind::SingleUseUnique,
+                1_710_000_110,
+            )
+            .with_status(sdkwork_api_domain_marketing::CouponCodeStatus::Redeemed)
+            .with_claim_subject_type(Some("user".to_owned()))
+            .with_claim_subject_id(Some(format!("1001:2002:{user_id}")))
+            .with_display_code_prefix(Some("DON".to_owned()))
+            .with_display_code_suffix(Some("20".to_owned()))
+            .with_updated_at_ms(1_710_000_230),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_coupon_redemption_record(
+            &sdkwork_api_domain_marketing::CouponRedemptionRecord::new(
+                952,
+                1001,
+                2002,
+                902,
+                101,
+                Some(401),
+                "user",
+                &user_id,
+                1_710_000_231,
+            )
+            .with_status(sdkwork_api_domain_marketing::CouponRedemptionStatus::Fulfilled)
+            .with_order_id(Some("order_done".to_owned()))
+            .with_updated_at_ms(1_710_000_240),
+        )
+        .await
+        .unwrap();
+    store
+        .insert_coupon_code_record(
+            &sdkwork_api_domain_marketing::CouponCodeRecord::new(
+                903,
+                1001,
+                2002,
+                301,
+                101,
+                Some(401),
+                hash_coupon_code_for_lookup("OTHER30"),
+                sdkwork_api_domain_marketing::CouponCodeKind::SingleUseUnique,
+                1_710_000_120,
+            )
+            .with_status(sdkwork_api_domain_marketing::CouponCodeStatus::Claimed)
+            .with_claim_subject_type(Some("user".to_owned()))
+            .with_claim_subject_id(Some("1001:2002:other_user".to_owned()))
+            .with_updated_at_ms(1_710_000_250),
+        )
+        .await
+        .unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/portal/marketing/codes")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let json = read_json(response).await;
+    let items = json["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0]["code"]["coupon_code_id"], 902);
+    assert_eq!(items[0]["latest_redemption"]["status"], "fulfilled");
+    assert_eq!(items[1]["code"]["coupon_code_id"], 901);
+    assert_eq!(items[1]["latest_redemption"]["status"], "pending");
+    assert_eq!(json["summary"]["total_count"], 2);
+    assert_eq!(json["summary"]["claimed_count"], 1);
+    assert_eq!(json["summary"]["redeemed_count"], 1);
+    assert_eq!(json["summary"]["reserved_count"], 1);
+}
+
+#[tokio::test]
+async fn portal_marketing_codes_support_status_filter() {
+    let pool = memory_pool().await;
+    let store = sdkwork_api_storage_sqlite::SqliteAdminStore::new(pool.clone());
+    let app = sdkwork_api_interface_portal::portal_router_with_pool(pool);
+    let token = portal_token(app.clone()).await;
+    let workspace = portal_workspace(app.clone(), &token).await;
+    let user_id = workspace["user"]["id"].as_str().unwrap().to_owned();
+
+    for (coupon_code_id, status, lookup_hash) in [
+        (
+            911_u64,
+            sdkwork_api_domain_marketing::CouponCodeStatus::Claimed,
+            hash_coupon_code_for_lookup("FILTER15"),
+        ),
+        (
+            912_u64,
+            sdkwork_api_domain_marketing::CouponCodeStatus::Redeemed,
+            hash_coupon_code_for_lookup("FILTER20"),
+        ),
+    ] {
+        store
+            .insert_coupon_code_record(
+                &sdkwork_api_domain_marketing::CouponCodeRecord::new(
+                    coupon_code_id,
+                    1001,
+                    2002,
+                    301,
+                    101,
+                    Some(401),
+                    lookup_hash,
+                    sdkwork_api_domain_marketing::CouponCodeKind::SingleUseUnique,
+                    1_710_000_100 + coupon_code_id,
+                )
+                .with_status(status)
+                .with_claim_subject_type(Some("user".to_owned()))
+                .with_claim_subject_id(Some(format!("1001:2002:{user_id}")))
+                .with_updated_at_ms(1_710_000_300 + coupon_code_id),
+            )
+            .await
+            .unwrap();
+    }
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/portal/marketing/codes?status=claimed")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let json = read_json(response).await;
+    let items = json["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["code"]["coupon_code_id"], 911);
+    assert_eq!(json["summary"]["total_count"], 1);
+    assert_eq!(json["summary"]["claimed_count"], 1);
+    assert_eq!(json["summary"]["redeemed_count"], 0);
+}
+
+#[tokio::test]
+async fn portal_commerce_quote_and_order_support_custom_recharge_but_reject_portal_self_settlement()
+{
     let pool = memory_pool().await;
     let app = sdkwork_api_interface_portal::portal_router_with_pool(pool.clone());
     let token = portal_token(app.clone()).await;
@@ -349,9 +1047,12 @@ async fn portal_commerce_quote_and_order_support_custom_recharge_from_server_pol
         .await
         .unwrap();
 
-    assert_eq!(settle_response.status(), StatusCode::OK);
+    assert_eq!(settle_response.status(), StatusCode::FORBIDDEN);
     let settle_json = read_json(settle_response).await;
-    assert_eq!(settle_json["status"], "fulfilled");
+    assert_eq!(
+        settle_json["error"]["message"],
+        "paid orders must be settled through the payment callback flow"
+    );
 
     let billing_response = app
         .oneshot(
@@ -367,7 +1068,7 @@ async fn portal_commerce_quote_and_order_support_custom_recharge_from_server_pol
 
     assert_eq!(billing_response.status(), StatusCode::OK);
     let billing_json = read_json(billing_response).await;
-    assert_eq!(billing_json["remaining_units"], 140260);
+    assert_eq!(billing_json["remaining_units"], 260);
 }
 
 #[tokio::test]
@@ -519,7 +1220,7 @@ async fn portal_commerce_orders_queue_paid_checkout_and_fulfill_coupon_redemptio
 }
 
 #[tokio::test]
-async fn portal_commerce_pending_recharge_can_be_settled_or_canceled() {
+async fn portal_commerce_pending_recharge_requires_payment_callback_or_cancel() {
     let pool = memory_pool().await;
     sqlx::query(
         "INSERT INTO ai_coupon_campaigns (id, code, discount_label, audience, remaining, active, note, expires_on, created_at_ms)
@@ -606,13 +1307,11 @@ async fn portal_commerce_pending_recharge_can_be_settled_or_canceled() {
     assert_eq!(checkout_session_json["order_id"], settled_order_id);
     assert_eq!(checkout_session_json["order_status"], "pending_payment");
     assert_eq!(checkout_session_json["session_status"], "open");
-    assert_eq!(checkout_session_json["provider"], "manual_lab");
-    assert_eq!(checkout_session_json["mode"], "operator_settlement");
     assert!(checkout_session_json["reference"]
         .as_str()
         .unwrap()
         .starts_with("PAY-"));
-    assert!(checkout_session_json["methods"]
+    assert!(!checkout_session_json["methods"]
         .as_array()
         .unwrap()
         .iter()
@@ -638,35 +1337,11 @@ async fn portal_commerce_pending_recharge_can_be_settled_or_canceled() {
         .await
         .unwrap();
 
-    assert_eq!(settle_response.status(), StatusCode::OK);
+    assert_eq!(settle_response.status(), StatusCode::FORBIDDEN);
     let settle_json = read_json(settle_response).await;
-    assert_eq!(settle_json["order_id"], settled_order_id);
-    assert_eq!(settle_json["status"], "fulfilled");
-
-    let settled_checkout_session_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("GET")
-                .uri(&format!(
-                    "/portal/commerce/orders/{settled_order_id}/checkout-session"
-                ))
-                .header("authorization", format!("Bearer {token}"))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(settled_checkout_session_response.status(), StatusCode::OK);
-    let settled_checkout_session_json = read_json(settled_checkout_session_response).await;
-    assert_eq!(settled_checkout_session_json["session_status"], "settled");
     assert_eq!(
-        settled_checkout_session_json["methods"]
-            .as_array()
-            .unwrap()
-            .len(),
-        0
+        settle_json["error"]["message"],
+        "paid orders must be settled through the payment callback flow"
     );
 
     let billing_after_settle = app
@@ -684,7 +1359,7 @@ async fn portal_commerce_pending_recharge_can_be_settled_or_canceled() {
 
     assert_eq!(billing_after_settle.status(), StatusCode::OK);
     let billing_after_settle_json = read_json(billing_after_settle).await;
-    assert_eq!(billing_after_settle_json["remaining_units"], 100260);
+    assert_eq!(billing_after_settle_json["remaining_units"], 260);
 
     let cancel_create_response = app
         .clone()
@@ -742,11 +1417,12 @@ async fn portal_commerce_pending_recharge_can_be_settled_or_canceled() {
 
     assert_eq!(billing_after_cancel.status(), StatusCode::OK);
     let billing_after_cancel_json = read_json(billing_after_cancel).await;
-    assert_eq!(billing_after_cancel_json["remaining_units"], 100260);
+    assert_eq!(billing_after_cancel_json["remaining_units"], 260);
 }
 
 #[tokio::test]
-async fn portal_commerce_subscription_checkout_requires_settlement_before_membership_activation() {
+async fn portal_commerce_subscription_checkout_requires_payment_callback_before_membership_activation(
+) {
     let pool = memory_pool().await;
     let app = sdkwork_api_interface_portal::portal_router_with_pool(pool.clone());
     let token = portal_token(app.clone()).await;
@@ -848,9 +1524,12 @@ async fn portal_commerce_subscription_checkout_requires_settlement_before_member
         .await
         .unwrap();
 
-    assert_eq!(settle_response.status(), StatusCode::OK);
+    assert_eq!(settle_response.status(), StatusCode::FORBIDDEN);
     let settle_json = read_json(settle_response).await;
-    assert_eq!(settle_json["status"], "fulfilled");
+    assert_eq!(
+        settle_json["error"]["message"],
+        "paid orders must be settled through the payment callback flow"
+    );
 
     let settled_billing_response = app
         .clone()
@@ -867,7 +1546,7 @@ async fn portal_commerce_subscription_checkout_requires_settlement_before_member
 
     assert_eq!(settled_billing_response.status(), StatusCode::OK);
     let settled_billing_json = read_json(settled_billing_response).await;
-    assert_eq!(settled_billing_json["remaining_units"], 99760);
+    assert_eq!(settled_billing_json["remaining_units"], 260);
 
     let settled_membership_response = app
         .oneshot(
@@ -883,18 +1562,87 @@ async fn portal_commerce_subscription_checkout_requires_settlement_before_member
 
     assert_eq!(settled_membership_response.status(), StatusCode::OK);
     let membership_json = read_json(settled_membership_response).await;
-    assert_eq!(membership_json["project_id"], project_id);
-    assert_eq!(membership_json["user_id"], user_id);
-    assert_eq!(membership_json["plan_id"], "growth");
-    assert_eq!(membership_json["plan_name"], "Growth");
-    assert_eq!(membership_json["included_units"], 100000);
-    assert_eq!(membership_json["cadence"], "/month");
-    assert_eq!(membership_json["status"], "active");
+    assert!(membership_json.is_null());
 }
 
 #[tokio::test]
-async fn portal_commerce_payment_events_can_fail_checkout_and_block_invalid_recovery() {
+async fn portal_commerce_payment_events_reject_direct_portal_settlement_events() {
     let pool = memory_pool().await;
+    let app = sdkwork_api_interface_portal::portal_router_with_pool(pool.clone());
+    let token = portal_token(app.clone()).await;
+    let workspace = portal_workspace(app.clone(), &token).await;
+    let project_id = workspace["project"]["id"].as_str().unwrap().to_owned();
+
+    sqlx::query(
+        "INSERT INTO ai_billing_ledger_entries (project_id, units, amount) VALUES (?, ?, ?)",
+    )
+    .bind(&project_id)
+    .bind(240_i64)
+    .bind(0.42_f64)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "INSERT INTO ai_billing_quota_policies (policy_id, project_id, max_units, enabled)
+         VALUES (?, ?, ?, ?)",
+    )
+    .bind("quota-portal")
+    .bind(&project_id)
+    .bind(500_i64)
+    .bind(1_i64)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let create_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/portal/commerce/orders")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"target_kind\":\"subscription_plan\",\"target_id\":\"growth\"}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(create_response.status(), StatusCode::CREATED);
+    let create_json = read_json(create_response).await;
+    let order_id = create_json["order_id"].as_str().unwrap().to_owned();
+
+    let settle_response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(&format!(
+                    "/portal/commerce/orders/{order_id}/payment-events"
+                ))
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from("{\"event_type\":\"settled\"}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(settle_response.status(), StatusCode::FORBIDDEN);
+    let settle_json = read_json(settle_response).await;
+    assert_eq!(
+        settle_json["error"]["message"],
+        "payment provider callbacks must use the internal callback endpoint"
+    );
+}
+
+#[tokio::test]
+#[serial]
+async fn portal_commerce_provider_callbacks_can_fail_checkout_and_block_invalid_recovery() {
+    let pool = memory_pool().await;
+    let _callback_secret_guard = payment_callback_secret_env_guard("test-payment-callback-secret");
     let app = sdkwork_api_interface_portal::portal_router_with_pool(pool.clone());
     let token = portal_token(app.clone()).await;
     let workspace = portal_workspace(app.clone(), &token).await;
@@ -949,9 +1697,12 @@ async fn portal_commerce_payment_events_can_fail_checkout_and_block_invalid_reco
             Request::builder()
                 .method("POST")
                 .uri(&format!(
-                    "/portal/commerce/orders/{order_id}/payment-events"
+                    "/portal/internal/commerce/orders/{order_id}/payment-events"
                 ))
-                .header("authorization", format!("Bearer {token}"))
+                .header(
+                    "x-sdkwork-payment-callback-secret",
+                    "test-payment-callback-secret",
+                )
                 .header("content-type", "application/json")
                 .body(Body::from("{\"event_type\":\"failed\"}"))
                 .unwrap(),
@@ -1010,9 +1761,12 @@ async fn portal_commerce_payment_events_can_fail_checkout_and_block_invalid_reco
             Request::builder()
                 .method("POST")
                 .uri(&format!(
-                    "/portal/commerce/orders/{order_id}/payment-events"
+                    "/portal/internal/commerce/orders/{order_id}/payment-events"
                 ))
-                .header("authorization", format!("Bearer {token}"))
+                .header(
+                    "x-sdkwork-payment-callback-secret",
+                    "test-payment-callback-secret",
+                )
                 .header("content-type", "application/json")
                 .body(Body::from("{\"event_type\":\"settled\"}"))
                 .unwrap(),
@@ -1029,8 +1783,10 @@ async fn portal_commerce_payment_events_can_fail_checkout_and_block_invalid_reco
 }
 
 #[tokio::test]
-async fn portal_commerce_payment_settlement_event_activates_membership_and_quota() {
+#[serial]
+async fn portal_commerce_provider_settlement_event_activates_membership_and_quota() {
     let pool = memory_pool().await;
+    let _callback_secret_guard = payment_callback_secret_env_guard("test-payment-callback-secret");
     let app = sdkwork_api_interface_portal::portal_router_with_pool(pool.clone());
     let token = portal_token(app.clone()).await;
     let workspace = portal_workspace(app.clone(), &token).await;
@@ -1086,9 +1842,12 @@ async fn portal_commerce_payment_settlement_event_activates_membership_and_quota
             Request::builder()
                 .method("POST")
                 .uri(&format!(
-                    "/portal/commerce/orders/{order_id}/payment-events"
+                    "/portal/internal/commerce/orders/{order_id}/payment-events"
                 ))
-                .header("authorization", format!("Bearer {token}"))
+                .header(
+                    "x-sdkwork-payment-callback-secret",
+                    "test-payment-callback-secret",
+                )
                 .header("content-type", "application/json")
                 .body(Body::from("{\"event_type\":\"settled\"}"))
                 .unwrap(),
@@ -1137,3 +1896,101 @@ async fn portal_commerce_payment_settlement_event_activates_membership_and_quota
     assert_eq!(membership_json["status"], "active");
 }
 
+#[tokio::test]
+#[serial]
+async fn portal_billing_summary_prefers_canonical_account_balance_after_recharge_settlement() {
+    let pool = memory_pool().await;
+    let _callback_secret_guard = payment_callback_secret_env_guard("test-payment-callback-secret");
+    let app = sdkwork_api_interface_portal::portal_router_with_pool(pool.clone());
+    let token = portal_token(app.clone()).await;
+    let workspace = portal_workspace(app.clone(), &token).await;
+    let project_id = workspace["project"]["id"].as_str().unwrap().to_owned();
+
+    sqlx::query(
+        "INSERT INTO ai_billing_ledger_entries (project_id, units, amount) VALUES (?, ?, ?)",
+    )
+    .bind(&project_id)
+    .bind(240_i64)
+    .bind(0.42_f64)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "INSERT INTO ai_billing_quota_policies (policy_id, project_id, max_units, enabled)
+         VALUES (?, ?, ?, ?)",
+    )
+    .bind("quota-portal")
+    .bind(&project_id)
+    .bind(500_i64)
+    .bind(1_i64)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let create_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/portal/commerce/orders")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"target_kind\":\"recharge_pack\",\"target_id\":\"pack-100k\"}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(create_response.status(), StatusCode::CREATED);
+    let create_json = read_json(create_response).await;
+    let order_id = create_json["order_id"].as_str().unwrap().to_owned();
+    assert_eq!(create_json["status"], "pending_payment");
+
+    let settle_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(&format!(
+                    "/portal/internal/commerce/orders/{order_id}/payment-events"
+                ))
+                .header(
+                    "x-sdkwork-payment-callback-secret",
+                    "test-payment-callback-secret",
+                )
+                .header("content-type", "application/json")
+                .body(Body::from("{\"event_type\":\"settled\"}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(settle_response.status(), StatusCode::OK);
+    let settle_json = read_json(settle_response).await;
+    assert_eq!(settle_json["status"], "fulfilled");
+
+    let billing_response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/portal/billing/summary")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(billing_response.status(), StatusCode::OK);
+    let billing_json = read_json(billing_response).await;
+    assert_eq!(billing_json["balance_source"], "canonical_account");
+    assert_eq!(billing_json["remaining_units"], 100000);
+    assert_eq!(billing_json["canonical_available_balance"], 100000.0);
+    assert_eq!(billing_json["canonical_grant_balance"], 100000.0);
+    assert_eq!(billing_json["canonical_consumed_balance"], 0.0);
+    assert_eq!(billing_json["canonical_held_balance"], 0.0);
+    assert_eq!(billing_json["quota_remaining_units"], 260);
+}

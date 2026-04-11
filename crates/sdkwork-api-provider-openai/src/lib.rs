@@ -1,8 +1,9 @@
 use std::collections::HashMap;
+use std::time::Duration;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use reqwest::{Client, RequestBuilder};
+use reqwest::{Client, RequestBuilder, StatusCode};
 use sdkwork_api_contract_openai::assistants::{CreateAssistantRequest, UpdateAssistantRequest};
 use sdkwork_api_contract_openai::audio::{
     CreateSpeechRequest, CreateTranscriptionRequest, CreateTranslationRequest,
@@ -64,6 +65,121 @@ pub fn map_model_object(model: &str) -> ModelCatalogEntry {
     ModelCatalogEntry::new(model, "provider-openai-official")
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenAiProviderHttpConfig {
+    connect_timeout: Duration,
+    request_timeout: Duration,
+    pool_idle_timeout: Duration,
+    tcp_keepalive: Duration,
+}
+
+impl Default for OpenAiProviderHttpConfig {
+    fn default() -> Self {
+        Self {
+            connect_timeout: Duration::from_secs(5),
+            request_timeout: Duration::from_secs(120),
+            pool_idle_timeout: Duration::from_secs(90),
+            tcp_keepalive: Duration::from_secs(30),
+        }
+    }
+}
+
+impl OpenAiProviderHttpConfig {
+    pub fn with_connect_timeout(mut self, timeout: Duration) -> Self {
+        self.connect_timeout = timeout;
+        self
+    }
+
+    pub fn with_request_timeout(mut self, timeout: Duration) -> Self {
+        self.request_timeout = timeout;
+        self
+    }
+
+    pub fn with_pool_idle_timeout(mut self, timeout: Duration) -> Self {
+        self.pool_idle_timeout = timeout;
+        self
+    }
+
+    pub fn with_tcp_keepalive(mut self, timeout: Duration) -> Self {
+        self.tcp_keepalive = timeout;
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UpstreamFailureCategory {
+    Timeout,
+    Connect,
+    HttpStatus,
+    Transport,
+    Other,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpstreamFailure {
+    pub category: UpstreamFailureCategory,
+    pub retryable: bool,
+    pub status_code: Option<u16>,
+    pub message: String,
+}
+
+pub fn classify_upstream_error(error: &anyhow::Error) -> UpstreamFailure {
+    let Some(reqwest_error) = error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<reqwest::Error>())
+    else {
+        return UpstreamFailure {
+            category: UpstreamFailureCategory::Other,
+            retryable: false,
+            status_code: None,
+            message: error.to_string(),
+        };
+    };
+
+    if reqwest_error.is_connect() {
+        return UpstreamFailure {
+            category: UpstreamFailureCategory::Connect,
+            retryable: true,
+            status_code: None,
+            message: format!("upstream connect failure: {reqwest_error}"),
+        };
+    }
+
+    if reqwest_error.is_timeout() {
+        return UpstreamFailure {
+            category: UpstreamFailureCategory::Timeout,
+            retryable: true,
+            status_code: None,
+            message: format!("upstream request timeout: {reqwest_error}"),
+        };
+    }
+
+    if let Some(status) = reqwest_error.status() {
+        return UpstreamFailure {
+            category: UpstreamFailureCategory::HttpStatus,
+            retryable: is_retryable_http_status(status),
+            status_code: Some(status.as_u16()),
+            message: format!("upstream returned HTTP {}", status.as_u16()),
+        };
+    }
+
+    if reqwest_error.is_request() || reqwest_error.is_body() {
+        return UpstreamFailure {
+            category: UpstreamFailureCategory::Transport,
+            retryable: true,
+            status_code: None,
+            message: format!("upstream transport failure: {reqwest_error}"),
+        };
+    }
+
+    UpstreamFailure {
+        category: UpstreamFailureCategory::Other,
+        retryable: false,
+        status_code: None,
+        message: error.to_string(),
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct OpenAiProviderAdapter {
     base_url: String,
@@ -73,9 +189,16 @@ pub struct OpenAiProviderAdapter {
 
 impl OpenAiProviderAdapter {
     pub fn new(base_url: impl Into<String>) -> Self {
+        Self::with_http_config(base_url, OpenAiProviderHttpConfig::default())
+    }
+
+    pub fn with_http_config(
+        base_url: impl Into<String>,
+        config: OpenAiProviderHttpConfig,
+    ) -> Self {
         Self {
             base_url: base_url.into().trim_end_matches('/').to_owned(),
-            client: Client::new(),
+            client: build_http_client(&config),
             request_headers: HashMap::new(),
         }
     }
@@ -2121,4 +2244,26 @@ fn add_optional_number_field(
         Some(value) => form.text(name.to_owned(), value.to_string()),
         None => form,
     }
+}
+
+fn build_http_client(config: &OpenAiProviderHttpConfig) -> Client {
+    Client::builder()
+        .connect_timeout(config.connect_timeout)
+        .timeout(config.request_timeout)
+        .pool_idle_timeout(config.pool_idle_timeout)
+        .tcp_keepalive(config.tcp_keepalive)
+        .build()
+        .expect("valid OpenAI provider HTTP client configuration")
+}
+
+fn is_retryable_http_status(status: StatusCode) -> bool {
+    matches!(
+        status,
+        StatusCode::REQUEST_TIMEOUT
+            | StatusCode::TOO_MANY_REQUESTS
+            | StatusCode::INTERNAL_SERVER_ERROR
+            | StatusCode::BAD_GATEWAY
+            | StatusCode::SERVICE_UNAVAILABLE
+            | StatusCode::GATEWAY_TIMEOUT
+    )
 }

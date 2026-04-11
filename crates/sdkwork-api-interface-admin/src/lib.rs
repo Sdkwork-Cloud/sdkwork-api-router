@@ -1,11 +1,10 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::{
     body::Bytes,
-    extract::FromRequestParts,
-    extract::Path,
-    extract::State,
+    extract::{FromRequestParts, Path, Query, State},
     http::header,
     http::request::Parts,
     http::StatusCode,
@@ -15,7 +14,8 @@ use axum::{
 };
 use sdkwork_api_app_billing::{
     create_quota_policy, list_billing_events, list_ledger_entries, list_quota_policies,
-    persist_quota_policy, summarize_billing_events_from_store, summarize_billing_from_store,
+    persist_quota_policy, summarize_account_balance, summarize_billing_events_from_store,
+    summarize_billing_from_store,
 };
 use sdkwork_api_app_catalog::{
     delete_channel as delete_catalog_channel, delete_channel_model as delete_catalog_channel_model,
@@ -39,22 +39,30 @@ use sdkwork_api_app_extension::{
     list_provider_health_snapshots, persist_extension_installation, persist_extension_instance,
     PersistExtensionInstanceInput,
 };
-  use sdkwork_api_app_gateway::{
-      invalidate_capability_catalog_cache, reload_extension_host_with_scope,
-      ConfiguredExtensionHostReloadScope,
-  };
+use sdkwork_api_app_gateway::{
+    invalidate_capability_catalog_cache, reload_extension_host_with_scope,
+    ConfiguredExtensionHostReloadScope,
+};
 use sdkwork_api_app_identity::{
-    change_admin_password, create_api_key_group, delete_admin_user, delete_api_key_group,
-    delete_gateway_api_key, delete_portal_user, list_admin_user_profiles, list_api_key_groups,
-    list_gateway_api_keys, list_portal_user_profiles, load_admin_user_profile, login_admin_user,
-    reset_admin_user_password, reset_portal_user_password, set_admin_user_active,
-    set_api_key_group_active, set_gateway_api_key_active, set_portal_user_active,
-    update_api_key_group, update_gateway_api_key_metadata, upsert_admin_user, upsert_portal_user,
-    verify_jwt, AdminIdentityError, ApiKeyGroupInput, Claims, CreatedGatewayApiKey,
-    PortalIdentityError,
+    change_admin_password, create_api_key_group, delete_admin_user_with_bootstrap,
+    delete_api_key_group, delete_gateway_api_key, delete_portal_user_with_bootstrap,
+    list_admin_user_profiles_with_bootstrap, list_api_key_groups, list_gateway_api_keys,
+    list_portal_user_profiles_with_bootstrap, load_admin_user_profile,
+    login_admin_user_with_bootstrap, reset_admin_user_password, reset_portal_user_password,
+    set_admin_user_active, set_api_key_group_active, set_gateway_api_key_active,
+    set_portal_user_active, update_api_key_group, update_gateway_api_key_metadata,
+    upsert_admin_user, upsert_portal_user, verify_jwt, AdminIdentityError, ApiKeyGroupInput,
+    Claims, CreatedGatewayApiKey, PortalIdentityError,
+};
+use sdkwork_api_app_marketing::{
+    find_coupon_redemption, list_coupon_codes, list_coupon_redemptions, summarize_coupon_codes,
+    summarize_coupon_redemptions, summarize_marketing_overview, CouponCodeSummary,
+    CouponRedemptionSummary, ListCouponCodesInput, ListCouponRedemptionsInput,
+    MarketingOverviewSummary,
 };
 use sdkwork_api_app_rate_limit::{
     create_rate_limit_policy, list_rate_limit_policies, persist_rate_limit_policy,
+    GatewayTrafficController, InMemoryGatewayTrafficController,
 };
 use sdkwork_api_app_routing::{
     create_routing_policy, create_routing_profile, list_compiled_routing_snapshots,
@@ -75,7 +83,10 @@ use sdkwork_api_app_tenant::{
 };
 use sdkwork_api_app_usage::list_usage_records;
 use sdkwork_api_app_usage::summarize_usage_records_from_store;
-use sdkwork_api_domain_billing::{BillingEventRecord, BillingEventSummary, BillingSummary, LedgerEntry, QuotaPolicy};
+use sdkwork_api_domain_billing::{
+    AccountType, BillingEventRecord, BillingEventSummary, BillingSummary, LedgerEntry,
+    ProjectBillingSummary, QuotaPolicy,
+};
 use sdkwork_api_domain_catalog::{
     Channel, ChannelModelRecord, ModelCapability, ModelCatalogEntry, ModelPriceRecord,
     ProviderChannelBinding, ProxyProvider,
@@ -83,9 +94,16 @@ use sdkwork_api_domain_catalog::{
 use sdkwork_api_domain_coupon::CouponCampaign;
 use sdkwork_api_domain_credential::UpstreamCredential;
 use sdkwork_api_domain_identity::{
-    AdminUserProfile, ApiKeyGroupRecord, GatewayApiKeyRecord, PortalUserProfile,
+    AdminAuditEventRecord, AdminUserProfile, AdminUserRole, ApiKeyGroupRecord, GatewayApiKeyRecord,
+    PortalUserProfile,
 };
-use sdkwork_api_domain_rate_limit::{RateLimitPolicy, RateLimitWindowSnapshot};
+use sdkwork_api_domain_marketing::{
+    CouponClaimRecord, CouponCodeBatchRecord, CouponCodeRecord, CouponCodeStatus,
+    CouponRedemptionRecord, CouponRedemptionStatus, CouponTemplateRecord, MarketingCampaignRecord,
+};
+use sdkwork_api_domain_rate_limit::{
+    CommercialPressureScopeKind, RateLimitPolicy, RateLimitWindowSnapshot, TrafficPressureSnapshot,
+};
 use sdkwork_api_domain_routing::{
     CompiledRoutingSnapshotRecord, ProviderHealthSnapshot, RoutingCandidateAssessment,
     RoutingDecisionLog, RoutingDecisionSource, RoutingPolicy, RoutingProfileRecord,
@@ -104,6 +122,9 @@ use sdkwork_api_storage_sqlite::SqliteAdminStore;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::SqlitePool;
+
+const PORTAL_WORKSPACE_IDENTITY_BINDING_TYPE: &str = "portal_workspace_user";
+const PORTAL_WORKSPACE_IDENTITY_BINDING_ISSUER: &str = "sdkwork-api-portal";
 
 const DEFAULT_ADMIN_JWT_SIGNING_SECRET: &str = "local-dev-admin-jwt-secret";
 const ADMIN_OPENAPI_SPEC: OpenApiServiceSpec<'static> = OpenApiServiceSpec {
@@ -220,6 +241,8 @@ pub struct AdminApiState {
     secret_manager: CredentialSecretManager,
     live_jwt_signing_secret: Reloadable<String>,
     jwt_signing_secret: String,
+    traffic_controller: Arc<dyn GatewayTrafficController>,
+    allow_local_dev_bootstrap: bool,
 }
 
 impl Clone for AdminApiState {
@@ -231,6 +254,8 @@ impl Clone for AdminApiState {
             secret_manager: self.live_secret_manager.snapshot(),
             live_jwt_signing_secret: self.live_jwt_signing_secret.clone(),
             jwt_signing_secret: self.live_jwt_signing_secret.snapshot(),
+            traffic_controller: Arc::clone(&self.traffic_controller),
+            allow_local_dev_bootstrap: self.allow_local_dev_bootstrap,
         }
     }
 }
@@ -283,10 +308,57 @@ impl AdminApiState {
         secret_manager: CredentialSecretManager,
         jwt_signing_secret: impl Into<String>,
     ) -> Self {
-        Self::with_live_store_and_secret_manager_handle_and_jwt_secret_handle(
+        Self::with_store_and_secret_manager_and_jwt_secret_and_traffic_controller(
+            store,
+            secret_manager,
+            jwt_signing_secret,
+            Arc::new(InMemoryGatewayTrafficController::new()),
+        )
+    }
+
+    pub fn with_store_and_secret_manager_and_jwt_secret_and_traffic_controller(
+        store: Arc<dyn AdminStore>,
+        secret_manager: CredentialSecretManager,
+        jwt_signing_secret: impl Into<String>,
+        traffic_controller: Arc<dyn GatewayTrafficController>,
+    ) -> Self {
+        Self::with_store_and_secret_manager_and_jwt_secret_and_local_bootstrap_and_traffic_controller(
+            store,
+            secret_manager,
+            jwt_signing_secret,
+            true,
+            traffic_controller,
+        )
+    }
+
+    pub fn with_store_and_secret_manager_and_jwt_secret_and_local_bootstrap(
+        store: Arc<dyn AdminStore>,
+        secret_manager: CredentialSecretManager,
+        jwt_signing_secret: impl Into<String>,
+        allow_local_dev_bootstrap: bool,
+    ) -> Self {
+        Self::with_store_and_secret_manager_and_jwt_secret_and_local_bootstrap_and_traffic_controller(
+            store,
+            secret_manager,
+            jwt_signing_secret,
+            allow_local_dev_bootstrap,
+            Arc::new(InMemoryGatewayTrafficController::new()),
+        )
+    }
+
+    pub fn with_store_and_secret_manager_and_jwt_secret_and_local_bootstrap_and_traffic_controller(
+        store: Arc<dyn AdminStore>,
+        secret_manager: CredentialSecretManager,
+        jwt_signing_secret: impl Into<String>,
+        allow_local_dev_bootstrap: bool,
+        traffic_controller: Arc<dyn GatewayTrafficController>,
+    ) -> Self {
+        Self::with_live_store_and_secret_manager_handle_and_jwt_secret_handle_and_local_bootstrap_and_traffic_controller(
             Reloadable::new(store),
             Reloadable::new(secret_manager),
             Reloadable::new(jwt_signing_secret.into()),
+            allow_local_dev_bootstrap,
+            traffic_controller,
         )
     }
 
@@ -295,10 +367,57 @@ impl AdminApiState {
         secret_manager: CredentialSecretManager,
         live_jwt_signing_secret: Reloadable<String>,
     ) -> Self {
-        Self::with_live_store_and_secret_manager_handle_and_jwt_secret_handle(
+        Self::with_live_store_and_secret_manager_and_jwt_secret_handle_and_traffic_controller(
+            live_store,
+            secret_manager,
+            live_jwt_signing_secret,
+            Arc::new(InMemoryGatewayTrafficController::new()),
+        )
+    }
+
+    pub fn with_live_store_and_secret_manager_and_jwt_secret_handle_and_traffic_controller(
+        live_store: Reloadable<Arc<dyn AdminStore>>,
+        secret_manager: CredentialSecretManager,
+        live_jwt_signing_secret: Reloadable<String>,
+        traffic_controller: Arc<dyn GatewayTrafficController>,
+    ) -> Self {
+        Self::with_live_store_and_secret_manager_and_jwt_secret_handle_and_local_bootstrap_and_traffic_controller(
+            live_store,
+            secret_manager,
+            live_jwt_signing_secret,
+            true,
+            traffic_controller,
+        )
+    }
+
+    pub fn with_live_store_and_secret_manager_and_jwt_secret_handle_and_local_bootstrap(
+        live_store: Reloadable<Arc<dyn AdminStore>>,
+        secret_manager: CredentialSecretManager,
+        live_jwt_signing_secret: Reloadable<String>,
+        allow_local_dev_bootstrap: bool,
+    ) -> Self {
+        Self::with_live_store_and_secret_manager_and_jwt_secret_handle_and_local_bootstrap_and_traffic_controller(
+            live_store,
+            secret_manager,
+            live_jwt_signing_secret,
+            allow_local_dev_bootstrap,
+            Arc::new(InMemoryGatewayTrafficController::new()),
+        )
+    }
+
+    pub fn with_live_store_and_secret_manager_and_jwt_secret_handle_and_local_bootstrap_and_traffic_controller(
+        live_store: Reloadable<Arc<dyn AdminStore>>,
+        secret_manager: CredentialSecretManager,
+        live_jwt_signing_secret: Reloadable<String>,
+        allow_local_dev_bootstrap: bool,
+        traffic_controller: Arc<dyn GatewayTrafficController>,
+    ) -> Self {
+        Self::with_live_store_and_secret_manager_handle_and_jwt_secret_handle_and_local_bootstrap_and_traffic_controller(
             live_store,
             Reloadable::new(secret_manager),
             live_jwt_signing_secret,
+            allow_local_dev_bootstrap,
+            traffic_controller,
         )
     }
 
@@ -307,6 +426,51 @@ impl AdminApiState {
         live_secret_manager: Reloadable<CredentialSecretManager>,
         live_jwt_signing_secret: Reloadable<String>,
     ) -> Self {
+        Self::with_live_store_and_secret_manager_handle_and_jwt_secret_handle_and_traffic_controller(
+            live_store,
+            live_secret_manager,
+            live_jwt_signing_secret,
+            Arc::new(InMemoryGatewayTrafficController::new()),
+        )
+    }
+
+    pub fn with_live_store_and_secret_manager_handle_and_jwt_secret_handle_and_traffic_controller(
+        live_store: Reloadable<Arc<dyn AdminStore>>,
+        live_secret_manager: Reloadable<CredentialSecretManager>,
+        live_jwt_signing_secret: Reloadable<String>,
+        traffic_controller: Arc<dyn GatewayTrafficController>,
+    ) -> Self {
+        Self::with_live_store_and_secret_manager_handle_and_jwt_secret_handle_and_local_bootstrap_and_traffic_controller(
+            live_store,
+            live_secret_manager,
+            live_jwt_signing_secret,
+            true,
+            traffic_controller,
+        )
+    }
+
+    pub fn with_live_store_and_secret_manager_handle_and_jwt_secret_handle_and_local_bootstrap(
+        live_store: Reloadable<Arc<dyn AdminStore>>,
+        live_secret_manager: Reloadable<CredentialSecretManager>,
+        live_jwt_signing_secret: Reloadable<String>,
+        allow_local_dev_bootstrap: bool,
+    ) -> Self {
+        Self::with_live_store_and_secret_manager_handle_and_jwt_secret_handle_and_local_bootstrap_and_traffic_controller(
+            live_store,
+            live_secret_manager,
+            live_jwt_signing_secret,
+            allow_local_dev_bootstrap,
+            Arc::new(InMemoryGatewayTrafficController::new()),
+        )
+    }
+
+    pub fn with_live_store_and_secret_manager_handle_and_jwt_secret_handle_and_local_bootstrap_and_traffic_controller(
+        live_store: Reloadable<Arc<dyn AdminStore>>,
+        live_secret_manager: Reloadable<CredentialSecretManager>,
+        live_jwt_signing_secret: Reloadable<String>,
+        allow_local_dev_bootstrap: bool,
+        traffic_controller: Arc<dyn GatewayTrafficController>,
+    ) -> Self {
         Self {
             store: live_store.snapshot(),
             secret_manager: live_secret_manager.snapshot(),
@@ -314,16 +478,20 @@ impl AdminApiState {
             live_secret_manager,
             jwt_signing_secret: live_jwt_signing_secret.snapshot(),
             live_jwt_signing_secret,
+            allow_local_dev_bootstrap,
+            traffic_controller,
         }
     }
 }
 
 #[derive(Clone, Debug)]
-struct AuthenticatedAdminClaims(Claims);
+struct AuthenticatedAdminClaims {
+    claims: Claims,
+}
 
 impl AuthenticatedAdminClaims {
     fn claims(&self) -> &Claims {
-        &self.0
+        &self.claims
     }
 }
 
@@ -347,9 +515,101 @@ impl FromRequestParts<AdminApiState> for AuthenticatedAdminClaims {
             return Err(StatusCode::UNAUTHORIZED);
         };
 
-        verify_jwt(token, &state.jwt_signing_secret)
-            .map(Self)
-            .map_err(|_| StatusCode::UNAUTHORIZED)
+        let claims =
+            verify_jwt(token, &state.jwt_signing_secret).map_err(|_| StatusCode::UNAUTHORIZED)?;
+        let Some(user) = state
+            .store
+            .find_admin_user_by_id(&claims.sub)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        else {
+            return Err(StatusCode::UNAUTHORIZED);
+        };
+        if !user.active {
+            return Err(StatusCode::UNAUTHORIZED);
+        }
+        if !authorize_admin_route(&user.role, parts.method.as_str(), parts.uri.path()) {
+            return Err(StatusCode::FORBIDDEN);
+        }
+
+        Ok(Self { claims })
+    }
+}
+
+fn authorize_admin_route(role: &AdminUserRole, method: &str, path: &str) -> bool {
+    if path == "/admin/auth/me" || path == "/admin/auth/change-password" {
+        return true;
+    }
+
+    let is_read = matches!(method, "GET" | "HEAD");
+    let required = if path.starts_with("/admin/users/")
+        || path.starts_with("/admin/credentials")
+        || path.starts_with("/admin/api-keys")
+        || path.starts_with("/admin/api-key-groups")
+    {
+        AdminRoutePermission::SuperAdminOnly
+    } else if path.starts_with("/admin/audit") {
+        AdminRoutePermission::AuditRead
+    } else if path.starts_with("/admin/model-prices") {
+        if is_read {
+            AdminRoutePermission::PricingRead
+        } else {
+            AdminRoutePermission::PricingWrite
+        }
+    } else if path.starts_with("/admin/billing")
+        || path.starts_with("/admin/coupons")
+        || path.starts_with("/admin/marketing")
+    {
+        if is_read {
+            AdminRoutePermission::FinanceRead
+        } else {
+            AdminRoutePermission::FinanceWrite
+        }
+    } else if is_read {
+        AdminRoutePermission::PlatformRead
+    } else {
+        AdminRoutePermission::PlatformWrite
+    };
+
+    role_allows_admin_permission(*role, required)
+}
+
+#[derive(Clone, Copy)]
+enum AdminRoutePermission {
+    SuperAdminOnly,
+    AuditRead,
+    PlatformRead,
+    PlatformWrite,
+    PricingRead,
+    PricingWrite,
+    FinanceRead,
+    FinanceWrite,
+}
+
+fn role_allows_admin_permission(role: AdminUserRole, permission: AdminRoutePermission) -> bool {
+    match role {
+        AdminUserRole::SuperAdmin => true,
+        AdminUserRole::PlatformOperator => matches!(
+            permission,
+            AdminRoutePermission::PlatformRead
+                | AdminRoutePermission::PlatformWrite
+                | AdminRoutePermission::PricingRead
+                | AdminRoutePermission::AuditRead
+        ),
+        AdminUserRole::FinanceOperator => matches!(
+            permission,
+            AdminRoutePermission::FinanceRead
+                | AdminRoutePermission::FinanceWrite
+                | AdminRoutePermission::PricingRead
+                | AdminRoutePermission::PricingWrite
+                | AdminRoutePermission::AuditRead
+        ),
+        AdminUserRole::ReadOnlyOperator => matches!(
+            permission,
+            AdminRoutePermission::PlatformRead
+                | AdminRoutePermission::PricingRead
+                | AdminRoutePermission::AuditRead
+        ),
     }
 }
 
@@ -372,6 +632,75 @@ struct ChangePasswordRequest {
     new_password: String,
 }
 
+#[derive(Debug, Deserialize, Default)]
+struct MarketingRedemptionsQuery {
+    #[serde(default)]
+    subject_type: Option<String>,
+    #[serde(default)]
+    subject_id: Option<String>,
+    #[serde(default)]
+    project_id: Option<String>,
+    #[serde(default)]
+    order_id: Option<String>,
+    #[serde(default)]
+    payment_order_id: Option<String>,
+    #[serde(default)]
+    coupon_template_id: Option<u64>,
+    #[serde(default)]
+    coupon_code_id: Option<u64>,
+    #[serde(default)]
+    marketing_campaign_id: Option<u64>,
+    #[serde(default)]
+    status: Option<CouponRedemptionStatus>,
+}
+
+impl MarketingRedemptionsQuery {
+    fn into_input(self) -> ListCouponRedemptionsInput {
+        let mut input = ListCouponRedemptionsInput::new()
+            .with_project_id(self.project_id)
+            .with_order_id(self.order_id)
+            .with_payment_order_id(self.payment_order_id)
+            .with_coupon_template_id(self.coupon_template_id)
+            .with_coupon_code_id(self.coupon_code_id)
+            .with_marketing_campaign_id(self.marketing_campaign_id)
+            .with_status(self.status);
+        if let (Some(subject_type), Some(subject_id)) = (self.subject_type, self.subject_id) {
+            input = input.with_subject(subject_type, subject_id);
+        }
+        input
+    }
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct MarketingCodesQuery {
+    #[serde(default)]
+    subject_type: Option<String>,
+    #[serde(default)]
+    subject_id: Option<String>,
+    #[serde(default)]
+    coupon_template_id: Option<u64>,
+    #[serde(default)]
+    coupon_code_batch_id: Option<u64>,
+    #[serde(default)]
+    marketing_campaign_id: Option<u64>,
+    #[serde(default)]
+    status: Option<CouponCodeStatus>,
+}
+
+impl MarketingCodesQuery {
+    fn into_input(self) -> ListCouponCodesInput {
+        let mut input = ListCouponCodesInput::new()
+            .with_coupon_template_id(self.coupon_template_id)
+            .with_coupon_code_batch_id(self.coupon_code_batch_id)
+            .with_marketing_campaign_id(self.marketing_campaign_id)
+            .with_status(self.status);
+        if let (Some(subject_type), Some(subject_id)) = (self.subject_type, self.subject_id) {
+            input = input.with_subject(subject_type, subject_id);
+        }
+        input
+    }
+}
+
 fn default_user_active() -> bool {
     true
 }
@@ -384,6 +713,8 @@ struct UpsertOperatorUserRequest {
     display_name: String,
     #[serde(default)]
     password: Option<String>,
+    #[serde(default)]
+    role: Option<String>,
     #[serde(default = "default_user_active")]
     active: bool,
 }
@@ -420,6 +751,17 @@ struct ErrorResponse {
 #[derive(Debug, Serialize)]
 struct ErrorBody {
     message: String,
+}
+
+#[derive(Debug, Serialize)]
+struct AdminGatewayTrafficPressureResponse {
+    generated_at_ms: u64,
+    snapshot_count: usize,
+    saturated_snapshot_count: usize,
+    pressured_projects: Vec<TrafficPressureSnapshot>,
+    throttled_api_keys: Vec<TrafficPressureSnapshot>,
+    saturated_providers: Vec<TrafficPressureSnapshot>,
+    snapshots: Vec<TrafficPressureSnapshot>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -968,6 +1310,7 @@ pub fn admin_router() -> Router {
         .route("/admin/channel-models", get(|| async { "channel-models" }))
         .route("/admin/models", get(|| async { "models" }))
         .route("/admin/model-prices", get(|| async { "model-prices" }))
+        .route("/admin/audit/events", get(|| async { "audit-events" }))
         .route(
             "/admin/extensions/installations",
             get(|| async { "extension-installations" }),
@@ -1016,6 +1359,10 @@ pub fn admin_router() -> Router {
         .route(
             "/admin/gateway/rate-limit-policies",
             get(|| async { "gateway-rate-limit-policies" }),
+        )
+        .route(
+            "/admin/gateway/traffic-pressure",
+            get(|| async { "gateway-traffic-pressure" }),
         )
         .route("/admin/routing/policies", get(|| async { "policies" }))
         .route("/admin/routing/profiles", get(|| async { "profiles" }))
@@ -1162,6 +1509,40 @@ pub fn admin_router_with_state(state: AdminApiState) -> Router {
         )
         .route("/admin/coupons/{coupon_id}", delete(delete_coupon_handler))
         .route(
+            "/admin/marketing/campaigns",
+            get(list_marketing_campaigns_handler),
+        )
+        .route(
+            "/admin/marketing/templates",
+            get(list_marketing_templates_handler),
+        )
+        .route(
+            "/admin/marketing/batches",
+            get(list_marketing_batches_handler),
+        )
+        .route(
+            "/admin/marketing/claims",
+            get(list_marketing_claims_handler),
+        )
+        .route(
+            "/admin/marketing/codes/summary",
+            get(marketing_codes_summary_handler),
+        )
+        .route("/admin/marketing/codes", get(list_marketing_codes_handler))
+        .route("/admin/marketing/overview", get(marketing_overview_handler))
+        .route(
+            "/admin/marketing/redemptions",
+            get(list_marketing_redemptions_handler),
+        )
+        .route(
+            "/admin/marketing/redemptions/summary",
+            get(marketing_redemptions_summary_handler),
+        )
+        .route(
+            "/admin/marketing/redemptions/{coupon_redemption_id}",
+            get(get_marketing_redemption_handler),
+        )
+        .route(
             "/admin/tenants",
             get(list_tenants_handler).post(create_tenant_handler),
         )
@@ -1286,6 +1667,7 @@ pub fn admin_router_with_state(state: AdminApiState) -> Router {
         )
         .route("/admin/usage/records", get(list_usage_records_handler))
         .route("/admin/usage/summary", get(usage_summary_handler))
+        .route("/admin/audit/events", get(list_admin_audit_events_handler))
         .route("/admin/billing/events", get(list_billing_events_handler))
         .route(
             "/admin/billing/events/summary",
@@ -1304,6 +1686,10 @@ pub fn admin_router_with_state(state: AdminApiState) -> Router {
         .route(
             "/admin/gateway/rate-limit-windows",
             get(list_rate_limit_window_snapshots_handler),
+        )
+        .route(
+            "/admin/gateway/traffic-pressure",
+            get(gateway_traffic_pressure_handler),
         )
         .route(
             "/admin/routing/policies",
@@ -1341,11 +1727,12 @@ async fn login_handler(
     State(state): State<AdminApiState>,
     Json(request): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let session = login_admin_user(
+    let session = login_admin_user_with_bootstrap(
         state.store.as_ref(),
         &request.email,
         &request.password,
         &state.jwt_signing_secret,
+        state.allow_local_dev_bootstrap,
     )
     .await
     .map_err(admin_error_response)?;
@@ -1390,52 +1777,97 @@ async fn list_operator_users_handler(
     _claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
 ) -> Result<Json<Vec<AdminUserProfile>>, (StatusCode, Json<ErrorResponse>)> {
-    list_admin_user_profiles(state.store.as_ref())
+    list_admin_user_profiles_with_bootstrap(state.store.as_ref(), state.allow_local_dev_bootstrap)
         .await
         .map(Json)
         .map_err(admin_error_response)
 }
 
 async fn upsert_operator_user_handler(
-    _claims: AuthenticatedAdminClaims,
+    claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
     Json(request): Json<UpsertOperatorUserRequest>,
 ) -> Result<(StatusCode, Json<AdminUserProfile>), (StatusCode, Json<ErrorResponse>)> {
-    upsert_admin_user(
+    let action = if request
+        .id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some()
+    {
+        "admin_user.update"
+    } else {
+        "admin_user.create"
+    };
+    let user = upsert_admin_user(
         state.store.as_ref(),
         request.id.as_deref(),
         &request.email,
         &request.display_name,
         request.password.as_deref(),
+        request.role.as_deref(),
         request.active,
     )
     .await
-    .map(|user| (StatusCode::CREATED, Json(user)))
-    .map_err(admin_error_response)
+    .map_err(admin_error_response)?;
+    persist_identity_audit_event(
+        state.store.as_ref(),
+        &claims,
+        action,
+        "admin_user",
+        &user.id,
+        None,
+        None,
+    )
+    .await
+    .map_err(admin_audit_error_response)?;
+    Ok((StatusCode::CREATED, Json(user)))
 }
 
 async fn update_operator_user_status_handler(
-    _claims: AuthenticatedAdminClaims,
+    claims: AuthenticatedAdminClaims,
     Path(user_id): Path<String>,
     State(state): State<AdminApiState>,
     Json(request): Json<UpdateUserStatusRequest>,
 ) -> Result<Json<AdminUserProfile>, (StatusCode, Json<ErrorResponse>)> {
-    set_admin_user_active(state.store.as_ref(), &user_id, request.active)
+    let user = set_admin_user_active(state.store.as_ref(), &user_id, request.active)
         .await
-        .map(Json)
-        .map_err(admin_error_response)
+        .map_err(admin_error_response)?;
+    persist_identity_audit_event(
+        state.store.as_ref(),
+        &claims,
+        "admin_user.status.update",
+        "admin_user",
+        &user.id,
+        None,
+        None,
+    )
+    .await
+    .map_err(admin_audit_error_response)?;
+    Ok(Json(user))
 }
 
 async fn reset_operator_user_password_handler(
-    _claims: AuthenticatedAdminClaims,
+    claims: AuthenticatedAdminClaims,
     Path(user_id): Path<String>,
     State(state): State<AdminApiState>,
     Json(request): Json<ResetUserPasswordRequest>,
 ) -> Result<Json<AdminUserProfile>, (StatusCode, Json<ErrorResponse>)> {
-    reset_admin_user_password(state.store.as_ref(), &user_id, &request.new_password)
+    let user = reset_admin_user_password(state.store.as_ref(), &user_id, &request.new_password)
         .await
-        .map(Json)
-        .map_err(admin_error_response)
+        .map_err(admin_error_response)?;
+    persist_identity_audit_event(
+        state.store.as_ref(),
+        &claims,
+        "admin_user.password.reset",
+        "admin_user",
+        &user.id,
+        None,
+        None,
+    )
+    .await
+    .map_err(admin_audit_error_response)?;
+    Ok(Json(user))
 }
 
 async fn delete_operator_user_handler(
@@ -1449,8 +1881,42 @@ async fn delete_operator_user_handler(
         )));
     }
 
-    match delete_admin_user(state.store.as_ref(), &user_id).await {
-        Ok(true) => Ok(StatusCode::NO_CONTENT),
+    let target_user = state
+        .store
+        .find_admin_user_by_id(&user_id)
+        .await
+        .map_err(|_| {
+            admin_error_response(AdminIdentityError::Storage(anyhow::anyhow!(
+                "failed to load admin user for audit"
+            )))
+        })?;
+    let Some(target_user) = target_user else {
+        return Err(admin_error_response(AdminIdentityError::NotFound(
+            "admin user not found".to_owned(),
+        )));
+    };
+
+    match delete_admin_user_with_bootstrap(
+        state.store.as_ref(),
+        &user_id,
+        state.allow_local_dev_bootstrap,
+    )
+    .await
+    {
+        Ok(true) => {
+            persist_identity_audit_event(
+                state.store.as_ref(),
+                &claims,
+                "admin_user.delete",
+                "admin_user",
+                &target_user.id,
+                None,
+                None,
+            )
+            .await
+            .map_err(admin_audit_error_response)?;
+            Ok(StatusCode::NO_CONTENT)
+        }
         Ok(false) => Err(admin_error_response(AdminIdentityError::NotFound(
             "admin user not found".to_owned(),
         ))),
@@ -1462,18 +1928,29 @@ async fn list_portal_users_handler(
     _claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
 ) -> Result<Json<Vec<PortalUserProfile>>, (StatusCode, Json<ErrorResponse>)> {
-    list_portal_user_profiles(state.store.as_ref())
+    list_portal_user_profiles_with_bootstrap(state.store.as_ref(), state.allow_local_dev_bootstrap)
         .await
         .map(Json)
         .map_err(portal_admin_error_response)
 }
 
 async fn upsert_portal_user_handler(
-    _claims: AuthenticatedAdminClaims,
+    claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
     Json(request): Json<UpsertPortalUserRequest>,
 ) -> Result<(StatusCode, Json<PortalUserProfile>), (StatusCode, Json<ErrorResponse>)> {
-    upsert_portal_user(
+    let action = if request
+        .id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some()
+    {
+        "portal_user.update"
+    } else {
+        "portal_user.create"
+    };
+    let user = upsert_portal_user(
         state.store.as_ref(),
         request.id.as_deref(),
         &request.email,
@@ -1484,41 +1961,108 @@ async fn upsert_portal_user_handler(
         request.active,
     )
     .await
-    .map(|user| (StatusCode::CREATED, Json(user)))
-    .map_err(portal_admin_error_response)
+    .map_err(portal_admin_error_response)?;
+    persist_identity_audit_event(
+        state.store.as_ref(),
+        &claims,
+        action,
+        "portal_user",
+        &user.id,
+        Some(user.workspace_tenant_id.as_str()),
+        Some(user.workspace_project_id.as_str()),
+    )
+    .await
+    .map_err(admin_audit_error_response)?;
+    Ok((StatusCode::CREATED, Json(user)))
 }
 
 async fn update_portal_user_status_handler(
-    _claims: AuthenticatedAdminClaims,
+    claims: AuthenticatedAdminClaims,
     Path(user_id): Path<String>,
     State(state): State<AdminApiState>,
     Json(request): Json<UpdateUserStatusRequest>,
 ) -> Result<Json<PortalUserProfile>, (StatusCode, Json<ErrorResponse>)> {
-    set_portal_user_active(state.store.as_ref(), &user_id, request.active)
+    let user = set_portal_user_active(state.store.as_ref(), &user_id, request.active)
         .await
-        .map(Json)
-        .map_err(portal_admin_error_response)
+        .map_err(portal_admin_error_response)?;
+    persist_identity_audit_event(
+        state.store.as_ref(),
+        &claims,
+        "portal_user.status.update",
+        "portal_user",
+        &user.id,
+        Some(user.workspace_tenant_id.as_str()),
+        Some(user.workspace_project_id.as_str()),
+    )
+    .await
+    .map_err(admin_audit_error_response)?;
+    Ok(Json(user))
 }
 
 async fn reset_portal_user_password_handler(
-    _claims: AuthenticatedAdminClaims,
+    claims: AuthenticatedAdminClaims,
     Path(user_id): Path<String>,
     State(state): State<AdminApiState>,
     Json(request): Json<ResetUserPasswordRequest>,
 ) -> Result<Json<PortalUserProfile>, (StatusCode, Json<ErrorResponse>)> {
-    reset_portal_user_password(state.store.as_ref(), &user_id, &request.new_password)
+    let user = reset_portal_user_password(state.store.as_ref(), &user_id, &request.new_password)
         .await
-        .map(Json)
-        .map_err(portal_admin_error_response)
+        .map_err(portal_admin_error_response)?;
+    persist_identity_audit_event(
+        state.store.as_ref(),
+        &claims,
+        "portal_user.password.reset",
+        "portal_user",
+        &user.id,
+        Some(user.workspace_tenant_id.as_str()),
+        Some(user.workspace_project_id.as_str()),
+    )
+    .await
+    .map_err(admin_audit_error_response)?;
+    Ok(Json(user))
 }
 
 async fn delete_portal_user_handler(
-    _claims: AuthenticatedAdminClaims,
+    claims: AuthenticatedAdminClaims,
     Path(user_id): Path<String>,
     State(state): State<AdminApiState>,
 ) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
-    match delete_portal_user(state.store.as_ref(), &user_id).await {
-        Ok(true) => Ok(StatusCode::NO_CONTENT),
+    let target_user = state
+        .store
+        .find_portal_user_by_id(&user_id)
+        .await
+        .map_err(|_| {
+            portal_admin_error_response(PortalIdentityError::Storage(anyhow::anyhow!(
+                "failed to load portal user for audit"
+            )))
+        })?;
+    let Some(target_user) = target_user else {
+        return Err(portal_admin_error_response(PortalIdentityError::NotFound(
+            "portal user not found".to_owned(),
+        )));
+    };
+
+    match delete_portal_user_with_bootstrap(
+        state.store.as_ref(),
+        &user_id,
+        state.allow_local_dev_bootstrap,
+    )
+    .await
+    {
+        Ok(true) => {
+            persist_identity_audit_event(
+                state.store.as_ref(),
+                &claims,
+                "portal_user.delete",
+                "portal_user",
+                &target_user.id,
+                Some(target_user.workspace_tenant_id.as_str()),
+                Some(target_user.workspace_project_id.as_str()),
+            )
+            .await
+            .map_err(admin_audit_error_response)?;
+            Ok(StatusCode::NO_CONTENT)
+        }
         Ok(false) => Err(portal_admin_error_response(PortalIdentityError::NotFound(
             "portal user not found".to_owned(),
         ))),
@@ -1574,6 +2118,120 @@ async fn delete_coupon_handler(
     }
 }
 
+async fn list_marketing_campaigns_handler(
+    _claims: AuthenticatedAdminClaims,
+    State(state): State<AdminApiState>,
+) -> Result<Json<Vec<MarketingCampaignRecord>>, StatusCode> {
+    state
+        .store
+        .list_marketing_campaign_records()
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn list_marketing_templates_handler(
+    _claims: AuthenticatedAdminClaims,
+    State(state): State<AdminApiState>,
+) -> Result<Json<Vec<CouponTemplateRecord>>, StatusCode> {
+    state
+        .store
+        .list_coupon_template_records()
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn list_marketing_batches_handler(
+    _claims: AuthenticatedAdminClaims,
+    State(state): State<AdminApiState>,
+) -> Result<Json<Vec<CouponCodeBatchRecord>>, StatusCode> {
+    state
+        .store
+        .list_coupon_code_batch_records()
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn list_marketing_claims_handler(
+    _claims: AuthenticatedAdminClaims,
+    State(state): State<AdminApiState>,
+) -> Result<Json<Vec<CouponClaimRecord>>, StatusCode> {
+    state
+        .store
+        .list_coupon_claim_records()
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn list_marketing_codes_handler(
+    _claims: AuthenticatedAdminClaims,
+    State(state): State<AdminApiState>,
+    Query(query): Query<MarketingCodesQuery>,
+) -> Result<Json<Vec<CouponCodeRecord>>, StatusCode> {
+    list_coupon_codes(state.store.as_ref(), &query.into_input())
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn marketing_codes_summary_handler(
+    _claims: AuthenticatedAdminClaims,
+    State(state): State<AdminApiState>,
+    Query(query): Query<MarketingCodesQuery>,
+) -> Result<Json<CouponCodeSummary>, StatusCode> {
+    summarize_coupon_codes(state.store.as_ref(), &query.into_input())
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn list_marketing_redemptions_handler(
+    _claims: AuthenticatedAdminClaims,
+    State(state): State<AdminApiState>,
+    Query(query): Query<MarketingRedemptionsQuery>,
+) -> Result<Json<Vec<CouponRedemptionRecord>>, StatusCode> {
+    list_coupon_redemptions(state.store.as_ref(), &query.into_input())
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn marketing_redemptions_summary_handler(
+    _claims: AuthenticatedAdminClaims,
+    State(state): State<AdminApiState>,
+    Query(query): Query<MarketingRedemptionsQuery>,
+) -> Result<Json<CouponRedemptionSummary>, StatusCode> {
+    summarize_coupon_redemptions(state.store.as_ref(), &query.into_input())
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn marketing_overview_handler(
+    _claims: AuthenticatedAdminClaims,
+    State(state): State<AdminApiState>,
+) -> Result<Json<MarketingOverviewSummary>, StatusCode> {
+    summarize_marketing_overview(state.store.as_ref())
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn get_marketing_redemption_handler(
+    _claims: AuthenticatedAdminClaims,
+    Path(coupon_redemption_id): Path<u64>,
+    State(state): State<AdminApiState>,
+) -> Result<Json<CouponRedemptionRecord>, StatusCode> {
+    find_coupon_redemption(state.store.as_ref(), coupon_redemption_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map(Json)
+        .ok_or(StatusCode::NOT_FOUND)
+}
+
 async fn list_channels_handler(
     _claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
@@ -1584,8 +2242,8 @@ async fn list_channels_handler(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
-  fn admin_error_response(error: AdminIdentityError) -> (StatusCode, Json<ErrorResponse>) {
-      let status = match error {
+fn admin_error_response(error: AdminIdentityError) -> (StatusCode, Json<ErrorResponse>) {
+    let status = match error {
         AdminIdentityError::InvalidInput(_) => StatusCode::BAD_REQUEST,
         AdminIdentityError::DuplicateEmail => StatusCode::CONFLICT,
         AdminIdentityError::Protected(_) => StatusCode::CONFLICT,
@@ -1599,13 +2257,13 @@ async fn list_channels_handler(
         error: ErrorBody {
             message: error.to_string(),
         },
-      };
-      (status, Json(body))
-  }
+    };
+    (status, Json(body))
+}
 
-  async fn invalidate_catalog_cache_after_mutation() {
-      invalidate_capability_catalog_cache().await;
-  }
+async fn invalidate_catalog_cache_after_mutation() {
+    invalidate_capability_catalog_cache().await;
+}
 
 fn gateway_api_key_create_error_response(
     error: anyhow::Error,
@@ -1620,6 +2278,17 @@ fn gateway_api_key_create_error_response(
         error: ErrorBody { message },
     };
     (status, Json(body))
+}
+
+fn admin_audit_error_response(status: StatusCode) -> (StatusCode, Json<ErrorResponse>) {
+    (
+        status,
+        Json(ErrorResponse {
+            error: ErrorBody {
+                message: "failed to persist admin audit event".to_owned(),
+            },
+        }),
+    )
 }
 
 fn looks_like_gateway_api_key_input_error(message: &str) -> bool {
@@ -1659,33 +2328,33 @@ fn portal_admin_error_response(error: PortalIdentityError) -> (StatusCode, Json<
     (status, Json(body))
 }
 
-  async fn create_channel_handler(
-      _claims: AuthenticatedAdminClaims,
-      State(state): State<AdminApiState>,
-      Json(request): Json<CreateChannelRequest>,
-  ) -> Result<(StatusCode, Json<Channel>), StatusCode> {
-      let channel = persist_channel(state.store.as_ref(), &request.id, &request.name)
-          .await
-          .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-      invalidate_catalog_cache_after_mutation().await;
-      Ok((StatusCode::CREATED, Json(channel)))
-  }
+async fn create_channel_handler(
+    _claims: AuthenticatedAdminClaims,
+    State(state): State<AdminApiState>,
+    Json(request): Json<CreateChannelRequest>,
+) -> Result<(StatusCode, Json<Channel>), StatusCode> {
+    let channel = persist_channel(state.store.as_ref(), &request.id, &request.name)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    invalidate_catalog_cache_after_mutation().await;
+    Ok((StatusCode::CREATED, Json(channel)))
+}
 
 async fn delete_channel_handler(
     _claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
     Path(channel_id): Path<String>,
-  ) -> Result<StatusCode, StatusCode> {
-      let deleted = delete_catalog_channel(state.store.as_ref(), &channel_id)
-          .await
-          .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-      if deleted {
-          invalidate_catalog_cache_after_mutation().await;
-          Ok(StatusCode::NO_CONTENT)
-      } else {
-          Err(StatusCode::NOT_FOUND)
-      }
-  }
+) -> Result<StatusCode, StatusCode> {
+    let deleted = delete_catalog_channel(state.store.as_ref(), &channel_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if deleted {
+        invalidate_catalog_cache_after_mutation().await;
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(StatusCode::NOT_FOUND)
+    }
+}
 
 async fn list_providers_handler(
     _claims: AuthenticatedAdminClaims,
@@ -1701,7 +2370,7 @@ async fn create_provider_handler(
     _claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
     Json(request): Json<CreateProviderRequest>,
-  ) -> Result<(StatusCode, Json<ProxyProvider>), StatusCode> {
+) -> Result<(StatusCode, Json<ProxyProvider>), StatusCode> {
     let primary_channel_id = request
         .channel_bindings
         .iter()
@@ -1720,12 +2389,12 @@ async fn create_provider_handler(
             display_name: &request.display_name,
             channel_bindings: &bindings,
         },
-      )
-      .await
-      .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-      invalidate_catalog_cache_after_mutation().await;
-      Ok((StatusCode::CREATED, Json(provider)))
-  }
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    invalidate_catalog_cache_after_mutation().await;
+    Ok((StatusCode::CREATED, Json(provider)))
+}
 
 async fn delete_provider_handler(
     _claims: AuthenticatedAdminClaims,
@@ -1750,16 +2419,16 @@ async fn delete_provider_handler(
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-      let deleted = delete_catalog_provider(state.store.as_ref(), &provider_id)
-          .await
-          .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-      if deleted {
-          invalidate_catalog_cache_after_mutation().await;
-          Ok(StatusCode::NO_CONTENT)
-      } else {
-          Err(StatusCode::NOT_FOUND)
-      }
-  }
+    let deleted = delete_catalog_provider(state.store.as_ref(), &provider_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if deleted {
+        invalidate_catalog_cache_after_mutation().await;
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(StatusCode::NOT_FOUND)
+    }
+}
 
 async fn list_credentials_handler(
     _claims: AuthenticatedAdminClaims,
@@ -1772,7 +2441,7 @@ async fn list_credentials_handler(
 }
 
 async fn create_credential_handler(
-    _claims: AuthenticatedAdminClaims,
+    claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
     Json(request): Json<CreateCredentialRequest>,
 ) -> Result<(StatusCode, Json<UpstreamCredential>), StatusCode> {
@@ -1786,11 +2455,26 @@ async fn create_credential_handler(
     )
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    persist_admin_audit_event(
+        state.store.as_ref(),
+        &claims,
+        "credential.create",
+        "credential",
+        &format!(
+            "{}:{}:{}",
+            request.tenant_id, request.provider_id, request.key_reference
+        ),
+        "secret_control",
+        Some(request.tenant_id.as_str()),
+        None,
+        Some(request.provider_id.as_str()),
+    )
+    .await?;
     Ok((StatusCode::CREATED, Json(credential)))
 }
 
 async fn delete_credential_handler(
-    _claims: AuthenticatedAdminClaims,
+    claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
     Path((tenant_id, provider_id, key_reference)): Path<(String, String, String)>,
 ) -> Result<StatusCode, StatusCode> {
@@ -1805,6 +2489,18 @@ async fn delete_credential_handler(
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     if deleted {
+        persist_admin_audit_event(
+            state.store.as_ref(),
+            &claims,
+            "credential.delete",
+            "credential",
+            &format!("{tenant_id}:{provider_id}:{key_reference}"),
+            "secret_control",
+            Some(tenant_id.as_str()),
+            None,
+            Some(provider_id.as_str()),
+        )
+        .await?;
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(StatusCode::NOT_FOUND)
@@ -1825,7 +2521,7 @@ async fn create_channel_model_handler(
     _claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
     Json(request): Json<CreateChannelModelRequest>,
-  ) -> Result<(StatusCode, Json<ChannelModelRecord>), StatusCode> {
+) -> Result<(StatusCode, Json<ChannelModelRecord>), StatusCode> {
     let record = persist_channel_model_with_metadata(
         state.store.as_ref(),
         &request.channel_id,
@@ -1835,28 +2531,28 @@ async fn create_channel_model_handler(
         request.streaming,
         request.context_window,
         request.description.as_deref(),
-      )
-      .await
-      .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-      invalidate_catalog_cache_after_mutation().await;
-      Ok((StatusCode::CREATED, Json(record)))
-  }
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    invalidate_catalog_cache_after_mutation().await;
+    Ok((StatusCode::CREATED, Json(record)))
+}
 
 async fn delete_channel_model_handler(
     _claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
     Path((channel_id, model_id)): Path<(String, String)>,
-  ) -> Result<StatusCode, StatusCode> {
-      let deleted = delete_catalog_channel_model(state.store.as_ref(), &channel_id, &model_id)
-          .await
-          .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-      if deleted {
-          invalidate_catalog_cache_after_mutation().await;
-          Ok(StatusCode::NO_CONTENT)
-      } else {
-          Err(StatusCode::NOT_FOUND)
-      }
-  }
+) -> Result<StatusCode, StatusCode> {
+    let deleted = delete_catalog_channel_model(state.store.as_ref(), &channel_id, &model_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if deleted {
+        invalidate_catalog_cache_after_mutation().await;
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(StatusCode::NOT_FOUND)
+    }
+}
 
 async fn list_models_handler(
     _claims: AuthenticatedAdminClaims,
@@ -1872,36 +2568,36 @@ async fn create_model_handler(
     _claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
     Json(request): Json<CreateModelRequest>,
-  ) -> Result<(StatusCode, Json<ModelCatalogEntry>), StatusCode> {
-      let model = persist_model_with_metadata(
+) -> Result<(StatusCode, Json<ModelCatalogEntry>), StatusCode> {
+    let model = persist_model_with_metadata(
         state.store.as_ref(),
         &request.external_name,
         &request.provider_id,
         &request.capabilities,
         request.streaming,
         request.context_window,
-      )
-      .await
-      .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-      invalidate_catalog_cache_after_mutation().await;
-      Ok((StatusCode::CREATED, Json(model)))
-  }
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    invalidate_catalog_cache_after_mutation().await;
+    Ok((StatusCode::CREATED, Json(model)))
+}
 
 async fn delete_model_handler(
     _claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
     Path((external_name, provider_id)): Path<(String, String)>,
-  ) -> Result<StatusCode, StatusCode> {
-      let deleted = delete_model_variant(state.store.as_ref(), &external_name, &provider_id)
-          .await
-          .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-      if deleted {
-          invalidate_catalog_cache_after_mutation().await;
-          Ok(StatusCode::NO_CONTENT)
-      } else {
-          Err(StatusCode::NOT_FOUND)
-      }
-  }
+) -> Result<StatusCode, StatusCode> {
+    let deleted = delete_model_variant(state.store.as_ref(), &external_name, &provider_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if deleted {
+        invalidate_catalog_cache_after_mutation().await;
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(StatusCode::NOT_FOUND)
+    }
+}
 
 async fn list_model_prices_handler(
     _claims: AuthenticatedAdminClaims,
@@ -1914,10 +2610,10 @@ async fn list_model_prices_handler(
 }
 
 async fn create_model_price_handler(
-    _claims: AuthenticatedAdminClaims,
+    claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
     Json(request): Json<CreateModelPriceRequest>,
-  ) -> Result<(StatusCode, Json<ModelPriceRecord>), StatusCode> {
+) -> Result<(StatusCode, Json<ModelPriceRecord>), StatusCode> {
     let record = persist_model_price_with_rates(
         state.store.as_ref(),
         &request.channel_id,
@@ -1931,33 +2627,60 @@ async fn create_model_price_handler(
         request.cache_write_price,
         request.request_price,
         request.is_active,
-      )
-      .await
-      .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-      invalidate_catalog_cache_after_mutation().await;
-      Ok((StatusCode::CREATED, Json(record)))
-  }
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    persist_admin_audit_event(
+        state.store.as_ref(),
+        &claims,
+        "model_price.create",
+        "model_price",
+        &format!(
+            "{}:{}:{}",
+            request.channel_id, request.model_id, request.proxy_provider_id
+        ),
+        "finance_control",
+        None,
+        None,
+        Some(request.proxy_provider_id.as_str()),
+    )
+    .await?;
+    invalidate_catalog_cache_after_mutation().await;
+    Ok((StatusCode::CREATED, Json(record)))
+}
 
 async fn delete_model_price_handler(
-    _claims: AuthenticatedAdminClaims,
+    claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
     Path((channel_id, model_id, proxy_provider_id)): Path<(String, String, String)>,
-  ) -> Result<StatusCode, StatusCode> {
-      let deleted = delete_catalog_model_price(
+) -> Result<StatusCode, StatusCode> {
+    let deleted = delete_catalog_model_price(
         state.store.as_ref(),
         &channel_id,
         &model_id,
         &proxy_provider_id,
-      )
-      .await
-      .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-      if deleted {
-          invalidate_catalog_cache_after_mutation().await;
-          Ok(StatusCode::NO_CONTENT)
-      } else {
-          Err(StatusCode::NOT_FOUND)
-      }
-  }
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if deleted {
+        persist_admin_audit_event(
+            state.store.as_ref(),
+            &claims,
+            "model_price.delete",
+            "model_price",
+            &format!("{channel_id}:{model_id}:{proxy_provider_id}"),
+            "finance_control",
+            None,
+            None,
+            Some(proxy_provider_id.as_str()),
+        )
+        .await?;
+        invalidate_catalog_cache_after_mutation().await;
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(StatusCode::NOT_FOUND)
+    }
+}
 
 async fn list_tenants_handler(
     _claims: AuthenticatedAdminClaims,
@@ -2072,11 +2795,11 @@ async fn list_api_key_groups_handler(
 }
 
 async fn create_api_key_group_handler(
-    _claims: AuthenticatedAdminClaims,
+    claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
     Json(request): Json<CreateApiKeyGroupRequest>,
 ) -> Result<(StatusCode, Json<ApiKeyGroupRecord>), (StatusCode, Json<ErrorResponse>)> {
-    create_api_key_group(
+    let group = create_api_key_group(
         state.store.as_ref(),
         ApiKeyGroupInput {
             tenant_id: request.tenant_id,
@@ -2092,12 +2815,23 @@ async fn create_api_key_group_handler(
         },
     )
     .await
-    .map(|group| (StatusCode::CREATED, Json(group)))
-    .map_err(admin_error_response)
+    .map_err(admin_error_response)?;
+    persist_identity_audit_event(
+        state.store.as_ref(),
+        &claims,
+        "api_key_group.create",
+        "api_key_group",
+        &group.group_id,
+        Some(group.tenant_id.as_str()),
+        Some(group.project_id.as_str()),
+    )
+    .await
+    .map_err(admin_audit_error_response)?;
+    Ok((StatusCode::CREATED, Json(group)))
 }
 
 async fn update_api_key_group_handler(
-    _claims: AuthenticatedAdminClaims,
+    claims: AuthenticatedAdminClaims,
     Path(group_id): Path<String>,
     State(state): State<AdminApiState>,
     Json(request): Json<UpdateApiKeyGroupRequest>,
@@ -2120,7 +2854,20 @@ async fn update_api_key_group_handler(
     )
     .await
     {
-        Ok(Some(group)) => Ok(Json(group)),
+        Ok(Some(group)) => {
+            persist_identity_audit_event(
+                state.store.as_ref(),
+                &claims,
+                "api_key_group.update",
+                "api_key_group",
+                &group.group_id,
+                Some(group.tenant_id.as_str()),
+                Some(group.project_id.as_str()),
+            )
+            .await
+            .map_err(admin_audit_error_response)?;
+            Ok(Json(group))
+        }
         Ok(None) => Err(admin_error_response(AdminIdentityError::NotFound(
             "api key group not found".to_owned(),
         ))),
@@ -2129,13 +2876,26 @@ async fn update_api_key_group_handler(
 }
 
 async fn update_api_key_group_status_handler(
-    _claims: AuthenticatedAdminClaims,
+    claims: AuthenticatedAdminClaims,
     Path(group_id): Path<String>,
     State(state): State<AdminApiState>,
     Json(request): Json<UpdateUserStatusRequest>,
 ) -> Result<Json<ApiKeyGroupRecord>, (StatusCode, Json<ErrorResponse>)> {
     match set_api_key_group_active(state.store.as_ref(), &group_id, request.active).await {
-        Ok(Some(group)) => Ok(Json(group)),
+        Ok(Some(group)) => {
+            persist_identity_audit_event(
+                state.store.as_ref(),
+                &claims,
+                "api_key_group.status.update",
+                "api_key_group",
+                &group.group_id,
+                Some(group.tenant_id.as_str()),
+                Some(group.project_id.as_str()),
+            )
+            .await
+            .map_err(admin_audit_error_response)?;
+            Ok(Json(group))
+        }
         Ok(None) => Err(admin_error_response(AdminIdentityError::NotFound(
             "api key group not found".to_owned(),
         ))),
@@ -2144,12 +2904,40 @@ async fn update_api_key_group_status_handler(
 }
 
 async fn delete_api_key_group_handler(
-    _claims: AuthenticatedAdminClaims,
+    claims: AuthenticatedAdminClaims,
     Path(group_id): Path<String>,
     State(state): State<AdminApiState>,
 ) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+    let existing = state
+        .store
+        .find_api_key_group(&group_id)
+        .await
+        .map_err(|_| {
+            admin_error_response(AdminIdentityError::Storage(anyhow::anyhow!(
+                "failed to load api key group for audit"
+            )))
+        })?;
+    let Some(existing) = existing else {
+        return Err(admin_error_response(AdminIdentityError::NotFound(
+            "api key group not found".to_owned(),
+        )));
+    };
+
     match delete_api_key_group(state.store.as_ref(), &group_id).await {
-        Ok(true) => Ok(StatusCode::NO_CONTENT),
+        Ok(true) => {
+            persist_identity_audit_event(
+                state.store.as_ref(),
+                &claims,
+                "api_key_group.delete",
+                "api_key_group",
+                &existing.group_id,
+                Some(existing.tenant_id.as_str()),
+                Some(existing.project_id.as_str()),
+            )
+            .await
+            .map_err(admin_audit_error_response)?;
+            Ok(StatusCode::NO_CONTENT)
+        }
         Ok(false) => Err(admin_error_response(AdminIdentityError::NotFound(
             "api key group not found".to_owned(),
         ))),
@@ -2158,7 +2946,7 @@ async fn delete_api_key_group_handler(
 }
 
 async fn create_api_key_handler(
-    _claims: AuthenticatedAdminClaims,
+    claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
     Json(request): Json<CreateApiKeyRequest>,
 ) -> Result<(StatusCode, Json<CreatedGatewayApiKey>), (StatusCode, Json<ErrorResponse>)> {
@@ -2182,11 +2970,22 @@ async fn create_api_key_handler(
     )
     .await
     .map_err(gateway_api_key_create_error_response)?;
+    persist_secret_audit_event(
+        state.store.as_ref(),
+        &claims,
+        "gateway_api_key.create",
+        "gateway_api_key",
+        &created.hashed,
+        Some(created.tenant_id.as_str()),
+        Some(created.project_id.as_str()),
+    )
+    .await
+    .map_err(admin_audit_error_response)?;
     Ok((StatusCode::CREATED, Json(created)))
 }
 
 async fn update_api_key_handler(
-    _claims: AuthenticatedAdminClaims,
+    claims: AuthenticatedAdminClaims,
     Path(hashed_key): Path<String>,
     State(state): State<AdminApiState>,
     Json(request): Json<UpdateApiKeyRequest>,
@@ -2204,7 +3003,20 @@ async fn update_api_key_handler(
     )
     .await
     {
-        Ok(Some(record)) => Ok(Json(record)),
+        Ok(Some(record)) => {
+            persist_secret_audit_event(
+                state.store.as_ref(),
+                &claims,
+                "gateway_api_key.update",
+                "gateway_api_key",
+                &record.hashed_key,
+                Some(record.tenant_id.as_str()),
+                Some(record.project_id.as_str()),
+            )
+            .await
+            .map_err(admin_audit_error_response)?;
+            Ok(Json(record))
+        }
         Ok(None) => Err(admin_error_response(AdminIdentityError::NotFound(
             "gateway api key not found".to_owned(),
         ))),
@@ -2213,7 +3025,7 @@ async fn update_api_key_handler(
 }
 
 async fn update_api_key_status_handler(
-    _claims: AuthenticatedAdminClaims,
+    claims: AuthenticatedAdminClaims,
     Path(hashed_key): Path<String>,
     State(state): State<AdminApiState>,
     Json(request): Json<UpdateUserStatusRequest>,
@@ -2222,20 +3034,51 @@ async fn update_api_key_status_handler(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     {
-        Some(record) => Ok(Json(record)),
+        Some(record) => {
+            persist_secret_audit_event(
+                state.store.as_ref(),
+                &claims,
+                "gateway_api_key.status.update",
+                "gateway_api_key",
+                &record.hashed_key,
+                Some(record.tenant_id.as_str()),
+                Some(record.project_id.as_str()),
+            )
+            .await?;
+            Ok(Json(record))
+        }
         None => Err(StatusCode::NOT_FOUND),
     }
 }
 
 async fn delete_api_key_handler(
-    _claims: AuthenticatedAdminClaims,
+    claims: AuthenticatedAdminClaims,
     Path(hashed_key): Path<String>,
     State(state): State<AdminApiState>,
 ) -> Result<StatusCode, StatusCode> {
+    let existing = state
+        .store
+        .find_gateway_api_key(&hashed_key)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let Some(existing) = existing else {
+        return Err(StatusCode::NOT_FOUND);
+    };
+
     let deleted = delete_gateway_api_key(state.store.as_ref(), &hashed_key)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if deleted {
+        persist_secret_audit_event(
+            state.store.as_ref(),
+            &claims,
+            "gateway_api_key.delete",
+            "gateway_api_key",
+            &existing.hashed_key,
+            Some(existing.tenant_id.as_str()),
+            Some(existing.project_id.as_str()),
+        )
+        .await?;
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(StatusCode::NOT_FOUND)
@@ -2617,11 +3460,142 @@ async fn list_provider_health_snapshots_handler(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
+async fn persist_admin_audit_event(
+    store: &dyn AdminStore,
+    claims: &AuthenticatedAdminClaims,
+    action: &str,
+    resource_type: &str,
+    resource_id: &str,
+    approval_scope: &str,
+    target_tenant_id: Option<&str>,
+    target_project_id: Option<&str>,
+    target_provider_id: Option<&str>,
+) -> Result<AdminAuditEventRecord, StatusCode> {
+    let Some(actor) = store
+        .find_admin_user_by_id(&claims.claims().sub)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    else {
+        return Err(StatusCode::UNAUTHORIZED);
+    };
+    let created_at_ms = unix_timestamp_ms();
+    let event_id = build_admin_audit_event_id(
+        created_at_ms,
+        next_admin_audit_sequence(),
+        &actor.id,
+        action,
+        resource_type,
+        resource_id,
+    );
+    let event = AdminAuditEventRecord::new(
+        event_id,
+        actor.id,
+        actor.email,
+        actor.role,
+        action,
+        resource_type,
+        resource_id,
+        approval_scope,
+        created_at_ms,
+    )
+    .with_target_tenant_id_option(target_tenant_id.map(ToOwned::to_owned))
+    .with_target_project_id_option(target_project_id.map(ToOwned::to_owned))
+    .with_target_provider_id_option(target_provider_id.map(ToOwned::to_owned));
+    store
+        .insert_admin_audit_event(&event)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+fn build_admin_audit_event_id(
+    created_at_ms: u64,
+    sequence: u64,
+    actor_user_id: &str,
+    action: &str,
+    resource_type: &str,
+    resource_id: &str,
+) -> String {
+    format!(
+        "admin_audit:{created_at_ms}:{sequence}:{actor_user_id}:{action}:{resource_type}:{resource_id}"
+    )
+}
+
+fn next_admin_audit_sequence() -> u64 {
+    static AUDIT_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+    AUDIT_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+}
+
+async fn persist_identity_audit_event(
+    store: &dyn AdminStore,
+    claims: &AuthenticatedAdminClaims,
+    action: &str,
+    resource_type: &str,
+    resource_id: &str,
+    target_tenant_id: Option<&str>,
+    target_project_id: Option<&str>,
+) -> Result<AdminAuditEventRecord, StatusCode> {
+    persist_admin_audit_event(
+        store,
+        claims,
+        action,
+        resource_type,
+        resource_id,
+        "identity_control",
+        target_tenant_id,
+        target_project_id,
+        None,
+    )
+    .await
+}
+
+async fn persist_secret_audit_event(
+    store: &dyn AdminStore,
+    claims: &AuthenticatedAdminClaims,
+    action: &str,
+    resource_type: &str,
+    resource_id: &str,
+    target_tenant_id: Option<&str>,
+    target_project_id: Option<&str>,
+) -> Result<AdminAuditEventRecord, StatusCode> {
+    persist_admin_audit_event(
+        store,
+        claims,
+        action,
+        resource_type,
+        resource_id,
+        "secret_control",
+        target_tenant_id,
+        target_project_id,
+        None,
+    )
+    .await
+}
+
 fn unix_timestamp_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("unix time")
         .as_millis() as u64
+}
+
+fn sort_traffic_pressure_snapshots(snapshots: &mut [TrafficPressureSnapshot]) {
+    snapshots.sort_by(|left, right| {
+        left.project_id
+            .cmp(&right.project_id)
+            .then_with(|| {
+                scope_kind_order(left.scope_kind).cmp(&scope_kind_order(right.scope_kind))
+            })
+            .then_with(|| left.scope_key.cmp(&right.scope_key))
+            .then_with(|| left.policy_id.cmp(&right.policy_id))
+    });
+}
+
+fn scope_kind_order(kind: CommercialPressureScopeKind) -> u8 {
+    match kind {
+        CommercialPressureScopeKind::Project => 0,
+        CommercialPressureScopeKind::ApiKey => 1,
+        CommercialPressureScopeKind::Provider => 2,
+    }
 }
 
 async fn simulate_routing_handler(
@@ -2795,6 +3769,18 @@ async fn usage_summary_handler(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
+async fn list_admin_audit_events_handler(
+    _claims: AuthenticatedAdminClaims,
+    State(state): State<AdminApiState>,
+) -> Result<Json<Vec<AdminAuditEventRecord>>, StatusCode> {
+    state
+        .store
+        .list_admin_audit_events()
+        .await
+        .map(Json)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
 async fn list_ledger_entries_handler(
     _claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
@@ -2829,10 +3815,146 @@ async fn billing_summary_handler(
     _claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
 ) -> Result<Json<BillingSummary>, StatusCode> {
-    summarize_billing_from_store(state.store.as_ref())
+    load_admin_billing_summary(state.store.as_ref())
         .await
         .map(Json)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct AdminCanonicalProjectBillingOverlay {
+    account_count: u64,
+    single_account_id: Option<u64>,
+    available_balance: f64,
+    held_balance: f64,
+    grant_balance: f64,
+    consumed_balance: f64,
+}
+
+async fn load_admin_billing_summary(store: &dyn AdminStore) -> Result<BillingSummary, StatusCode> {
+    let mut summary = summarize_billing_from_store(store)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let overlays = load_admin_canonical_project_billing_overlays(store).await?;
+
+    for project_id in overlays.keys() {
+        if !summary
+            .projects
+            .iter()
+            .any(|project| &project.project_id == project_id)
+        {
+            summary
+                .projects
+                .push(ProjectBillingSummary::new(project_id.clone()));
+        }
+    }
+
+    for project in &mut summary.projects {
+        if let Some(overlay) = overlays.get(&project.project_id) {
+            apply_admin_canonical_billing_overlay(project, overlay);
+        }
+    }
+
+    summary.project_count = summary.projects.len() as u64;
+    summary.exhausted_project_count = summary
+        .projects
+        .iter()
+        .filter(|project| project.exhausted)
+        .count() as u64;
+    Ok(summary)
+}
+
+async fn load_admin_canonical_project_billing_overlays(
+    store: &dyn AdminStore,
+) -> Result<std::collections::HashMap<String, AdminCanonicalProjectBillingOverlay>, StatusCode> {
+    let Some(identity_store) = store.identity_kernel() else {
+        return Ok(std::collections::HashMap::new());
+    };
+    let Some(account_store) = store.account_kernel() else {
+        return Ok(std::collections::HashMap::new());
+    };
+
+    let mut overlays =
+        std::collections::HashMap::<String, AdminCanonicalProjectBillingOverlay>::new();
+    let mut seen_accounts = std::collections::HashSet::<(String, u64)>::new();
+    let bindings = identity_store
+        .list_identity_binding_records()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    for binding in bindings {
+        if binding.binding_type != PORTAL_WORKSPACE_IDENTITY_BINDING_TYPE
+            || binding.issuer.as_deref() != Some(PORTAL_WORKSPACE_IDENTITY_BINDING_ISSUER)
+        {
+            continue;
+        }
+        let Some(project_id) = binding
+            .owner
+            .clone()
+            .filter(|value| !value.trim().is_empty())
+        else {
+            continue;
+        };
+        let Some(account) = account_store
+            .find_account_record_by_owner(
+                binding.tenant_id,
+                binding.organization_id,
+                binding.user_id,
+                AccountType::Primary,
+            )
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        else {
+            continue;
+        };
+        if !seen_accounts.insert((project_id.clone(), account.account_id)) {
+            continue;
+        }
+
+        let snapshot =
+            summarize_account_balance(account_store, account.account_id, unix_timestamp_ms())
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let overlay = overlays.entry(project_id).or_default();
+        overlay.account_count += 1;
+        overlay.available_balance += snapshot.available_balance;
+        overlay.held_balance += snapshot.held_balance;
+        overlay.grant_balance += snapshot.grant_balance;
+        overlay.consumed_balance += snapshot.consumed_balance;
+        overlay.single_account_id = if overlay.account_count == 1 {
+            Some(account.account_id)
+        } else {
+            None
+        };
+    }
+
+    Ok(overlays)
+}
+
+fn apply_admin_canonical_billing_overlay(
+    summary: &mut ProjectBillingSummary,
+    overlay: &AdminCanonicalProjectBillingOverlay,
+) {
+    if summary.quota_remaining_units.is_none() {
+        summary.quota_remaining_units = summary.remaining_units;
+    }
+    summary.balance_source = Some("canonical_account".to_owned());
+    summary.remaining_units = Some(effective_remaining_units_from_balance(
+        overlay.available_balance,
+    ));
+    summary.canonical_account_id = overlay.single_account_id;
+    summary.canonical_available_balance = Some(overlay.available_balance);
+    summary.canonical_held_balance = Some(overlay.held_balance);
+    summary.canonical_grant_balance = Some(overlay.grant_balance);
+    summary.canonical_consumed_balance = Some(overlay.consumed_balance);
+    summary.exhausted = overlay.available_balance <= f64::EPSILON;
+}
+
+fn effective_remaining_units_from_balance(balance: f64) -> u64 {
+    if !balance.is_finite() || balance <= 0.0 {
+        0
+    } else {
+        balance.floor() as u64
+    }
 }
 
 async fn list_quota_policies_handler(
@@ -2883,6 +4005,51 @@ async fn list_rate_limit_window_snapshots_handler(
         .await
         .map(Json)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn gateway_traffic_pressure_handler(
+    _claims: AuthenticatedAdminClaims,
+    State(state): State<AdminApiState>,
+) -> Result<Json<AdminGatewayTrafficPressureResponse>, StatusCode> {
+    let mut snapshots = state.traffic_controller.list_pressure_snapshots();
+    sort_traffic_pressure_snapshots(&mut snapshots);
+
+    let pressured_projects = snapshots
+        .iter()
+        .filter(|snapshot| {
+            snapshot.scope_kind == CommercialPressureScopeKind::Project
+                && snapshot.current_in_flight > 0
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let throttled_api_keys = snapshots
+        .iter()
+        .filter(|snapshot| {
+            snapshot.scope_kind == CommercialPressureScopeKind::ApiKey && snapshot.saturated
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let saturated_providers = snapshots
+        .iter()
+        .filter(|snapshot| {
+            snapshot.scope_kind == CommercialPressureScopeKind::Provider && snapshot.saturated
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let saturated_snapshot_count = snapshots
+        .iter()
+        .filter(|snapshot| snapshot.saturated)
+        .count();
+
+    Ok(Json(AdminGatewayTrafficPressureResponse {
+        generated_at_ms: unix_timestamp_ms(),
+        snapshot_count: snapshots.len(),
+        saturated_snapshot_count,
+        pressured_projects,
+        throttled_api_keys,
+        saturated_providers,
+        snapshots,
+    }))
 }
 
 async fn create_rate_limit_policy_handler(

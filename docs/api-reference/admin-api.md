@@ -10,7 +10,7 @@ The admin service exposes the operator control plane under `/admin/*`.
   - `GET /admin/auth/me`
   - `POST /admin/auth/change-password`
 
-Example login:
+Example login for an explicitly enabled local development bootstrap:
 
 ```bash
 curl -X POST http://127.0.0.1:8081/admin/auth/login \
@@ -20,6 +20,8 @@ curl -X POST http://127.0.0.1:8081/admin/auth/login \
     "password":"ChangeMe123!"
   }'
 ```
+
+The built-in `admin@sdkwork.local / ChangeMe123!` bootstrap account is available only when startup enables `SDKWORK_ALLOW_LOCAL_DEV_BOOTSTRAP=true`. In secure runtime mode, create operator accounts explicitly instead of relying on demo credentials.
 
 Use the returned JWT as:
 
@@ -55,12 +57,13 @@ Key tables:
 - `ai_router_credential_records`: encrypted router credential storage
 - `ai_app_api_key_groups`: application API key group registry
 - `ai_app_api_keys`: application access key registry
+- `ai_admin_audit_events`: durable operator audit ledger for high-risk control-plane writes
 - `ai_billing_events`: canonical Billing 2.0 event ledger for multimodal and routing-aware accounting
 
 Unified app API keys are persisted in `ai_app_api_keys` with:
 
 - `hashed_key`: lookup key used for runtime authentication
-- `raw_key`: persisted original plaintext key when retained by policy
+- `key_prefix`: non-secret prefix retained for operator recognition and audit trails
 - `tenant_id`
 - `project_id`
 - `environment`
@@ -71,6 +74,8 @@ Unified app API keys are persisted in `ai_app_api_keys` with:
 - `last_used_at_ms`
 - `expires_at_ms`
 - `active`
+
+Plaintext API keys are returned exactly once in the create response payload and are never serialized again from admin list or detail reads.
 
 API key groups are persisted in `ai_app_api_key_groups` with:
 
@@ -113,16 +118,17 @@ Fresh databases now create only `ai_*` physical tables. Legacy names such as `id
 | health and metrics | `GET /admin/health`, `GET /metrics` | liveness and Prometheus-style metrics |
 | auth | `POST /auth/login`, `GET /auth/me`, `POST /auth/change-password` | operator authentication and password rotation |
 | tenancy | `GET/POST /tenants`, `DELETE /tenants/{tenant_id}`, `GET/POST /projects`, `DELETE /projects/{project_id}` | tenant and project lifecycle |
-| gateway access | `GET/POST /api-keys`, `PUT /api-keys/{hashed_key}`, `POST /api-keys/{hashed_key}/status`, `DELETE /api-keys/{hashed_key}` | gateway API key issuance, metadata updates, raw key visibility, and status control |
+| gateway access | `GET/POST /api-keys`, `PUT /api-keys/{hashed_key}`, `POST /api-keys/{hashed_key}/status`, `DELETE /api-keys/{hashed_key}` | gateway API key issuance, metadata updates, one-time plaintext reveal at create, and status control |
 | gateway groups | `GET/POST /api-key-groups`, `PATCH /api-key-groups/{group_id}`, `POST /api-key-groups/{group_id}/status`, `DELETE /api-key-groups/{group_id}` | API key group lifecycle, policy attachment prep, and activation control |
 | provider catalog | `GET/POST /channels`, `DELETE /channels/{channel_id}`, `GET/POST /providers`, `DELETE /providers/{provider_id}`, `GET/POST /credentials`, `DELETE /credentials/{tenant_id}/providers/{provider_id}/keys/{key_reference}` | channel, provider, and credential management |
 | channel models | `GET/POST /channel-models`, `DELETE /channel-models/{channel_id}/models/{model_id}` | channel-to-model mapping management |
 | model pricing | `GET/POST /model-prices`, `DELETE /model-prices/{channel_id}/models/{model_id}/providers/{proxy_provider_id}` | per-channel-model, per-provider pricing control |
 | compatibility model routes | `GET/POST /models`, `DELETE /models/{external_name}/providers/{provider_id}` | legacy provider-scoped model compatibility routes backed by canonical catalog tables |
+| audit and governance | `GET /audit/events` | durable operator audit history for identity, secret, and finance-sensitive mutations |
 | extensions | `GET/POST /extensions/installations`, `GET /extensions/packages`, `GET/POST /extensions/instances`, `GET /extensions/runtime-statuses`, `POST /extensions/runtime-reloads` | extension runtime management |
 | extension rollouts | `GET/POST /extensions/runtime-rollouts`, `GET /extensions/runtime-rollouts/{rollout_id}` | coordinated extension rollout control |
 | runtime config rollouts | `GET/POST /runtime-config/rollouts`, `GET /runtime-config/rollouts/{rollout_id}` | coordinated config reload control |
-| usage and billing | `GET /usage/records`, `GET /usage/summary`, `GET /billing/events`, `GET /billing/events/summary`, `GET /billing/ledger`, `GET /billing/summary`, `GET/POST /billing/quota-policies` | operator observability, billing-event inspection, and quota enforcement |
+| usage and billing | `GET /usage/records`, `GET /usage/summary`, `GET /billing/events`, `GET /billing/events/summary`, `GET /billing/ledger`, `GET /billing/summary`, `GET/POST /billing/quota-policies` | operator observability, billing-event inspection, effective balance visibility, and quota enforcement |
 | routing | `GET/POST /routing/policies`, `GET/POST /routing/profiles`, `GET /routing/snapshots`, `GET /routing/health-snapshots`, `GET /routing/decision-logs`, `POST /routing/simulations` | dispatch policy, reusable routing profiles, compiled route state, and diagnostics |
 
 ## What The Admin API Owns
@@ -137,6 +143,47 @@ The admin API is the system-of-record surface for:
 - quota controls
 
 If you need to operate the gateway, this is the API that changes the underlying behavior.
+
+## Role And Governance Notes
+
+- `super_admin` owns identity and secret administration:
+  - operator and portal user lifecycle
+  - upstream credentials
+  - gateway API keys
+  - API key groups
+- `finance_operator` owns finance-sensitive commercial writes:
+  - model pricing
+  - billing and marketing write routes
+- `platform_operator` owns catalog, routing, runtime, and other platform-control writes, but cannot mutate model prices or secret-bearing routes
+- `read_only_operator` can inspect platform and pricing read models plus the audit ledger, but cannot write control-plane state
+- the current codebase does not yet expose admin-side refund, dispute, or payment-adjustment write routes; when those are added they should reuse the same durable audit substrate and finance-bound approval posture instead of creating a parallel governance path
+
+## Audit Event Notes
+
+- `GET /admin/audit/events` reads durable control-plane audit history from `ai_admin_audit_events`
+- every audit event includes:
+  - `actor_user_id`
+  - `actor_email`
+  - `actor_role`
+  - `action`
+  - `resource_type`
+  - `resource_id`
+  - `approval_scope`
+  - optional `target_tenant_id`
+  - optional `target_project_id`
+  - optional `target_provider_id`
+  - `created_at_ms`
+- approval scopes currently emitted by the admin service include:
+  - `identity_control`
+  - `secret_control`
+  - `finance_control`
+- audited high-risk mutations now include:
+  - admin user create, update, status change, password reset, and delete
+  - portal user create, update, status change, password reset, and delete
+  - gateway API key create, update, status change, and delete
+  - API key group create, update, status change, and delete
+  - upstream credential create and delete
+  - model price create and delete
 
 ## API Key Group Notes
 
@@ -166,6 +213,15 @@ If you need to operate the gateway, this is the API that changes the underlying 
 
 ## Billing Event Notes
 
+- `GET /admin/billing/summary` now returns `remaining_units` as the effective project balance exposed to operators
+- when canonical recharge accounts exist for a project, `GET /admin/billing/summary` sets `balance_source` to `canonical_account` and also exposes:
+  - `quota_remaining_units`
+  - `canonical_account_id`
+  - `canonical_available_balance`
+  - `canonical_held_balance`
+  - `canonical_grant_balance`
+  - `canonical_consumed_balance`
+- when no canonical recharge account exists yet, `balance_source` remains `quota_policy` and `remaining_units` continues to reflect the quota layer
 - `GET /admin/billing/events` exposes the canonical Billing 2.0 event ledger
 - `GET /admin/billing/events/summary` aggregates billing events by:
   - project

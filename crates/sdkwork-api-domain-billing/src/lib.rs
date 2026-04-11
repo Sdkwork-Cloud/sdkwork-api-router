@@ -249,8 +249,7 @@ impl BillingEventRecord {
         fallback_reason: Option<&str>,
     ) -> Self {
         self.applied_routing_profile_id = applied_routing_profile_id.map(ToOwned::to_owned);
-        self.compiled_routing_snapshot_id =
-            compiled_routing_snapshot_id.map(ToOwned::to_owned);
+        self.compiled_routing_snapshot_id = compiled_routing_snapshot_id.map(ToOwned::to_owned);
         self.fallback_reason = fallback_reason.map(ToOwned::to_owned);
         self
     }
@@ -338,11 +337,25 @@ pub struct ProjectBillingSummary {
     pub used_units: u64,
     pub booked_amount: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub balance_source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quota_policy_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quota_limit_units: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quota_remaining_units: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remaining_units: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical_account_id: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical_available_balance: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical_held_balance: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical_grant_balance: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical_consumed_balance: Option<f64>,
     #[serde(default)]
     pub exhausted: bool,
 }
@@ -354,9 +367,16 @@ impl ProjectBillingSummary {
             entry_count: 0,
             used_units: 0,
             booked_amount: 0.0,
+            balance_source: None,
             quota_policy_id: None,
             quota_limit_units: None,
+            quota_remaining_units: None,
             remaining_units: None,
+            canonical_account_id: None,
+            canonical_available_balance: None,
+            canonical_held_balance: None,
+            canonical_grant_balance: None,
+            canonical_consumed_balance: None,
             exhausted: false,
         }
     }

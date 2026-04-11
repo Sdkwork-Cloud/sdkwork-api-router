@@ -494,7 +494,10 @@ fn execute_fake_redis_command(
             let mut nx = false;
             let mut index = 3;
             while index < command.len() {
-                match String::from_utf8_lossy(&command[index]).to_ascii_uppercase().as_str() {
+                match String::from_utf8_lossy(&command[index])
+                    .to_ascii_uppercase()
+                    .as_str()
+                {
                     "PX" => {
                         ttl_ms = Some(
                             String::from_utf8_lossy(&command[index + 1])
@@ -519,8 +522,9 @@ fn execute_fake_redis_command(
                 key,
                 FakeRedisStringValue {
                     value,
-                    expires_at: ttl_ms
-                        .map(|ttl_ms| std::time::Instant::now() + std::time::Duration::from_millis(ttl_ms)),
+                    expires_at: ttl_ms.map(|ttl_ms| {
+                        std::time::Instant::now() + std::time::Duration::from_millis(ttl_ms)
+                    }),
                 },
             );
             RespValue::Simple("OK".to_owned())
@@ -577,9 +581,12 @@ fn execute_fake_redis_command(
 #[allow(dead_code)]
 fn purge_expired_strings(database: &mut FakeRedisDatabase) {
     let now = std::time::Instant::now();
-    database
-        .strings
-        .retain(|_, value| value.expires_at.map(|expires_at| expires_at > now).unwrap_or(true));
+    database.strings.retain(|_, value| {
+        value
+            .expires_at
+            .map(|expires_at| expires_at > now)
+            .unwrap_or(true)
+    });
 }
 
 #[allow(dead_code)]
@@ -596,7 +603,9 @@ fn read_resp_array(stream: &mut TcpStream) -> std::io::Result<Option<Vec<Vec<u8>
             "expected RESP array",
         ));
     }
-    let count = read_resp_line(stream)?.parse::<usize>().expect("array length");
+    let count = read_resp_line(stream)?
+        .parse::<usize>()
+        .expect("array length");
     let mut values = Vec::with_capacity(count);
     for _ in 0..count {
         let mut bulk_marker = [0_u8; 1];

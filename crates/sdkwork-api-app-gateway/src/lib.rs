@@ -1,6 +1,7 @@
 use anyhow::{bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use sdkwork_api_app_credential::{resolve_provider_secret_with_manager, CredentialSecretManager};
+use sdkwork_api_app_rate_limit::acquire_provider_admission_for_current_request;
 use sdkwork_api_app_routing::{select_route_with_store_context, RouteSelectionContext};
 use sdkwork_api_cache_core::{cache_get_or_insert_with, CacheStore, CacheTag};
 use sdkwork_api_cache_memory::MemoryCacheStore;
@@ -94,7 +95,7 @@ use sdkwork_api_contract_openai::webhooks::{
     WebhookObject,
 };
 use sdkwork_api_domain_catalog::ProxyProvider;
-use sdkwork_api_domain_routing::{RoutingDecision, RoutingDecisionSource};
+use sdkwork_api_domain_routing::{ProviderHealthSnapshot, RoutingDecision, RoutingDecisionSource};
 use sdkwork_api_extension_core::{
     ExtensionKind, ExtensionManifest, ExtensionModality, ExtensionProtocol, ExtensionRuntime,
 };
@@ -105,19 +106,29 @@ use sdkwork_api_extension_host::{
     verify_discovered_extension_package_trust, BuiltinProviderExtensionFactory,
     DiscoveredExtensionPackage, ExtensionDiscoveryPolicy, ExtensionHost,
 };
-use sdkwork_api_provider_core::{ProviderRequest, ProviderRequestOptions, ProviderStreamOutput};
+use sdkwork_api_observability::{
+    annotate_current_http_metrics, record_current_commercial_event,
+    record_current_provider_execution, CommercialEventDimensions, CommercialEventKind,
+    ProviderExecutionMetricDimensions,
+};
+use sdkwork_api_provider_core::{
+    ProviderOutput, ProviderRequest, ProviderRequestOptions, ProviderStreamOutput,
+};
 use sdkwork_api_provider_ollama::OllamaProviderAdapter;
-use sdkwork_api_provider_openai::OpenAiProviderAdapter;
+use sdkwork_api_provider_openai::{
+    classify_upstream_error, OpenAiProviderAdapter, UpstreamFailureCategory,
+};
 use sdkwork_api_provider_openrouter::OpenRouterProviderAdapter;
 use sdkwork_api_storage_core::{AdminStore, Reloadable};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::borrow::ToOwned;
 use std::fs;
 use std::future::Future;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;
 
@@ -294,12 +305,14 @@ pub async fn get_model_from_store(
             CacheTag::new(format!("model:{model_id}")),
         ],
         || async {
-            let cached = store.find_model(model_id).await?.map(|entry| {
-                CachedCapabilityCatalogModel {
-                    id: entry.external_name,
-                    owned_by: entry.provider_id,
-                }
-            });
+            let cached =
+                store
+                    .find_model(model_id)
+                    .await?
+                    .map(|entry| CachedCapabilityCatalogModel {
+                        id: entry.external_name,
+                        owned_by: entry.provider_id,
+                    });
             Ok(serde_json::to_vec(&cached)?)
         },
     )
@@ -331,21 +344,21 @@ pub async fn delete_model_from_store(
                 &api_key,
                 ProviderRequest::ModelsDelete(model_id),
             )
-              .await?;
+            .await?;
 
-              if let Some(response) = response {
-                  let _ = store.delete_model(model_id).await?;
-                  invalidate_capability_catalog_cache().await;
-                  return Ok(Some(response));
-              }
-          }
-      }
+            if let Some(response) = response {
+                let _ = store.delete_model(model_id).await?;
+                invalidate_capability_catalog_cache().await;
+                return Ok(Some(response));
+            }
+        }
+    }
 
-      if store.delete_model(model_id).await? {
-          invalidate_capability_catalog_cache().await;
-          return Ok(Some(serde_json::to_value(DeleteModelResponse::deleted(
-              model_id,
-          ))?));
+    if store.delete_model(model_id).await? {
+        invalidate_capability_catalog_cache().await;
+        return Ok(Some(serde_json::to_value(DeleteModelResponse::deleted(
+            model_id,
+        ))?));
     }
 
     Ok(None)
@@ -355,6 +368,8 @@ pub async fn delete_model_from_store(
 struct ProviderExecutionTarget {
     provider_id: String,
     runtime_key: String,
+    runtime: ExtensionRuntime,
+    instance_id: Option<String>,
     base_url: String,
     local_fallback: bool,
 }
@@ -364,15 +379,25 @@ impl ProviderExecutionTarget {
         Self {
             provider_id: LOCAL_PROVIDER_ID.to_owned(),
             runtime_key: String::new(),
+            runtime: ExtensionRuntime::Builtin,
+            instance_id: None,
             base_url: String::new(),
             local_fallback: true,
         }
     }
 
-    fn upstream(provider_id: String, runtime_key: String, base_url: String) -> Self {
+    fn upstream(
+        provider_id: String,
+        runtime_key: String,
+        runtime: ExtensionRuntime,
+        instance_id: Option<String>,
+        base_url: String,
+    ) -> Self {
         Self {
             provider_id,
             runtime_key,
+            runtime,
+            instance_id,
             base_url,
             local_fallback: false,
         }
@@ -383,9 +408,17 @@ impl ProviderExecutionTarget {
 struct ProviderExecutionDescriptor {
     provider_id: String,
     runtime_key: String,
+    runtime: ExtensionRuntime,
+    instance_id: Option<String>,
     base_url: String,
     api_key: String,
     local_fallback: bool,
+}
+
+#[derive(Clone)]
+struct ProviderExecutionCandidate {
+    provider: ProxyProvider,
+    api_key: String,
 }
 
 async fn build_extension_host_from_store(store: &dyn AdminStore) -> Result<ExtensionHost> {
@@ -440,6 +473,8 @@ async fn provider_execution_target_for_provider(
             Ok(ProviderExecutionTarget::upstream(
                 provider.id.clone(),
                 load_plan.extension_id,
+                load_plan.runtime,
+                Some(load_plan.instance_id),
                 resolved_base_url,
             ))
         }
@@ -447,6 +482,8 @@ async fn provider_execution_target_for_provider(
             Ok(ProviderExecutionTarget::upstream(
                 provider.id.clone(),
                 provider_runtime_key(provider).to_owned(),
+                ExtensionRuntime::Builtin,
+                None,
                 provider.base_url.clone(),
             ))
         }
@@ -463,6 +500,8 @@ async fn provider_execution_descriptor_for_provider(
     Ok(ProviderExecutionDescriptor {
         provider_id: target.provider_id,
         runtime_key: target.runtime_key,
+        runtime: target.runtime,
+        instance_id: target.instance_id,
         base_url: target.base_url,
         api_key,
         local_fallback: target.local_fallback,
@@ -916,20 +955,11 @@ pub async fn relay_chat_completion_from_store_with_options(
         &request.model,
     )
     .await?;
-    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
-        return Ok(None);
-    };
-    let Some(api_key) =
-        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
-            .await?
-    else {
-        return Ok(None);
-    };
-
-    execute_json_provider_request_for_provider_with_options(
+    execute_json_provider_request_for_decision_with_options(
         store,
-        &provider,
-        &api_key,
+        secret_manager,
+        tenant_id,
+        &decision,
         ProviderRequest::ChatCompletions(request),
         options,
     )
@@ -1141,20 +1171,11 @@ pub async fn relay_chat_completion_stream_from_store_with_options(
         &request.model,
     )
     .await?;
-    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
-        return Ok(None);
-    };
-    let Some(api_key) =
-        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
-            .await?
-    else {
-        return Ok(None);
-    };
-
-    execute_stream_provider_request_for_provider_with_options(
+    execute_stream_provider_request_for_decision_with_options(
         store,
-        &provider,
-        &api_key,
+        secret_manager,
+        tenant_id,
+        &decision,
         ProviderRequest::ChatCompletionsStream(request),
         options,
     )
@@ -1978,20 +1999,11 @@ pub async fn relay_response_from_store(
         &request.model,
     )
     .await?;
-    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
-        return Ok(None);
-    };
-    let Some(api_key) =
-        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
-            .await?
-    else {
-        return Ok(None);
-    };
-
-    execute_json_provider_request_for_provider(
+    execute_json_provider_request_for_decision(
         store,
-        &provider,
-        &api_key,
+        secret_manager,
+        tenant_id,
+        &decision,
         ProviderRequest::Responses(request),
     )
     .await
@@ -2012,20 +2024,11 @@ pub async fn relay_response_stream_from_store(
         &request.model,
     )
     .await?;
-    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
-        return Ok(None);
-    };
-    let Some(api_key) =
-        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
-            .await?
-    else {
-        return Ok(None);
-    };
-
-    execute_stream_provider_request_for_provider(
+    execute_stream_provider_request_for_decision(
         store,
-        &provider,
-        &api_key,
+        secret_manager,
+        tenant_id,
+        &decision,
         ProviderRequest::ResponsesStream(request),
     )
     .await
@@ -2046,20 +2049,11 @@ pub async fn relay_count_response_input_tokens_from_store(
         &request.model,
     )
     .await?;
-    let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
-        return Ok(None);
-    };
-    let Some(api_key) =
-        resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
-            .await?
-    else {
-        return Ok(None);
-    };
-
-    execute_json_provider_request_for_provider(
+    execute_json_provider_request_for_decision(
         store,
-        &provider,
-        &api_key,
+        secret_manager,
+        tenant_id,
+        &decision,
         ProviderRequest::ResponsesInputTokens(request),
     )
     .await
@@ -4814,8 +4808,8 @@ pub async fn relay_music_from_store(
     project_id: &str,
     request: &CreateMusicRequest,
 ) -> Result<Option<Value>> {
-    let decision = select_gateway_route(store, tenant_id, Some(project_id), "music", &request.model)
-        .await?;
+    let decision =
+        select_gateway_route(store, tenant_id, Some(project_id), "music", &request.model).await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -4826,8 +4820,13 @@ pub async fn relay_music_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request_for_provider(store, &provider, &api_key, ProviderRequest::Music(request))
-        .await
+    execute_json_provider_request_for_provider(
+        store,
+        &provider,
+        &api_key,
+        ProviderRequest::Music(request),
+    )
+    .await
 }
 
 pub async fn relay_list_music_from_store(
@@ -4836,7 +4835,8 @@ pub async fn relay_list_music_from_store(
     tenant_id: &str,
     project_id: &str,
 ) -> Result<Option<Value>> {
-    let decision = select_gateway_route(store, tenant_id, Some(project_id), "music", "music").await?;
+    let decision =
+        select_gateway_route(store, tenant_id, Some(project_id), "music", "music").await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -4847,8 +4847,13 @@ pub async fn relay_list_music_from_store(
         return Ok(None);
     };
 
-    execute_json_provider_request_for_provider(store, &provider, &api_key, ProviderRequest::MusicList)
-        .await
+    execute_json_provider_request_for_provider(
+        store,
+        &provider,
+        &api_key,
+        ProviderRequest::MusicList,
+    )
+    .await
 }
 
 pub async fn relay_get_music_from_store(
@@ -4858,7 +4863,8 @@ pub async fn relay_get_music_from_store(
     project_id: &str,
     music_id: &str,
 ) -> Result<Option<Value>> {
-    let decision = select_gateway_route(store, tenant_id, Some(project_id), "music", music_id).await?;
+    let decision =
+        select_gateway_route(store, tenant_id, Some(project_id), "music", music_id).await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -4885,7 +4891,8 @@ pub async fn relay_delete_music_from_store(
     project_id: &str,
     music_id: &str,
 ) -> Result<Option<Value>> {
-    let decision = select_gateway_route(store, tenant_id, Some(project_id), "music", music_id).await?;
+    let decision =
+        select_gateway_route(store, tenant_id, Some(project_id), "music", music_id).await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -4912,7 +4919,8 @@ pub async fn relay_music_content_from_store(
     project_id: &str,
     music_id: &str,
 ) -> Result<Option<ProviderStreamOutput>> {
-    let decision = select_gateway_route(store, tenant_id, Some(project_id), "music", music_id).await?;
+    let decision =
+        select_gateway_route(store, tenant_id, Some(project_id), "music", music_id).await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -4939,7 +4947,8 @@ pub async fn relay_music_lyrics_from_store(
     project_id: &str,
     request: &CreateMusicLyricsRequest,
 ) -> Result<Option<Value>> {
-    let decision = select_gateway_route(store, tenant_id, Some(project_id), "music", "lyrics").await?;
+    let decision =
+        select_gateway_route(store, tenant_id, Some(project_id), "music", "lyrics").await?;
     let Some(provider) = store.find_provider(&decision.selected_provider_id).await? else {
         return Ok(None);
     };
@@ -5816,31 +5825,34 @@ pub fn create_music(
     _project_id: &str,
     request: &CreateMusicRequest,
 ) -> Result<MusicTracksResponse> {
-    Ok(MusicTracksResponse::new(vec![
-        MusicObject::new("music_1")
-            .with_status("completed")
-            .with_model(&request.model)
-            .with_title(request.title.clone().unwrap_or_else(|| "SDKWork Track".to_owned()))
-            .with_audio_url("https://example.com/music.mp3")
-            .with_lyrics(
-                request
-                    .lyrics
-                    .clone()
-                    .unwrap_or_else(|| "We rise with the skyline".to_owned()),
-            )
-            .with_duration_seconds(request.duration_seconds.unwrap_or(123.0)),
-    ]))
+    Ok(MusicTracksResponse::new(vec![MusicObject::new("music_1")
+        .with_status("completed")
+        .with_model(&request.model)
+        .with_title(
+            request
+                .title
+                .clone()
+                .unwrap_or_else(|| "SDKWork Track".to_owned()),
+        )
+        .with_audio_url("https://example.com/music.mp3")
+        .with_lyrics(
+            request
+                .lyrics
+                .clone()
+                .unwrap_or_else(|| "We rise with the skyline".to_owned()),
+        )
+        .with_duration_seconds(
+            request.duration_seconds.unwrap_or(123.0),
+        )]))
 }
 
 pub fn list_music(_tenant_id: &str, _project_id: &str) -> Result<MusicTracksResponse> {
-    Ok(MusicTracksResponse::new(vec![
-        MusicObject::new("music_1")
-            .with_status("completed")
-            .with_model("suno-v4")
-            .with_title("SDKWork Track")
-            .with_audio_url("https://example.com/music.mp3")
-            .with_duration_seconds(123.0),
-    ]))
+    Ok(MusicTracksResponse::new(vec![MusicObject::new("music_1")
+        .with_status("completed")
+        .with_model("suno-v4")
+        .with_title("SDKWork Track")
+        .with_audio_url("https://example.com/music.mp3")
+        .with_duration_seconds(123.0)]))
 }
 
 pub fn get_music(_tenant_id: &str, _project_id: &str, music_id: &str) -> Result<MusicObject> {
@@ -5861,7 +5873,9 @@ pub fn delete_music(
 }
 
 pub fn music_content(_tenant_id: &str, _project_id: &str, _music_id: &str) -> Result<Vec<u8>> {
-    Ok(vec![0x49, 0x44, 0x33, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x21])
+    Ok(vec![
+        0x49, 0x44, 0x33, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x21,
+    ])
 }
 
 pub fn create_music_lyrics(
@@ -5869,17 +5883,14 @@ pub fn create_music_lyrics(
     _project_id: &str,
     request: &CreateMusicLyricsRequest,
 ) -> Result<MusicLyricsObject> {
-    Ok(MusicLyricsObject::new(
-        "lyrics_1",
-        "completed",
-        &request.prompt,
+    Ok(
+        MusicLyricsObject::new("lyrics_1", "completed", &request.prompt).with_title(
+            request
+                .title
+                .clone()
+                .unwrap_or_else(|| "SDKWork Lyrics".to_owned()),
+        ),
     )
-    .with_title(
-        request
-            .title
-            .clone()
-            .unwrap_or_else(|| "SDKWork Lyrics".to_owned()),
-    ))
 }
 
 pub fn create_video(
@@ -5891,18 +5902,24 @@ pub fn create_video(
     Ok(VideosResponse::new(vec![VideoObject::new(
         "video_1",
         "https://example.com/video.mp4",
-    )]))
+    )
+    .with_status("completed")
+    .with_duration_seconds(24.0)]))
 }
 
 pub fn list_videos(_tenant_id: &str, _project_id: &str) -> Result<VideosResponse> {
     Ok(VideosResponse::new(vec![VideoObject::new(
         "video_1",
         "https://example.com/video.mp4",
-    )]))
+    )
+    .with_status("completed")
+    .with_duration_seconds(24.0)]))
 }
 
 pub fn get_video(_tenant_id: &str, _project_id: &str, video_id: &str) -> Result<VideoObject> {
-    Ok(VideoObject::new(video_id, "https://example.com/video.mp4"))
+    Ok(VideoObject::new(video_id, "https://example.com/video.mp4")
+        .with_status("completed")
+        .with_duration_seconds(24.0))
 }
 
 pub fn delete_video(
@@ -5926,7 +5943,9 @@ pub fn remix_video(
     Ok(VideosResponse::new(vec![VideoObject::new(
         "video_1_remix",
         "https://example.com/video-remix.mp4",
-    )]))
+    )
+    .with_status("completed")
+    .with_duration_seconds(24.0)]))
 }
 
 pub fn create_video_character(
@@ -5986,7 +6005,9 @@ pub fn extend_video(
     Ok(VideosResponse::new(vec![VideoObject::new(
         "video_1_extended",
         "https://example.com/video-extended.mp4",
-    )]))
+    )
+    .with_status("completed")
+    .with_duration_seconds(24.0)]))
 }
 
 pub fn edit_video(
@@ -5997,7 +6018,9 @@ pub fn edit_video(
     Ok(VideosResponse::new(vec![VideoObject::new(
         "video_1_edited",
         "https://example.com/video-edited.mp4",
-    )]))
+    )
+    .with_status("completed")
+    .with_duration_seconds(24.0)]))
 }
 
 pub fn extensions_video(
@@ -6008,7 +6031,9 @@ pub fn extensions_video(
     Ok(VideosResponse::new(vec![VideoObject::new(
         "video_1_extended",
         "https://example.com/video-extended.mp4",
-    )]))
+    )
+    .with_status("completed")
+    .with_duration_seconds(24.0)]))
 }
 
 pub fn create_upload_part(
@@ -7081,6 +7106,45 @@ async fn execute_json_provider_request_for_provider(
     .await
 }
 
+async fn execute_json_provider_request_for_decision_with_options(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    decision: &RoutingDecision,
+    request: ProviderRequest<'_>,
+    options: &ProviderRequestOptions,
+) -> Result<Option<Value>> {
+    let response = execute_provider_request_for_decision_with_options(
+        store,
+        secret_manager,
+        tenant_id,
+        decision,
+        request,
+        options,
+    )
+    .await?;
+    Ok(response.and_then(ProviderOutput::into_json))
+}
+
+async fn execute_json_provider_request_for_decision(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    decision: &RoutingDecision,
+    request: ProviderRequest<'_>,
+) -> Result<Option<Value>> {
+    let options = ProviderRequestOptions::default();
+    execute_json_provider_request_for_decision_with_options(
+        store,
+        secret_manager,
+        tenant_id,
+        decision,
+        request,
+        &options,
+    )
+    .await
+}
+
 async fn execute_json_provider_request_for_provider_with_options(
     store: &dyn AdminStore,
     provider: &ProxyProvider,
@@ -7119,6 +7183,230 @@ async fn execute_stream_provider_request_for_provider(
     .await
 }
 
+async fn execute_stream_provider_request_for_decision_with_options(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    decision: &RoutingDecision,
+    request: ProviderRequest<'_>,
+    options: &ProviderRequestOptions,
+) -> Result<Option<ProviderStreamOutput>> {
+    let response = execute_provider_request_for_decision_with_options(
+        store,
+        secret_manager,
+        tenant_id,
+        decision,
+        request,
+        options,
+    )
+    .await?;
+    Ok(response.and_then(ProviderOutput::into_stream))
+}
+
+async fn execute_stream_provider_request_for_decision(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    decision: &RoutingDecision,
+    request: ProviderRequest<'_>,
+) -> Result<Option<ProviderStreamOutput>> {
+    let options = ProviderRequestOptions::default();
+    execute_stream_provider_request_for_decision_with_options(
+        store,
+        secret_manager,
+        tenant_id,
+        decision,
+        request,
+        &options,
+    )
+    .await
+}
+
+async fn execute_provider_request_for_decision_with_options(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    decision: &RoutingDecision,
+    request: ProviderRequest<'_>,
+    options: &ProviderRequestOptions,
+) -> Result<Option<ProviderOutput>> {
+    let candidates =
+        provider_execution_candidates_for_decision(store, secret_manager, tenant_id, decision)
+            .await?;
+    if candidates.is_empty() {
+        return Ok(None);
+    }
+    let candidate_count = candidates.len();
+    let request_model = provider_request_model_name(request).map(ToOwned::to_owned);
+
+    let host = build_extension_host_from_store(store).await?;
+    let mut last_admission_error: Option<anyhow::Error> = None;
+    let mut last_retryable_error: Option<anyhow::Error> = None;
+
+    for (candidate_index, candidate) in candidates.into_iter().enumerate() {
+        let descriptor = provider_execution_descriptor_for_provider(
+            store,
+            &candidate.provider,
+            candidate.api_key,
+        )
+        .await?;
+        if descriptor.local_fallback {
+            continue;
+        }
+
+        let _provider_admission_permit =
+            match acquire_provider_admission_for_current_request(&descriptor.provider_id).await {
+                Ok(permit) => permit,
+                Err(error) => {
+                    persist_provider_execution_health_snapshot(
+                        store,
+                        &descriptor,
+                        false,
+                        Some(error.to_string()),
+                    )
+                    .await?;
+                    last_admission_error = Some(anyhow::Error::new(error));
+                    continue;
+                }
+            };
+
+        let Some(adapter) =
+            host.resolve_provider(&descriptor.runtime_key, descriptor.base_url.clone())
+        else {
+            persist_provider_execution_health_snapshot(
+                store,
+                &descriptor,
+                false,
+                Some("provider adapter is not available in the extension host".to_owned()),
+            )
+            .await?;
+            continue;
+        };
+
+        let mut attempt = 0_usize;
+        loop {
+            let attempt_started_at = Instant::now();
+            match adapter
+                .execute_with_options(&descriptor.api_key, request, options)
+                .await
+            {
+                Ok(response) => {
+                    let retry_outcome = if attempt > 0 { "retried" } else { "none" };
+                    let failover_outcome = if candidate_index > 0 {
+                        "activated"
+                    } else {
+                        "none"
+                    };
+                    annotate_current_http_metrics(|dimensions| {
+                        dimensions.provider = Some(descriptor.provider_id.clone());
+                        dimensions.model = request_model.clone();
+                        dimensions.retry_outcome = Some(retry_outcome.to_owned());
+                        dimensions.failover_outcome = Some(failover_outcome.to_owned());
+                    });
+                    let mut telemetry = ProviderExecutionMetricDimensions::default()
+                        .with_provider(descriptor.provider_id.clone())
+                        .with_retry_outcome(retry_outcome)
+                        .with_failover_outcome(failover_outcome)
+                        .with_result("succeeded");
+                    if let Some(model) = request_model.as_ref() {
+                        telemetry = telemetry.with_model(model.clone());
+                    }
+                    record_current_provider_execution(
+                        attempt_started_at.elapsed().as_millis() as u64,
+                        telemetry,
+                    );
+                    persist_provider_execution_health_snapshot(
+                        store,
+                        &descriptor,
+                        true,
+                        Some("gateway execution succeeded".to_owned()),
+                    )
+                    .await?;
+                    return Ok(Some(response));
+                }
+                Err(error) => {
+                    let failure = classify_upstream_error(&error);
+                    let has_failover_target = candidate_index + 1 < candidate_count;
+                    let retry_same_provider = attempt == 0
+                        && matches!(
+                            failure.category,
+                            UpstreamFailureCategory::Connect | UpstreamFailureCategory::Transport
+                        );
+                    let retry_outcome = if retry_same_provider {
+                        "same_provider_retry"
+                    } else if failure.retryable && has_failover_target {
+                        "will_failover"
+                    } else if failure.retryable {
+                        "exhausted"
+                    } else {
+                        "terminal"
+                    };
+                    let failover_outcome = if candidate_index > 0 || has_failover_target {
+                        "activated"
+                    } else {
+                        "none"
+                    };
+                    annotate_current_http_metrics(|dimensions| {
+                        dimensions.provider = Some(descriptor.provider_id.clone());
+                        dimensions.model = request_model.clone();
+                        dimensions.retry_outcome = Some(retry_outcome.to_owned());
+                        dimensions.failover_outcome = Some(failover_outcome.to_owned());
+                    });
+                    let mut telemetry = ProviderExecutionMetricDimensions::default()
+                        .with_provider(descriptor.provider_id.clone())
+                        .with_retry_outcome(retry_outcome)
+                        .with_failover_outcome(failover_outcome)
+                        .with_result(if failure.retryable {
+                            "retryable_failure"
+                        } else {
+                            "terminal_failure"
+                        });
+                    if let Some(model) = request_model.as_ref() {
+                        telemetry = telemetry.with_model(model.clone());
+                    }
+                    record_current_provider_execution(
+                        attempt_started_at.elapsed().as_millis() as u64,
+                        telemetry,
+                    );
+                    if failure.retryable && has_failover_target && !retry_same_provider {
+                        record_current_commercial_event(
+                            CommercialEventKind::FailoverActivation,
+                            CommercialEventDimensions::default()
+                                .with_provider(descriptor.provider_id.clone())
+                                .with_model_option(request_model.clone())
+                                .with_result("activated"),
+                        );
+                    }
+                    persist_provider_execution_health_snapshot(
+                        store,
+                        &descriptor,
+                        false,
+                        Some(failure.message.clone()),
+                    )
+                    .await?;
+                    if retry_same_provider {
+                        attempt += 1;
+                        continue;
+                    }
+
+                    if failure.retryable {
+                        last_retryable_error = Some(error);
+                        break;
+                    }
+
+                    return Err(error);
+                }
+            }
+        }
+    }
+
+    match (last_admission_error, last_retryable_error) {
+        (Some(error), _) => Err(error),
+        (None, Some(error)) => Err(error),
+        (None, None) => Ok(None),
+    }
+}
+
 async fn execute_stream_provider_request_for_provider_with_options(
     store: &dyn AdminStore,
     provider: &ProxyProvider,
@@ -7142,6 +7430,89 @@ async fn execute_stream_provider_request_for_provider_with_options(
         .execute_with_options(&descriptor.api_key, request, options)
         .await?;
     Ok(response.into_stream())
+}
+
+async fn provider_execution_candidates_for_decision(
+    store: &dyn AdminStore,
+    secret_manager: &CredentialSecretManager,
+    tenant_id: &str,
+    decision: &RoutingDecision,
+) -> Result<Vec<ProviderExecutionCandidate>> {
+    let mut candidates = Vec::new();
+    for provider_id in &decision.candidate_ids {
+        let Some(provider) = store.find_provider(provider_id).await? else {
+            continue;
+        };
+        let Some(api_key) =
+            resolve_provider_secret_with_manager(store, secret_manager, tenant_id, &provider.id)
+                .await?
+        else {
+            continue;
+        };
+        candidates.push(ProviderExecutionCandidate { provider, api_key });
+    }
+    Ok(candidates)
+}
+
+fn provider_request_model_name(request: ProviderRequest<'_>) -> Option<&str> {
+    match request {
+        ProviderRequest::Assistants(payload) => Some(payload.model.as_str()),
+        ProviderRequest::ChatCompletions(payload)
+        | ProviderRequest::ChatCompletionsStream(payload) => Some(payload.model.as_str()),
+        ProviderRequest::Completions(payload) => Some(payload.model.as_str()),
+        ProviderRequest::Responses(payload) | ProviderRequest::ResponsesStream(payload) => {
+            Some(payload.model.as_str())
+        }
+        ProviderRequest::Embeddings(payload) => Some(payload.model.as_str()),
+        ProviderRequest::Moderations(payload) => Some(payload.model.as_str()),
+        ProviderRequest::Music(payload) => Some(payload.model.as_str()),
+        ProviderRequest::ImagesGenerations(payload) => Some(payload.model.as_str()),
+        ProviderRequest::ImagesEdits(payload) => payload.model.as_deref(),
+        ProviderRequest::ImagesVariations(payload) => payload.model.as_deref(),
+        ProviderRequest::AudioTranscriptions(payload) => Some(payload.model.as_str()),
+        ProviderRequest::AudioTranslations(payload) => Some(payload.model.as_str()),
+        ProviderRequest::AudioSpeech(payload) => Some(payload.model.as_str()),
+        ProviderRequest::RealtimeSessions(payload) => Some(payload.model.as_str()),
+        ProviderRequest::ThreadRuns(_, payload) => payload.model.as_deref(),
+        ProviderRequest::ThreadsRuns(payload) => payload.model.as_deref(),
+        ProviderRequest::Videos(payload) => Some(payload.model.as_str()),
+        _ => None,
+    }
+}
+
+async fn persist_provider_execution_health_snapshot(
+    store: &dyn AdminStore,
+    descriptor: &ProviderExecutionDescriptor,
+    healthy: bool,
+    message: Option<String>,
+) -> Result<()> {
+    let snapshot = ProviderHealthSnapshot::new(
+        descriptor.provider_id.clone(),
+        descriptor.runtime_key.clone(),
+        extension_runtime_key(&descriptor.runtime),
+        current_time_millis(),
+    )
+    .with_instance_id_option(descriptor.instance_id.clone())
+    .with_running(true)
+    .with_healthy(healthy)
+    .with_message_option(message);
+    store.insert_provider_health_snapshot(&snapshot).await?;
+    Ok(())
+}
+
+fn extension_runtime_key(runtime: &ExtensionRuntime) -> &'static str {
+    match runtime {
+        ExtensionRuntime::Builtin => "builtin",
+        ExtensionRuntime::NativeDynamic => "native_dynamic",
+        ExtensionRuntime::Connector => "connector",
+    }
+}
+
+fn current_time_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or(0)
 }
 
 async fn execute_json_provider_request(

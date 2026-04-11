@@ -69,6 +69,7 @@ pub trait ProviderAdapter {
     fn id(&self) -> &'static str;
 }
 
+#[derive(Clone, Copy)]
 pub enum ProviderRequest<'a> {
     ModelsList,
     ModelsRetrieve(&'a str),

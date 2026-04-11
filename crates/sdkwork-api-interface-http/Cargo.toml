@@ -20,6 +20,9 @@ sdkwork-api-app-rate-limit = { path = "../sdkwork-api-app-rate-limit" }
 sdkwork-api-app-routing = { path = "../sdkwork-api-app-routing" }
 sdkwork-api-app-usage = { path = "../sdkwork-api-app-usage" }
 sdkwork-api-contract-openai = { path = "../sdkwork-api-contract-openai" }
+sdkwork-api-domain-catalog = { path = "../sdkwork-api-domain-catalog" }
+sdkwork-api-domain-identity = { path = "../sdkwork-api-domain-identity" }
+sdkwork-api-domain-usage = { path = "../sdkwork-api-domain-usage" }
 sdkwork-api-observability = { path = "../sdkwork-api-observability" }
 sdkwork-api-openapi = { path = "../sdkwork-api-openapi" }
 sdkwork-api-policy-billing = { path = "../sdkwork-api-policy-billing" }
@@ -39,8 +42,9 @@ serial_test.workspace = true
 sdkwork-api-cache-core = { path = "../sdkwork-api-cache-core" }
 sdkwork-api-cache-memory = { path = "../sdkwork-api-cache-memory" }
 sdkwork-api-cache-redis = { path = "../sdkwork-api-cache-redis" }
-sdkwork-api-domain-catalog = { path = "../sdkwork-api-domain-catalog" }
+sdkwork-api-domain-billing = { path = "../sdkwork-api-domain-billing" }
 sdkwork-api-domain-identity = { path = "../sdkwork-api-domain-identity" }
+sdkwork-api-domain-usage = { path = "../sdkwork-api-domain-usage" }
 sdkwork-api-ext-provider-native-mock = { path = "../sdkwork-api-ext-provider-native-mock" }
 sdkwork-api-extension-core = { path = "../sdkwork-api-extension-core" }
 sha2.workspace = true

@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 pub use sdkwork_api_cache_core::CacheBackendKind;
 pub use sdkwork_api_secret_core::SecretBackendKind;
 use sdkwork_api_storage_core::StorageDialect;
@@ -39,8 +39,9 @@ const SDKWORK_CREDENTIAL_MASTER_KEY: &str = "SDKWORK_CREDENTIAL_MASTER_KEY";
 const SDKWORK_CREDENTIAL_LEGACY_MASTER_KEYS: &str = "SDKWORK_CREDENTIAL_LEGACY_MASTER_KEYS";
 const SDKWORK_SECRET_LOCAL_FILE: &str = "SDKWORK_SECRET_LOCAL_FILE";
 const SDKWORK_SECRET_KEYRING_SERVICE: &str = "SDKWORK_SECRET_KEYRING_SERVICE";
+const SDKWORK_ALLOW_LOCAL_DEV_BOOTSTRAP: &str = "SDKWORK_ALLOW_LOCAL_DEV_BOOTSTRAP";
 
-const MANAGED_ENV_KEYS: [&str; 19] = [
+const MANAGED_ENV_KEYS: [&str; 20] = [
     SDKWORK_GATEWAY_BIND,
     SDKWORK_ADMIN_BIND,
     SDKWORK_PORTAL_BIND,
@@ -60,6 +61,7 @@ const MANAGED_ENV_KEYS: [&str; 19] = [
     SDKWORK_RUNTIME_SNAPSHOT_INTERVAL_SECS,
     SDKWORK_SECRET_BACKEND,
     SDKWORK_CREDENTIAL_MASTER_KEY,
+    SDKWORK_ALLOW_LOCAL_DEV_BOOTSTRAP,
 ];
 
 const MANAGED_SECRET_ENV_KEYS: [&str; 3] = [
@@ -136,6 +138,7 @@ pub struct StandaloneConfig {
     pub credential_legacy_master_keys: Vec<String>,
     pub secret_local_file: String,
     pub secret_keyring_service: String,
+    pub allow_local_dev_bootstrap: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -195,6 +198,7 @@ struct StandaloneConfigFile {
     credential_legacy_master_keys: Option<Vec<String>>,
     secret_local_file: Option<String>,
     secret_keyring_service: Option<String>,
+    allow_local_dev_bootstrap: Option<bool>,
 }
 
 impl Default for StandaloneConfig {
@@ -222,6 +226,7 @@ impl Default for StandaloneConfig {
             credential_legacy_master_keys: Vec::new(),
             secret_local_file: "sdkwork-api-secrets.json".to_owned(),
             secret_keyring_service: "sdkwork-api-server".to_owned(),
+            allow_local_dev_bootstrap: false,
         }
     }
 }
@@ -318,6 +323,10 @@ impl StandaloneConfig {
                 SDKWORK_SECRET_KEYRING_SERVICE.to_owned(),
                 self.secret_keyring_service.clone(),
             ),
+            (
+                SDKWORK_ALLOW_LOCAL_DEV_BOOTSTRAP.to_owned(),
+                self.allow_local_dev_bootstrap.to_string(),
+            ),
         ];
 
         if !self.extension_paths.is_empty() {
@@ -370,6 +379,48 @@ impl StandaloneConfig {
             native_dynamic_shutdown_drain_timeout_ms: self.native_dynamic_shutdown_drain_timeout_ms,
             runtime_snapshot_interval_secs: self.runtime_snapshot_interval_secs,
         }
+    }
+
+    pub fn validate_startup_security(&self) -> Result<()> {
+        if self.allow_local_dev_bootstrap {
+            return Ok(());
+        }
+
+        let mut insecure_reasons = Vec::new();
+
+        if self.admin_jwt_signing_secret == "local-dev-admin-jwt-secret" {
+            insecure_reasons.push(format!(
+                "{SDKWORK_ADMIN_JWT_SIGNING_SECRET} uses the local-dev default"
+            ));
+        }
+        if self.portal_jwt_signing_secret == "local-dev-portal-jwt-secret" {
+            insecure_reasons.push(format!(
+                "{SDKWORK_PORTAL_JWT_SIGNING_SECRET} uses the local-dev default"
+            ));
+        }
+        if self.credential_master_key == "local-dev-master-key" {
+            insecure_reasons.push(format!(
+                "{SDKWORK_CREDENTIAL_MASTER_KEY} uses the local-dev default"
+            ));
+        }
+        if self
+            .credential_legacy_master_keys
+            .iter()
+            .any(|value| value == "local-dev-master-key")
+        {
+            insecure_reasons.push(format!(
+                "{SDKWORK_CREDENTIAL_LEGACY_MASTER_KEYS} contains the local-dev default"
+            ));
+        }
+
+        if insecure_reasons.is_empty() {
+            return Ok(());
+        }
+
+        Err(anyhow!(
+            "insecure startup defaults are not allowed unless {SDKWORK_ALLOW_LOCAL_DEV_BOOTSTRAP}=true: {}",
+            insecure_reasons.join("; ")
+        ))
     }
 
     pub fn non_reloadable_changed_fields(&self, next: &Self) -> Vec<&'static str> {
@@ -475,6 +526,7 @@ impl StandaloneConfig {
             credential_legacy_master_keys: Vec::new(),
             secret_local_file: paths.secret_local_file.to_string_lossy().into_owned(),
             secret_keyring_service: "sdkwork-api-server".to_owned(),
+            allow_local_dev_bootstrap: false,
         }
     }
 
@@ -562,6 +614,9 @@ impl StandaloneConfig {
         }
         if let Some(value) = file.secret_keyring_service {
             self.secret_keyring_service = value;
+        }
+        if let Some(value) = file.allow_local_dev_bootstrap {
+            self.allow_local_dev_bootstrap = value;
         }
 
         Ok(())
@@ -652,6 +707,11 @@ impl StandaloneConfig {
         if let Some(value) = values.get(SDKWORK_SECRET_KEYRING_SERVICE) {
             self.secret_keyring_service = value.clone();
         }
+        self.allow_local_dev_bootstrap = parse_bool_env(
+            values,
+            SDKWORK_ALLOW_LOCAL_DEV_BOOTSTRAP,
+            self.allow_local_dev_bootstrap,
+        )?;
 
         Ok(())
     }

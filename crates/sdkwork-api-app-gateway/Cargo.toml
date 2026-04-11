@@ -9,6 +9,7 @@ anyhow.workspace = true
 base64.workspace = true
 reqwest.workspace = true
 sdkwork-api-app-credential = { path = "../sdkwork-api-app-credential" }
+sdkwork-api-app-rate-limit = { path = "../sdkwork-api-app-rate-limit" }
 sdkwork-api-app-routing = { path = "../sdkwork-api-app-routing" }
 sdkwork-api-cache-core = { path = "../sdkwork-api-cache-core" }
 sdkwork-api-cache-memory = { path = "../sdkwork-api-cache-memory" }
@@ -17,6 +18,7 @@ sdkwork-api-domain-catalog = { path = "../sdkwork-api-domain-catalog" }
 sdkwork-api-domain-routing = { path = "../sdkwork-api-domain-routing" }
 sdkwork-api-extension-core = { path = "../sdkwork-api-extension-core" }
 sdkwork-api-extension-host = { path = "../sdkwork-api-extension-host" }
+sdkwork-api-observability = { path = "../sdkwork-api-observability" }
 sdkwork-api-provider-core = { path = "../sdkwork-api-provider-core" }
 sdkwork-api-provider-ollama = { path = "../sdkwork-api-provider-ollama" }
 sdkwork-api-provider-openai = { path = "../sdkwork-api-provider-openai" }

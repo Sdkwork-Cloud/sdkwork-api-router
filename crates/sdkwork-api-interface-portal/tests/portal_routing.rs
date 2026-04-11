@@ -307,27 +307,23 @@ async fn portal_routing_snapshots_are_workspace_scoped() {
 
     store
         .insert_compiled_routing_snapshot(
-            &CompiledRoutingSnapshotRecord::new(
-                "snapshot-workspace",
-                "chat_completion",
-                "gpt-4.1",
-            )
-            .with_tenant_id(&tenant_id)
-            .with_project_id(&project_id)
-            .with_api_key_group_id("group-live")
-            .with_matched_policy_id("policy-live")
-            .with_applied_routing_profile_id("profile-live")
-            .with_strategy("geo_affinity")
-            .with_ordered_provider_ids(vec![
-                "provider-openai".to_owned(),
-                "provider-anthropic".to_owned(),
-            ])
-            .with_default_provider_id("provider-openai")
-            .with_max_latency_ms(800)
-            .with_require_healthy(true)
-            .with_preferred_region("us-east")
-            .with_created_at_ms(1_700_000_000_000)
-            .with_updated_at_ms(1_700_000_000_100),
+            &CompiledRoutingSnapshotRecord::new("snapshot-workspace", "chat_completion", "gpt-4.1")
+                .with_tenant_id(&tenant_id)
+                .with_project_id(&project_id)
+                .with_api_key_group_id("group-live")
+                .with_matched_policy_id("policy-live")
+                .with_applied_routing_profile_id("profile-live")
+                .with_strategy("geo_affinity")
+                .with_ordered_provider_ids(vec![
+                    "provider-openai".to_owned(),
+                    "provider-anthropic".to_owned(),
+                ])
+                .with_default_provider_id("provider-openai")
+                .with_max_latency_ms(800)
+                .with_require_healthy(true)
+                .with_preferred_region("us-east")
+                .with_created_at_ms(1_700_000_000_000)
+                .with_updated_at_ms(1_700_000_000_100),
         )
         .await
         .unwrap();

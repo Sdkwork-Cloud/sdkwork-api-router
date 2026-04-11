@@ -226,10 +226,10 @@ async fn admin_metrics_route_reports_login_and_authenticated_requests() {
     let body = String::from_utf8(bytes.to_vec()).unwrap();
     assert!(body.contains("sdkwork_service_info{service=\"admin\"} 1"));
     assert!(body.contains(
-        "sdkwork_http_requests_total{service=\"admin\",method=\"POST\",route=\"/admin/auth/login\",status=\"200\"} 1"
+        "sdkwork_http_requests_total{service=\"admin\",method=\"POST\",route=\"/admin/auth/login\",status=\"200\",tenant=\"none\",model=\"none\",provider=\"none\",billing_mode=\"none\",retry_outcome=\"none\",failover_outcome=\"none\",payment_outcome=\"none\"} 1"
     ));
     assert!(body.contains(
-        "sdkwork_http_requests_total{service=\"admin\",method=\"GET\",route=\"/admin/projects\",status=\"200\"} 1"
+        "sdkwork_http_requests_total{service=\"admin\",method=\"GET\",route=\"/admin/projects\",status=\"200\",tenant=\"none\",model=\"none\",provider=\"none\",billing_mode=\"none\",retry_outcome=\"none\",failover_outcome=\"none\",payment_outcome=\"none\"} 1"
     ));
 }
 
