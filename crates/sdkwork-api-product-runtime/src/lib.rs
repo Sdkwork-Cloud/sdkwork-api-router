@@ -370,6 +370,7 @@ impl RouterProductRuntime {
                 effective_config.clone(),
                 StandaloneServiceReloadHandles::admin(live_store.clone(), live_admin_jwt)
                     .with_live_commercial_billing(live_commercial_billing.clone())
+                    .with_payment_store(live_payment_store.clone())
                     .with_secret_manager(live_secret_manager.clone())
                     .with_listener(listener_host.reload_handle())
                     .with_node_id(admin_node_id.as_deref().context("admin node id missing")?),

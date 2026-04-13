@@ -20,5 +20,6 @@ sdkwork-api-storage-sqlite = { path = "../../crates/sdkwork-api-storage-sqlite" 
 tokio.workspace = true
 
 [dev-dependencies]
+serial_test.workspace = true
 serde_json.workspace = true
 tower.workspace = true

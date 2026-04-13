@@ -34,6 +34,7 @@ dependencies = [
  "sdkwork-api-storage-postgres",
  "sdkwork-api-storage-sqlite",
  "serde_json",
+ "serial_test",
  "tokio",
  "tower",
 ]
