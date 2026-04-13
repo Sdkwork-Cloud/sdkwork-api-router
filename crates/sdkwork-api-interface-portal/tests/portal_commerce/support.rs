@@ -64,6 +64,10 @@ pub(super) fn workspace_request_context(workspace: &Value) -> GatewayRequestCont
         environment: "portal".to_owned(),
         api_key_hash: "portal_workspace_scope".to_owned(),
         api_key_group_id: None,
+        canonical_tenant_id: None,
+        canonical_organization_id: None,
+        canonical_user_id: None,
+        canonical_api_key_id: None,
     }
 }
 
@@ -213,14 +217,12 @@ pub(super) async fn seed_marketing_catalog_coupon_code(
         .await
         .unwrap();
 
-    let campaign = MarketingCampaignRecord::new(
-        format!("campaign_{slug}"),
-        format!("template_{slug}"),
-    )
-        .with_display_name(format!("{code_value} Campaign"))
-        .with_status(campaign_status)
-        .with_created_at_ms(1_710_000_000_000)
-        .with_updated_at_ms(1_710_000_000_000);
+    let campaign =
+        MarketingCampaignRecord::new(format!("campaign_{slug}"), format!("template_{slug}"))
+            .with_display_name(format!("{code_value} Campaign"))
+            .with_status(campaign_status)
+            .with_created_at_ms(1_710_000_000_000)
+            .with_updated_at_ms(1_710_000_000_000);
     store
         .insert_marketing_campaign_record(&campaign)
         .await
@@ -233,10 +235,14 @@ pub(super) async fn seed_marketing_catalog_coupon_code(
         .with_updated_at_ms(1_710_000_000_000);
     store.insert_campaign_budget_record(&budget).await.unwrap();
 
-    let code = CouponCodeRecord::new(format!("code_{slug}"), format!("template_{slug}"), code_value)
-        .with_status(code_status)
-        .with_created_at_ms(1_710_000_000_000)
-        .with_updated_at_ms(1_710_000_000_000);
+    let code = CouponCodeRecord::new(
+        format!("code_{slug}"),
+        format!("template_{slug}"),
+        code_value,
+    )
+    .with_status(code_status)
+    .with_created_at_ms(1_710_000_000_000)
+    .with_updated_at_ms(1_710_000_000_000);
     store.insert_coupon_code_record(&code).await.unwrap();
 }
 

@@ -4,14 +4,10 @@ use super::*;
 mod handlers;
 
 pub(crate) use handlers::{
-    confirm_marketing_coupon_redemption_handler,
-    list_marketing_codes_handler,
-    list_marketing_redemptions_handler,
-    list_marketing_reward_history_handler,
-    list_my_coupons_handler,
-    reserve_marketing_coupon_handler,
-    rollback_marketing_coupon_redemption_handler,
-    validate_marketing_coupon_handler,
+    confirm_marketing_coupon_redemption_handler, list_marketing_codes_handler,
+    list_marketing_redemptions_handler, list_marketing_reward_history_handler,
+    list_my_coupons_handler, reserve_marketing_coupon_handler,
+    rollback_marketing_coupon_redemption_handler, validate_marketing_coupon_handler,
 };
 #[derive(Debug, Clone)]
 struct MarketingCouponContext {
@@ -279,7 +275,10 @@ async fn load_marketing_redemptions_for_subject(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .into_iter()
         .filter(|redemption| reservation_ids.contains(&redemption.coupon_reservation_id))
-        .filter(|redemption| status.is_none_or(|expected| redemption.redemption_status == expected))
+        .filter(|redemption| match status {
+            Some(expected) => redemption.redemption_status == expected,
+            None => true,
+        })
         .collect::<Vec<_>>();
 
     redemptions.sort_by(|left, right| {
@@ -363,10 +362,10 @@ async fn load_marketing_code_items(
                     .zip(code.claimed_subject_scope)
                     .is_some_and(|(subject_id, scope)| subjects.matches(scope, subject_id))
         })
-        .filter_map(|code| {
+        .map(|code| {
             let latest_reservation = latest_reservations.get(&code.coupon_code_id).cloned();
             let latest_redemption = latest_redemptions.get(&code.coupon_code_id).cloned();
-            Some((code, latest_reservation, latest_redemption))
+            (code, latest_reservation, latest_redemption)
         })
         .collect::<Vec<_>>();
 
@@ -450,8 +449,7 @@ async fn load_marketing_reward_history_items(
                 .cmp(&left.created_at_ms)
                 .then_with(|| right.coupon_rollback_id.cmp(&left.coupon_rollback_id))
         });
-        let ownership =
-            portal_coupon_ownership_summary(subjects, &code, None, Some(&redemption));
+        let ownership = portal_coupon_ownership_summary(subjects, &code, None, Some(&redemption));
         let account_arrival_summary =
             portal_coupon_account_arrival_summary(&redemption, account_arrival);
         items.push(PortalMarketingRewardHistoryItem {
@@ -962,6 +960,3 @@ fn campaign_budget_status_after_mutation(
         CampaignBudgetStatus::Active
     }
 }
-
-
-

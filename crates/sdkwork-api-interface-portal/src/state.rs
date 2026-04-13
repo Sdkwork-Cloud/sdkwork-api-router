@@ -74,7 +74,11 @@ impl PortalApiState {
         jwt_signing_secret: impl Into<String>,
     ) -> Self {
         let store = Arc::new(SqliteAdminStore::new(pool));
-        Self::with_store_and_secret_manager_and_jwt_secret(store, secret_manager, jwt_signing_secret)
+        Self::with_store_and_secret_manager_and_jwt_secret(
+            store,
+            secret_manager,
+            jwt_signing_secret,
+        )
     }
 
     pub fn with_store_and_jwt_secret<S>(

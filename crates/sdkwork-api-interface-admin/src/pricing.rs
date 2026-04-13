@@ -414,11 +414,10 @@ pub(crate) async fn publish_canonical_pricing_plan_handler(
         .await
         .map_err(commercial_billing_error_response)?;
 
-    for archived_plan in plans.iter().filter(|plan| {
-        active_sibling_plan_ids
-            .iter()
-            .any(|sibling_id| *sibling_id == plan.pricing_plan_id)
-    }) {
+    for archived_plan in plans
+        .iter()
+        .filter(|plan| active_sibling_plan_ids.contains(&plan.pricing_plan_id))
+    {
         let archived_plan = build_pricing_plan_with_status(archived_plan, "archived", now_ms);
         commercial_billing
             .insert_pricing_plan_record(&archived_plan)
@@ -437,11 +436,10 @@ pub(crate) async fn publish_canonical_pricing_plan_handler(
             .map_err(commercial_billing_error_response)?;
     }
 
-    for rate in rates.iter().filter(|rate| {
-        active_sibling_plan_ids
-            .iter()
-            .any(|sibling_id| *sibling_id == rate.pricing_plan_id)
-    }) {
+    for rate in rates
+        .iter()
+        .filter(|rate| active_sibling_plan_ids.contains(&rate.pricing_plan_id))
+    {
         let archived_rate = build_pricing_rate_with_status(rate, "archived", now_ms);
         commercial_billing
             .insert_pricing_rate_record(&archived_rate)

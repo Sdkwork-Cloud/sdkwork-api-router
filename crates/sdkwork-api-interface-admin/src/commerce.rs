@@ -32,8 +32,8 @@ use sdkwork_api_domain_marketing::{
     CouponCodeRecord, CouponRedemptionRecord, CouponReservationRecord, CouponRollbackRecord,
     CouponTemplateRecord, MarketingCampaignRecord,
 };
-use serde::{Deserialize, Serialize};
 use sdkwork_api_observability::RequestId;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use utoipa::ToSchema;
 
@@ -271,7 +271,9 @@ fn build_publication_actionability(
             blocked_publication_action(no_rates_reason.clone())
         }
         CatalogPublicationStatus::Draft if effective_from_ms > now_ms => {
-            blocked_publication_action("publication effective_from_ms is in the future; schedule instead")
+            blocked_publication_action(
+                "publication effective_from_ms is in the future; schedule instead",
+            )
         }
         CatalogPublicationStatus::Draft => allowed_publication_action(),
     };
@@ -289,9 +291,11 @@ fn build_publication_actionability(
         CatalogPublicationStatus::Draft if governed_pricing_status == "planned" => {
             blocked_publication_action("publication is already scheduled")
         }
-        CatalogPublicationStatus::Draft if effective_from_ms <= now_ms => blocked_publication_action(
-            "publication can only be scheduled for a future effective_from_ms",
-        ),
+        CatalogPublicationStatus::Draft if effective_from_ms <= now_ms => {
+            blocked_publication_action(
+                "publication can only be scheduled for a future effective_from_ms",
+            )
+        }
         CatalogPublicationStatus::Draft => allowed_publication_action(),
     };
 
@@ -380,10 +384,10 @@ async fn load_commercial_catalog_publication_context(
     })
 }
 
-fn publication_mutation_decision<'a>(
-    detail: &'a CommercialCatalogPublicationDetail,
+fn publication_mutation_decision(
+    detail: &CommercialCatalogPublicationDetail,
     action: CatalogPublicationLifecycleAction,
-) -> &'a CommercialCatalogPublicationActionDecision {
+) -> &CommercialCatalogPublicationActionDecision {
     match action {
         CatalogPublicationLifecycleAction::Publish => &detail.actionability.publish,
         CatalogPublicationLifecycleAction::Schedule => &detail.actionability.schedule,
@@ -412,18 +416,24 @@ fn normalized_publication_mutation_reason(
     Ok(normalized.to_owned())
 }
 
+struct CatalogPublicationLifecycleAuditContext<'a> {
+    action: CatalogPublicationLifecycleAction,
+    outcome: CatalogPublicationLifecycleAuditOutcome,
+    operator_id: &'a str,
+    request_id: &'a str,
+    operator_reason: &'a str,
+    recorded_at_ms: u64,
+    decision_reasons: Vec<String>,
+}
+
 fn build_catalog_publication_lifecycle_audit_record(
     before: &CommercialCatalogPublicationContext,
     after: Option<&CommercialCatalogPublicationContext>,
-    action: CatalogPublicationLifecycleAction,
-    outcome: CatalogPublicationLifecycleAuditOutcome,
-    operator_id: &str,
-    request_id: &str,
-    operator_reason: &str,
-    recorded_at_ms: u64,
-    decision_reasons: Vec<String>,
+    audit: CatalogPublicationLifecycleAuditContext<'_>,
 ) -> CatalogPublicationLifecycleAuditRecord {
-    let after_projection = after.map(|context| &context.projection).unwrap_or(&before.projection);
+    let after_projection = after
+        .map(|context| &context.projection)
+        .unwrap_or(&before.projection);
     let governed_pricing_plan_before = before.governed_pricing_plan.as_ref();
     let governed_pricing_plan_after = after
         .and_then(|context| context.governed_pricing_plan.as_ref())
@@ -433,20 +443,29 @@ fn build_catalog_publication_lifecycle_audit_record(
         format!(
             "catalog_publication_audit:{request_id}:{}:{}",
             before.projection.publication.publication_id,
-            action.as_str()
+            audit.action.as_str(),
+            request_id = audit.request_id
         ),
         before.projection.publication.publication_id.clone(),
-        before.projection.publication.publication_revision_id.clone(),
+        before
+            .projection
+            .publication
+            .publication_revision_id
+            .clone(),
         before.projection.publication.publication_version,
-        before.projection.publication.publication_source_kind.clone(),
-        action,
-        outcome,
-        operator_id.to_owned(),
-        request_id.to_owned(),
-        operator_reason.to_owned(),
+        before
+            .projection
+            .publication
+            .publication_source_kind
+            .clone(),
+        audit.action,
+        audit.outcome,
+        audit.operator_id.to_owned(),
+        audit.request_id.to_owned(),
+        audit.operator_reason.to_owned(),
         before.projection.publication.status.as_str().to_owned(),
         after_projection.publication.status.as_str().to_owned(),
-        recorded_at_ms,
+        audit.recorded_at_ms,
     )
     .with_governed_pricing_plan_id(
         governed_pricing_plan_after
@@ -459,7 +478,7 @@ fn build_catalog_publication_lifecycle_audit_record(
     .with_governed_pricing_status_after_option(
         governed_pricing_plan_after.map(|plan| plan.status.clone()),
     )
-    .with_decision_reasons(decision_reasons)
+    .with_decision_reasons(audit.decision_reasons)
 }
 
 async fn persist_catalog_publication_lifecycle_audit_record(
@@ -520,11 +539,11 @@ async fn apply_publish_commercial_catalog_publication(
         .await
         .map_err(commercial_billing_error_response)?;
 
-    for archived_plan in context.pricing_plans.iter().filter(|plan| {
-        active_sibling_plan_ids
-            .iter()
-            .any(|sibling_id| *sibling_id == plan.pricing_plan_id)
-    }) {
+    for archived_plan in context
+        .pricing_plans
+        .iter()
+        .filter(|plan| active_sibling_plan_ids.contains(&plan.pricing_plan_id))
+    {
         let archived_plan =
             crate::pricing::build_pricing_plan_with_status(archived_plan, "archived", now_ms);
         commercial_billing
@@ -541,12 +560,13 @@ async fn apply_publish_commercial_catalog_publication(
             .map_err(commercial_billing_error_response)?;
     }
 
-    for rate in context.pricing_rates.iter().filter(|rate| {
-        active_sibling_plan_ids
-            .iter()
-            .any(|sibling_id| *sibling_id == rate.pricing_plan_id)
-    }) {
-        let archived_rate = crate::pricing::build_pricing_rate_with_status(rate, "archived", now_ms);
+    for rate in context
+        .pricing_rates
+        .iter()
+        .filter(|rate| active_sibling_plan_ids.contains(&rate.pricing_plan_id))
+    {
+        let archived_rate =
+            crate::pricing::build_pricing_rate_with_status(rate, "archived", now_ms);
         commercial_billing
             .insert_pricing_rate_record(&archived_rate)
             .await
@@ -621,8 +641,7 @@ async fn apply_retire_commercial_catalog_publication(
         .map_err(commercial_billing_error_response)?;
 
     for rate in &context.governed_pricing_rates {
-        let retired_rate =
-            crate::pricing::build_pricing_rate_with_status(rate, "archived", now_ms);
+        let retired_rate = crate::pricing::build_pricing_rate_with_status(rate, "archived", now_ms);
         commercial_billing
             .insert_pricing_rate_record(&retired_rate)
             .await
@@ -640,7 +659,8 @@ async fn mutate_commercial_catalog_publication(
     operator_reason: String,
     action: CatalogPublicationLifecycleAction,
 ) -> Result<Json<CommercialCatalogPublicationMutationResult>, (StatusCode, Json<ErrorResponse>)> {
-    let before_context = load_commercial_catalog_publication_context(&state, &publication_id).await?;
+    let before_context =
+        load_commercial_catalog_publication_context(&state, &publication_id).await?;
     let before_detail =
         build_commercial_catalog_publication_detail(&before_context, unix_timestamp_ms());
     let decision = publication_mutation_decision(&before_detail, action);
@@ -652,13 +672,15 @@ async fn mutate_commercial_catalog_publication(
         let audit = build_catalog_publication_lifecycle_audit_record(
             &before_context,
             None,
-            action,
-            CatalogPublicationLifecycleAuditOutcome::Rejected,
-            &operator_id,
-            &request_id_value,
-            &operator_reason,
-            recorded_at_ms,
-            decision.reasons.clone(),
+            CatalogPublicationLifecycleAuditContext {
+                action,
+                outcome: CatalogPublicationLifecycleAuditOutcome::Rejected,
+                operator_id: &operator_id,
+                request_id: &request_id_value,
+                operator_reason: &operator_reason,
+                recorded_at_ms,
+                decision_reasons: decision.reasons.clone(),
+            },
         );
         persist_catalog_publication_lifecycle_audit_record(&state, &audit).await?;
         let reason = decision
@@ -690,22 +712,28 @@ async fn mutate_commercial_catalog_publication(
         }
     }
 
-    let after_context = load_commercial_catalog_publication_context(&state, &publication_id).await?;
+    let after_context =
+        load_commercial_catalog_publication_context(&state, &publication_id).await?;
     let detail = build_commercial_catalog_publication_detail(&after_context, unix_timestamp_ms());
     let audit = build_catalog_publication_lifecycle_audit_record(
         &before_context,
         Some(&after_context),
-        action,
-        CatalogPublicationLifecycleAuditOutcome::Applied,
-        &operator_id,
-        &request_id_value,
-        &operator_reason,
-        recorded_at_ms,
-        Vec::new(),
+        CatalogPublicationLifecycleAuditContext {
+            action,
+            outcome: CatalogPublicationLifecycleAuditOutcome::Applied,
+            operator_id: &operator_id,
+            request_id: &request_id_value,
+            operator_reason: &operator_reason,
+            recorded_at_ms,
+            decision_reasons: Vec::new(),
+        },
     );
     let audit = persist_catalog_publication_lifecycle_audit_record(&state, &audit).await?;
 
-    Ok(Json(CommercialCatalogPublicationMutationResult { detail, audit }))
+    Ok(Json(CommercialCatalogPublicationMutationResult {
+        detail,
+        audit,
+    }))
 }
 
 pub(crate) async fn list_recent_commerce_orders_handler(

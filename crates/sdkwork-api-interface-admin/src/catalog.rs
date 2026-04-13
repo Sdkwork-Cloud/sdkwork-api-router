@@ -47,10 +47,11 @@ pub(crate) async fn delete_channel_handler(
 }
 
 pub(crate) async fn list_providers_handler(
-    _claims: AuthenticatedAdminClaims,
+    claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
     Query(query): Query<ListProvidersQuery>,
 ) -> Result<Json<Vec<ProviderCatalogResponse>>, StatusCode> {
+    require_admin_privilege(&claims, AdminPrivilege::CatalogRead)?;
     let providers = list_providers(state.store.as_ref())
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -91,10 +92,11 @@ pub(crate) async fn list_providers_handler(
 }
 
 pub(crate) async fn create_provider_handler(
-    _claims: AuthenticatedAdminClaims,
+    claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
     Json(request): Json<CreateProviderRequest>,
 ) -> Result<(StatusCode, Json<ProviderCreateResponse>), StatusCode> {
+    require_admin_privilege(&claims, AdminPrivilege::CatalogWrite)?;
     let normalized =
         normalize_provider_create_request(&request).map_err(|_| StatusCode::BAD_REQUEST)?;
     let primary_channel_id = request
@@ -202,9 +204,10 @@ pub(crate) async fn delete_provider_handler(
 }
 
 pub(crate) async fn list_credentials_handler(
-    _claims: AuthenticatedAdminClaims,
+    claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
 ) -> Result<Json<Vec<UpstreamCredential>>, StatusCode> {
+    require_admin_privilege(&claims, AdminPrivilege::SecretRead)?;
     list_credentials(state.store.as_ref())
         .await
         .map(|credentials| {
@@ -221,10 +224,11 @@ pub(crate) async fn list_credentials_handler(
 }
 
 pub(crate) async fn create_credential_handler(
-    _claims: AuthenticatedAdminClaims,
+    claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
     Json(request): Json<CreateCredentialRequest>,
 ) -> Result<(StatusCode, Json<UpstreamCredential>), StatusCode> {
+    require_admin_privilege(&claims, AdminPrivilege::SecretWrite)?;
     let credential = persist_credential_with_secret_and_manager(
         state.store.as_ref(),
         &state.secret_manager,
@@ -235,6 +239,18 @@ pub(crate) async fn create_credential_handler(
     )
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    audit::record_admin_audit_event(
+        &state,
+        &claims,
+        "credential.create",
+        "credential",
+        format!(
+            "{}:{}:{}",
+            credential.tenant_id, credential.provider_id, credential.key_reference
+        ),
+        audit::APPROVAL_SCOPE_SECRET_CONTROL,
+    )
+    .await?;
     Ok((StatusCode::CREATED, Json(credential)))
 }
 
@@ -296,10 +312,11 @@ pub(crate) async fn upsert_official_provider_config_handler(
 }
 
 pub(crate) async fn delete_credential_handler(
-    _claims: AuthenticatedAdminClaims,
+    claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
     Path((tenant_id, provider_id, key_reference)): Path<(String, String, String)>,
 ) -> Result<StatusCode, StatusCode> {
+    require_admin_privilege(&claims, AdminPrivilege::SecretWrite)?;
     let deleted = delete_credential_with_manager(
         state.store.as_ref(),
         &state.secret_manager,
@@ -311,6 +328,15 @@ pub(crate) async fn delete_credential_handler(
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     if deleted {
+        audit::record_admin_audit_event(
+            &state,
+            &claims,
+            "credential.delete",
+            "credential",
+            format!("{tenant_id}:{provider_id}:{key_reference}"),
+            audit::APPROVAL_SCOPE_SECRET_CONTROL,
+        )
+        .await?;
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(StatusCode::NOT_FOUND)
@@ -540,10 +566,11 @@ pub(crate) async fn list_model_prices_handler(
 }
 
 pub(crate) async fn create_model_price_handler(
-    _claims: AuthenticatedAdminClaims,
+    claims: AuthenticatedAdminClaims,
     State(state): State<AdminApiState>,
     Json(request): Json<CreateModelPriceRequest>,
 ) -> Result<(StatusCode, Json<ModelPriceRecord>), StatusCode> {
+    require_admin_privilege(&claims, AdminPrivilege::FinanceWrite)?;
     let record = persist_model_price_with_rates_and_metadata(
         state.store.as_ref(),
         &request.channel_id,
@@ -563,6 +590,18 @@ pub(crate) async fn create_model_price_handler(
     )
     .await
     .map_err(|error| catalog_write_error_status(&error))?;
+    audit::record_admin_audit_event(
+        &state,
+        &claims,
+        "model_price.create",
+        "model_price",
+        format!(
+            "{}:{}:{}",
+            record.channel_id, record.model_id, record.proxy_provider_id
+        ),
+        audit::APPROVAL_SCOPE_FINANCE_CONTROL,
+    )
+    .await?;
     invalidate_catalog_cache_after_mutation().await;
     Ok((StatusCode::CREATED, Json(record)))
 }

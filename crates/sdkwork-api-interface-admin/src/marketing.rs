@@ -1015,8 +1015,7 @@ fn build_coupon_template_actionability(
     let template_draft = coupon_template.status == CouponTemplateStatus::Draft;
     let approval_in_review =
         coupon_template.approval_state == CouponTemplateApprovalState::InReview;
-    let approval_approved =
-        coupon_template.approval_state == CouponTemplateApprovalState::Approved;
+    let approval_approved = coupon_template.approval_state == CouponTemplateApprovalState::Approved;
     let has_future_activation = coupon_template
         .activation_at_ms
         .is_some_and(|value| value > now_ms);
@@ -1024,7 +1023,9 @@ fn build_coupon_template_actionability(
     let clone = allowed_coupon_template_action();
 
     let submit_for_approval = if !template_draft {
-        blocked_coupon_template_action("coupon template must remain draft before approval submission")
+        blocked_coupon_template_action(
+            "coupon template must remain draft before approval submission",
+        )
     } else if approval_in_review {
         blocked_coupon_template_action("coupon template is already in approval review")
     } else if approval_approved {
@@ -1125,17 +1126,21 @@ fn normalized_marketing_lifecycle_reason(
     Ok(normalized.to_owned())
 }
 
+struct MarketingLifecycleAuditContext<'a> {
+    operator_id: &'a str,
+    request_id: &'a str,
+    reason: &'a str,
+    requested_at_ms: u64,
+    decision_reasons: Vec<String>,
+}
+
 fn build_coupon_template_lifecycle_audit_record(
     before: &CouponTemplateRecord,
     after: Option<&CouponTemplateRecord>,
     source_coupon_template_id: Option<String>,
     action: CouponTemplateLifecycleAction,
     outcome: CouponTemplateLifecycleAuditOutcome,
-    operator_id: &str,
-    request_id: &str,
-    reason: &str,
-    requested_at_ms: u64,
-    decision_reasons: Vec<String>,
+    audit: MarketingLifecycleAuditContext<'_>,
 ) -> CouponTemplateLifecycleAuditRecord {
     let after_template = after.unwrap_or(before);
     let audit_coupon_template_id = if action == CouponTemplateLifecycleAction::Clone {
@@ -1147,22 +1152,26 @@ fn build_coupon_template_lifecycle_audit_record(
         format!(
             "coupon_template_audit:{request_id}:{}:{}",
             audit_coupon_template_id,
-            action.as_str()
+            action.as_str(),
+            request_id = audit.request_id
         ),
         audit_coupon_template_id,
         action,
         outcome,
         before.status,
         after_template.status,
-        operator_id.to_owned(),
-        request_id.to_owned(),
-        reason.to_owned(),
-        requested_at_ms,
+        audit.operator_id.to_owned(),
+        audit.request_id.to_owned(),
+        audit.reason.to_owned(),
+        audit.requested_at_ms,
     )
     .with_source_coupon_template_id(source_coupon_template_id)
     .with_approval_states(before.approval_state, after_template.approval_state)
-    .with_revisions(coupon_template_revision(before), coupon_template_revision(after_template))
-    .with_decision_reasons(decision_reasons)
+    .with_revisions(
+        coupon_template_revision(before),
+        coupon_template_revision(after_template),
+    )
+    .with_decision_reasons(audit.decision_reasons)
 }
 
 async fn persist_coupon_template_lifecycle_audit_record(
@@ -1211,11 +1220,13 @@ async fn mutate_marketing_coupon_template_lifecycle(
             None,
             action,
             CouponTemplateLifecycleAuditOutcome::Rejected,
-            operator_id,
-            request_id,
-            reason,
-            now_ms,
-            decision.reasons.clone(),
+            MarketingLifecycleAuditContext {
+                operator_id,
+                request_id,
+                reason,
+                requested_at_ms: now_ms,
+                decision_reasons: decision.reasons.clone(),
+            },
         );
         persist_coupon_template_lifecycle_audit_record(store, &audit).await?;
         let message = decision
@@ -1228,24 +1239,29 @@ async fn mutate_marketing_coupon_template_lifecycle(
 
     let (next_status, next_approval_state) = match action {
         CouponTemplateLifecycleAction::Clone => unreachable!("clone uses dedicated helper"),
-        CouponTemplateLifecycleAction::SubmitForApproval => {
-            (coupon_template.status, CouponTemplateApprovalState::InReview)
-        }
-        CouponTemplateLifecycleAction::Approve => {
-            (coupon_template.status, CouponTemplateApprovalState::Approved)
-        }
-        CouponTemplateLifecycleAction::Reject => {
-            (coupon_template.status, CouponTemplateApprovalState::Rejected)
-        }
+        CouponTemplateLifecycleAction::SubmitForApproval => (
+            coupon_template.status,
+            CouponTemplateApprovalState::InReview,
+        ),
+        CouponTemplateLifecycleAction::Approve => (
+            coupon_template.status,
+            CouponTemplateApprovalState::Approved,
+        ),
+        CouponTemplateLifecycleAction::Reject => (
+            coupon_template.status,
+            CouponTemplateApprovalState::Rejected,
+        ),
         CouponTemplateLifecycleAction::Publish => {
             (CouponTemplateStatus::Active, coupon_template.approval_state)
         }
-        CouponTemplateLifecycleAction::Schedule => {
-            (CouponTemplateStatus::Scheduled, coupon_template.approval_state)
-        }
-        CouponTemplateLifecycleAction::Retire => {
-            (CouponTemplateStatus::Archived, coupon_template.approval_state)
-        }
+        CouponTemplateLifecycleAction::Schedule => (
+            CouponTemplateStatus::Scheduled,
+            coupon_template.approval_state,
+        ),
+        CouponTemplateLifecycleAction::Retire => (
+            CouponTemplateStatus::Archived,
+            coupon_template.approval_state,
+        ),
     };
 
     let updated_coupon_template = coupon_template
@@ -1270,11 +1286,13 @@ async fn mutate_marketing_coupon_template_lifecycle(
         None,
         action,
         CouponTemplateLifecycleAuditOutcome::Applied,
-        operator_id,
-        request_id,
-        reason,
-        now_ms,
-        Vec::new(),
+        MarketingLifecycleAuditContext {
+            operator_id,
+            request_id,
+            reason,
+            requested_at_ms: now_ms,
+            decision_reasons: Vec::new(),
+        },
     );
     let audit = persist_coupon_template_lifecycle_audit_record(store, &audit).await?;
     Ok(CouponTemplateMutationResult { detail, audit })
@@ -1289,7 +1307,8 @@ async fn clone_marketing_coupon_template_revision(
     reason: &str,
 ) -> Result<CouponTemplateMutationResult, (StatusCode, Json<ErrorResponse>)> {
     let now_ms = unix_timestamp_ms();
-    let source_coupon_template = load_coupon_template_record(store, source_coupon_template_id).await?;
+    let source_coupon_template =
+        load_coupon_template_record(store, source_coupon_template_id).await?;
     let actionability = build_coupon_template_actionability(&source_coupon_template, now_ms);
     if !actionability.clone.allowed {
         let audit = build_coupon_template_lifecycle_audit_record(
@@ -1298,11 +1317,13 @@ async fn clone_marketing_coupon_template_revision(
             None,
             CouponTemplateLifecycleAction::Clone,
             CouponTemplateLifecycleAuditOutcome::Rejected,
-            operator_id,
-            request_id,
-            reason,
-            now_ms,
-            actionability.clone.reasons.clone(),
+            MarketingLifecycleAuditContext {
+                operator_id,
+                request_id,
+                reason,
+                requested_at_ms: now_ms,
+                decision_reasons: actionability.clone.reasons.clone(),
+            },
         );
         persist_coupon_template_lifecycle_audit_record(store, &audit).await?;
         let message = actionability
@@ -1399,11 +1420,13 @@ async fn clone_marketing_coupon_template_revision(
         Some(source_coupon_template.coupon_template_id.clone()),
         CouponTemplateLifecycleAction::Clone,
         CouponTemplateLifecycleAuditOutcome::Applied,
-        operator_id,
-        request_id,
-        reason,
-        now_ms,
-        Vec::new(),
+        MarketingLifecycleAuditContext {
+            operator_id,
+            request_id,
+            reason,
+            requested_at_ms: now_ms,
+            decision_reasons: Vec::new(),
+        },
     );
     let audit = persist_coupon_template_lifecycle_audit_record(store, &audit).await?;
     Ok(CouponTemplateMutationResult { detail, audit })
@@ -1447,8 +1470,10 @@ async fn compare_marketing_coupon_template_revisions(
     source_coupon_template_id: &str,
     target_coupon_template_id: &str,
 ) -> Result<CouponTemplateComparisonResult, (StatusCode, Json<ErrorResponse>)> {
-    let source_coupon_template = load_coupon_template_record(store, source_coupon_template_id).await?;
-    let target_coupon_template = load_coupon_template_record(store, target_coupon_template_id).await?;
+    let source_coupon_template =
+        load_coupon_template_record(store, source_coupon_template_id).await?;
+    let target_coupon_template =
+        load_coupon_template_record(store, target_coupon_template_id).await?;
     let mut field_changes = Vec::new();
     for field in [
         "template_key",
@@ -1524,9 +1549,7 @@ fn allowed_marketing_campaign_action() -> MarketingCampaignActionDecision {
     }
 }
 
-fn blocked_marketing_campaign_action(
-    reason: impl Into<String>,
-) -> MarketingCampaignActionDecision {
+fn blocked_marketing_campaign_action(reason: impl Into<String>) -> MarketingCampaignActionDecision {
     MarketingCampaignActionDecision {
         allowed: false,
         reasons: vec![reason.into()],
@@ -1546,10 +1569,8 @@ fn build_marketing_campaign_actionability(
     let campaign_active = campaign.status == MarketingCampaignStatus::Active;
     let campaign_scheduled = campaign.status == MarketingCampaignStatus::Scheduled;
     let campaign_draft = campaign.status == MarketingCampaignStatus::Draft;
-    let approval_in_review =
-        campaign.approval_state == MarketingCampaignApprovalState::InReview;
-    let approval_approved =
-        campaign.approval_state == MarketingCampaignApprovalState::Approved;
+    let approval_in_review = campaign.approval_state == MarketingCampaignApprovalState::InReview;
+    let approval_approved = campaign.approval_state == MarketingCampaignApprovalState::Approved;
     let has_future_start = campaign.start_at_ms.is_some_and(|value| value > now_ms);
     let already_expired = campaign.end_at_ms.is_some_and(|value| value <= now_ms);
 
@@ -1697,11 +1718,7 @@ fn build_marketing_campaign_lifecycle_audit_record(
     source_marketing_campaign_id: Option<String>,
     action: MarketingCampaignLifecycleAction,
     outcome: MarketingCampaignLifecycleAuditOutcome,
-    operator_id: &str,
-    request_id: &str,
-    reason: &str,
-    requested_at_ms: u64,
-    decision_reasons: Vec<String>,
+    audit: MarketingLifecycleAuditContext<'_>,
 ) -> MarketingCampaignLifecycleAuditRecord {
     let after_campaign = after.unwrap_or(before);
     let audit_marketing_campaign_id = if action == MarketingCampaignLifecycleAction::Clone {
@@ -1713,7 +1730,8 @@ fn build_marketing_campaign_lifecycle_audit_record(
         format!(
             "marketing_campaign_audit:{request_id}:{}:{}",
             audit_marketing_campaign_id,
-            action.as_str()
+            action.as_str(),
+            request_id = audit.request_id
         ),
         audit_marketing_campaign_id,
         before.coupon_template_id.clone(),
@@ -1721,10 +1739,10 @@ fn build_marketing_campaign_lifecycle_audit_record(
         outcome,
         before.status,
         after_campaign.status,
-        operator_id.to_owned(),
-        request_id.to_owned(),
-        reason.to_owned(),
-        requested_at_ms,
+        audit.operator_id.to_owned(),
+        audit.request_id.to_owned(),
+        audit.reason.to_owned(),
+        audit.requested_at_ms,
     )
     .with_source_marketing_campaign_id(source_marketing_campaign_id)
     .with_approval_states(before.approval_state, after_campaign.approval_state)
@@ -1732,7 +1750,7 @@ fn build_marketing_campaign_lifecycle_audit_record(
         marketing_campaign_revision(before),
         marketing_campaign_revision(after_campaign),
     )
-    .with_decision_reasons(decision_reasons)
+    .with_decision_reasons(audit.decision_reasons)
 }
 
 async fn persist_marketing_campaign_lifecycle_audit_record(
@@ -1781,11 +1799,13 @@ async fn mutate_marketing_campaign_lifecycle(
             None,
             action,
             MarketingCampaignLifecycleAuditOutcome::Rejected,
-            operator_id,
-            request_id,
-            reason,
-            now_ms,
-            decision.reasons.clone(),
+            MarketingLifecycleAuditContext {
+                operator_id,
+                request_id,
+                reason,
+                requested_at_ms: now_ms,
+                decision_reasons: decision.reasons.clone(),
+            },
         );
         persist_marketing_campaign_lifecycle_audit_record(store, &audit).await?;
         let message = decision
@@ -1810,18 +1830,15 @@ async fn mutate_marketing_campaign_lifecycle(
             MarketingCampaignStatus::Draft,
             MarketingCampaignApprovalState::Rejected,
         ),
-        MarketingCampaignLifecycleAction::Publish => (
-            MarketingCampaignStatus::Active,
-            campaign.approval_state,
-        ),
-        MarketingCampaignLifecycleAction::Schedule => (
-            MarketingCampaignStatus::Scheduled,
-            campaign.approval_state,
-        ),
-        MarketingCampaignLifecycleAction::Retire => (
-            MarketingCampaignStatus::Ended,
-            campaign.approval_state,
-        ),
+        MarketingCampaignLifecycleAction::Publish => {
+            (MarketingCampaignStatus::Active, campaign.approval_state)
+        }
+        MarketingCampaignLifecycleAction::Schedule => {
+            (MarketingCampaignStatus::Scheduled, campaign.approval_state)
+        }
+        MarketingCampaignLifecycleAction::Retire => {
+            (MarketingCampaignStatus::Ended, campaign.approval_state)
+        }
     };
 
     let updated_campaign = campaign
@@ -1846,11 +1863,13 @@ async fn mutate_marketing_campaign_lifecycle(
         None,
         action,
         MarketingCampaignLifecycleAuditOutcome::Applied,
-        operator_id,
-        request_id,
-        reason,
-        now_ms,
-        Vec::new(),
+        MarketingLifecycleAuditContext {
+            operator_id,
+            request_id,
+            reason,
+            requested_at_ms: now_ms,
+            decision_reasons: Vec::new(),
+        },
     );
     let audit = persist_marketing_campaign_lifecycle_audit_record(store, &audit).await?;
     Ok(MarketingCampaignMutationResult { detail, audit })
@@ -1928,7 +1947,8 @@ async fn clone_marketing_campaign_revision(
     let now_ms = unix_timestamp_ms();
     let (source_campaign, coupon_template) =
         load_marketing_campaign_context(store, source_marketing_campaign_id).await?;
-    let actionability = build_marketing_campaign_actionability(&source_campaign, &coupon_template, now_ms);
+    let actionability =
+        build_marketing_campaign_actionability(&source_campaign, &coupon_template, now_ms);
     if !actionability.clone.allowed {
         let audit = build_marketing_campaign_lifecycle_audit_record(
             &source_campaign,
@@ -1936,11 +1956,13 @@ async fn clone_marketing_campaign_revision(
             None,
             MarketingCampaignLifecycleAction::Clone,
             MarketingCampaignLifecycleAuditOutcome::Rejected,
-            operator_id,
-            request_id,
-            reason,
-            now_ms,
-            actionability.clone.reasons.clone(),
+            MarketingLifecycleAuditContext {
+                operator_id,
+                request_id,
+                reason,
+                requested_at_ms: now_ms,
+                decision_reasons: actionability.clone.reasons.clone(),
+            },
         );
         persist_marketing_campaign_lifecycle_audit_record(store, &audit).await?;
         let message = actionability
@@ -2021,11 +2043,13 @@ async fn clone_marketing_campaign_revision(
         Some(source_campaign.marketing_campaign_id.clone()),
         MarketingCampaignLifecycleAction::Clone,
         MarketingCampaignLifecycleAuditOutcome::Applied,
-        operator_id,
-        request_id,
-        reason,
-        now_ms,
-        Vec::new(),
+        MarketingLifecycleAuditContext {
+            operator_id,
+            request_id,
+            reason,
+            requested_at_ms: now_ms,
+            decision_reasons: Vec::new(),
+        },
     );
     let audit = persist_marketing_campaign_lifecycle_audit_record(store, &audit).await?;
     Ok(MarketingCampaignMutationResult { detail, audit })
@@ -2146,14 +2170,14 @@ async fn load_campaign_budget_context(
         .into_iter()
         .find(|record| record.marketing_campaign_id == budget.marketing_campaign_id)
         .ok_or_else(|| {
-        error_response(
-            StatusCode::NOT_FOUND,
-            format!(
-                "marketing campaign {} for campaign budget {} not found",
-                budget.marketing_campaign_id, campaign_budget_id
-            ),
-        )
-    })?;
+            error_response(
+                StatusCode::NOT_FOUND,
+                format!(
+                    "marketing campaign {} for campaign budget {} not found",
+                    budget.marketing_campaign_id, campaign_budget_id
+                ),
+            )
+        })?;
 
     Ok((budget, campaign))
 }
@@ -2175,18 +2199,15 @@ fn build_campaign_budget_lifecycle_audit_record(
     after: Option<&CampaignBudgetRecord>,
     action: CampaignBudgetLifecycleAction,
     outcome: CampaignBudgetLifecycleAuditOutcome,
-    operator_id: &str,
-    request_id: &str,
-    reason: &str,
-    requested_at_ms: u64,
-    decision_reasons: Vec<String>,
+    audit: MarketingLifecycleAuditContext<'_>,
 ) -> CampaignBudgetLifecycleAuditRecord {
     let after_budget = after.unwrap_or(before);
     CampaignBudgetLifecycleAuditRecord::new(
         format!(
             "campaign_budget_audit:{request_id}:{}:{}",
             before.campaign_budget_id,
-            action.as_str()
+            action.as_str(),
+            request_id = audit.request_id
         ),
         before.campaign_budget_id.clone(),
         before.marketing_campaign_id.clone(),
@@ -2194,12 +2215,12 @@ fn build_campaign_budget_lifecycle_audit_record(
         outcome,
         before.status,
         after_budget.status,
-        operator_id.to_owned(),
-        request_id.to_owned(),
-        reason.to_owned(),
-        requested_at_ms,
+        audit.operator_id.to_owned(),
+        audit.request_id.to_owned(),
+        audit.reason.to_owned(),
+        audit.requested_at_ms,
     )
-    .with_decision_reasons(decision_reasons)
+    .with_decision_reasons(audit.decision_reasons)
 }
 
 async fn persist_campaign_budget_lifecycle_audit_record(
@@ -2241,11 +2262,13 @@ async fn mutate_marketing_campaign_budget_lifecycle(
             None,
             action,
             CampaignBudgetLifecycleAuditOutcome::Rejected,
-            operator_id,
-            request_id,
-            reason,
-            now_ms,
-            decision.reasons.clone(),
+            MarketingLifecycleAuditContext {
+                operator_id,
+                request_id,
+                reason,
+                requested_at_ms: now_ms,
+                decision_reasons: decision.reasons.clone(),
+            },
         );
         persist_campaign_budget_lifecycle_audit_record(store, &audit).await?;
         let message = decision
@@ -2261,7 +2284,10 @@ async fn mutate_marketing_campaign_budget_lifecycle(
         CampaignBudgetLifecycleAction::Close => CampaignBudgetStatus::Closed,
     };
 
-    let updated_budget = budget.clone().with_status(next_status).with_updated_at_ms(now_ms);
+    let updated_budget = budget
+        .clone()
+        .with_status(next_status)
+        .with_updated_at_ms(now_ms);
     let updated_budget = store
         .insert_campaign_budget_record(&updated_budget)
         .await
@@ -2278,11 +2304,13 @@ async fn mutate_marketing_campaign_budget_lifecycle(
         Some(&updated_budget),
         action,
         CampaignBudgetLifecycleAuditOutcome::Applied,
-        operator_id,
-        request_id,
-        reason,
-        now_ms,
-        Vec::new(),
+        MarketingLifecycleAuditContext {
+            operator_id,
+            request_id,
+            reason,
+            requested_at_ms: now_ms,
+            decision_reasons: Vec::new(),
+        },
     );
     let audit = persist_campaign_budget_lifecycle_audit_record(store, &audit).await?;
     Ok(CampaignBudgetMutationResult { detail, audit })
@@ -2338,7 +2366,9 @@ fn blocked_coupon_code_action(reason: impl Into<String>) -> CouponCodeActionDeci
 
 fn coupon_code_is_expired(coupon_code: &CouponCodeRecord, now_ms: u64) -> bool {
     coupon_code.status == CouponCodeStatus::Expired
-        || coupon_code.expires_at_ms.is_some_and(|value| value <= now_ms)
+        || coupon_code
+            .expires_at_ms
+            .is_some_and(|value| value <= now_ms)
 }
 
 fn build_coupon_code_actionability(
@@ -2355,9 +2385,9 @@ fn build_coupon_code_actionability(
             CouponCodeStatus::Disabled => {
                 blocked_coupon_code_action("coupon code is already disabled")
             }
-            CouponCodeStatus::Reserved => {
-                blocked_coupon_code_action("reserved coupon code is governed by runtime and cannot be disabled")
-            }
+            CouponCodeStatus::Reserved => blocked_coupon_code_action(
+                "reserved coupon code is governed by runtime and cannot be disabled",
+            ),
             CouponCodeStatus::Redeemed => {
                 blocked_coupon_code_action("redeemed coupon code cannot be disabled")
             }
@@ -2375,9 +2405,9 @@ fn build_coupon_code_actionability(
             CouponCodeStatus::Available => {
                 blocked_coupon_code_action("coupon code is already available")
             }
-            CouponCodeStatus::Reserved => {
-                blocked_coupon_code_action("reserved coupon code is governed by runtime and cannot be restored")
-            }
+            CouponCodeStatus::Reserved => blocked_coupon_code_action(
+                "reserved coupon code is governed by runtime and cannot be restored",
+            ),
             CouponCodeStatus::Redeemed => {
                 blocked_coupon_code_action("redeemed coupon code cannot be restored")
             }
@@ -2450,18 +2480,15 @@ fn build_coupon_code_lifecycle_audit_record(
     after: Option<&CouponCodeRecord>,
     action: CouponCodeLifecycleAction,
     outcome: CouponCodeLifecycleAuditOutcome,
-    operator_id: &str,
-    request_id: &str,
-    reason: &str,
-    requested_at_ms: u64,
-    decision_reasons: Vec<String>,
+    audit: MarketingLifecycleAuditContext<'_>,
 ) -> CouponCodeLifecycleAuditRecord {
     let after_code = after.unwrap_or(before);
     CouponCodeLifecycleAuditRecord::new(
         format!(
             "coupon_code_audit:{request_id}:{}:{}",
             before.coupon_code_id,
-            action.as_str()
+            action.as_str(),
+            request_id = audit.request_id
         ),
         before.coupon_code_id.clone(),
         before.coupon_template_id.clone(),
@@ -2469,12 +2496,12 @@ fn build_coupon_code_lifecycle_audit_record(
         outcome,
         before.status,
         after_code.status,
-        operator_id.to_owned(),
-        request_id.to_owned(),
-        reason.to_owned(),
-        requested_at_ms,
+        audit.operator_id.to_owned(),
+        audit.request_id.to_owned(),
+        audit.reason.to_owned(),
+        audit.requested_at_ms,
     )
-    .with_decision_reasons(decision_reasons)
+    .with_decision_reasons(audit.decision_reasons)
 }
 
 async fn persist_coupon_code_lifecycle_audit_record(
@@ -2516,11 +2543,13 @@ async fn mutate_marketing_coupon_code_lifecycle(
             None,
             action,
             CouponCodeLifecycleAuditOutcome::Rejected,
-            operator_id,
-            request_id,
-            reason,
-            now_ms,
-            decision.reasons.clone(),
+            MarketingLifecycleAuditContext {
+                operator_id,
+                request_id,
+                reason,
+                requested_at_ms: now_ms,
+                decision_reasons: decision.reasons.clone(),
+            },
         );
         persist_coupon_code_lifecycle_audit_record(store, &audit).await?;
         let message = decision
@@ -2556,13 +2585,14 @@ async fn mutate_marketing_coupon_code_lifecycle(
         Some(&updated_coupon_code),
         action,
         CouponCodeLifecycleAuditOutcome::Applied,
-        operator_id,
-        request_id,
-        reason,
-        now_ms,
-        Vec::new(),
+        MarketingLifecycleAuditContext {
+            operator_id,
+            request_id,
+            reason,
+            requested_at_ms: now_ms,
+            decision_reasons: Vec::new(),
+        },
     );
     let audit = persist_coupon_code_lifecycle_audit_record(store, &audit).await?;
     Ok(CouponCodeMutationResult { detail, audit })
 }
-

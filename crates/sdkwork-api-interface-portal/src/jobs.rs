@@ -72,4 +72,3 @@ pub(crate) async fn list_async_job_assets_handler(
     assets.sort_by(|left, right| left.asset_id.cmp(&right.asset_id));
     Ok(Json(assets))
 }
-

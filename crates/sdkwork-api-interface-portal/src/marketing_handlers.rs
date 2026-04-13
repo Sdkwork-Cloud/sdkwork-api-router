@@ -556,5 +556,3 @@ pub(crate) async fn list_marketing_codes_handler(
     let summary = summarize_marketing_code_items(&items);
     Ok(Json(PortalMarketingCodesResponse { summary, items }))
 }
-
-

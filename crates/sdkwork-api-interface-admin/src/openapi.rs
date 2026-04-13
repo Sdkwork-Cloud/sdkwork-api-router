@@ -1453,7 +1453,9 @@ fn admin_openapi() -> utoipa::openapi::OpenApi {
         .routes(routes!(openapi_paths::commerce_catalog_publications_list))
         .routes(routes!(openapi_paths::commerce_catalog_publication_detail))
         .routes(routes!(openapi_paths::commerce_catalog_publication_publish))
-        .routes(routes!(openapi_paths::commerce_catalog_publication_schedule))
+        .routes(routes!(
+            openapi_paths::commerce_catalog_publication_schedule
+        ))
         .routes(routes!(openapi_paths::commerce_catalog_publication_retire))
         .routes(routes!(openapi_paths::commerce_payment_methods_list))
         .routes(routes!(openapi_paths::commerce_payment_method_put))
