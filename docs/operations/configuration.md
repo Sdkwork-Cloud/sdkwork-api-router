@@ -94,9 +94,15 @@ Supported fields:
 - `require_signed_native_dynamic_extensions`
 - `admin_jwt_signing_secret`
 - `portal_jwt_signing_secret`
+- `bootstrap_data_dir`
+- `bootstrap_profile`
 - `runtime_snapshot_interval_secs`
 - `secret_backend`
 - `credential_master_key`
+- `allow_insecure_dev_defaults`
+- `metrics_bearer_token`
+- `browser_allowed_origins`
+- `credential_legacy_master_keys`
 - `secret_local_file`
 - `secret_keyring_service`
 
@@ -229,9 +235,14 @@ The most important runtime environment variables are:
 - `SDKWORK_PORTAL_BIND`
 - `SDKWORK_ADMIN_JWT_SIGNING_SECRET`
 - `SDKWORK_PORTAL_JWT_SIGNING_SECRET`
+- `SDKWORK_BOOTSTRAP_DATA_DIR`
+- `SDKWORK_BOOTSTRAP_PROFILE`
 - `SDKWORK_SECRET_BACKEND`
 - `SDKWORK_CREDENTIAL_MASTER_KEY`
-- `SDKWORK_ALLOW_LOCAL_DEV_BOOTSTRAP`
+- `SDKWORK_ALLOW_INSECURE_DEV_DEFAULTS`
+- `SDKWORK_METRICS_BEARER_TOKEN`
+- `SDKWORK_BROWSER_ALLOWED_ORIGINS`
+- `SDKWORK_CREDENTIAL_LEGACY_MASTER_KEYS`
 - `SDKWORK_SECRET_LOCAL_FILE`
 - `SDKWORK_SECRET_KEYRING_SERVICE`
 - `SDKWORK_SERVICE_INSTANCE_ID`
@@ -246,21 +257,24 @@ The most important runtime environment variables are:
 
 ## Startup Security Validation
 
-The standalone runtime rejects insecure local-development secrets by default.
+The standalone runtime keeps built-in development defaults available for loopback-only local startup, but rejects them once any service binds a non-loopback address unless you opt in explicitly.
 
 Rules:
 
-- `SDKWORK_ADMIN_JWT_SIGNING_SECRET=local-dev-admin-jwt-secret` is rejected unless `SDKWORK_ALLOW_LOCAL_DEV_BOOTSTRAP=true`
-- `SDKWORK_PORTAL_JWT_SIGNING_SECRET=local-dev-portal-jwt-secret` is rejected unless `SDKWORK_ALLOW_LOCAL_DEV_BOOTSTRAP=true`
-- `SDKWORK_CREDENTIAL_MASTER_KEY=local-dev-master-key` is rejected unless `SDKWORK_ALLOW_LOCAL_DEV_BOOTSTRAP=true`
-- `SDKWORK_CREDENTIAL_LEGACY_MASTER_KEYS` must not contain `local-dev-master-key` unless `SDKWORK_ALLOW_LOCAL_DEV_BOOTSTRAP=true`
-- the built-in `admin@sdkwork.local` and `portal@sdkwork.local` demo accounts are seeded only when `SDKWORK_ALLOW_LOCAL_DEV_BOOTSTRAP=true`
+- loopback-only bindings such as `127.0.0.1:8080` may keep the built-in development defaults for local development
+- if any of `gateway_bind`, `admin_bind`, or `portal_bind` is non-loopback, `SDKWORK_ADMIN_JWT_SIGNING_SECRET=local-dev-admin-jwt-secret` is rejected unless `SDKWORK_ALLOW_INSECURE_DEV_DEFAULTS=true`
+- if any of `gateway_bind`, `admin_bind`, or `portal_bind` is non-loopback, `SDKWORK_PORTAL_JWT_SIGNING_SECRET=local-dev-portal-jwt-secret` is rejected unless `SDKWORK_ALLOW_INSECURE_DEV_DEFAULTS=true`
+- if any of `gateway_bind`, `admin_bind`, or `portal_bind` is non-loopback, `SDKWORK_CREDENTIAL_MASTER_KEY=local-dev-master-key` is rejected unless `SDKWORK_ALLOW_INSECURE_DEV_DEFAULTS=true`
+- if any of `gateway_bind`, `admin_bind`, or `portal_bind` is non-loopback, `SDKWORK_METRICS_BEARER_TOKEN=local-dev-metrics-token` is rejected unless `SDKWORK_ALLOW_INSECURE_DEV_DEFAULTS=true`
+- the built-in `admin@sdkwork.local` and `portal@sdkwork.local` demo accounts come from the `dev` bootstrap profile, for example `SDKWORK_BOOTSTRAP_PROFILE=dev`; the default `prod` bootstrap profile does not seed them
 
 Recommended production posture:
 
 - set strong, unique admin and portal JWT signing secrets
 - set a non-demo credential master key
-- leave `SDKWORK_ALLOW_LOCAL_DEV_BOOTSTRAP` unset or explicitly `false`
+- set a non-default metrics bearer token
+- keep `SDKWORK_BOOTSTRAP_PROFILE=prod` unless you intentionally need the development seed data
+- leave `SDKWORK_ALLOW_INSECURE_DEV_DEFAULTS` unset or explicitly `false`
 
 ## Cluster Runtime Coordination
 

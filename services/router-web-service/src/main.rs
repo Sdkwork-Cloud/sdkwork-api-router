@@ -1,5 +1,6 @@
 use std::{env, path::PathBuf};
 
+use sdkwork_api_config::HttpExposureConfig;
 use sdkwork_api_observability::init_tracing;
 use sdkwork_api_runtime_host::{serve_public_web, RuntimeHostConfig};
 
@@ -26,6 +27,7 @@ fn env_path_or(name: &str, default: &str) -> PathBuf {
 
 fn main() -> anyhow::Result<()> {
     init_tracing("router-web-service");
+    let http_exposure = HttpExposureConfig::from_env()?;
 
     let mut config = RuntimeHostConfig::new(
         env_or("SDKWORK_WEB_BIND", "0.0.0.0:9983"),
@@ -34,7 +36,8 @@ fn main() -> anyhow::Result<()> {
         env_or("SDKWORK_ADMIN_PROXY_TARGET", "127.0.0.1:9981"),
         env_or("SDKWORK_PORTAL_PROXY_TARGET", "127.0.0.1:9982"),
         env_or("SDKWORK_GATEWAY_PROXY_TARGET", "127.0.0.1:9980"),
-    );
+    )
+    .with_browser_allowed_origins(http_exposure.browser_allowed_origins);
     config.admin_site_proxy_upstream = env_optional("SDKWORK_ADMIN_SITE_PROXY_TARGET");
     config.portal_site_proxy_upstream = env_optional("SDKWORK_PORTAL_SITE_PROXY_TARGET");
 

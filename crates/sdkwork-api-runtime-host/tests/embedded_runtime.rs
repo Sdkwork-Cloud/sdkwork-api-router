@@ -150,14 +150,17 @@ async fn runtime_serves_static_sites_and_proxies_api_routes() {
     )
     .unwrap();
 
-    let runtime = EmbeddedRuntime::start(RuntimeHostConfig::new(
-        "127.0.0.1:0",
-        &admin_dir,
-        &portal_dir,
-        spawn_echo_upstream("admin").await,
-        spawn_echo_upstream("portal").await,
-        spawn_echo_upstream("gateway").await,
-    ))
+    let runtime = EmbeddedRuntime::start(
+        RuntimeHostConfig::new(
+            "127.0.0.1:0",
+            &admin_dir,
+            &portal_dir,
+            spawn_echo_upstream("admin").await,
+            spawn_echo_upstream("portal").await,
+            spawn_echo_upstream("gateway").await,
+        )
+        .with_browser_allowed_origins(["https://console.example.com"]),
+    )
     .await
     .unwrap();
 
@@ -194,6 +197,7 @@ async fn runtime_serves_static_sites_and_proxies_api_routes() {
             "{}/api/admin/sessions?next=dashboard",
             runtime.base_url()
         ))
+        .header("origin", "https://console.example.com")
         .body("payload-body")
         .send()
         .await
@@ -204,7 +208,7 @@ async fn runtime_serves_static_sites_and_proxies_api_routes() {
             .headers()
             .get("access-control-allow-origin")
             .unwrap(),
-        "*"
+        "https://console.example.com"
     );
     assert_eq!(
         admin_proxy_response
@@ -220,6 +224,7 @@ async fn runtime_serves_static_sites_and_proxies_api_routes() {
 
     let gateway_health_response = client
         .get(format!("{}/api/v1/health", runtime.base_url()))
+        .header("origin", "https://console.example.com")
         .send()
         .await
         .unwrap();
@@ -229,7 +234,7 @@ async fn runtime_serves_static_sites_and_proxies_api_routes() {
             .headers()
             .get("access-control-allow-origin")
             .unwrap(),
-        "*"
+        "https://console.example.com"
     );
     assert_eq!(
         gateway_health_response
@@ -248,6 +253,7 @@ async fn runtime_serves_static_sites_and_proxies_api_routes() {
             reqwest::Method::OPTIONS,
             format!("{}/api/v1/health", runtime.base_url()),
         )
+        .header("origin", "https://console.example.com")
         .send()
         .await
         .unwrap();
@@ -257,6 +263,18 @@ async fn runtime_serves_static_sites_and_proxies_api_routes() {
             .headers()
             .get("access-control-allow-origin")
             .unwrap(),
-        "*"
+        "https://console.example.com"
     );
+
+    let disallowed_origin_response = client
+        .get(format!("{}/api/v1/health", runtime.base_url()))
+        .header("origin", "https://evil.example.com")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(disallowed_origin_response.status(), reqwest::StatusCode::OK);
+    assert!(disallowed_origin_response
+        .headers()
+        .get("access-control-allow-origin")
+        .is_none());
 }

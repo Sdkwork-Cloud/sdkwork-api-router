@@ -36,25 +36,29 @@ fn standalone_defaults_are_local_friendly() {
         config.admin_jwt_signing_secret,
         "local-dev-admin-jwt-secret"
     );
-    assert!(!config.allow_local_dev_bootstrap);
+    assert!(!config.allow_insecure_dev_defaults);
     assert_eq!(config.storage_dialect().unwrap(), StorageDialect::Sqlite);
 }
 
 #[test]
-fn startup_security_validation_rejects_local_dev_defaults_without_explicit_dev_mode() {
-    let error = StandaloneConfig::default()
-        .validate_startup_security()
-        .unwrap_err();
+fn security_posture_rejects_non_loopback_local_dev_defaults_without_explicit_dev_mode() {
+    let error = StandaloneConfig {
+        gateway_bind: "0.0.0.0:8080".to_owned(),
+        ..StandaloneConfig::default()
+    }
+    .validate_security_posture()
+    .unwrap_err();
     assert!(error
         .to_string()
-        .contains("SDKWORK_ALLOW_LOCAL_DEV_BOOTSTRAP"));
+        .contains("SDKWORK_ALLOW_INSECURE_DEV_DEFAULTS"));
 }
 
 #[test]
-fn startup_security_validation_allows_local_dev_defaults_with_explicit_dev_mode() {
+fn security_posture_allows_non_loopback_local_dev_defaults_with_explicit_dev_mode() {
     let mut config = StandaloneConfig::default();
-    config.allow_local_dev_bootstrap = true;
-    config.validate_startup_security().unwrap();
+    config.gateway_bind = "0.0.0.0:8080".to_owned();
+    config.allow_insecure_dev_defaults = true;
+    config.validate_security_posture().unwrap();
 }
 
 #[test]
@@ -121,11 +125,8 @@ fn builds_config_from_pairs() {
 
 #[test]
 fn parses_insecure_dev_override_from_pairs_and_reexports_it() {
-    let config = StandaloneConfig::from_pairs([(
-        "SDKWORK_ALLOW_INSECURE_DEV_DEFAULTS",
-        "true",
-    )])
-    .unwrap();
+    let config =
+        StandaloneConfig::from_pairs([("SDKWORK_ALLOW_INSECURE_DEV_DEFAULTS", "true")]).unwrap();
     let values = config
         .resolved_env_pairs()
         .into_iter()
@@ -182,10 +183,7 @@ fn parses_bootstrap_data_settings_from_pairs_and_reexports_them() {
         Some("D:/sdkwork/bootstrap")
     );
     assert_eq!(config.bootstrap_profile, "dev");
-    assert_eq!(
-        values["SDKWORK_BOOTSTRAP_DATA_DIR"],
-        "D:/sdkwork/bootstrap"
-    );
+    assert_eq!(values["SDKWORK_BOOTSTRAP_DATA_DIR"], "D:/sdkwork/bootstrap");
     assert_eq!(values["SDKWORK_BOOTSTRAP_PROFILE"], "dev");
 }
 

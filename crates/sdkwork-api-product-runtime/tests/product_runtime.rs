@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use reqwest::Client;
 use sdkwork_api_app_credential::CredentialSecretManager;
 use sdkwork_api_app_runtime::{
-    CommercialBillingReadKernel, build_admin_payment_store_handles_from_config,
+    build_admin_payment_store_handles_from_config, CommercialBillingReadKernel,
 };
 use sdkwork_api_config::{CacheBackendKind, StandaloneConfigLoader};
 use sdkwork_api_interface_http::GatewayApiState;
@@ -24,7 +24,7 @@ async fn product_runtime_builder_wires_gateway_billing_handle_into_gateway_state
     let database_url = sqlite_url_for(database_path);
     let (_loader, mut config) = StandaloneConfigLoader::from_local_root_and_pairs(
         &config_root,
-        [("SDKWORK_ALLOW_LOCAL_DEV_BOOTSTRAP", "true")],
+        std::iter::empty::<(&str, &str)>(),
     )
     .unwrap();
     config.database_url = database_url;
@@ -67,7 +67,7 @@ async fn desktop_product_runtime_serves_static_sites_and_all_api_health_routes()
 
     let (loader, config) = StandaloneConfigLoader::from_local_root_and_pairs(
         &config_root,
-        [("SDKWORK_ALLOW_LOCAL_DEV_BOOTSTRAP", "true")],
+        std::iter::empty::<(&str, &str)>(),
     )
     .unwrap();
 
@@ -172,35 +172,37 @@ async fn desktop_product_runtime_serves_static_sites_and_all_api_health_routes()
 }
 
 #[tokio::test]
-async fn desktop_product_runtime_rejects_local_dev_defaults_without_explicit_dev_mode() {
+async fn server_product_runtime_rejects_non_loopback_local_dev_defaults_without_explicit_override()
+{
     let config_root = temp_root("desktop-runtime-security");
     let admin_site_dir = temp_root("desktop-security-admin-site");
     let portal_site_dir = temp_root("desktop-security-portal-site");
     fs::write(admin_site_dir.join("index.html"), "admin").unwrap();
     fs::write(portal_site_dir.join("index.html"), "portal").unwrap();
 
-    let (loader, config) = StandaloneConfigLoader::from_local_root_and_pairs(
+    let (loader, mut config) = StandaloneConfigLoader::from_local_root_and_pairs(
         &config_root,
         std::iter::empty::<(&str, &str)>(),
     )
     .unwrap();
+    config.gateway_bind = "0.0.0.0:8080".to_owned();
 
     let error = RouterProductRuntime::start(
         loader,
         config,
-        RouterProductRuntimeOptions::desktop(ProductSiteDirs::new(
+        RouterProductRuntimeOptions::server(ProductSiteDirs::new(
             &admin_site_dir,
             &portal_site_dir,
         )),
     )
     .await
     .err()
-    .expect("runtime should reject insecure local-dev startup defaults");
+    .expect("runtime should reject insecure non-loopback startup defaults");
 
     assert!(
         error
             .to_string()
-            .contains("SDKWORK_ALLOW_LOCAL_DEV_BOOTSTRAP"),
+            .contains("SDKWORK_ALLOW_INSECURE_DEV_DEFAULTS"),
         "{error}"
     );
 }
@@ -275,7 +277,7 @@ async fn server_product_runtime_rejects_web_role_without_required_api_upstreams(
 
     let (loader, config) = StandaloneConfigLoader::from_local_root_and_pairs(
         &config_root,
-        [("SDKWORK_ALLOW_LOCAL_DEV_BOOTSTRAP", "true")],
+        std::iter::empty::<(&str, &str)>(),
     )
     .unwrap();
 
@@ -300,7 +302,7 @@ async fn product_runtime_supports_redis_cache_backend_during_startup() {
     let config_root = temp_root("runtime-cache-backend");
     let (loader, mut config) = StandaloneConfigLoader::from_local_root_and_pairs(
         &config_root,
-        [("SDKWORK_ALLOW_LOCAL_DEV_BOOTSTRAP", "true")],
+        std::iter::empty::<(&str, &str)>(),
     )
     .unwrap();
     let redis_server = MinimalRedisPingServer::start();
@@ -475,19 +477,14 @@ async fn product_runtime_bootstraps_repository_default_data_pack() {
     let request_settlements = AccountKernelStore::list_request_settlement_records(&store)
         .await
         .unwrap();
-    let global_balance = CommercialBillingReadKernel::summarize_account_balance(
-        &store,
-        7001001,
-        1710000500000,
-    )
-        .await
-        .unwrap();
-    let global_ledger_history = CommercialBillingReadKernel::list_account_ledger_history(
-        &store,
-        7001001,
-    )
-        .await
-        .unwrap();
+    let global_balance =
+        CommercialBillingReadKernel::summarize_account_balance(&store, 7001001, 1710000500000)
+            .await
+            .unwrap();
+    let global_ledger_history =
+        CommercialBillingReadKernel::list_account_ledger_history(&store, 7001001)
+            .await
+            .unwrap();
     let global_reconciliation_state = store
         .find_account_commerce_reconciliation_state(7001001, "project_global_default")
         .await
@@ -1070,43 +1067,40 @@ async fn product_runtime_bootstraps_repository_default_data_pack() {
             && attempt.runtime_kind == "openai"
     }));
     assert!(local_edge_job_attempts.iter().any(|attempt| {
-        attempt.job_id == "job-global-edge-local-capacity-audit"
-            && attempt.runtime_kind == "ollama"
+        attempt.job_id == "job-global-edge-local-capacity-audit" && attempt.runtime_kind == "ollama"
     }));
     assert!(async_job_assets.iter().any(|asset| {
         asset.asset_id == "asset-global-growth-playbook-md"
             && asset.job_id == "job-global-growth-playbook"
     }));
-    assert!(official_direct_job_assets.iter().any(|asset| {
-        asset.job_id == "job-global-official-direct-capacity-plan"
-    }));
-    assert!(local_edge_job_assets.iter().any(|asset| {
-        asset.job_id == "job-global-edge-local-capacity-audit"
-    }));
+    assert!(official_direct_job_assets
+        .iter()
+        .any(|asset| { asset.job_id == "job-global-official-direct-capacity-plan" }));
+    assert!(local_edge_job_assets
+        .iter()
+        .any(|asset| { asset.job_id == "job-global-edge-local-capacity-audit" }));
     assert!(async_job_callbacks.iter().any(|callback| {
         callback.callback_id == 10801 && callback.job_id == "job-global-growth-playbook"
     }));
-    assert!(official_direct_job_callbacks.iter().any(|callback| {
-        callback.job_id == "job-global-official-direct-capacity-plan"
-    }));
-    assert!(local_edge_job_callbacks.iter().any(|callback| {
-        callback.job_id == "job-global-edge-local-capacity-audit"
-    }));
+    assert!(official_direct_job_callbacks
+        .iter()
+        .any(|callback| { callback.job_id == "job-global-official-direct-capacity-plan" }));
+    assert!(local_edge_job_callbacks
+        .iter()
+        .any(|callback| { callback.job_id == "job-global-edge-local-capacity-audit" }));
     assert!(enterprise_contract_job_attempts.iter().any(|attempt| {
-        attempt.job_id == "job-global-enterprise-sow-draft"
-            && attempt.runtime_kind == "anthropic"
+        attempt.job_id == "job-global-enterprise-sow-draft" && attempt.runtime_kind == "anthropic"
     }));
-    assert!(enterprise_contract_job_assets.iter().any(|asset| {
-        asset.job_id == "job-global-enterprise-sow-draft"
-    }));
-    assert!(enterprise_contract_job_callbacks.iter().any(|callback| {
-        callback.job_id == "job-global-enterprise-sow-draft"
-    }));
+    assert!(enterprise_contract_job_assets
+        .iter()
+        .any(|asset| { asset.job_id == "job-global-enterprise-sow-draft" }));
+    assert!(enterprise_contract_job_callbacks
+        .iter()
+        .any(|callback| { callback.job_id == "job-global-enterprise-sow-draft" }));
     assert_eq!(account_records.len(), 1);
-    assert!(account_records.iter().any(|account| {
-        account.account_id == 7001001
-            && account.currency_code == "USD"
-    }));
+    assert!(account_records
+        .iter()
+        .any(|account| { account.account_id == 7001001 && account.currency_code == "USD" }));
     assert_eq!(account_benefit_lots.len(), 6);
     assert!(account_benefit_lots.iter().any(|lot| lot.lot_id == 8001003));
     assert!(account_benefit_lots.iter().any(|lot| lot.lot_id == 8001004));
@@ -1149,14 +1143,30 @@ async fn product_runtime_bootstraps_repository_default_data_pack() {
         .any(|entry| entry.ledger_entry_id == 8201027));
     assert_eq!(account_ledger_allocations.len(), 27);
     assert_eq!(request_meter_facts.len(), 21);
-    assert!(request_meter_facts.iter().any(|fact| fact.request_id == 610002));
-    assert!(request_meter_facts.iter().any(|fact| fact.request_id == 610003));
-    assert!(request_meter_facts.iter().any(|fact| fact.request_id == 610007));
-    assert!(request_meter_facts.iter().any(|fact| fact.request_id == 610012));
-    assert!(request_meter_facts.iter().any(|fact| fact.request_id == 610013));
-    assert!(request_meter_facts.iter().any(|fact| fact.request_id == 610018));
-    assert!(request_meter_facts.iter().any(|fact| fact.request_id == 610019));
-    assert!(request_meter_facts.iter().any(|fact| fact.request_id == 610021));
+    assert!(request_meter_facts
+        .iter()
+        .any(|fact| fact.request_id == 610002));
+    assert!(request_meter_facts
+        .iter()
+        .any(|fact| fact.request_id == 610003));
+    assert!(request_meter_facts
+        .iter()
+        .any(|fact| fact.request_id == 610007));
+    assert!(request_meter_facts
+        .iter()
+        .any(|fact| fact.request_id == 610012));
+    assert!(request_meter_facts
+        .iter()
+        .any(|fact| fact.request_id == 610013));
+    assert!(request_meter_facts
+        .iter()
+        .any(|fact| fact.request_id == 610018));
+    assert!(request_meter_facts
+        .iter()
+        .any(|fact| fact.request_id == 610019));
+    assert!(request_meter_facts
+        .iter()
+        .any(|fact| fact.request_id == 610021));
     assert!(request_meter_facts.iter().any(|fact| {
         fact.request_id == 610002
             && fact.cost_pricing_plan_id == Some(9108)
@@ -1339,26 +1349,18 @@ async fn product_runtime_bootstraps_repository_dev_identity_seed_data() {
     let request_settlements = AccountKernelStore::list_request_settlement_records(&store)
         .await
         .unwrap();
-    let local_demo_balance = CommercialBillingReadKernel::summarize_account_balance(
-        &store,
-        7002001,
-        1710001700000,
-    )
-        .await
-        .unwrap();
-    let growth_lab_balance = CommercialBillingReadKernel::summarize_account_balance(
-        &store,
-        7002003,
-        1710001700000,
-    )
-        .await
-        .unwrap();
-    let partner_ledger_history = CommercialBillingReadKernel::list_account_ledger_history(
-        &store,
-        7002002,
-    )
-        .await
-        .unwrap();
+    let local_demo_balance =
+        CommercialBillingReadKernel::summarize_account_balance(&store, 7002001, 1710001700000)
+            .await
+            .unwrap();
+    let growth_lab_balance =
+        CommercialBillingReadKernel::summarize_account_balance(&store, 7002003, 1710001700000)
+            .await
+            .unwrap();
+    let partner_ledger_history =
+        CommercialBillingReadKernel::list_account_ledger_history(&store, 7002002)
+            .await
+            .unwrap();
     let local_demo_reconciliation_state = store
         .find_account_commerce_reconciliation_state(7002001, "project_local_demo")
         .await
@@ -1424,8 +1426,14 @@ async fn product_runtime_bootstraps_repository_dev_identity_seed_data() {
     assert!(routing_decision_logs
         .iter()
         .any(|decision| decision.decision_id == "decision-dev-growth-lab"));
-    assert_eq!(project_growth_lab_membership.plan_id, "plan-growth-lab-apac");
-    assert_eq!(project_growth_lab_membership.project_id, "project_growth_lab");
+    assert_eq!(
+        project_growth_lab_membership.plan_id,
+        "plan-growth-lab-apac"
+    );
+    assert_eq!(
+        project_growth_lab_membership.project_id,
+        "project_growth_lab"
+    );
     assert!(provider_health_snapshots.iter().any(|snapshot| {
         snapshot.provider_id == "provider-ollama-local"
             && snapshot.instance_id.as_deref() == Some("provider-ollama-local")
@@ -1488,7 +1496,9 @@ async fn product_runtime_bootstraps_repository_dev_identity_seed_data() {
     assert!(campaign_budgets
         .iter()
         .any(|budget| budget.campaign_budget_id == "budget-growth-lab-apac-launch"));
-    assert!(coupon_codes.iter().any(|code| code.code_value == "LAUNCH100"));
+    assert!(coupon_codes
+        .iter()
+        .any(|code| code.code_value == "LAUNCH100"));
     assert!(coupon_codes.iter().any(|code| code.code_value == "DEV50"));
     assert!(coupon_codes
         .iter()
@@ -1592,13 +1602,18 @@ async fn product_runtime_bootstraps_repository_dev_identity_seed_data() {
         callback.callback_id == 10803 && callback.job_id == "job-partner-gemini-brief"
     }));
     assert_eq!(account_records.len(), 4);
-    assert!(account_records.iter().any(|account| account.account_id == 7001001));
-    assert!(account_records.iter().any(|account| {
-        account.account_id == 7002001
-            && account.currency_code == "USD"
-    }));
-    assert!(account_records.iter().any(|account| account.account_id == 7002002));
-    assert!(account_records.iter().any(|account| account.account_id == 7002003));
+    assert!(account_records
+        .iter()
+        .any(|account| account.account_id == 7001001));
+    assert!(account_records
+        .iter()
+        .any(|account| { account.account_id == 7002001 && account.currency_code == "USD" }));
+    assert!(account_records
+        .iter()
+        .any(|account| account.account_id == 7002002));
+    assert!(account_records
+        .iter()
+        .any(|account| account.account_id == 7002003));
     assert_eq!(account_benefit_lots.len(), 11);
     assert!(account_benefit_lots.iter().any(|lot| lot.lot_id == 8001003));
     assert!(account_benefit_lots.iter().any(|lot| lot.lot_id == 8001004));
@@ -1641,14 +1656,30 @@ async fn product_runtime_bootstraps_repository_dev_identity_seed_data() {
         .any(|entry| entry.ledger_entry_id == 8201027));
     assert_eq!(account_ledger_allocations.len(), 35);
     assert_eq!(request_meter_facts.len(), 24);
-    assert!(request_meter_facts.iter().any(|fact| fact.request_id == 610002));
-    assert!(request_meter_facts.iter().any(|fact| fact.request_id == 610003));
-    assert!(request_meter_facts.iter().any(|fact| fact.request_id == 610007));
-    assert!(request_meter_facts.iter().any(|fact| fact.request_id == 610012));
-    assert!(request_meter_facts.iter().any(|fact| fact.request_id == 610013));
-    assert!(request_meter_facts.iter().any(|fact| fact.request_id == 610018));
-    assert!(request_meter_facts.iter().any(|fact| fact.request_id == 610019));
-    assert!(request_meter_facts.iter().any(|fact| fact.request_id == 610021));
+    assert!(request_meter_facts
+        .iter()
+        .any(|fact| fact.request_id == 610002));
+    assert!(request_meter_facts
+        .iter()
+        .any(|fact| fact.request_id == 610003));
+    assert!(request_meter_facts
+        .iter()
+        .any(|fact| fact.request_id == 610007));
+    assert!(request_meter_facts
+        .iter()
+        .any(|fact| fact.request_id == 610012));
+    assert!(request_meter_facts
+        .iter()
+        .any(|fact| fact.request_id == 610013));
+    assert!(request_meter_facts
+        .iter()
+        .any(|fact| fact.request_id == 610018));
+    assert!(request_meter_facts
+        .iter()
+        .any(|fact| fact.request_id == 610019));
+    assert!(request_meter_facts
+        .iter()
+        .any(|fact| fact.request_id == 610021));
     assert!(request_meter_facts.iter().any(|fact| {
         fact.request_id == 620001
             && fact.cost_pricing_plan_id == Some(9112)

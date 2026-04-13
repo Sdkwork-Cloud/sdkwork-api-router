@@ -1,27 +1,21 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use sdkwork_api_app_credential::CredentialSecretManager;
 use sdkwork_api_app_gateway::{
     configure_capability_catalog_cache_store, configure_route_decision_cache_store,
 };
 use sdkwork_api_app_runtime::{
-    StandaloneListenerHost, StandaloneRuntimeSupervision, StandaloneServiceKind,
-    StandaloneServiceReloadHandles, build_admin_payment_store_handles_from_config,
-    build_cache_runtime_from_config, resolve_service_runtime_node_id,
-    start_extension_runtime_rollout_supervision, start_standalone_runtime_supervision,
+    build_admin_payment_store_handles_from_config, build_cache_runtime_from_config,
+    resolve_service_runtime_node_id, start_extension_runtime_rollout_supervision,
+    start_standalone_runtime_supervision, StandaloneListenerHost, StandaloneRuntimeSupervision,
+    StandaloneServiceKind, StandaloneServiceReloadHandles,
 };
 use sdkwork_api_config::{RuntimeMode, StandaloneConfig, StandaloneConfigLoader};
-use sdkwork_api_interface_admin::{
-    admin_router_with_state_and_http_exposure, AdminApiState,
-};
-use sdkwork_api_interface_http::{
-    gateway_router_with_state_and_http_exposure, GatewayApiState,
-};
-use sdkwork_api_interface_portal::{
-    portal_router_with_state_and_http_exposure, PortalApiState,
-};
+use sdkwork_api_interface_admin::{admin_router_with_state_and_http_exposure, AdminApiState};
+use sdkwork_api_interface_http::{gateway_router_with_state_and_http_exposure, GatewayApiState};
+use sdkwork_api_interface_portal::{portal_router_with_state_and_http_exposure, PortalApiState};
 use sdkwork_api_runtime_host::{EmbeddedRuntime, RuntimeHostConfig};
 use sdkwork_api_storage_core::Reloadable;
 use serde::Serialize;
@@ -201,6 +195,7 @@ impl RouterProductRuntime {
         config: StandaloneConfig,
         options: RouterProductRuntimeOptions,
     ) -> Result<Self> {
+        config.validate_security_posture()?;
         let mode = product_mode_label(options.mode).to_owned();
         let roles = options
             .roles
@@ -230,6 +225,7 @@ impl RouterProductRuntime {
             ));
         let live_admin_jwt = Reloadable::new(config.admin_jwt_signing_secret.clone());
         let live_portal_jwt = Reloadable::new(config.portal_jwt_signing_secret.clone());
+        let http_exposure = config.http_exposure_config();
 
         let gateway_listener = if options.roles.contains(&ProductRuntimeRole::Gateway) {
             Some(
@@ -242,7 +238,7 @@ impl RouterProductRuntime {
                             live_payment_store.clone(),
                             live_secret_manager.clone(),
                         ),
-                        config.http_exposure_config(),
+                        http_exposure.clone(),
                     ),
                 )
                 .await?,
@@ -263,7 +259,7 @@ impl RouterProductRuntime {
                             Some(live_payment_store.clone()),
                             live_admin_jwt.clone(),
                         ),
-                        config.http_exposure_config(),
+                        http_exposure.clone(),
                     ),
                 )
                 .await?,
@@ -284,7 +280,7 @@ impl RouterProductRuntime {
                             Some(live_identity_store.clone()),
                             live_portal_jwt.clone(),
                         ),
-                        config.http_exposure_config(),
+                        http_exposure.clone(),
                     ),
                 )
                 .await?,
@@ -348,9 +344,7 @@ impl RouterProductRuntime {
                 runtime_loader.clone(),
                 effective_config.clone(),
                 StandaloneServiceReloadHandles::gateway(live_store.clone())
-                    .with_live_gateway_commercial_billing(
-                        live_gateway_commercial_billing.clone(),
-                    )
+                    .with_live_gateway_commercial_billing(live_gateway_commercial_billing.clone())
                     .with_payment_store(live_payment_store.clone())
                     .with_secret_manager(live_secret_manager.clone())
                     .with_listener(listener_host.reload_handle())
@@ -407,29 +401,32 @@ impl RouterProductRuntime {
                 )?;
                 ensure_required_web_upstreams(&options)?;
 
-                let runtime = EmbeddedRuntime::start(RuntimeHostConfig::new(
-                    options.public_web_bind,
-                    options.site_dirs.admin_site_dir,
-                    options.site_dirs.portal_site_dir,
-                    resolve_upstream(
-                        "admin",
-                        options.roles.contains(&ProductRuntimeRole::Admin),
-                        admin_bind_addr.as_deref(),
-                        options.admin_upstream.as_deref(),
-                    )?,
-                    resolve_upstream(
-                        "portal",
-                        options.roles.contains(&ProductRuntimeRole::Portal),
-                        portal_bind_addr.as_deref(),
-                        options.portal_upstream.as_deref(),
-                    )?,
-                    resolve_upstream(
-                        "gateway",
-                        options.roles.contains(&ProductRuntimeRole::Gateway),
-                        gateway_bind_addr.as_deref(),
-                        options.gateway_upstream.as_deref(),
-                    )?,
-                ))
+                let runtime = EmbeddedRuntime::start(
+                    RuntimeHostConfig::new(
+                        options.public_web_bind,
+                        options.site_dirs.admin_site_dir,
+                        options.site_dirs.portal_site_dir,
+                        resolve_upstream(
+                            "admin",
+                            options.roles.contains(&ProductRuntimeRole::Admin),
+                            admin_bind_addr.as_deref(),
+                            options.admin_upstream.as_deref(),
+                        )?,
+                        resolve_upstream(
+                            "portal",
+                            options.roles.contains(&ProductRuntimeRole::Portal),
+                            portal_bind_addr.as_deref(),
+                            options.portal_upstream.as_deref(),
+                        )?,
+                        resolve_upstream(
+                            "gateway",
+                            options.roles.contains(&ProductRuntimeRole::Gateway),
+                            gateway_bind_addr.as_deref(),
+                            options.gateway_upstream.as_deref(),
+                        )?,
+                    )
+                    .with_browser_allowed_origins(http_exposure.browser_allowed_origins.clone()),
+                )
                 .await?;
                 let base_url = runtime.base_url().to_owned();
                 let bind_addr = base_url.trim_start_matches("http://").to_owned();

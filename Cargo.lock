@@ -2596,6 +2596,7 @@ name = "router-web-service"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "sdkwork-api-config",
  "sdkwork-api-observability",
  "sdkwork-api-runtime-host",
 ]

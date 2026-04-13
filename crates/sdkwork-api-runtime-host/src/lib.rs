@@ -32,7 +32,6 @@ use pingora_http::ResponseHeader;
 use pingora_proxy::http_proxy_service;
 use pingora_proxy::{ProxyHttp, Session};
 
-const BROWSER_CORS_ALLOW_ORIGIN: &str = "*";
 const BROWSER_CORS_ALLOW_METHODS: &str = "GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD";
 const BROWSER_CORS_ALLOW_HEADERS: &str =
     "authorization, content-type, x-api-key, anthropic-version, anthropic-beta, x-request-id";
@@ -98,6 +97,7 @@ pub struct RuntimeHostConfig {
     pub gateway_upstream: String,
     pub admin_site_proxy_upstream: Option<String>,
     pub portal_site_proxy_upstream: Option<String>,
+    pub browser_allowed_origins: Vec<String>,
 }
 
 impl RuntimeHostConfig {
@@ -118,6 +118,7 @@ impl RuntimeHostConfig {
             gateway_upstream: gateway_upstream.into(),
             admin_site_proxy_upstream: None,
             portal_site_proxy_upstream: None,
+            browser_allowed_origins: Vec::new(),
         }
     }
 
@@ -130,6 +131,15 @@ impl RuntimeHostConfig {
             "127.0.0.1:9982",
             "127.0.0.1:9980",
         )
+    }
+
+    pub fn with_browser_allowed_origins<I, S>(mut self, origins: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.browser_allowed_origins = origins.into_iter().map(Into::into).collect();
+        self
     }
 }
 
@@ -431,6 +441,7 @@ async fn runtime_host_handler(
     request: AxumRequest,
 ) -> AxumResponse {
     let request_path = request.uri().path().to_owned();
+    let request_origin = request_origin_http_headers(request.headers());
 
     match resolve_runtime_route(&state.config, &request_path) {
         RuntimeRoute::Redirect(location) => redirect_response(&location),
@@ -450,12 +461,20 @@ async fn runtime_host_handler(
             request_path,
         } => {
             if request.method() == Method::OPTIONS {
-                return browser_cors_preflight_response();
+                return browser_cors_preflight_response(&state.config, request_origin.as_deref());
             }
 
-            match proxy_request(state, request, &upstream, &request_path).await {
+            match proxy_request(
+                state.clone(),
+                request,
+                &upstream,
+                &request_path,
+                request_origin.clone(),
+            )
+            .await
+            {
                 Ok(response) => response,
-                Err(error) => bad_gateway_response(error),
+                Err(error) => bad_gateway_response(error, &state.config, request_origin.as_deref()),
             }
         }
         RuntimeRoute::NotFound => not_found_response(),
@@ -468,6 +487,7 @@ async fn proxy_request(
     request: AxumRequest,
     upstream: &str,
     request_path: &str,
+    request_origin: Option<String>,
 ) -> Result<AxumResponse> {
     let (parts, body) = request.into_parts();
     let upstream_addr = upstream_target(&state.config, upstream);
@@ -487,7 +507,11 @@ async fn proxy_request(
         .await
         .with_context(|| format!("failed to proxy request to {upstream_url}"))?;
 
-    Ok(proxied_response(upstream_response))
+    Ok(proxied_response(
+        &state.config,
+        request_origin.as_deref(),
+        upstream_response,
+    ))
 }
 
 #[cfg(windows)]
@@ -506,7 +530,11 @@ fn build_upstream_url(target: &str, request_path: &str, query: Option<&str>) -> 
 }
 
 #[cfg(windows)]
-fn proxied_response(upstream_response: reqwest::Response) -> AxumResponse {
+fn proxied_response(
+    config: &RuntimeHostConfig,
+    request_origin: Option<&str>,
+    upstream_response: reqwest::Response,
+) -> AxumResponse {
     let status = upstream_response.status();
     let headers = upstream_response.headers().clone();
     let mut response = AxumResponse::builder()
@@ -520,7 +548,7 @@ fn proxied_response(upstream_response: reqwest::Response) -> AxumResponse {
         }
         response.headers_mut().append(name, value.clone());
     }
-    apply_browser_cors_http_headers(response.headers_mut());
+    apply_browser_cors_http_headers(response.headers_mut(), config, request_origin);
 
     response
 }
@@ -545,7 +573,10 @@ fn redirect_response(location: &str) -> AxumResponse {
 }
 
 #[cfg(windows)]
-fn browser_cors_preflight_response() -> AxumResponse {
+fn browser_cors_preflight_response(
+    config: &RuntimeHostConfig,
+    request_origin: Option<&str>,
+) -> AxumResponse {
     let mut response = AxumResponse::builder()
         .status(StatusCode::NO_CONTENT)
         .body(Body::empty())
@@ -553,17 +584,21 @@ fn browser_cors_preflight_response() -> AxumResponse {
     response
         .headers_mut()
         .insert(header::CONTENT_LENGTH, HeaderValue::from_static("0"));
-    apply_browser_cors_http_headers(response.headers_mut());
+    apply_browser_cors_http_headers(response.headers_mut(), config, request_origin);
     response
 }
 
 #[cfg(windows)]
-fn bad_gateway_response(error: anyhow::Error) -> AxumResponse {
+fn bad_gateway_response(
+    error: anyhow::Error,
+    config: &RuntimeHostConfig,
+    request_origin: Option<&str>,
+) -> AxumResponse {
     let mut response = AxumResponse::builder()
         .status(StatusCode::BAD_GATEWAY)
         .body(Body::from(format!("bad gateway: {error:#}")))
         .expect("valid bad gateway response");
-    apply_browser_cors_http_headers(response.headers_mut());
+    apply_browser_cors_http_headers(response.headers_mut(), config, request_origin);
     response
 }
 
@@ -618,10 +653,18 @@ fn serve_static_asset_http(
 }
 
 #[cfg(windows)]
-fn apply_browser_cors_http_headers(headers: &mut HeaderMap) {
+fn apply_browser_cors_http_headers(
+    headers: &mut HeaderMap,
+    config: &RuntimeHostConfig,
+    request_origin: Option<&str>,
+) {
+    let Some(allow_origin) = resolve_browser_cors_allow_origin(config, request_origin) else {
+        return;
+    };
+
     headers.insert(
         HeaderName::from_static("access-control-allow-origin"),
-        HeaderValue::from_static(BROWSER_CORS_ALLOW_ORIGIN),
+        HeaderValue::from_str(allow_origin).expect("valid cors allow origin"),
     );
     headers.insert(
         HeaderName::from_static("access-control-allow-methods"),
@@ -640,6 +683,51 @@ fn apply_browser_cors_http_headers(headers: &mut HeaderMap) {
         HeaderValue::from_static(BROWSER_CORS_MAX_AGE),
     );
     headers.insert(header::VARY, HeaderValue::from_static("origin"));
+}
+
+fn resolve_browser_cors_allow_origin<'a>(
+    config: &'a RuntimeHostConfig,
+    request_origin: Option<&'a str>,
+) -> Option<&'a str> {
+    if config
+        .browser_allowed_origins
+        .iter()
+        .any(|origin| origin.trim() == "*")
+    {
+        return Some("*");
+    }
+
+    let request_origin = request_origin?.trim();
+    if request_origin.is_empty() {
+        return None;
+    }
+
+    config
+        .browser_allowed_origins
+        .iter()
+        .any(|origin| origin == request_origin)
+        .then_some(request_origin)
+}
+
+#[cfg(windows)]
+fn request_origin_http_headers(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
+fn request_origin_pingora(session: &Session) -> Option<String> {
+    session
+        .req_header()
+        .headers
+        .get("origin")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
 }
 
 fn upstream_target<'a>(config: &'a RuntimeHostConfig, upstream: &str) -> &'a str {
@@ -723,7 +811,9 @@ impl ProxyHttp for RuntimeHostProxy {
                 .as_str()
                 .eq_ignore_ascii_case("OPTIONS")
         {
-            respond_browser_cors_preflight(session).await?;
+            let request_origin = request_origin_pingora(session);
+            respond_browser_cors_preflight(session, &self.config, request_origin.as_deref())
+                .await?;
             return Ok(true);
         }
 
@@ -774,12 +864,13 @@ impl ProxyHttp for RuntimeHostProxy {
 
     async fn response_filter(
         &self,
-        _session: &mut Session,
+        session: &mut Session,
         upstream_response: &mut ResponseHeader,
         ctx: &mut Self::CTX,
     ) -> PingoraResult<()> {
         if matches!(ctx.route, RuntimeRoute::Proxy { .. }) {
-            apply_browser_cors_headers(upstream_response)?;
+            let request_origin = request_origin_pingora(session);
+            apply_browser_cors_headers(upstream_response, &self.config, request_origin.as_deref())?;
         }
 
         Ok(())
@@ -787,8 +878,16 @@ impl ProxyHttp for RuntimeHostProxy {
 }
 
 #[cfg_attr(windows, allow(dead_code))]
-fn apply_browser_cors_headers(header: &mut ResponseHeader) -> PingoraResult<()> {
-    header.insert_header("access-control-allow-origin", BROWSER_CORS_ALLOW_ORIGIN)?;
+fn apply_browser_cors_headers(
+    header: &mut ResponseHeader,
+    config: &RuntimeHostConfig,
+    request_origin: Option<&str>,
+) -> PingoraResult<()> {
+    let Some(allow_origin) = resolve_browser_cors_allow_origin(config, request_origin) else {
+        return Ok(());
+    };
+
+    header.insert_header("access-control-allow-origin", allow_origin)?;
     header.insert_header("access-control-allow-methods", BROWSER_CORS_ALLOW_METHODS)?;
     header.insert_header("access-control-allow-headers", BROWSER_CORS_ALLOW_HEADERS)?;
     header.insert_header("access-control-expose-headers", BROWSER_CORS_EXPOSE_HEADERS)?;
@@ -798,9 +897,13 @@ fn apply_browser_cors_headers(header: &mut ResponseHeader) -> PingoraResult<()> 
 }
 
 #[cfg_attr(windows, allow(dead_code))]
-async fn respond_browser_cors_preflight(session: &mut Session) -> PingoraResult<()> {
+async fn respond_browser_cors_preflight(
+    session: &mut Session,
+    config: &RuntimeHostConfig,
+    request_origin: Option<&str>,
+) -> PingoraResult<()> {
     let mut header = ResponseHeader::build(204, Some(0))?;
-    apply_browser_cors_headers(&mut header)?;
+    apply_browser_cors_headers(&mut header, config, request_origin)?;
     session.write_response_header(Box::new(header), true).await
 }
 
@@ -930,9 +1033,8 @@ mod tests {
     use super::{
         apply_browser_cors_headers, build_redirect_response_header, listener_probe_addr,
         resolve_runtime_route, selected_runtime_backend, RuntimeHostBackend, RuntimeHostConfig,
-        RuntimeRoute, RuntimeSite, BROWSER_CORS_ALLOW_HEADERS,
-        BROWSER_CORS_ALLOW_METHODS, BROWSER_CORS_ALLOW_ORIGIN, BROWSER_CORS_EXPOSE_HEADERS,
-        BROWSER_CORS_MAX_AGE,
+        RuntimeRoute, RuntimeSite, BROWSER_CORS_ALLOW_HEADERS, BROWSER_CORS_ALLOW_METHODS,
+        BROWSER_CORS_EXPOSE_HEADERS, BROWSER_CORS_MAX_AGE,
     };
     use pingora_http::ResponseHeader;
 
@@ -947,13 +1049,16 @@ mod tests {
     }
 
     #[test]
-    fn browser_cors_headers_are_added_to_proxy_responses() {
+    fn browser_cors_headers_echo_allowed_request_origin() {
         let mut header = ResponseHeader::build(200, Some(0)).unwrap();
-        apply_browser_cors_headers(&mut header).unwrap();
+        let config = RuntimeHostConfig::local_defaults("127.0.0.1:9983")
+            .with_browser_allowed_origins(["https://console.example.com"]);
+        apply_browser_cors_headers(&mut header, &config, Some("https://console.example.com"))
+            .unwrap();
 
         assert_eq!(
             header.headers.get("access-control-allow-origin").unwrap(),
-            BROWSER_CORS_ALLOW_ORIGIN
+            "https://console.example.com"
         );
         assert_eq!(
             header.headers.get("access-control-allow-methods").unwrap(),
@@ -971,6 +1076,17 @@ mod tests {
             header.headers.get("access-control-max-age").unwrap(),
             BROWSER_CORS_MAX_AGE
         );
+    }
+
+    #[test]
+    fn browser_cors_headers_skip_disallowed_request_origin() {
+        let mut header = ResponseHeader::build(200, Some(0)).unwrap();
+        let config = RuntimeHostConfig::local_defaults("127.0.0.1:9983")
+            .with_browser_allowed_origins(["https://console.example.com"]);
+
+        apply_browser_cors_headers(&mut header, &config, Some("https://evil.example.com")).unwrap();
+
+        assert!(header.headers.get("access-control-allow-origin").is_none());
     }
 
     #[test]
@@ -1037,5 +1153,11 @@ mod tests {
                 request_path: "/portal/home".to_owned(),
             }
         );
+    }
+
+    #[test]
+    fn local_defaults_start_without_browser_cors_origins() {
+        let config = RuntimeHostConfig::local_defaults("127.0.0.1:9983");
+        assert!(config.browser_allowed_origins.is_empty());
     }
 }

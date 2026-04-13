@@ -110,13 +110,13 @@ async fn main() -> anyhow::Result<()> {
     let (loader, config) = StandaloneConfigLoader::from_env()?;
 
     if settings.dry_run {
-        print!("{}", render_service_plan(&settings, &config));
+        print!("{}", render_service_plan(&settings, &config)?);
         return Ok(());
     }
 
     config.validate_security_posture()?;
     init_tracing("router-product-service");
-    let options = build_runtime_options(&settings);
+    let options = build_runtime_options(&settings)?;
     let runtime = RouterProductRuntime::start(loader, config, options).await?;
     print_runtime_summary(&runtime);
 
@@ -210,8 +210,10 @@ where
     })
 }
 
-fn build_runtime_options(settings: &ProductServiceSettings) -> RouterProductRuntimeOptions {
-    let mut options = RouterProductRuntimeOptions::server(resolve_site_dirs(settings));
+fn build_runtime_options(
+    settings: &ProductServiceSettings,
+) -> anyhow::Result<RouterProductRuntimeOptions> {
+    let mut options = RouterProductRuntimeOptions::server(resolve_site_dirs(settings)?);
 
     if let Some(bind) = settings.public_web_bind.as_deref() {
         options = options.with_public_web_bind(bind);
@@ -232,7 +234,7 @@ fn build_runtime_options(settings: &ProductServiceSettings) -> RouterProductRunt
         options = options.with_roles(roles);
     }
 
-    options
+    Ok(options)
 }
 
 fn apply_loader_env_overrides(settings: &ProductServiceSettings) {
@@ -305,27 +307,98 @@ fn resolve_path_option(
     })
 }
 
-fn resolve_site_dirs(settings: &ProductServiceSettings) -> ProductSiteDirs {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let workspace_root = manifest_dir
-        .parent()
-        .and_then(Path::parent)
-        .expect("router-product-service must live inside services/");
-    let defaults = ProductSiteDirs::from_workspace_root(workspace_root);
+fn resolve_site_dirs(settings: &ProductServiceSettings) -> anyhow::Result<ProductSiteDirs> {
+    if let (Some(admin_site_dir), Some(portal_site_dir)) = (
+        settings.admin_site_dir.clone(),
+        settings.portal_site_dir.clone(),
+    ) {
+        return Ok(ProductSiteDirs::new(admin_site_dir, portal_site_dir));
+    }
 
-    ProductSiteDirs::new(
+    let ProductSiteDirs {
+        admin_site_dir: default_admin_site_dir,
+        portal_site_dir: default_portal_site_dir,
+    } = resolve_default_site_dirs()?;
+
+    Ok(ProductSiteDirs::new(
         settings
             .admin_site_dir
             .clone()
-            .unwrap_or(defaults.admin_site_dir),
+            .unwrap_or(default_admin_site_dir),
         settings
             .portal_site_dir
             .clone()
-            .unwrap_or(defaults.portal_site_dir),
+            .unwrap_or(default_portal_site_dir),
+    ))
+}
+
+fn resolve_default_site_dirs() -> anyhow::Result<ProductSiteDirs> {
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .map(Path::to_path_buf);
+
+    resolve_default_site_dirs_for_paths(env::current_exe().ok(), workspace_root.as_deref())
+}
+
+fn resolve_default_site_dirs_for_paths(
+    current_exe: Option<PathBuf>,
+    workspace_root: Option<&Path>,
+) -> anyhow::Result<ProductSiteDirs> {
+    let mut attempted_layouts = Vec::new();
+
+    if let Some(current_exe) = current_exe {
+        if let Some(release_layout) = release_runtime_site_dirs(&current_exe) {
+            if site_dirs_exist(&release_layout) {
+                return Ok(release_layout);
+            }
+            attempted_layouts.push(describe_site_dirs("release_runtime_home", &release_layout));
+        }
+    }
+
+    if let Some(workspace_root) = workspace_root {
+        let workspace_layout = ProductSiteDirs::from_workspace_root(workspace_root);
+        if site_dirs_exist(&workspace_layout) {
+            return Ok(workspace_layout);
+        }
+        attempted_layouts.push(describe_site_dirs("workspace_root", &workspace_layout));
+    }
+
+    let attempted_layouts = if attempted_layouts.is_empty() {
+        "none".to_owned()
+    } else {
+        attempted_layouts.join("; ")
+    };
+
+    anyhow::bail!(
+        "unable to resolve default site directories; set {SDKWORK_ADMIN_SITE_DIR} and {SDKWORK_PORTAL_SITE_DIR} or pass --admin-site-dir/--portal-site-dir. attempted layouts: {attempted_layouts}"
+    );
+}
+
+fn release_runtime_site_dirs(current_exe: &Path) -> Option<ProductSiteDirs> {
+    let runtime_home = current_exe.parent()?.parent()?;
+    Some(ProductSiteDirs::new(
+        runtime_home.join("sites").join("admin").join("dist"),
+        runtime_home.join("sites").join("portal").join("dist"),
+    ))
+}
+
+fn site_dirs_exist(site_dirs: &ProductSiteDirs) -> bool {
+    site_dirs.admin_site_dir.is_dir() && site_dirs.portal_site_dir.is_dir()
+}
+
+fn describe_site_dirs(label: &str, site_dirs: &ProductSiteDirs) -> String {
+    format!(
+        "{label}: admin={}, portal={}",
+        site_dirs.admin_site_dir.display(),
+        site_dirs.portal_site_dir.display()
     )
 }
 
-fn render_service_plan(settings: &ProductServiceSettings, config: &StandaloneConfig) -> String {
+fn render_service_plan(
+    settings: &ProductServiceSettings,
+    config: &StandaloneConfig,
+) -> anyhow::Result<String> {
     match settings.plan_format {
         PlanFormat::Text => render_service_plan_text(settings, config),
         PlanFormat::Json => render_service_plan_json(settings, config),
@@ -335,8 +408,8 @@ fn render_service_plan(settings: &ProductServiceSettings, config: &StandaloneCon
 fn render_service_plan_text(
     settings: &ProductServiceSettings,
     config: &StandaloneConfig,
-) -> String {
-    let site_dirs = resolve_site_dirs(settings);
+) -> anyhow::Result<String> {
+    let site_dirs = resolve_site_dirs(settings)?;
     let roles = settings
         .roles
         .clone()
@@ -391,14 +464,14 @@ fn render_service_plan_text(
     }
 
     lines.push(String::new());
-    lines.join("\n")
+    Ok(lines.join("\n"))
 }
 
 fn render_service_plan_json(
     settings: &ProductServiceSettings,
     config: &StandaloneConfig,
-) -> String {
-    let site_dirs = resolve_site_dirs(settings);
+) -> anyhow::Result<String> {
+    let site_dirs = resolve_site_dirs(settings)?;
     let roles = settings
         .roles
         .clone()
@@ -414,7 +487,7 @@ fn render_service_plan_json(
         .map(ProductRuntimeRole::as_str)
         .collect::<Vec<_>>();
 
-    serde_json::to_string_pretty(&json!({
+    Ok(serde_json::to_string_pretty(&json!({
         "mode": "dry-run",
         "plan_format": settings.plan_format.as_str(),
         "roles": roles,
@@ -438,7 +511,7 @@ fn render_service_plan_json(
             "portal": settings.portal_upstream,
         }
     }))
-    .expect("service plan json serialization should not fail")
+    .expect("service plan json serialization should not fail"))
 }
 
 fn print_runtime_summary(runtime: &RouterProductRuntime) {
@@ -458,15 +531,26 @@ fn print_runtime_summary(runtime: &RouterProductRuntime) {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     use clap::Parser;
     use serde_json::Value;
 
     use super::{
-        render_service_plan, resolve_service_settings, PlanFormat, ProductRuntimeRole,
-        ProductServiceSettings, RouterProductServiceCli, StandaloneConfig,
+        render_service_plan, resolve_default_site_dirs_for_paths, resolve_service_settings,
+        PlanFormat, ProductRuntimeRole, ProductServiceSettings, RouterProductServiceCli,
+        StandaloneConfig,
     };
+
+    fn unique_temp_dir(name: &str) -> PathBuf {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("router-product-service-tests-{name}-{suffix}"))
+    }
 
     #[test]
     fn resolve_service_settings_parses_full_cli_cluster_overrides() {
@@ -596,7 +680,7 @@ mod tests {
             ..StandaloneConfig::default()
         };
 
-        let plan = render_service_plan(&settings, &config);
+        let plan = render_service_plan(&settings, &config).expect("plan should render");
 
         assert!(plan.contains("router-product-service dry run"));
         assert!(plan.contains("roles=web,gateway"));
@@ -639,7 +723,7 @@ mod tests {
             ..StandaloneConfig::default()
         };
 
-        let plan = render_service_plan(&settings, &config);
+        let plan = render_service_plan(&settings, &config).expect("plan should render");
         let parsed: Value = serde_json::from_str(&plan).expect("plan should be valid json");
 
         assert_eq!(parsed["mode"], "dry-run");
@@ -661,5 +745,88 @@ mod tests {
             parsed["upstreams"]["portal"],
             serde_json::Value::String("10.0.0.13:8082".to_owned())
         );
+    }
+
+    #[test]
+    fn resolve_default_site_dirs_prefers_release_runtime_home_layout() {
+        let runtime_home = unique_temp_dir("runtime-home");
+        let binary_dir = runtime_home.join("bin");
+        fs::create_dir_all(runtime_home.join("sites").join("admin").join("dist"))
+            .expect("admin release site dir should exist");
+        fs::create_dir_all(runtime_home.join("sites").join("portal").join("dist"))
+            .expect("portal release site dir should exist");
+        fs::create_dir_all(&binary_dir).expect("binary dir should exist");
+
+        let site_dirs = resolve_default_site_dirs_for_paths(
+            Some(binary_dir.join("router-product-service.exe")),
+            None::<&Path>,
+        )
+        .expect("release layout should resolve");
+
+        assert_eq!(
+            site_dirs.admin_site_dir,
+            runtime_home.join("sites").join("admin").join("dist")
+        );
+        assert_eq!(
+            site_dirs.portal_site_dir,
+            runtime_home.join("sites").join("portal").join("dist")
+        );
+    }
+
+    #[test]
+    fn resolve_default_site_dirs_falls_back_to_workspace_root_when_release_layout_is_missing() {
+        let binary_root = unique_temp_dir("binary-root");
+        let workspace_root = unique_temp_dir("workspace-root");
+        fs::create_dir_all(binary_root.join("bin")).expect("binary dir should exist");
+        fs::create_dir_all(
+            workspace_root
+                .join("apps")
+                .join("sdkwork-router-admin")
+                .join("dist"),
+        )
+        .expect("admin workspace site dir should exist");
+        fs::create_dir_all(
+            workspace_root
+                .join("apps")
+                .join("sdkwork-router-portal")
+                .join("dist"),
+        )
+        .expect("portal workspace site dir should exist");
+
+        let site_dirs = resolve_default_site_dirs_for_paths(
+            Some(binary_root.join("bin").join("router-product-service.exe")),
+            Some(&workspace_root),
+        )
+        .expect("workspace layout should resolve");
+
+        assert_eq!(
+            site_dirs.admin_site_dir,
+            workspace_root
+                .join("apps")
+                .join("sdkwork-router-admin")
+                .join("dist")
+        );
+        assert_eq!(
+            site_dirs.portal_site_dir,
+            workspace_root
+                .join("apps")
+                .join("sdkwork-router-portal")
+                .join("dist")
+        );
+    }
+
+    #[test]
+    fn resolve_default_site_dirs_errors_when_no_supported_layout_exists() {
+        let binary_root = unique_temp_dir("missing-layout");
+        fs::create_dir_all(binary_root.join("bin")).expect("binary dir should exist");
+
+        let error = resolve_default_site_dirs_for_paths(
+            Some(binary_root.join("bin").join("router-product-service.exe")),
+            None::<&Path>,
+        )
+        .expect_err("missing site layouts should error");
+
+        assert!(error.to_string().contains("SDKWORK_ADMIN_SITE_DIR"));
+        assert!(error.to_string().contains("SDKWORK_PORTAL_SITE_DIR"));
     }
 }

@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+sdkwork-api-config = { path = "../../crates/sdkwork-api-config" }
 sdkwork-api-observability = { path = "../../crates/sdkwork-api-observability" }
 sdkwork-api-runtime-host = { path = "../../crates/sdkwork-api-runtime-host" }
 
