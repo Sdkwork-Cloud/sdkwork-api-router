@@ -1,4 +1,4 @@
-use axum::body::{Body, to_bytes};
+use axum::body::{to_bytes, Body};
 use axum::http::{Request, StatusCode};
 use std::sync::{Mutex, OnceLock};
 use tower::ServiceExt;
@@ -266,8 +266,8 @@ async fn openapi_routes_expose_gateway_api_inventory() {
         "#/components/schemas/PortalCommerceQuote"
     );
     assert_eq!(
-        json["paths"]["/marketing/coupons/validate"]["post"]["requestBody"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/marketing/coupons/validate"]["post"]["requestBody"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/GatewayCouponValidationRequest"
     );
     assert_eq!(
@@ -276,8 +276,8 @@ async fn openapi_routes_expose_gateway_api_inventory() {
         "#/components/schemas/GatewayCouponValidationResponse"
     );
     assert_eq!(
-        json["paths"]["/marketing/coupons/reserve"]["post"]["requestBody"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/marketing/coupons/reserve"]["post"]["requestBody"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/GatewayCouponReservationRequest"
     );
     assert_eq!(
@@ -286,8 +286,8 @@ async fn openapi_routes_expose_gateway_api_inventory() {
         "#/components/schemas/GatewayCouponReservationResponse"
     );
     assert_eq!(
-        json["paths"]["/marketing/coupons/confirm"]["post"]["requestBody"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/marketing/coupons/confirm"]["post"]["requestBody"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/GatewayCouponRedemptionConfirmRequest"
     );
     assert_eq!(
@@ -296,8 +296,8 @@ async fn openapi_routes_expose_gateway_api_inventory() {
         "#/components/schemas/GatewayCouponRedemptionConfirmResponse"
     );
     assert_eq!(
-        json["paths"]["/marketing/coupons/rollback"]["post"]["requestBody"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/marketing/coupons/rollback"]["post"]["requestBody"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/GatewayCouponRedemptionRollbackRequest"
     );
     assert_eq!(
@@ -306,8 +306,8 @@ async fn openapi_routes_expose_gateway_api_inventory() {
         "#/components/schemas/GatewayCouponRedemptionRollbackResponse"
     );
     assert_eq!(
-        json["paths"]["/commercial/account"]["get"]["responses"]["200"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/commercial/account"]["get"]["responses"]["200"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/GatewayCommercialAccountResponse"
     );
     assert_eq!(
@@ -324,13 +324,13 @@ async fn openapi_routes_expose_gateway_api_inventory() {
         "limit"
     );
     assert_eq!(
-        json["paths"]["/v1/models"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
-            ["$ref"],
+        json["paths"]["/v1/models"]["get"]["responses"]["200"]["content"]["application/json"]
+            ["schema"]["$ref"],
         "#/components/schemas/ListModelsResponse"
     );
     assert_eq!(
-        json["paths"]["/v1/models/{model_id}"]["get"]["responses"]["200"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/models/{model_id}"]["get"]["responses"]["200"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/ModelObject"
     );
     assert_eq!(
@@ -339,13 +339,13 @@ async fn openapi_routes_expose_gateway_api_inventory() {
         "#/components/schemas/CreateChatCompletionRequest"
     );
     assert_eq!(
-        json["paths"]["/v1/chat/completions"]["post"]["responses"]["200"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/chat/completions"]["post"]["responses"]["200"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/ChatCompletionResponse"
     );
     assert_eq!(
-        json["paths"]["/v1/completions"]["post"]["requestBody"]["content"]["application/json"]["schema"]
-            ["$ref"],
+        json["paths"]["/v1/completions"]["post"]["requestBody"]["content"]["application/json"]
+            ["schema"]["$ref"],
         "#/components/schemas/CreateCompletionRequest"
     );
     assert_eq!(
@@ -354,48 +354,48 @@ async fn openapi_routes_expose_gateway_api_inventory() {
         "#/components/schemas/CompletionObject"
     );
     assert_eq!(
-        json["paths"]["/v1/responses"]["post"]["requestBody"]["content"]["application/json"]["schema"]
-            ["$ref"],
+        json["paths"]["/v1/responses"]["post"]["requestBody"]["content"]["application/json"]
+            ["schema"]["$ref"],
         "#/components/schemas/CreateResponseRequest"
     );
     assert_eq!(
-        json["paths"]["/v1/responses"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]
-            ["$ref"],
+        json["paths"]["/v1/responses"]["post"]["responses"]["200"]["content"]["application/json"]
+            ["schema"]["$ref"],
         "#/components/schemas/ResponseObject"
     );
     assert_eq!(
-        json["paths"]["/v1/responses/input_tokens"]["post"]["requestBody"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/responses/input_tokens"]["post"]["requestBody"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/CountResponseInputTokensRequest"
     );
     assert_eq!(
-        json["paths"]["/v1/responses/input_tokens"]["post"]["responses"]["200"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/responses/input_tokens"]["post"]["responses"]["200"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/ResponseInputTokensObject"
     );
     assert_eq!(
-        json["paths"]["/v1/responses/compact"]["post"]["requestBody"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/responses/compact"]["post"]["requestBody"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/CompactResponseRequest"
     );
     assert_eq!(
-        json["paths"]["/v1/responses/compact"]["post"]["responses"]["200"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/responses/compact"]["post"]["responses"]["200"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/ResponseCompactionObject"
     );
     assert_eq!(
-        json["paths"]["/v1/responses/{response_id}"]["get"]["responses"]["200"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/responses/{response_id}"]["get"]["responses"]["200"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/ResponseObject"
     );
     assert_eq!(
-        json["paths"]["/v1/responses/{response_id}"]["delete"]["responses"]["200"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/responses/{response_id}"]["delete"]["responses"]["200"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/DeleteResponseResponse"
     );
     assert_eq!(
-        json["paths"]["/v1/responses/{response_id}/input_items"]["get"]["responses"]["200"]["content"]
-            ["application/json"]["schema"]["$ref"],
+        json["paths"]["/v1/responses/{response_id}/input_items"]["get"]["responses"]["200"]
+            ["content"]["application/json"]["schema"]["$ref"],
         "#/components/schemas/ListResponseInputItemsResponse"
     );
     assert_eq!(
@@ -404,8 +404,8 @@ async fn openapi_routes_expose_gateway_api_inventory() {
         "#/components/schemas/ResponseObject"
     );
     assert_eq!(
-        json["paths"]["/v1/embeddings"]["post"]["requestBody"]["content"]["application/json"]["schema"]
-            ["$ref"],
+        json["paths"]["/v1/embeddings"]["post"]["requestBody"]["content"]["application/json"]
+            ["schema"]["$ref"],
         "#/components/schemas/CreateEmbeddingRequest"
     );
     assert_eq!(
@@ -414,8 +414,8 @@ async fn openapi_routes_expose_gateway_api_inventory() {
         "#/components/schemas/CreateEmbeddingResponse"
     );
     assert_eq!(
-        json["paths"]["/v1/moderations"]["post"]["requestBody"]["content"]["application/json"]["schema"]
-            ["$ref"],
+        json["paths"]["/v1/moderations"]["post"]["requestBody"]["content"]["application/json"]
+            ["schema"]["$ref"],
         "#/components/schemas/CreateModerationRequest"
     );
     assert_eq!(
@@ -424,13 +424,13 @@ async fn openapi_routes_expose_gateway_api_inventory() {
         "#/components/schemas/ModerationResponse"
     );
     assert_eq!(
-        json["paths"]["/v1/images/generations"]["post"]["requestBody"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/images/generations"]["post"]["requestBody"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/CreateImageRequest"
     );
     assert_eq!(
-        json["paths"]["/v1/images/generations"]["post"]["responses"]["200"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/images/generations"]["post"]["responses"]["200"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/ImagesResponse"
     );
     assert_eq!(
@@ -439,48 +439,48 @@ async fn openapi_routes_expose_gateway_api_inventory() {
         "#/components/schemas/CreateImageEditRequest"
     );
     assert_eq!(
-        json["paths"]["/v1/images/edits"]["post"]["responses"]["200"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/images/edits"]["post"]["responses"]["200"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/ImagesResponse"
     );
     assert_eq!(
-        json["paths"]["/v1/images/variations"]["post"]["requestBody"]["content"]["multipart/form-data"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/images/variations"]["post"]["requestBody"]["content"]
+            ["multipart/form-data"]["schema"]["$ref"],
         "#/components/schemas/CreateImageVariationRequest"
     );
     assert_eq!(
-        json["paths"]["/v1/images/variations"]["post"]["responses"]["200"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/images/variations"]["post"]["responses"]["200"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/ImagesResponse"
     );
     assert_eq!(
-        json["paths"]["/v1/audio/transcriptions"]["post"]["requestBody"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/audio/transcriptions"]["post"]["requestBody"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/CreateTranscriptionRequest"
     );
     assert_eq!(
-        json["paths"]["/v1/audio/transcriptions"]["post"]["responses"]["200"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/audio/transcriptions"]["post"]["responses"]["200"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/TranscriptionObject"
     );
     assert_eq!(
-        json["paths"]["/v1/audio/translations"]["post"]["requestBody"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/audio/translations"]["post"]["requestBody"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/CreateTranslationRequest"
     );
     assert_eq!(
-        json["paths"]["/v1/audio/translations"]["post"]["responses"]["200"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/audio/translations"]["post"]["responses"]["200"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/TranslationObject"
     );
     assert_eq!(
-        json["paths"]["/v1/audio/speech"]["post"]["requestBody"]["content"]["application/json"]["schema"]
-            ["$ref"],
+        json["paths"]["/v1/audio/speech"]["post"]["requestBody"]["content"]["application/json"]
+            ["schema"]["$ref"],
         "#/components/schemas/CreateSpeechRequest"
     );
     assert_eq!(
-        json["paths"]["/v1/audio/speech"]["post"]["responses"]["200"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/audio/speech"]["post"]["responses"]["200"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/SpeechResponse"
     );
     assert_eq!(
@@ -489,23 +489,23 @@ async fn openapi_routes_expose_gateway_api_inventory() {
         "#/components/schemas/ListVoicesResponse"
     );
     assert_eq!(
-        json["paths"]["/v1/audio/voice_consents"]["post"]["requestBody"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/audio/voice_consents"]["post"]["requestBody"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/CreateVoiceConsentRequest"
     );
     assert_eq!(
-        json["paths"]["/v1/audio/voice_consents"]["post"]["responses"]["200"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/audio/voice_consents"]["post"]["responses"]["200"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/VoiceConsentObject"
     );
     assert_eq!(
-        json["paths"]["/v1/assistants"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
-            ["$ref"],
+        json["paths"]["/v1/assistants"]["get"]["responses"]["200"]["content"]["application/json"]
+            ["schema"]["$ref"],
         "#/components/schemas/ListAssistantsResponse"
     );
     assert_eq!(
-        json["paths"]["/v1/assistants"]["post"]["requestBody"]["content"]["application/json"]["schema"]
-            ["$ref"],
+        json["paths"]["/v1/assistants"]["post"]["requestBody"]["content"]["application/json"]
+            ["schema"]["$ref"],
         "#/components/schemas/CreateAssistantRequest"
     );
     assert_eq!(
@@ -514,118 +514,118 @@ async fn openapi_routes_expose_gateway_api_inventory() {
         "#/components/schemas/AssistantObject"
     );
     assert_eq!(
-        json["paths"]["/v1/assistants/{assistant_id}"]["get"]["responses"]["200"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/assistants/{assistant_id}"]["get"]["responses"]["200"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/AssistantObject"
     );
     assert_eq!(
-        json["paths"]["/v1/realtime/sessions"]["post"]["requestBody"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/realtime/sessions"]["post"]["requestBody"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/CreateRealtimeSessionRequest"
     );
     assert_eq!(
-        json["paths"]["/v1/realtime/sessions"]["post"]["responses"]["200"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/realtime/sessions"]["post"]["responses"]["200"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/RealtimeSessionObject"
     );
     assert_eq!(
-        json["paths"]["/v1/files"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
-            ["$ref"],
+        json["paths"]["/v1/files"]["get"]["responses"]["200"]["content"]["application/json"]
+            ["schema"]["$ref"],
         "#/components/schemas/ListFilesResponse"
     );
     assert_eq!(
-        json["paths"]["/v1/files"]["post"]["requestBody"]["content"]["multipart/form-data"]["schema"]
-            ["$ref"],
+        json["paths"]["/v1/files"]["post"]["requestBody"]["content"]["multipart/form-data"]
+            ["schema"]["$ref"],
         "#/components/schemas/CreateFileRequest"
     );
     assert_eq!(
-        json["paths"]["/v1/files"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]
-            ["$ref"],
-        "#/components/schemas/FileObject"
-    );
-    assert_eq!(
-        json["paths"]["/v1/files/{file_id}"]["get"]["responses"]["200"]["content"]["application/json"]
+        json["paths"]["/v1/files"]["post"]["responses"]["200"]["content"]["application/json"]
             ["schema"]["$ref"],
         "#/components/schemas/FileObject"
     );
     assert_eq!(
-        json["paths"]["/v1/files/{file_id}"]["delete"]["responses"]["200"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/files/{file_id}"]["get"]["responses"]["200"]["content"]
+            ["application/json"]["schema"]["$ref"],
+        "#/components/schemas/FileObject"
+    );
+    assert_eq!(
+        json["paths"]["/v1/files/{file_id}"]["delete"]["responses"]["200"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/DeleteFileResponse"
     );
     assert_eq!(
-        json["paths"]["/v1/uploads"]["post"]["requestBody"]["content"]["application/json"]["schema"]
-            ["$ref"],
+        json["paths"]["/v1/uploads"]["post"]["requestBody"]["content"]["application/json"]
+            ["schema"]["$ref"],
         "#/components/schemas/CreateUploadRequest"
     );
     assert_eq!(
-        json["paths"]["/v1/uploads"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]
-            ["$ref"],
+        json["paths"]["/v1/uploads"]["post"]["responses"]["200"]["content"]["application/json"]
+            ["schema"]["$ref"],
         "#/components/schemas/UploadObject"
     );
     assert_eq!(
-        json["paths"]["/v1/uploads/{upload_id}/parts"]["post"]["requestBody"]["content"]["multipart/form-data"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/uploads/{upload_id}/parts"]["post"]["requestBody"]["content"]
+            ["multipart/form-data"]["schema"]["$ref"],
         "#/components/schemas/AddUploadPartRequest"
     );
     assert_eq!(
-        json["paths"]["/v1/uploads/{upload_id}/parts"]["post"]["responses"]["200"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/uploads/{upload_id}/parts"]["post"]["responses"]["200"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/UploadPartObject"
     );
     assert_eq!(
-        json["paths"]["/v1/uploads/{upload_id}/complete"]["post"]["requestBody"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/uploads/{upload_id}/complete"]["post"]["requestBody"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/CompleteUploadRequest"
     );
     assert_eq!(
-        json["paths"]["/v1/uploads/{upload_id}/complete"]["post"]["responses"]["200"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/uploads/{upload_id}/complete"]["post"]["responses"]["200"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/UploadObject"
     );
     assert_eq!(
-        json["paths"]["/v1/uploads/{upload_id}/cancel"]["post"]["responses"]["200"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/uploads/{upload_id}/cancel"]["post"]["responses"]["200"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/UploadObject"
     );
     assert_eq!(
-        json["paths"]["/v1/batches"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
-            ["$ref"],
+        json["paths"]["/v1/batches"]["get"]["responses"]["200"]["content"]["application/json"]
+            ["schema"]["$ref"],
         "#/components/schemas/ListBatchesResponse"
     );
     assert_eq!(
-        json["paths"]["/v1/batches"]["post"]["requestBody"]["content"]["application/json"]["schema"]
-            ["$ref"],
+        json["paths"]["/v1/batches"]["post"]["requestBody"]["content"]["application/json"]
+            ["schema"]["$ref"],
         "#/components/schemas/CreateBatchRequest"
     );
     assert_eq!(
-        json["paths"]["/v1/batches"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]
-            ["$ref"],
-        "#/components/schemas/BatchObject"
-    );
-    assert_eq!(
-        json["paths"]["/v1/batches/{batch_id}"]["get"]["responses"]["200"]["content"]["application/json"]
+        json["paths"]["/v1/batches"]["post"]["responses"]["200"]["content"]["application/json"]
             ["schema"]["$ref"],
         "#/components/schemas/BatchObject"
     );
     assert_eq!(
-        json["paths"]["/v1/batches/{batch_id}/cancel"]["post"]["responses"]["200"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/batches/{batch_id}"]["get"]["responses"]["200"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/BatchObject"
     );
     assert_eq!(
-        json["paths"]["/v1/vector_stores"]["get"]["responses"]["200"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/batches/{batch_id}/cancel"]["post"]["responses"]["200"]["content"]
+            ["application/json"]["schema"]["$ref"],
+        "#/components/schemas/BatchObject"
+    );
+    assert_eq!(
+        json["paths"]["/v1/vector_stores"]["get"]["responses"]["200"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/ListVectorStoresResponse"
     );
     assert_eq!(
-        json["paths"]["/v1/vector_stores"]["post"]["requestBody"]["content"]["application/json"]["schema"]
-            ["$ref"],
+        json["paths"]["/v1/vector_stores"]["post"]["requestBody"]["content"]["application/json"]
+            ["schema"]["$ref"],
         "#/components/schemas/CreateVectorStoreRequest"
     );
     assert_eq!(
-        json["paths"]["/v1/vector_stores"]["post"]["responses"]["200"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/vector_stores"]["post"]["responses"]["200"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/VectorStoreObject"
     );
     assert_eq!(
@@ -634,8 +634,8 @@ async fn openapi_routes_expose_gateway_api_inventory() {
         "#/components/schemas/VectorStoreObject"
     );
     assert_eq!(
-        json["paths"]["/v1/vector_stores/{vector_store_id}"]["post"]["requestBody"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/vector_stores/{vector_store_id}"]["post"]["requestBody"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/UpdateVectorStoreRequest"
     );
     assert_eq!(
@@ -644,38 +644,38 @@ async fn openapi_routes_expose_gateway_api_inventory() {
         "#/components/schemas/VectorStoreObject"
     );
     assert_eq!(
-        json["paths"]["/v1/vector_stores/{vector_store_id}"]["delete"]["responses"]["200"]["content"]
-            ["application/json"]["schema"]["$ref"],
+        json["paths"]["/v1/vector_stores/{vector_store_id}"]["delete"]["responses"]["200"]
+            ["content"]["application/json"]["schema"]["$ref"],
         "#/components/schemas/DeleteVectorStoreResponse"
     );
     assert_eq!(
-        json["paths"]["/v1/vector_stores/{vector_store_id}/search"]["post"]["requestBody"]["content"]
-            ["application/json"]["schema"]["$ref"],
+        json["paths"]["/v1/vector_stores/{vector_store_id}/search"]["post"]["requestBody"]
+            ["content"]["application/json"]["schema"]["$ref"],
         "#/components/schemas/SearchVectorStoreRequest"
     );
     assert_eq!(
-        json["paths"]["/v1/vector_stores/{vector_store_id}/search"]["post"]["responses"]["200"]["content"]
-            ["application/json"]["schema"]["$ref"],
+        json["paths"]["/v1/vector_stores/{vector_store_id}/search"]["post"]["responses"]["200"]
+            ["content"]["application/json"]["schema"]["$ref"],
         "#/components/schemas/SearchVectorStoreResponse"
     );
     assert_eq!(
-        json["paths"]["/v1/vector_stores/{vector_store_id}/files"]["get"]["responses"]["200"]["content"]
-            ["application/json"]["schema"]["$ref"],
+        json["paths"]["/v1/vector_stores/{vector_store_id}/files"]["get"]["responses"]["200"]
+            ["content"]["application/json"]["schema"]["$ref"],
         "#/components/schemas/ListVectorStoreFilesResponse"
     );
     assert_eq!(
-        json["paths"]["/v1/vector_stores/{vector_store_id}/files"]["post"]["requestBody"]["content"]
-            ["application/json"]["schema"]["$ref"],
+        json["paths"]["/v1/vector_stores/{vector_store_id}/files"]["post"]["requestBody"]
+            ["content"]["application/json"]["schema"]["$ref"],
         "#/components/schemas/CreateVectorStoreFileRequest"
     );
     assert_eq!(
-        json["paths"]["/v1/vector_stores/{vector_store_id}/files"]["post"]["responses"]["200"]["content"]
-            ["application/json"]["schema"]["$ref"],
+        json["paths"]["/v1/vector_stores/{vector_store_id}/files"]["post"]["responses"]["200"]
+            ["content"]["application/json"]["schema"]["$ref"],
         "#/components/schemas/VectorStoreFileObject"
     );
     assert_eq!(
-        json["paths"]["/v1/vector_stores/{vector_store_id}/files/{file_id}"]["get"]["responses"]["200"]
-            ["content"]["application/json"]["schema"]["$ref"],
+        json["paths"]["/v1/vector_stores/{vector_store_id}/files/{file_id}"]["get"]["responses"]
+            ["200"]["content"]["application/json"]["schema"]["$ref"],
         "#/components/schemas/VectorStoreFileObject"
     );
     assert_eq!(
@@ -684,18 +684,18 @@ async fn openapi_routes_expose_gateway_api_inventory() {
         "#/components/schemas/DeleteVectorStoreFileResponse"
     );
     assert_eq!(
-        json["paths"]["/v1/vector_stores/{vector_store_id}/file_batches"]["post"]["requestBody"]["content"]
-            ["application/json"]["schema"]["$ref"],
+        json["paths"]["/v1/vector_stores/{vector_store_id}/file_batches"]["post"]["requestBody"]
+            ["content"]["application/json"]["schema"]["$ref"],
         "#/components/schemas/CreateVectorStoreFileBatchRequest"
     );
     assert_eq!(
-        json["paths"]["/v1/vector_stores/{vector_store_id}/file_batches"]["post"]["responses"]["200"]
-            ["content"]["application/json"]["schema"]["$ref"],
+        json["paths"]["/v1/vector_stores/{vector_store_id}/file_batches"]["post"]["responses"]
+            ["200"]["content"]["application/json"]["schema"]["$ref"],
         "#/components/schemas/VectorStoreFileBatchObject"
     );
     assert_eq!(
-        json["paths"]["/v1/vector_stores/{vector_store_id}/file_batches/{batch_id}"]["get"]["responses"]
-            ["200"]["content"]["application/json"]["schema"]["$ref"],
+        json["paths"]["/v1/vector_stores/{vector_store_id}/file_batches/{batch_id}"]["get"]
+            ["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
         "#/components/schemas/VectorStoreFileBatchObject"
     );
     assert_eq!(
@@ -704,23 +704,23 @@ async fn openapi_routes_expose_gateway_api_inventory() {
         "#/components/schemas/VectorStoreFileBatchObject"
     );
     assert_eq!(
-        json["paths"]["/v1/vector_stores/{vector_store_id}/file_batches/{batch_id}/files"]["get"]["responses"]
-            ["200"]["content"]["application/json"]["schema"]["$ref"],
+        json["paths"]["/v1/vector_stores/{vector_store_id}/file_batches/{batch_id}/files"]["get"]
+            ["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
         "#/components/schemas/ListVectorStoreFilesResponse"
     );
     assert_eq!(
-        json["paths"]["/v1/conversations"]["get"]["responses"]["200"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/conversations"]["get"]["responses"]["200"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/ListConversationsResponse"
     );
     assert_eq!(
-        json["paths"]["/v1/conversations"]["post"]["requestBody"]["content"]["application/json"]["schema"]
-            ["$ref"],
+        json["paths"]["/v1/conversations"]["post"]["requestBody"]["content"]["application/json"]
+            ["schema"]["$ref"],
         "#/components/schemas/CreateConversationRequest"
     );
     assert_eq!(
-        json["paths"]["/v1/conversations"]["post"]["responses"]["200"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/conversations"]["post"]["responses"]["200"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/ConversationObject"
     );
     assert_eq!(
@@ -729,8 +729,8 @@ async fn openapi_routes_expose_gateway_api_inventory() {
         "#/components/schemas/ConversationObject"
     );
     assert_eq!(
-        json["paths"]["/v1/conversations/{conversation_id}"]["post"]["requestBody"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/conversations/{conversation_id}"]["post"]["requestBody"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/UpdateConversationRequest"
     );
     assert_eq!(
@@ -739,28 +739,28 @@ async fn openapi_routes_expose_gateway_api_inventory() {
         "#/components/schemas/ConversationObject"
     );
     assert_eq!(
-        json["paths"]["/v1/conversations/{conversation_id}"]["delete"]["responses"]["200"]["content"]
-            ["application/json"]["schema"]["$ref"],
+        json["paths"]["/v1/conversations/{conversation_id}"]["delete"]["responses"]["200"]
+            ["content"]["application/json"]["schema"]["$ref"],
         "#/components/schemas/DeleteConversationResponse"
     );
     assert_eq!(
-        json["paths"]["/v1/conversations/{conversation_id}/items"]["get"]["responses"]["200"]["content"]
-            ["application/json"]["schema"]["$ref"],
+        json["paths"]["/v1/conversations/{conversation_id}/items"]["get"]["responses"]["200"]
+            ["content"]["application/json"]["schema"]["$ref"],
         "#/components/schemas/ListConversationItemsResponse"
     );
     assert_eq!(
-        json["paths"]["/v1/conversations/{conversation_id}/items"]["post"]["requestBody"]["content"]
-            ["application/json"]["schema"]["$ref"],
+        json["paths"]["/v1/conversations/{conversation_id}/items"]["post"]["requestBody"]
+            ["content"]["application/json"]["schema"]["$ref"],
         "#/components/schemas/CreateConversationItemsRequest"
     );
     assert_eq!(
-        json["paths"]["/v1/conversations/{conversation_id}/items"]["post"]["responses"]["200"]["content"]
-            ["application/json"]["schema"]["$ref"],
+        json["paths"]["/v1/conversations/{conversation_id}/items"]["post"]["responses"]["200"]
+            ["content"]["application/json"]["schema"]["$ref"],
         "#/components/schemas/ListConversationItemsResponse"
     );
     assert_eq!(
-        json["paths"]["/v1/conversations/{conversation_id}/items/{item_id}"]["get"]["responses"]["200"]
-            ["content"]["application/json"]["schema"]["$ref"],
+        json["paths"]["/v1/conversations/{conversation_id}/items/{item_id}"]["get"]["responses"]
+            ["200"]["content"]["application/json"]["schema"]["$ref"],
         "#/components/schemas/ConversationItemObject"
     );
     assert_eq!(
@@ -769,58 +769,58 @@ async fn openapi_routes_expose_gateway_api_inventory() {
         "#/components/schemas/DeleteConversationItemResponse"
     );
     assert_eq!(
-        json["paths"]["/v1/threads"]["post"]["requestBody"]["content"]["application/json"]["schema"]
-            ["$ref"],
+        json["paths"]["/v1/threads"]["post"]["requestBody"]["content"]["application/json"]
+            ["schema"]["$ref"],
         "#/components/schemas/CreateThreadRequest"
     );
     assert_eq!(
-        json["paths"]["/v1/threads"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]
-            ["$ref"],
-        "#/components/schemas/ThreadObject"
-    );
-    assert_eq!(
-        json["paths"]["/v1/threads/{thread_id}"]["get"]["responses"]["200"]["content"]["application/json"]
+        json["paths"]["/v1/threads"]["post"]["responses"]["200"]["content"]["application/json"]
             ["schema"]["$ref"],
         "#/components/schemas/ThreadObject"
     );
     assert_eq!(
-        json["paths"]["/v1/threads/{thread_id}"]["post"]["requestBody"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/threads/{thread_id}"]["get"]["responses"]["200"]["content"]
+            ["application/json"]["schema"]["$ref"],
+        "#/components/schemas/ThreadObject"
+    );
+    assert_eq!(
+        json["paths"]["/v1/threads/{thread_id}"]["post"]["requestBody"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/UpdateThreadRequest"
     );
     assert_eq!(
-        json["paths"]["/v1/threads/{thread_id}"]["post"]["responses"]["200"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/threads/{thread_id}"]["post"]["responses"]["200"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/ThreadObject"
     );
     assert_eq!(
-        json["paths"]["/v1/threads/{thread_id}"]["delete"]["responses"]["200"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/threads/{thread_id}"]["delete"]["responses"]["200"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/DeleteThreadResponse"
     );
     assert_eq!(
-        json["paths"]["/v1/threads/{thread_id}/messages"]["get"]["responses"]["200"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/threads/{thread_id}/messages"]["get"]["responses"]["200"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/ListThreadMessagesResponse"
     );
     assert_eq!(
-        json["paths"]["/v1/threads/{thread_id}/messages"]["post"]["requestBody"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/threads/{thread_id}/messages"]["post"]["requestBody"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/CreateThreadMessageRequest"
     );
     assert_eq!(
-        json["paths"]["/v1/threads/{thread_id}/messages"]["post"]["responses"]["200"]["content"]["application/json"]
-            ["schema"]["$ref"],
-        "#/components/schemas/ThreadMessageObject"
-    );
-    assert_eq!(
-        json["paths"]["/v1/threads/{thread_id}/messages/{message_id}"]["get"]["responses"]["200"]["content"]
+        json["paths"]["/v1/threads/{thread_id}/messages"]["post"]["responses"]["200"]["content"]
             ["application/json"]["schema"]["$ref"],
         "#/components/schemas/ThreadMessageObject"
     );
     assert_eq!(
-        json["paths"]["/v1/threads/{thread_id}/messages/{message_id}"]["post"]["requestBody"]["content"]
-            ["application/json"]["schema"]["$ref"],
+        json["paths"]["/v1/threads/{thread_id}/messages/{message_id}"]["get"]["responses"]["200"]
+            ["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/ThreadMessageObject"
+    );
+    assert_eq!(
+        json["paths"]["/v1/threads/{thread_id}/messages/{message_id}"]["post"]["requestBody"]
+            ["content"]["application/json"]["schema"]["$ref"],
         "#/components/schemas/UpdateThreadMessageRequest"
     );
     assert_eq!(
@@ -829,68 +829,68 @@ async fn openapi_routes_expose_gateway_api_inventory() {
         "#/components/schemas/ThreadMessageObject"
     );
     assert_eq!(
-        json["paths"]["/v1/threads/{thread_id}/messages/{message_id}"]["delete"]["responses"]["200"]
-            ["content"]["application/json"]["schema"]["$ref"],
+        json["paths"]["/v1/threads/{thread_id}/messages/{message_id}"]["delete"]["responses"]
+            ["200"]["content"]["application/json"]["schema"]["$ref"],
         "#/components/schemas/DeleteThreadMessageResponse"
     );
     assert_eq!(
-        json["paths"]["/v1/threads/runs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
-            ["$ref"],
+        json["paths"]["/v1/threads/runs"]["post"]["requestBody"]["content"]["application/json"]
+            ["schema"]["$ref"],
         "#/components/schemas/CreateThreadAndRunRequest"
     );
     assert_eq!(
-        json["paths"]["/v1/threads/runs"]["post"]["responses"]["200"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/threads/runs"]["post"]["responses"]["200"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/RunObject"
     );
     assert_eq!(
-        json["paths"]["/v1/threads/{thread_id}/runs"]["get"]["responses"]["200"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/threads/{thread_id}/runs"]["get"]["responses"]["200"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/ListRunsResponse"
     );
     assert_eq!(
-        json["paths"]["/v1/threads/{thread_id}/runs"]["post"]["requestBody"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/threads/{thread_id}/runs"]["post"]["requestBody"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/CreateRunRequest"
     );
     assert_eq!(
-        json["paths"]["/v1/threads/{thread_id}/runs"]["post"]["responses"]["200"]["content"]["application/json"]
-            ["schema"]["$ref"],
-        "#/components/schemas/RunObject"
-    );
-    assert_eq!(
-        json["paths"]["/v1/threads/{thread_id}/runs/{run_id}"]["get"]["responses"]["200"]["content"]
+        json["paths"]["/v1/threads/{thread_id}/runs"]["post"]["responses"]["200"]["content"]
             ["application/json"]["schema"]["$ref"],
         "#/components/schemas/RunObject"
     );
     assert_eq!(
-        json["paths"]["/v1/threads/{thread_id}/runs/{run_id}"]["post"]["requestBody"]["content"]["application/json"]
-            ["schema"]["$ref"],
+        json["paths"]["/v1/threads/{thread_id}/runs/{run_id}"]["get"]["responses"]["200"]
+            ["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/RunObject"
+    );
+    assert_eq!(
+        json["paths"]["/v1/threads/{thread_id}/runs/{run_id}"]["post"]["requestBody"]["content"]
+            ["application/json"]["schema"]["$ref"],
         "#/components/schemas/UpdateRunRequest"
     );
     assert_eq!(
-        json["paths"]["/v1/threads/{thread_id}/runs/{run_id}"]["post"]["responses"]["200"]["content"]
-            ["application/json"]["schema"]["$ref"],
-        "#/components/schemas/RunObject"
-    );
-    assert_eq!(
-        json["paths"]["/v1/threads/{thread_id}/runs/{run_id}/cancel"]["post"]["responses"]["200"]["content"]
-            ["application/json"]["schema"]["$ref"],
-        "#/components/schemas/RunObject"
-    );
-    assert_eq!(
-        json["paths"]["/v1/threads/{thread_id}/runs/{run_id}/submit_tool_outputs"]["post"]["requestBody"]
+        json["paths"]["/v1/threads/{thread_id}/runs/{run_id}"]["post"]["responses"]["200"]
             ["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/RunObject"
+    );
+    assert_eq!(
+        json["paths"]["/v1/threads/{thread_id}/runs/{run_id}/cancel"]["post"]["responses"]["200"]
+            ["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/RunObject"
+    );
+    assert_eq!(
+        json["paths"]["/v1/threads/{thread_id}/runs/{run_id}/submit_tool_outputs"]["post"]
+            ["requestBody"]["content"]["application/json"]["schema"]["$ref"],
         "#/components/schemas/SubmitToolOutputsRunRequest"
     );
     assert_eq!(
-        json["paths"]["/v1/threads/{thread_id}/runs/{run_id}/submit_tool_outputs"]["post"]["responses"]
-            ["200"]["content"]["application/json"]["schema"]["$ref"],
+        json["paths"]["/v1/threads/{thread_id}/runs/{run_id}/submit_tool_outputs"]["post"]
+            ["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
         "#/components/schemas/RunObject"
     );
     assert_eq!(
-        json["paths"]["/v1/threads/{thread_id}/runs/{run_id}/steps"]["get"]["responses"]["200"]["content"]
-            ["application/json"]["schema"]["$ref"],
+        json["paths"]["/v1/threads/{thread_id}/runs/{run_id}/steps"]["get"]["responses"]["200"]
+            ["content"]["application/json"]["schema"]["$ref"],
         "#/components/schemas/ListRunStepsResponse"
     );
     assert_eq!(
@@ -960,7 +960,8 @@ async fn openapi_routes_expose_gateway_api_inventory() {
         serde_json::json!([])
     );
     assert_eq!(
-        json["paths"]["/v1/conversations/{conversation_id}/items"]["post"]["security"][0]["bearerAuth"],
+        json["paths"]["/v1/conversations/{conversation_id}/items"]["post"]["security"][0]
+            ["bearerAuth"],
         serde_json::json!([])
     );
     assert_eq!(
@@ -1008,7 +1009,8 @@ async fn openapi_routes_expose_gateway_api_inventory() {
         serde_json::json!([])
     );
     assert_eq!(
-        json["paths"]["/v1/vector_stores/{vector_store_id}/search"]["post"]["security"][0]["bearerAuth"],
+        json["paths"]["/v1/vector_stores/{vector_store_id}/search"]["post"]["security"][0]
+            ["bearerAuth"],
         serde_json::json!([])
     );
     assert_eq!(
@@ -1024,8 +1026,8 @@ async fn openapi_routes_expose_gateway_api_inventory() {
         serde_json::json!([])
     );
     assert_eq!(
-        json["paths"]["/v1/threads/{thread_id}/runs/{run_id}/submit_tool_outputs"]["post"]["security"]
-            [0]["bearerAuth"],
+        json["paths"]["/v1/threads/{thread_id}/runs/{run_id}/submit_tool_outputs"]["post"]
+            ["security"][0]["bearerAuth"],
         serde_json::json!([])
     );
     assert_eq!(
@@ -1064,9 +1066,30 @@ fn try_gateway_router_returns_error_for_invalid_http_exposure_env() {
     }
 
     let error = result.expect_err("invalid env should return an error");
-    assert!(
-        error
-            .to_string()
-            .contains("invalid list value for SDKWORK_BROWSER_ALLOWED_ORIGINS")
-    );
+    assert!(error
+        .to_string()
+        .contains("invalid list value for SDKWORK_BROWSER_ALLOWED_ORIGINS"));
+}
+
+#[tokio::test]
+async fn try_gateway_router_with_pool_returns_error_for_invalid_http_exposure_env() {
+    let _lock = http_exposure_env_lock().lock().unwrap();
+    let key = "SDKWORK_BROWSER_ALLOWED_ORIGINS";
+    let previous = std::env::var(key).ok();
+    std::env::set_var(key, ";;;");
+    let pool = sdkwork_api_storage_sqlite::run_migrations("sqlite::memory:")
+        .await
+        .unwrap();
+
+    let result = sdkwork_api_interface_http::try_gateway_router_with_pool(pool);
+
+    match previous {
+        Some(value) => std::env::set_var(key, value),
+        None => std::env::remove_var(key),
+    }
+
+    let error = result.expect_err("invalid env should return an error");
+    assert!(error
+        .to_string()
+        .contains("invalid list value for SDKWORK_BROWSER_ALLOWED_ORIGINS"));
 }

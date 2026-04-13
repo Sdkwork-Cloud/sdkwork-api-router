@@ -56,11 +56,9 @@ async fn openapi_routes_expose_admin_api_inventory_with_schema_components() {
         json["paths"]["/admin/marketing/coupon-templates/{coupon_template_id}/compare"]["post"]
             .is_object()
     );
-    assert!(
-        json["paths"]["/admin/marketing/coupon-templates/{coupon_template_id}/submit-for-approval"]
-            ["post"]
-            .is_object()
-    );
+    assert!(json["paths"]
+        ["/admin/marketing/coupon-templates/{coupon_template_id}/submit-for-approval"]["post"]
+        .is_object());
     assert!(
         json["paths"]["/admin/marketing/coupon-templates/{coupon_template_id}/approve"]["post"]
             .is_object()
@@ -81,11 +79,9 @@ async fn openapi_routes_expose_admin_api_inventory_with_schema_components() {
         json["paths"]["/admin/marketing/coupon-templates/{coupon_template_id}/retire"]["post"]
             .is_object()
     );
-    assert!(
-        json["paths"]["/admin/marketing/coupon-templates/{coupon_template_id}/lifecycle-audits"]
-            ["get"]
-            .is_object()
-    );
+    assert!(json["paths"]
+        ["/admin/marketing/coupon-templates/{coupon_template_id}/lifecycle-audits"]["get"]
+        .is_object());
     assert!(json["paths"]["/admin/marketing/campaigns"]["get"].is_object());
     assert!(json["paths"]["/admin/marketing/campaigns"]["post"].is_object());
     assert!(
@@ -100,11 +96,9 @@ async fn openapi_routes_expose_admin_api_inventory_with_schema_components() {
         json["paths"]["/admin/marketing/campaigns/{marketing_campaign_id}/compare"]["post"]
             .is_object()
     );
-    assert!(
-        json["paths"]["/admin/marketing/campaigns/{marketing_campaign_id}/submit-for-approval"]
-            ["post"]
-            .is_object()
-    );
+    assert!(json["paths"]
+        ["/admin/marketing/campaigns/{marketing_campaign_id}/submit-for-approval"]["post"]
+        .is_object());
     assert!(
         json["paths"]["/admin/marketing/campaigns/{marketing_campaign_id}/approve"]["post"]
             .is_object()
@@ -126,8 +120,7 @@ async fn openapi_routes_expose_admin_api_inventory_with_schema_components() {
             .is_object()
     );
     assert!(
-        json["paths"]["/admin/marketing/campaigns/{marketing_campaign_id}/lifecycle-audits"]
-            ["get"]
+        json["paths"]["/admin/marketing/campaigns/{marketing_campaign_id}/lifecycle-audits"]["get"]
             .is_object()
     );
     assert!(json["paths"]["/admin/marketing/budgets"]["get"].is_object());
@@ -136,8 +129,7 @@ async fn openapi_routes_expose_admin_api_inventory_with_schema_components() {
         json["paths"]["/admin/marketing/budgets/{campaign_budget_id}/status"]["post"].is_object()
     );
     assert!(
-        json["paths"]["/admin/marketing/budgets/{campaign_budget_id}/activate"]["post"]
-            .is_object()
+        json["paths"]["/admin/marketing/budgets/{campaign_budget_id}/activate"]["post"].is_object()
     );
     assert!(
         json["paths"]["/admin/marketing/budgets/{campaign_budget_id}/close"]["post"].is_object()
@@ -149,12 +141,8 @@ async fn openapi_routes_expose_admin_api_inventory_with_schema_components() {
     assert!(json["paths"]["/admin/marketing/codes"]["get"].is_object());
     assert!(json["paths"]["/admin/marketing/codes"]["post"].is_object());
     assert!(json["paths"]["/admin/marketing/codes/{coupon_code_id}/status"]["post"].is_object());
-    assert!(
-        json["paths"]["/admin/marketing/codes/{coupon_code_id}/disable"]["post"].is_object()
-    );
-    assert!(
-        json["paths"]["/admin/marketing/codes/{coupon_code_id}/restore"]["post"].is_object()
-    );
+    assert!(json["paths"]["/admin/marketing/codes/{coupon_code_id}/disable"]["post"].is_object());
+    assert!(json["paths"]["/admin/marketing/codes/{coupon_code_id}/restore"]["post"].is_object());
     assert!(
         json["paths"]["/admin/marketing/codes/{coupon_code_id}/lifecycle-audits"]["get"]
             .is_object()
@@ -229,9 +217,7 @@ async fn openapi_routes_expose_admin_api_inventory_with_schema_components() {
     assert!(json["components"]["schemas"]["UpdateMarketingCampaignStatusRequest"].is_object());
     assert!(json["components"]["schemas"]["CloneMarketingCampaignRequest"].is_object());
     assert!(json["components"]["schemas"]["CompareMarketingCampaignRequest"].is_object());
-    assert!(
-        json["components"]["schemas"]["SubmitMarketingCampaignForApprovalRequest"].is_object()
-    );
+    assert!(json["components"]["schemas"]["SubmitMarketingCampaignForApprovalRequest"].is_object());
     assert!(json["components"]["schemas"]["ApproveMarketingCampaignRequest"].is_object());
     assert!(json["components"]["schemas"]["RejectMarketingCampaignRequest"].is_object());
     assert!(json["components"]["schemas"]["MarketingCampaignLifecycleAction"].is_object());
@@ -280,16 +266,24 @@ async fn openapi_routes_expose_admin_api_inventory_with_schema_components() {
     assert!(json["components"]["schemas"]["BillingEventRecord"].is_object());
     assert!(json["components"]["schemas"]["BillingEventSummary"].is_object());
     assert!(json["components"]["schemas"]["BillingSummary"].is_object());
-    assert!(json["components"]["schemas"]["CommercialCatalogPublicationActionDecision"].is_object());
+    assert!(
+        json["components"]["schemas"]["CommercialCatalogPublicationActionDecision"].is_object()
+    );
     assert!(json["components"]["schemas"]["CommercialCatalogPublicationActionability"].is_object());
     assert!(json["components"]["schemas"]["CommercialCatalogPublicationDetail"].is_object());
-    assert!(json["components"]["schemas"]["CommercialCatalogPublicationMutationResult"].is_object());
+    assert!(
+        json["components"]["schemas"]["CommercialCatalogPublicationMutationResult"].is_object()
+    );
     assert!(json["components"]["schemas"]["CommercialCatalogPublicationProjection"].is_object());
     assert!(json["components"]["schemas"]["CatalogPublicationLifecycleAction"].is_object());
     assert!(json["components"]["schemas"]["CatalogPublicationLifecycleAuditOutcome"].is_object());
     assert!(json["components"]["schemas"]["CatalogPublicationLifecycleAuditRecord"].is_object());
-    assert!(json["components"]["schemas"]["PublishCommercialCatalogPublicationRequest"].is_object());
-    assert!(json["components"]["schemas"]["ScheduleCommercialCatalogPublicationRequest"].is_object());
+    assert!(
+        json["components"]["schemas"]["PublishCommercialCatalogPublicationRequest"].is_object()
+    );
+    assert!(
+        json["components"]["schemas"]["ScheduleCommercialCatalogPublicationRequest"].is_object()
+    );
     assert!(json["components"]["schemas"]["RetireCommercialCatalogPublicationRequest"].is_object());
     assert!(json["components"]["schemas"]["CommerceOrderAuditRecord"].is_object());
     assert_eq!(
@@ -465,8 +459,7 @@ async fn openapi_routes_expose_admin_api_inventory_with_schema_components() {
         "#/components/schemas/CouponTemplateActionability"
     );
     assert_eq!(
-        json["components"]["schemas"]["CouponTemplateActionability"]["properties"]["clone"]
-            ["$ref"],
+        json["components"]["schemas"]["CouponTemplateActionability"]["properties"]["clone"]["$ref"],
         "#/components/schemas/CouponTemplateActionDecision"
     );
     assert_eq!(
@@ -485,8 +478,8 @@ async fn openapi_routes_expose_admin_api_inventory_with_schema_components() {
         "#/components/schemas/CouponTemplateRecord"
     );
     assert_eq!(
-        json["components"]["schemas"]["CouponTemplateLifecycleAuditRecord"]["properties"]
-            ["action"]["$ref"],
+        json["components"]["schemas"]["CouponTemplateLifecycleAuditRecord"]["properties"]["action"]
+            ["$ref"],
         "#/components/schemas/CouponTemplateLifecycleAction"
     );
     assert_eq!(
@@ -500,8 +493,8 @@ async fn openapi_routes_expose_admin_api_inventory_with_schema_components() {
         "#/components/schemas/UpdateMarketingCampaignStatusRequest"
     );
     assert_eq!(
-        json["paths"]["/admin/marketing/campaigns/{marketing_campaign_id}/lifecycle-audits"]
-            ["get"]["responses"]["200"]["content"]["application/json"]["schema"]["items"]["$ref"],
+        json["paths"]["/admin/marketing/campaigns/{marketing_campaign_id}/lifecycle-audits"]["get"]
+            ["responses"]["200"]["content"]["application/json"]["schema"]["items"]["$ref"],
         "#/components/schemas/MarketingCampaignLifecycleAuditRecord"
     );
     assert_eq!(
@@ -579,8 +572,8 @@ async fn openapi_routes_expose_admin_api_inventory_with_schema_components() {
         "#/components/schemas/ActivateCampaignBudgetRequest"
     );
     assert_eq!(
-        json["paths"]["/admin/marketing/budgets/{campaign_budget_id}/close"]["post"]
-            ["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+        json["paths"]["/admin/marketing/budgets/{campaign_budget_id}/close"]["post"]["requestBody"]
+            ["content"]["application/json"]["schema"]["$ref"],
         "#/components/schemas/CloseCampaignBudgetRequest"
     );
     assert_eq!(
@@ -622,8 +615,8 @@ async fn openapi_routes_expose_admin_api_inventory_with_schema_components() {
         "#/components/schemas/CampaignBudgetActionDecision"
     );
     assert_eq!(
-        json["components"]["schemas"]["CampaignBudgetLifecycleAuditRecord"]["properties"]
-            ["action"]["$ref"],
+        json["components"]["schemas"]["CampaignBudgetLifecycleAuditRecord"]["properties"]["action"]
+            ["$ref"],
         "#/components/schemas/CampaignBudgetLifecycleAction"
     );
     assert_eq!(
@@ -841,6 +834,29 @@ fn try_admin_router_returns_error_for_invalid_http_exposure_env() {
     std::env::set_var(key, ";;;");
 
     let result = sdkwork_api_interface_admin::try_admin_router();
+
+    match previous {
+        Some(value) => std::env::set_var(key, value),
+        None => std::env::remove_var(key),
+    }
+
+    let error = result.expect_err("invalid env should return an error");
+    assert!(error
+        .to_string()
+        .contains("invalid list value for SDKWORK_BROWSER_ALLOWED_ORIGINS"));
+}
+
+#[tokio::test]
+async fn try_admin_router_with_pool_returns_error_for_invalid_http_exposure_env() {
+    let _lock = http_exposure_env_lock().lock().unwrap();
+    let key = "SDKWORK_BROWSER_ALLOWED_ORIGINS";
+    let previous = std::env::var(key).ok();
+    std::env::set_var(key, ";;;");
+    let pool = sdkwork_api_storage_sqlite::run_migrations("sqlite::memory:")
+        .await
+        .unwrap();
+
+    let result = sdkwork_api_interface_admin::try_admin_router_with_pool(pool);
 
     match previous {
         Some(value) => std::env::set_var(key, value),

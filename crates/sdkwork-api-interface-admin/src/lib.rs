@@ -142,15 +142,13 @@ use sdkwork_api_domain_jobs::{
 use sdkwork_api_domain_marketing::{
     CampaignBudgetLifecycleAction, CampaignBudgetLifecycleAuditOutcome,
     CampaignBudgetLifecycleAuditRecord, CampaignBudgetRecord, CampaignBudgetStatus,
-    CouponCodeLifecycleAction, CouponCodeLifecycleAuditOutcome,
-    CouponCodeLifecycleAuditRecord, CouponCodeRecord, CouponCodeStatus,
-    CouponRedemptionRecord, CouponReservationRecord, CouponRollbackRecord,
-    CouponTemplateApprovalState,
-    CouponTemplateLifecycleAuditOutcome, CouponTemplateLifecycleAuditRecord,
-    CouponTemplateLifecycleAction, CouponTemplateRecord, CouponTemplateStatus,
-    MarketingCampaignLifecycleAction,
+    CouponCodeLifecycleAction, CouponCodeLifecycleAuditOutcome, CouponCodeLifecycleAuditRecord,
+    CouponCodeRecord, CouponCodeStatus, CouponRedemptionRecord, CouponReservationRecord,
+    CouponRollbackRecord, CouponTemplateApprovalState, CouponTemplateLifecycleAction,
+    CouponTemplateLifecycleAuditOutcome, CouponTemplateLifecycleAuditRecord, CouponTemplateRecord,
+    CouponTemplateStatus, MarketingCampaignApprovalState, MarketingCampaignLifecycleAction,
     MarketingCampaignLifecycleAuditOutcome, MarketingCampaignLifecycleAuditRecord,
-    MarketingCampaignApprovalState, MarketingCampaignRecord, MarketingCampaignStatus,
+    MarketingCampaignRecord, MarketingCampaignStatus,
 };
 use sdkwork_api_domain_payment::{
     PaymentChannelPolicyRecord, PaymentGatewayAccountRecord, PaymentOrderRecord,
@@ -166,9 +164,7 @@ use sdkwork_api_domain_routing::{
 use sdkwork_api_domain_tenant::{Project, Tenant};
 use sdkwork_api_domain_usage::{UsageRecord, UsageSummary};
 use sdkwork_api_extension_core::{ExtensionInstallation, ExtensionInstance, ExtensionRuntime};
-use sdkwork_api_observability::{
-    observe_http_metrics, observe_http_tracing, HttpMetricsRegistry,
-};
+use sdkwork_api_observability::{observe_http_metrics, observe_http_tracing, HttpMetricsRegistry};
 use sdkwork_api_storage_core::{AdminStore, CommercialKernelStore, Reloadable};
 use sdkwork_api_storage_postgres::PostgresAdminStore;
 use sdkwork_api_storage_sqlite::SqliteAdminStore;
@@ -192,7 +188,10 @@ pub use routes::{
     admin_router_with_state_and_http_exposure, admin_router_with_store,
     admin_router_with_store_and_secret_manager,
     admin_router_with_store_and_secret_manager_and_jwt_secret, try_admin_router,
-    try_admin_router_with_state,
+    try_admin_router_with_pool, try_admin_router_with_pool_and_master_key,
+    try_admin_router_with_pool_and_secret_manager, try_admin_router_with_state,
+    try_admin_router_with_store, try_admin_router_with_store_and_secret_manager,
+    try_admin_router_with_store_and_secret_manager_and_jwt_secret,
 };
 
 const DEFAULT_ADMIN_JWT_SIGNING_SECRET: &str = "local-dev-admin-jwt-secret";

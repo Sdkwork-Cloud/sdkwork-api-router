@@ -190,8 +190,7 @@ async fn openapi_routes_expose_portal_api_inventory_with_schema_components() {
         "#/components/schemas/PortalCouponEffectSummary"
     );
     assert_eq!(
-        json["components"]["schemas"]["PortalMarketingCodeItem"]["properties"]["ownership"]
-            ["$ref"],
+        json["components"]["schemas"]["PortalMarketingCodeItem"]["properties"]["ownership"]["$ref"],
         "#/components/schemas/PortalCouponOwnershipSummary"
     );
     assert_eq!(
@@ -442,6 +441,29 @@ fn try_portal_router_returns_error_for_invalid_http_exposure_env() {
     std::env::set_var(key, ";;;");
 
     let result = sdkwork_api_interface_portal::try_portal_router();
+
+    match previous {
+        Some(value) => std::env::set_var(key, value),
+        None => std::env::remove_var(key),
+    }
+
+    let error = result.expect_err("invalid env should return an error");
+    assert!(error
+        .to_string()
+        .contains("invalid list value for SDKWORK_BROWSER_ALLOWED_ORIGINS"));
+}
+
+#[tokio::test]
+async fn try_portal_router_with_pool_returns_error_for_invalid_http_exposure_env() {
+    let _lock = http_exposure_env_lock().lock().unwrap();
+    let key = "SDKWORK_BROWSER_ALLOWED_ORIGINS";
+    let previous = std::env::var(key).ok();
+    std::env::set_var(key, ";;;");
+    let pool = sdkwork_api_storage_sqlite::run_migrations("sqlite::memory:")
+        .await
+        .unwrap();
+
+    let result = sdkwork_api_interface_portal::try_portal_router_with_pool(pool);
 
     match previous {
         Some(value) => std::env::set_var(key, value),

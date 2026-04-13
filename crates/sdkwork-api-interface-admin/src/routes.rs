@@ -42,29 +42,31 @@ fn metrics_route_with_state(
     http_exposure: &HttpExposureConfig,
 ) -> axum::routing::MethodRouter<AdminApiState> {
     let expected_token: Arc<str> = Arc::from(http_exposure.metrics_bearer_token.clone());
-    get(move |headers: HeaderMap, State(state): State<AdminApiState>| {
-        let metrics = metrics.clone();
-        let expected_token = expected_token.clone();
-        async move {
-            if !metrics_request_authorized(&headers, expected_token.as_ref()) {
-                return (
-                    StatusCode::UNAUTHORIZED,
-                    [(header::WWW_AUTHENTICATE, "Bearer")],
-                    "metrics bearer token required",
-                )
-                    .into_response();
-            }
+    get(
+        move |headers: HeaderMap, State(state): State<AdminApiState>| {
+            let metrics = metrics.clone();
+            let expected_token = expected_token.clone();
+            async move {
+                if !metrics_request_authorized(&headers, expected_token.as_ref()) {
+                    return (
+                        StatusCode::UNAUTHORIZED,
+                        [(header::WWW_AUTHENTICATE, "Bearer")],
+                        "metrics bearer token required",
+                    )
+                        .into_response();
+                }
 
-            (
-                [(
-                    header::CONTENT_TYPE,
-                    "text/plain; version=0.0.4; charset=utf-8",
-                )],
-                payments::render_admin_metrics_payload(metrics.as_ref(), &state).await,
-            )
-                .into_response()
-        }
-    })
+                (
+                    [(
+                        header::CONTENT_TYPE,
+                        "text/plain; version=0.0.4; charset=utf-8",
+                    )],
+                    payments::render_admin_metrics_payload(metrics.as_ref(), &state).await,
+                )
+                    .into_response()
+            }
+        },
+    )
 }
 
 fn metrics_request_authorized(headers: &HeaderMap, expected_token: &str) -> bool {
@@ -278,7 +280,10 @@ pub fn try_admin_router() -> anyhow::Result<Router> {
             "/admin/payments/orders/{payment_order_id}",
             get(|| async { "payment-order-dossier" }),
         )
-        .route("/admin/payments/refunds", get(|| async { "payment-refunds" }))
+        .route(
+            "/admin/payments/refunds",
+            get(|| async { "payment-refunds" }),
+        )
         .route(
             "/admin/payments/refunds/{refund_order_id}/approve",
             post(|| async { "payment-refund-approve" }),
@@ -401,40 +406,84 @@ pub fn admin_router() -> Router {
     try_admin_router().expect("http exposure config should load from process env")
 }
 
-pub fn admin_router_with_pool(pool: SqlitePool) -> Router {
-    admin_router_with_pool_and_master_key(pool, "local-dev-master-key")
+pub fn try_admin_router_with_pool(pool: SqlitePool) -> anyhow::Result<Router> {
+    try_admin_router_with_pool_and_master_key(pool, "local-dev-master-key")
 }
 
-pub fn admin_router_with_store(store: Arc<dyn AdminStore>) -> Router {
-    admin_router_with_store_and_secret_manager(
+pub fn admin_router_with_pool(pool: SqlitePool) -> Router {
+    try_admin_router_with_pool(pool).expect("http exposure config should load from process env")
+}
+
+pub fn try_admin_router_with_store(store: Arc<dyn AdminStore>) -> anyhow::Result<Router> {
+    try_admin_router_with_store_and_secret_manager(
         store,
         CredentialSecretManager::database_encrypted("local-dev-master-key"),
     )
+}
+
+pub fn admin_router_with_store(store: Arc<dyn AdminStore>) -> Router {
+    try_admin_router_with_store(store).expect("http exposure config should load from process env")
+}
+
+pub fn try_admin_router_with_pool_and_master_key(
+    pool: SqlitePool,
+    credential_master_key: impl Into<String>,
+) -> anyhow::Result<Router> {
+    try_admin_router_with_state(AdminApiState::with_master_key(pool, credential_master_key))
 }
 
 pub fn admin_router_with_pool_and_master_key(
     pool: SqlitePool,
     credential_master_key: impl Into<String>,
 ) -> Router {
-    admin_router_with_state(AdminApiState::with_master_key(pool, credential_master_key))
+    try_admin_router_with_pool_and_master_key(pool, credential_master_key)
+        .expect("http exposure config should load from process env")
+}
+
+pub fn try_admin_router_with_pool_and_secret_manager(
+    pool: SqlitePool,
+    secret_manager: CredentialSecretManager,
+) -> anyhow::Result<Router> {
+    try_admin_router_with_state(AdminApiState::with_secret_manager(pool, secret_manager))
 }
 
 pub fn admin_router_with_pool_and_secret_manager(
     pool: SqlitePool,
     secret_manager: CredentialSecretManager,
 ) -> Router {
-    admin_router_with_state(AdminApiState::with_secret_manager(pool, secret_manager))
+    try_admin_router_with_pool_and_secret_manager(pool, secret_manager)
+        .expect("http exposure config should load from process env")
+}
+
+pub fn try_admin_router_with_store_and_secret_manager(
+    store: Arc<dyn AdminStore>,
+    secret_manager: CredentialSecretManager,
+) -> anyhow::Result<Router> {
+    try_admin_router_with_store_and_secret_manager_and_jwt_secret(
+        store,
+        secret_manager,
+        DEFAULT_ADMIN_JWT_SIGNING_SECRET,
+    )
 }
 
 pub fn admin_router_with_store_and_secret_manager(
     store: Arc<dyn AdminStore>,
     secret_manager: CredentialSecretManager,
 ) -> Router {
-    admin_router_with_store_and_secret_manager_and_jwt_secret(
+    try_admin_router_with_store_and_secret_manager(store, secret_manager)
+        .expect("http exposure config should load from process env")
+}
+
+pub fn try_admin_router_with_store_and_secret_manager_and_jwt_secret(
+    store: Arc<dyn AdminStore>,
+    secret_manager: CredentialSecretManager,
+    jwt_signing_secret: impl Into<String>,
+) -> anyhow::Result<Router> {
+    try_admin_router_with_state(AdminApiState::with_store_and_secret_manager_and_jwt_secret(
         store,
         secret_manager,
-        DEFAULT_ADMIN_JWT_SIGNING_SECRET,
-    )
+        jwt_signing_secret,
+    ))
 }
 
 pub fn admin_router_with_store_and_secret_manager_and_jwt_secret(
@@ -442,11 +491,12 @@ pub fn admin_router_with_store_and_secret_manager_and_jwt_secret(
     secret_manager: CredentialSecretManager,
     jwt_signing_secret: impl Into<String>,
 ) -> Router {
-    admin_router_with_state(AdminApiState::with_store_and_secret_manager_and_jwt_secret(
+    try_admin_router_with_store_and_secret_manager_and_jwt_secret(
         store,
         secret_manager,
         jwt_signing_secret,
-    ))
+    )
+    .expect("http exposure config should load from process env")
 }
 
 pub fn try_admin_router_with_state(state: AdminApiState) -> anyhow::Result<Router> {
@@ -468,7 +518,10 @@ pub fn admin_router_with_state_and_http_exposure(
     let metrics = Arc::new(HttpMetricsRegistry::new("admin"));
     Router::new()
         .merge(openapi::admin_docs_router())
-        .route("/metrics", metrics_route_with_state(metrics.clone(), &http_exposure))
+        .route(
+            "/metrics",
+            metrics_route_with_state(metrics.clone(), &http_exposure),
+        )
         .route("/admin/health", get(|| async { "ok" }))
         .route("/admin/auth/login", post(auth::login_handler))
         .route("/admin/auth/me", get(auth::me_handler))

@@ -3,23 +3,23 @@ use std::fmt::Write as _;
 use std::sync::Arc;
 
 mod auth;
+mod auth_types;
 mod billing;
 mod commerce;
 mod gateway;
 mod http;
 mod jobs;
 mod marketing;
+mod marketing_types;
 mod openapi;
 mod routing;
-mod workspace;
 mod state;
-mod auth_types;
-mod marketing_types;
+mod workspace;
 
-pub use state::PortalApiState;
 pub(crate) use auth_types::*;
 pub(crate) use commerce::{PortalCommerceReconciliationSummary, PortalOrderCenterEntry};
 pub(crate) use marketing_types::*;
+pub use state::PortalApiState;
 pub(crate) use state::{AuthenticatedPortalClaims, DEFAULT_PORTAL_JWT_SIGNING_SECRET};
 
 use axum::{
@@ -31,9 +31,10 @@ use axum::{
     Json, Router,
 };
 use sdkwork_api_app_billing::{
-    list_account_ledger_history, list_billing_events, summarize_account_balance, summarize_billing_events,
-    summarize_billing_snapshot, synchronize_due_pricing_plan_lifecycle, AccountBalanceSnapshot,
-    AccountLedgerHistoryEntry, AccountLotBalanceSnapshot, CommercialBillingAdminKernel,
+    list_account_ledger_history, list_billing_events, summarize_account_balance,
+    summarize_billing_events, summarize_billing_snapshot, synchronize_due_pricing_plan_lifecycle,
+    AccountBalanceSnapshot, AccountLedgerHistoryEntry, AccountLotBalanceSnapshot,
+    CommercialBillingAdminKernel,
 };
 use sdkwork_api_app_commerce::{
     apply_portal_commerce_payment_event, apply_portal_commerce_payment_event_with_billing,
@@ -41,13 +42,12 @@ use sdkwork_api_app_commerce::{
     list_portal_commerce_payment_attempts, list_portal_commerce_payment_methods,
     list_project_commerce_orders, load_portal_commerce_catalog,
     load_portal_commerce_checkout_session, load_portal_commerce_checkout_session_with_policy,
-    load_portal_commerce_order, load_portal_commerce_payment_attempt,
-    load_project_membership, portal_commerce_product_kind, portal_commerce_transaction_kind,
-    preview_portal_commerce_quote, process_portal_stripe_webhook,
-    reclaim_expired_coupon_reservations_for_code_if_needed, settle_portal_commerce_order,
-    settle_portal_commerce_order_with_billing, submit_portal_commerce_order, CommerceError,
-    CommercePaymentAttemptRecord, PaymentMethodRecord, PortalCommerceCatalog,
-    PortalCommerceCheckoutSession, PortalCommerceOrderRecord,
+    load_portal_commerce_order, load_portal_commerce_payment_attempt, load_project_membership,
+    portal_commerce_product_kind, portal_commerce_transaction_kind, preview_portal_commerce_quote,
+    process_portal_stripe_webhook, reclaim_expired_coupon_reservations_for_code_if_needed,
+    settle_portal_commerce_order, settle_portal_commerce_order_with_billing,
+    submit_portal_commerce_order, CommerceError, CommercePaymentAttemptRecord, PaymentMethodRecord,
+    PortalCommerceCatalog, PortalCommerceCheckoutSession, PortalCommerceOrderRecord,
     PortalCommercePaymentAttemptCreateRequest, PortalCommercePaymentEventRecord,
     PortalCommercePaymentEventRequest, PortalCommerceQuote, PortalCommerceQuoteRequest,
     PortalCommerceWebhookAck, PortalProjectMembershipRecord,
@@ -69,14 +69,14 @@ use sdkwork_api_app_marketing::{
     confirm_coupon_redemption, reserve_coupon_redemption, rollback_coupon_redemption,
     validate_coupon_stack, CouponValidationDecision,
 };
-use sdkwork_api_app_rate_limit::{
-    check_coupon_rate_limit, coupon_actor_bucket, CouponRateLimitAction,
-};
 use sdkwork_api_app_payment::{
     ensure_commerce_payment_checkout, ensure_portal_payment_subject_scope,
     list_portal_commerce_order_payment_events, list_project_commerce_order_center,
     request_portal_commerce_order_refund, CommerceOrderCenterEntry, PaymentAttemptTimelineEntry,
     PortalAccountHistorySnapshot,
+};
+use sdkwork_api_app_rate_limit::{
+    check_coupon_rate_limit, coupon_actor_bucket, CouponRateLimitAction,
 };
 use sdkwork_api_app_routing::{
     create_routing_profile, list_compiled_routing_snapshots, list_routing_profiles,
@@ -86,8 +86,8 @@ use sdkwork_api_app_routing::{
 use sdkwork_api_app_usage::summarize_usage_records;
 use sdkwork_api_config::HttpExposureConfig;
 use sdkwork_api_domain_billing::{
-    AccountBenefitLotRecord, AccountLedgerAllocationRecord, AccountLedgerEntryRecord,
-    AccountHoldRecord, AccountRecord, AccountType, BillingEventRecord, BillingEventSummary,
+    AccountBenefitLotRecord, AccountHoldRecord, AccountLedgerAllocationRecord,
+    AccountLedgerEntryRecord, AccountRecord, AccountType, BillingEventRecord, BillingEventSummary,
     LedgerEntry, PricingPlanRecord, PricingRateRecord, ProjectBillingSummary,
     RequestSettlementRecord,
 };
@@ -208,7 +208,10 @@ pub fn try_portal_router() -> anyhow::Result<Router> {
     let http_exposure = http::http_exposure_config()?;
     Ok(Router::new()
         .merge(openapi::portal_docs_router())
-        .route("/metrics", http::metrics_route(metrics.clone(), &http_exposure))
+        .route(
+            "/metrics",
+            http::metrics_route(metrics.clone(), &http_exposure),
+        )
         .route("/portal/health", get(|| async { "ok" }))
         .route("/portal/auth/register", post(|| async { "register" }))
         .route("/portal/auth/login", post(|| async { "login" }))
@@ -397,18 +400,41 @@ pub fn portal_router() -> Router {
     try_portal_router().expect("http exposure config should load from process env")
 }
 
+pub fn try_portal_router_with_pool(pool: SqlitePool) -> anyhow::Result<Router> {
+    try_portal_router_with_pool_and_jwt_secret(pool, DEFAULT_PORTAL_JWT_SIGNING_SECRET)
+}
+
 pub fn portal_router_with_pool(pool: SqlitePool) -> Router {
-    portal_router_with_pool_and_jwt_secret(pool, DEFAULT_PORTAL_JWT_SIGNING_SECRET)
+    try_portal_router_with_pool(pool).expect("http exposure config should load from process env")
+}
+
+pub fn try_portal_router_with_pool_and_jwt_secret(
+    pool: SqlitePool,
+    jwt_signing_secret: impl Into<String>,
+) -> anyhow::Result<Router> {
+    try_portal_router_with_store_and_jwt_secret(
+        Arc::new(SqliteAdminStore::new(pool)),
+        jwt_signing_secret,
+    )
 }
 
 pub fn portal_router_with_pool_and_jwt_secret(
     pool: SqlitePool,
     jwt_signing_secret: impl Into<String>,
 ) -> Router {
-    portal_router_with_store_and_jwt_secret(
-        Arc::new(SqliteAdminStore::new(pool)),
-        jwt_signing_secret,
-    )
+    try_portal_router_with_pool_and_jwt_secret(pool, jwt_signing_secret)
+        .expect("http exposure config should load from process env")
+}
+
+pub fn try_portal_router_with_store<S>(store: Arc<S>) -> anyhow::Result<Router>
+where
+    S: AdminStore
+        + CommercialBillingAdminKernel
+        + CommercialKernelStore
+        + IdentityKernelStore
+        + 'static,
+{
+    try_portal_router_with_store_and_jwt_secret(store, DEFAULT_PORTAL_JWT_SIGNING_SECRET)
 }
 
 pub fn portal_router_with_store<S>(store: Arc<S>) -> Router
@@ -419,7 +445,24 @@ where
         + IdentityKernelStore
         + 'static,
 {
-    portal_router_with_store_and_jwt_secret(store, DEFAULT_PORTAL_JWT_SIGNING_SECRET)
+    try_portal_router_with_store(store).expect("http exposure config should load from process env")
+}
+
+pub fn try_portal_router_with_store_and_jwt_secret<S>(
+    store: Arc<S>,
+    jwt_signing_secret: impl Into<String>,
+) -> anyhow::Result<Router>
+where
+    S: AdminStore
+        + CommercialBillingAdminKernel
+        + CommercialKernelStore
+        + IdentityKernelStore
+        + 'static,
+{
+    try_portal_router_with_state(PortalApiState::with_store_and_jwt_secret(
+        store,
+        jwt_signing_secret,
+    ))
 }
 
 pub fn portal_router_with_store_and_jwt_secret<S>(
@@ -433,10 +476,8 @@ where
         + IdentityKernelStore
         + 'static,
 {
-    portal_router_with_state(PortalApiState::with_store_and_jwt_secret(
-        store,
-        jwt_signing_secret,
-    ))
+    try_portal_router_with_store_and_jwt_secret(store, jwt_signing_secret)
+        .expect("http exposure config should load from process env")
 }
 
 pub fn try_portal_router_with_state(state: PortalApiState) -> anyhow::Result<Router> {
@@ -458,7 +499,10 @@ pub fn portal_router_with_state_and_http_exposure(
     let metrics = Arc::new(HttpMetricsRegistry::new("portal"));
     Router::new()
         .merge(openapi::portal_docs_router())
-        .route("/metrics", http::metrics_route(metrics.clone(), &http_exposure))
+        .route(
+            "/metrics",
+            http::metrics_route(metrics.clone(), &http_exposure),
+        )
         .route("/portal/health", get(|| async { "ok" }))
         .route("/portal/auth/register", post(auth::register_handler))
         .route("/portal/auth/login", post(auth::login_handler))
@@ -485,7 +529,10 @@ pub fn portal_router_with_state_and_http_exposure(
             "/portal/marketing/coupon-redemptions/rollback",
             post(marketing::rollback_marketing_coupon_redemption_handler),
         )
-        .route("/portal/marketing/my-coupons", get(marketing::list_my_coupons_handler))
+        .route(
+            "/portal/marketing/my-coupons",
+            get(marketing::list_my_coupons_handler),
+        )
         .route(
             "/portal/marketing/reward-history",
             get(marketing::list_marketing_reward_history_handler),
@@ -494,7 +541,10 @@ pub fn portal_router_with_state_and_http_exposure(
             "/portal/marketing/redemptions",
             get(marketing::list_marketing_redemptions_handler),
         )
-        .route("/portal/marketing/codes", get(marketing::list_marketing_codes_handler))
+        .route(
+            "/portal/marketing/codes",
+            get(marketing::list_marketing_codes_handler),
+        )
         .route("/portal/async-jobs", get(jobs::list_async_jobs_handler))
         .route(
             "/portal/async-jobs/{job_id}/attempts",
@@ -508,11 +558,18 @@ pub fn portal_router_with_state_and_http_exposure(
             "/portal/gateway/rate-limit-snapshot",
             get(workspace::gateway_rate_limit_snapshot_handler),
         )
-        .route("/portal/commerce/catalog", get(commerce::commerce_catalog_handler))
-        .route("/portal/commerce/quote", post(commerce::commerce_quote_handler))
+        .route(
+            "/portal/commerce/catalog",
+            get(commerce::commerce_catalog_handler),
+        )
+        .route(
+            "/portal/commerce/quote",
+            post(commerce::commerce_quote_handler),
+        )
         .route(
             "/portal/commerce/orders",
-            get(commerce::list_commerce_orders_handler).post(commerce::create_commerce_order_handler),
+            get(commerce::list_commerce_orders_handler)
+                .post(commerce::create_commerce_order_handler),
         )
         .route(
             "/portal/commerce/orders/{order_id}",
@@ -582,15 +639,25 @@ pub fn portal_router_with_state_and_http_exposure(
         )
         .route(
             "/portal/api-key-groups/{group_id}",
-            patch(gateway::update_api_key_group_handler).delete(gateway::delete_api_key_group_handler),
+            patch(gateway::update_api_key_group_handler)
+                .delete(gateway::delete_api_key_group_handler),
         )
         .route(
             "/portal/api-key-groups/{group_id}/status",
             post(gateway::update_api_key_group_status_handler),
         )
-        .route("/portal/usage/records", get(workspace::list_usage_records_handler))
-        .route("/portal/usage/summary", get(workspace::usage_summary_handler))
-        .route("/portal/billing/account", get(billing::billing_account_handler))
+        .route(
+            "/portal/usage/records",
+            get(workspace::list_usage_records_handler),
+        )
+        .route(
+            "/portal/usage/summary",
+            get(workspace::usage_summary_handler),
+        )
+        .route(
+            "/portal/billing/account",
+            get(billing::billing_account_handler),
+        )
         .route(
             "/portal/billing/account-history",
             get(account_history_handler),
@@ -623,27 +690,44 @@ pub fn portal_router_with_state_and_http_exposure(
             "/portal/billing/pricing-rates",
             get(billing::list_billing_pricing_rates_handler),
         )
-        .route("/portal/billing/summary", get(billing::billing_summary_handler))
-        .route("/portal/billing/ledger", get(billing::list_billing_ledger_handler))
-        .route("/portal/billing/events", get(billing::list_billing_events_handler))
+        .route(
+            "/portal/billing/summary",
+            get(billing::billing_summary_handler),
+        )
+        .route(
+            "/portal/billing/ledger",
+            get(billing::list_billing_ledger_handler),
+        )
+        .route(
+            "/portal/billing/events",
+            get(billing::list_billing_events_handler),
+        )
         .route(
             "/portal/billing/events/summary",
             get(billing::billing_events_summary_handler),
         )
-        .route("/portal/routing/summary", get(routing::routing_summary_handler))
+        .route(
+            "/portal/routing/summary",
+            get(routing::routing_summary_handler),
+        )
         .route(
             "/portal/routing/profiles",
-            get(routing::list_routing_profiles_handler).post(routing::create_routing_profile_handler),
+            get(routing::list_routing_profiles_handler)
+                .post(routing::create_routing_profile_handler),
         )
         .route(
             "/portal/routing/preferences",
-            get(routing::get_routing_preferences_handler).post(routing::save_routing_preferences_handler),
+            get(routing::get_routing_preferences_handler)
+                .post(routing::save_routing_preferences_handler),
         )
         .route(
             "/portal/routing/snapshots",
             get(routing::list_routing_snapshots_handler),
         )
-        .route("/portal/routing/preview", post(routing::preview_routing_handler))
+        .route(
+            "/portal/routing/preview",
+            post(routing::preview_routing_handler),
+        )
         .route(
             "/portal/routing/decision-logs",
             get(routing::list_routing_decision_logs_handler),
@@ -1042,38 +1126,38 @@ async fn account_history_handler(
 
     let (benefit_lots, holds, request_settlements, ledger) =
         if let Some(account) = snapshot.account.as_ref() {
-        let mut benefit_lots = payment_store
-            .list_account_benefit_lots()
-            .await
-            .map_err(portal_payment_error_response)?
-            .into_iter()
-            .filter(|lot| lot.account_id == account.account_id)
-            .collect::<Vec<_>>();
-        benefit_lots.sort_by_key(|lot| lot.lot_id);
+            let mut benefit_lots = payment_store
+                .list_account_benefit_lots()
+                .await
+                .map_err(portal_payment_error_response)?
+                .into_iter()
+                .filter(|lot| lot.account_id == account.account_id)
+                .collect::<Vec<_>>();
+            benefit_lots.sort_by_key(|lot| lot.lot_id);
 
-        let mut holds = payment_store
-            .list_account_holds()
-            .await
-            .map_err(portal_payment_error_response)?
-            .into_iter()
-            .filter(|hold| hold.account_id == account.account_id)
-            .collect::<Vec<_>>();
-        holds.sort_by_key(|hold| hold.hold_id);
+            let mut holds = payment_store
+                .list_account_holds()
+                .await
+                .map_err(portal_payment_error_response)?
+                .into_iter()
+                .filter(|hold| hold.account_id == account.account_id)
+                .collect::<Vec<_>>();
+            holds.sort_by_key(|hold| hold.hold_id);
 
-        let mut request_settlements = payment_store
-            .list_request_settlement_records()
-            .await
-            .map_err(portal_payment_error_response)?
-            .into_iter()
-            .filter(|settlement| settlement.account_id == account.account_id)
-            .collect::<Vec<_>>();
-        request_settlements.sort_by_key(|settlement| settlement.request_settlement_id);
+            let mut request_settlements = payment_store
+                .list_request_settlement_records()
+                .await
+                .map_err(portal_payment_error_response)?
+                .into_iter()
+                .filter(|settlement| settlement.account_id == account.account_id)
+                .collect::<Vec<_>>();
+            request_settlements.sort_by_key(|settlement| settlement.request_settlement_id);
 
-        let ledger = list_account_ledger_history(payment_store.as_ref(), account.account_id)
-            .await
-            .map_err(portal_payment_error_response)?;
+            let ledger = list_account_ledger_history(payment_store.as_ref(), account.account_id)
+                .await
+                .map_err(portal_payment_error_response)?;
 
-        (benefit_lots, holds, request_settlements, ledger)
+            (benefit_lots, holds, request_settlements, ledger)
         } else {
             (Vec::new(), Vec::new(), Vec::new(), Vec::new())
         };
@@ -1360,8 +1444,8 @@ async fn sync_portal_order_checkout(
     order: &PortalCommerceOrderRecord,
     observed_at_ms: u64,
 ) -> anyhow::Result<()> {
-    let scope = ensure_portal_payment_subject_scope(identity_store, portal_user_id, observed_at_ms)
-        .await?;
+    let scope =
+        ensure_portal_payment_subject_scope(identity_store, portal_user_id, observed_at_ms).await?;
     ensure_commerce_payment_checkout(payment_store, &scope, order, "portal_web").await?;
     Ok(())
 }

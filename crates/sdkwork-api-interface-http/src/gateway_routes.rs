@@ -358,42 +358,74 @@ pub fn gateway_router_with_stateless_config_and_http_exposure(
         .with_state(config.into_context())
 }
 
-pub fn gateway_router_with_pool(pool: SqlitePool) -> Router {
-    gateway_router_with_pool_and_master_key(pool, "local-dev-master-key")
+pub fn try_gateway_router_with_pool(pool: SqlitePool) -> anyhow::Result<Router> {
+    try_gateway_router_with_pool_and_master_key(pool, "local-dev-master-key")
 }
 
-pub fn gateway_router_with_store(store: Arc<dyn AdminStore>) -> Router {
-    gateway_router_with_store_and_secret_manager(
+pub fn gateway_router_with_pool(pool: SqlitePool) -> Router {
+    try_gateway_router_with_pool(pool).expect("http exposure config should load from process env")
+}
+
+pub fn try_gateway_router_with_store(store: Arc<dyn AdminStore>) -> anyhow::Result<Router> {
+    try_gateway_router_with_store_and_secret_manager(
         store,
         CredentialSecretManager::database_encrypted("local-dev-master-key"),
     )
+}
+
+pub fn gateway_router_with_store(store: Arc<dyn AdminStore>) -> Router {
+    try_gateway_router_with_store(store).expect("http exposure config should load from process env")
+}
+
+pub fn try_gateway_router_with_pool_and_master_key(
+    pool: SqlitePool,
+    credential_master_key: impl Into<String>,
+) -> anyhow::Result<Router> {
+    try_gateway_router_with_state(GatewayApiState::with_master_key(
+        pool,
+        credential_master_key,
+    ))
 }
 
 pub fn gateway_router_with_pool_and_master_key(
     pool: SqlitePool,
     credential_master_key: impl Into<String>,
 ) -> Router {
-    gateway_router_with_state(GatewayApiState::with_master_key(
-        pool,
-        credential_master_key,
-    ))
+    try_gateway_router_with_pool_and_master_key(pool, credential_master_key)
+        .expect("http exposure config should load from process env")
+}
+
+pub fn try_gateway_router_with_pool_and_secret_manager(
+    pool: SqlitePool,
+    secret_manager: CredentialSecretManager,
+) -> anyhow::Result<Router> {
+    try_gateway_router_with_state(GatewayApiState::with_secret_manager(pool, secret_manager))
 }
 
 pub fn gateway_router_with_pool_and_secret_manager(
     pool: SqlitePool,
     secret_manager: CredentialSecretManager,
 ) -> Router {
-    gateway_router_with_state(GatewayApiState::with_secret_manager(pool, secret_manager))
+    try_gateway_router_with_pool_and_secret_manager(pool, secret_manager)
+        .expect("http exposure config should load from process env")
+}
+
+pub fn try_gateway_router_with_store_and_secret_manager(
+    store: Arc<dyn AdminStore>,
+    secret_manager: CredentialSecretManager,
+) -> anyhow::Result<Router> {
+    try_gateway_router_with_state(GatewayApiState::with_store_and_secret_manager(
+        store,
+        secret_manager,
+    ))
 }
 
 pub fn gateway_router_with_store_and_secret_manager(
     store: Arc<dyn AdminStore>,
     secret_manager: CredentialSecretManager,
 ) -> Router {
-    gateway_router_with_state(GatewayApiState::with_store_and_secret_manager(
-        store,
-        secret_manager,
-    ))
+    try_gateway_router_with_store_and_secret_manager(store, secret_manager)
+        .expect("http exposure config should load from process env")
 }
 
 pub fn try_gateway_router_with_state(state: GatewayApiState) -> anyhow::Result<Router> {
@@ -834,4 +866,3 @@ pub fn gateway_router_with_state_and_http_exposure(
         ))
         .with_state(state)
 }
-
