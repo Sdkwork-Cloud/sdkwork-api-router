@@ -23,7 +23,8 @@ use sdkwork_api_domain_commerce::{
 };
 use sdkwork_api_domain_credential::{OfficialProviderConfig, UpstreamCredential};
 use sdkwork_api_domain_identity::{
-    AdminUserRecord, ApiKeyGroupRecord, GatewayApiKeyRecord, PortalUserRecord,
+    AdminUserRecord, ApiKeyGroupRecord, CanonicalApiKeyRecord, GatewayApiKeyRecord,
+    IdentityBindingRecord, IdentityUserRecord, PortalUserRecord,
 };
 use sdkwork_api_domain_jobs::{
     AsyncJobAssetRecord, AsyncJobAttemptRecord, AsyncJobAttemptStatus, AsyncJobCallbackRecord,
@@ -70,9 +71,9 @@ use sdkwork_api_storage_core::{
     AtomicCouponRollbackCommand, AtomicCouponRollbackCompensationCommand,
     AtomicCouponRollbackCompensationResult, AtomicCouponRollbackResult,
     ExtensionRuntimeRolloutParticipantRecord, ExtensionRuntimeRolloutRecord,
-    MarketingKernelTransaction, MarketingKernelTransactionExecutor, MarketingStore,
-    PaymentKernelStore, ServiceRuntimeNodeRecord, StandaloneConfigRolloutParticipantRecord,
-    StandaloneConfigRolloutRecord, StorageDialect,
+    IdentityKernelStore, MarketingKernelTransaction, MarketingKernelTransactionExecutor,
+    MarketingStore, PaymentKernelStore, ServiceRuntimeNodeRecord,
+    StandaloneConfigRolloutParticipantRecord, StandaloneConfigRolloutRecord, StorageDialect,
 };
 use serde_json::Value;
 use sqlx::{
@@ -93,6 +94,7 @@ mod commerce_order_store;
 mod commerce_payment_store;
 mod commerce_store_mappers;
 mod gateway_store;
+mod identity_kernel_store;
 mod identity_store;
 mod jobs_store;
 mod marketing_store_impl;

@@ -1,8 +1,11 @@
+use std::sync::Arc;
+
 use sdkwork_api_app_credential::CredentialSecretManager;
 use sdkwork_api_app_gateway::{
     configure_capability_catalog_cache_store, configure_route_decision_cache_store,
     configure_route_recovery_probe_lock_store,
 };
+use sdkwork_api_app_rate_limit::InMemoryGatewayTrafficController;
 use sdkwork_api_app_runtime::{
     StandaloneListenerHost, StandaloneServiceKind, StandaloneServiceReloadHandles,
     build_admin_payment_store_handles_from_config, build_cache_runtime_from_config,
@@ -46,6 +49,7 @@ async fn main() -> anyhow::Result<()> {
         live_commercial_billing.clone(),
         live_payment_store.clone(),
         live_secret_manager.clone(),
+        Arc::new(InMemoryGatewayTrafficController::new()),
     );
     let listener_host = StandaloneListenerHost::bind(
         config.gateway_bind.clone(),

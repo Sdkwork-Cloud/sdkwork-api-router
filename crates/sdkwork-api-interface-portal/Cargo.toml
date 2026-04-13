@@ -50,6 +50,7 @@ sdkwork-api-app-payment = { path = "../sdkwork-api-app-payment" }
 sdkwork-api-domain-payment = { path = "../sdkwork-api-domain-payment" }
 sdkwork-api-domain-routing = { path = "../sdkwork-api-domain-routing" }
 serde_json.workspace = true
+serial_test.workspace = true
 tokio.workspace = true
 tower.workspace = true
 
