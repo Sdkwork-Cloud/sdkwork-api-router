@@ -3,32 +3,6 @@ use super::*;
 pub(crate) async fn apply_postgres_marketing_schema(pool: &PgPool) -> Result<()> {
     let pool = pool.clone();
     sqlx::query(
-        "CREATE TABLE IF NOT EXISTS ai_coupon_campaigns (
-            id TEXT PRIMARY KEY NOT NULL,
-            code TEXT NOT NULL,
-            discount_label TEXT NOT NULL,
-            audience TEXT NOT NULL,
-            remaining BIGINT NOT NULL DEFAULT 0,
-            active BOOLEAN NOT NULL DEFAULT TRUE,
-            note TEXT NOT NULL DEFAULT '',
-            expires_on TEXT NOT NULL DEFAULT '',
-            created_at_ms BIGINT NOT NULL DEFAULT 0
-        )",
-    )
-    .execute(&pool)
-    .await?;
-    sqlx::query(
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_coupon_campaigns_code ON ai_coupon_campaigns (code)",
-    )
-    .execute(&pool)
-    .await?;
-    sqlx::query(
-        "CREATE INDEX IF NOT EXISTS idx_ai_coupon_campaigns_active_remaining_created
-         ON ai_coupon_campaigns (active, remaining, created_at_ms DESC, code)",
-    )
-    .execute(&pool)
-    .await?;
-    sqlx::query(
         "CREATE TABLE IF NOT EXISTS ai_marketing_coupon_template (
             coupon_template_id TEXT PRIMARY KEY NOT NULL,
             template_key TEXT NOT NULL,
@@ -165,12 +139,33 @@ pub(crate) async fn apply_postgres_marketing_schema(pool: &PgPool) -> Result<()>
             campaign_budget_id TEXT PRIMARY KEY NOT NULL,
             marketing_campaign_id TEXT NOT NULL,
             status TEXT NOT NULL,
+            total_budget_minor BIGINT NOT NULL DEFAULT 0,
+            reserved_budget_minor BIGINT NOT NULL DEFAULT 0,
+            consumed_budget_minor BIGINT NOT NULL DEFAULT 0,
             created_at_ms BIGINT NOT NULL DEFAULT 0,
             updated_at_ms BIGINT NOT NULL DEFAULT 0,
             record_json TEXT NOT NULL
         )",
     )
     .execute(&pool)
+    .await?;
+    ensure_postgres_column_if_table_exists(
+        &pool,
+        "ai_marketing_campaign_budget",
+        "ALTER TABLE ai_marketing_campaign_budget ADD COLUMN IF NOT EXISTS total_budget_minor BIGINT NOT NULL DEFAULT 0",
+    )
+    .await?;
+    ensure_postgres_column_if_table_exists(
+        &pool,
+        "ai_marketing_campaign_budget",
+        "ALTER TABLE ai_marketing_campaign_budget ADD COLUMN IF NOT EXISTS reserved_budget_minor BIGINT NOT NULL DEFAULT 0",
+    )
+    .await?;
+    ensure_postgres_column_if_table_exists(
+        &pool,
+        "ai_marketing_campaign_budget",
+        "ALTER TABLE ai_marketing_campaign_budget ADD COLUMN IF NOT EXISTS consumed_budget_minor BIGINT NOT NULL DEFAULT 0",
+    )
     .await?;
     sqlx::query(
         "CREATE INDEX IF NOT EXISTS idx_ai_marketing_campaign_budget_campaign_status
@@ -312,6 +307,7 @@ pub(crate) async fn apply_postgres_marketing_schema(pool: &PgPool) -> Result<()>
             subject_scope TEXT NOT NULL,
             subject_id TEXT NOT NULL,
             reservation_status TEXT NOT NULL,
+            budget_reserved_minor BIGINT NOT NULL DEFAULT 0,
             expires_at_ms BIGINT NOT NULL,
             created_at_ms BIGINT NOT NULL DEFAULT 0,
             updated_at_ms BIGINT NOT NULL DEFAULT 0,
@@ -319,6 +315,12 @@ pub(crate) async fn apply_postgres_marketing_schema(pool: &PgPool) -> Result<()>
         )",
     )
     .execute(&pool)
+    .await?;
+    ensure_postgres_column_if_table_exists(
+        &pool,
+        "ai_marketing_coupon_reservation",
+        "ALTER TABLE ai_marketing_coupon_reservation ADD COLUMN IF NOT EXISTS budget_reserved_minor BIGINT NOT NULL DEFAULT 0",
+    )
     .await?;
     sqlx::query(
         "CREATE INDEX IF NOT EXISTS idx_ai_marketing_coupon_reservation_code_status_expiry
@@ -343,6 +345,8 @@ pub(crate) async fn apply_postgres_marketing_schema(pool: &PgPool) -> Result<()>
             coupon_code_id TEXT NOT NULL,
             coupon_template_id TEXT NOT NULL,
             redemption_status TEXT NOT NULL,
+            budget_consumed_minor BIGINT NOT NULL DEFAULT 0,
+            subsidy_amount_minor BIGINT NOT NULL DEFAULT 0,
             order_id TEXT,
             payment_event_id TEXT,
             redeemed_at_ms BIGINT NOT NULL DEFAULT 0,
@@ -351,6 +355,18 @@ pub(crate) async fn apply_postgres_marketing_schema(pool: &PgPool) -> Result<()>
         )",
     )
     .execute(&pool)
+    .await?;
+    ensure_postgres_column_if_table_exists(
+        &pool,
+        "ai_marketing_coupon_redemption",
+        "ALTER TABLE ai_marketing_coupon_redemption ADD COLUMN IF NOT EXISTS budget_consumed_minor BIGINT NOT NULL DEFAULT 0",
+    )
+    .await?;
+    ensure_postgres_column_if_table_exists(
+        &pool,
+        "ai_marketing_coupon_redemption",
+        "ALTER TABLE ai_marketing_coupon_redemption ADD COLUMN IF NOT EXISTS subsidy_amount_minor BIGINT NOT NULL DEFAULT 0",
+    )
     .await?;
     sqlx::query(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_marketing_coupon_redemption_reservation
@@ -378,12 +394,26 @@ pub(crate) async fn apply_postgres_marketing_schema(pool: &PgPool) -> Result<()>
             coupon_redemption_id TEXT NOT NULL,
             rollback_type TEXT NOT NULL,
             rollback_status TEXT NOT NULL,
+            restored_budget_minor BIGINT NOT NULL DEFAULT 0,
+            restored_inventory_count BIGINT NOT NULL DEFAULT 0,
             created_at_ms BIGINT NOT NULL DEFAULT 0,
             updated_at_ms BIGINT NOT NULL DEFAULT 0,
             record_json TEXT NOT NULL
         )",
     )
     .execute(&pool)
+    .await?;
+    ensure_postgres_column_if_table_exists(
+        &pool,
+        "ai_marketing_coupon_rollback",
+        "ALTER TABLE ai_marketing_coupon_rollback ADD COLUMN IF NOT EXISTS restored_budget_minor BIGINT NOT NULL DEFAULT 0",
+    )
+    .await?;
+    ensure_postgres_column_if_table_exists(
+        &pool,
+        "ai_marketing_coupon_rollback",
+        "ALTER TABLE ai_marketing_coupon_rollback ADD COLUMN IF NOT EXISTS restored_inventory_count BIGINT NOT NULL DEFAULT 0",
+    )
     .await?;
     sqlx::query(
         "CREATE INDEX IF NOT EXISTS idx_ai_marketing_coupon_rollback_redemption_status

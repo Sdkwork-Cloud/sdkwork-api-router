@@ -2,6 +2,10 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 
 use sdkwork_api_app_billing::CommercialBillingAdminKernel;
+use sdkwork_api_app_marketing::{
+    ensure_campaign_budget_record, ensure_coupon_code_record, ensure_coupon_template_record,
+    ensure_marketing_campaign_record,
+};
 use sdkwork_api_storage_core::{AccountKernelStore, AdminStore};
 
 use super::manifest::BootstrapProfilePack;
@@ -451,30 +455,77 @@ impl_store_stage!(
     project_memberships,
     upsert_project_membership
 );
-impl_store_stage!(
-    CouponTemplateStage,
-    "coupon_templates",
-    coupon_templates,
-    insert_coupon_template_record
-);
-impl_store_stage!(
-    MarketingCampaignStage,
-    "marketing_campaigns",
-    marketing_campaigns,
-    insert_marketing_campaign_record
-);
-impl_store_stage!(
-    CampaignBudgetStage,
-    "campaign_budgets",
-    campaign_budgets,
-    insert_campaign_budget_record
-);
-impl_store_stage!(
-    CouponCodeStage,
-    "coupon_codes",
-    coupon_codes,
-    insert_coupon_code_record
-);
+#[async_trait]
+impl BootstrapStage for CouponTemplateStage {
+    fn name(&self) -> &'static str {
+        "coupon_templates"
+    }
+
+    async fn apply(
+        &self,
+        context: &BootstrapStageContext<'_>,
+        pack: &BootstrapProfilePack,
+    ) -> Result<usize> {
+        for record in &pack.data.coupon_templates {
+            ensure_coupon_template_record(context.store, record.clone()).await?;
+        }
+        Ok(pack.data.coupon_templates.len())
+    }
+}
+
+#[async_trait]
+impl BootstrapStage for MarketingCampaignStage {
+    fn name(&self) -> &'static str {
+        "marketing_campaigns"
+    }
+
+    async fn apply(
+        &self,
+        context: &BootstrapStageContext<'_>,
+        pack: &BootstrapProfilePack,
+    ) -> Result<usize> {
+        for record in &pack.data.marketing_campaigns {
+            ensure_marketing_campaign_record(context.store, record.clone()).await?;
+        }
+        Ok(pack.data.marketing_campaigns.len())
+    }
+}
+
+#[async_trait]
+impl BootstrapStage for CampaignBudgetStage {
+    fn name(&self) -> &'static str {
+        "campaign_budgets"
+    }
+
+    async fn apply(
+        &self,
+        context: &BootstrapStageContext<'_>,
+        pack: &BootstrapProfilePack,
+    ) -> Result<usize> {
+        for record in &pack.data.campaign_budgets {
+            ensure_campaign_budget_record(context.store, record.clone()).await?;
+        }
+        Ok(pack.data.campaign_budgets.len())
+    }
+}
+
+#[async_trait]
+impl BootstrapStage for CouponCodeStage {
+    fn name(&self) -> &'static str {
+        "coupon_codes"
+    }
+
+    async fn apply(
+        &self,
+        context: &BootstrapStageContext<'_>,
+        pack: &BootstrapProfilePack,
+    ) -> Result<usize> {
+        for record in &pack.data.coupon_codes {
+            ensure_coupon_code_record(context.store, record.clone()).await?;
+        }
+        Ok(pack.data.coupon_codes.len())
+    }
+}
 impl_store_stage!(
     CommerceOrderStage,
     "commerce_orders",

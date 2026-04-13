@@ -130,14 +130,8 @@ async fn portal_manual_payment_simulation_can_be_enabled_for_lab_compatibility()
 async fn portal_commerce_orders_queue_paid_checkout_and_fulfill_coupon_redemption() {
     let pool = memory_pool().await;
     let store = SqliteAdminStore::new(pool.clone());
-    seed_marketing_catalog_coupon_code(
-        &store,
-        "spring20",
-        "SPRING20",
-        MarketingCampaignStatus::Active,
-        CouponCodeStatus::Available,
-    )
-    .await;
+    seed_marketing_catalog_coupon(&store).await;
+    seed_marketing_bonus_coupon(&store).await;
 
     let app = portal_lab_app(pool.clone());
     let token = portal_token(app.clone()).await;
@@ -176,7 +170,7 @@ async fn portal_commerce_orders_queue_paid_checkout_and_fulfill_coupon_redemptio
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    "{\"target_kind\":\"recharge_pack\",\"target_id\":\"pack-100k\",\"coupon_code\":\"SPRING20\"}",
+                    "{\"target_kind\":\"recharge_pack\",\"target_id\":\"pack-100k\",\"coupon_code\":\"LAUNCH20\"}",
                 ))
                 .unwrap(),
         )
@@ -271,14 +265,7 @@ async fn portal_commerce_orders_queue_paid_checkout_and_fulfill_coupon_redemptio
 async fn portal_commerce_pending_recharge_can_be_settled_or_canceled() {
     let pool = memory_pool().await;
     let store = SqliteAdminStore::new(pool.clone());
-    seed_marketing_catalog_coupon_code(
-        &store,
-        "spring20",
-        "SPRING20",
-        MarketingCampaignStatus::Active,
-        CouponCodeStatus::Available,
-    )
-    .await;
+    seed_marketing_catalog_coupon(&store).await;
 
     let app = portal_lab_app(pool.clone());
     let token = portal_token(app.clone()).await;
@@ -316,7 +303,7 @@ async fn portal_commerce_pending_recharge_can_be_settled_or_canceled() {
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    "{\"target_kind\":\"recharge_pack\",\"target_id\":\"pack-100k\",\"coupon_code\":\"SPRING20\"}",
+                    "{\"target_kind\":\"recharge_pack\",\"target_id\":\"pack-100k\",\"coupon_code\":\"LAUNCH20\"}",
                 ))
                 .unwrap(),
         )

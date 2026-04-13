@@ -1,5 +1,10 @@
 use super::*;
 
+mod billing_routes;
+mod catalog_routes;
+mod commerce_routes;
+mod marketing_routes;
+
 fn http_exposure_config() -> anyhow::Result<HttpExposureConfig> {
     HttpExposureConfig::from_env()
 }
@@ -275,49 +280,6 @@ pub fn try_admin_router() -> anyhow::Result<Router> {
             "/admin/commerce/reconciliation-runs/{reconciliation_run_id}/items",
             get(|| async { "commerce-reconciliation-items" }),
         )
-        .route("/admin/payments/orders", get(|| async { "payment-orders" }))
-        .route(
-            "/admin/payments/orders/{payment_order_id}",
-            get(|| async { "payment-order-dossier" }),
-        )
-        .route(
-            "/admin/payments/refunds",
-            get(|| async { "payment-refunds" }),
-        )
-        .route(
-            "/admin/payments/refunds/{refund_order_id}/approve",
-            post(|| async { "payment-refund-approve" }),
-        )
-        .route(
-            "/admin/payments/refunds/{refund_order_id}/cancel",
-            post(|| async { "payment-refund-cancel" }),
-        )
-        .route(
-            "/admin/payments/refunds/{refund_order_id}/start",
-            post(|| async { "payment-refund-start" }),
-        )
-        .route(
-            "/admin/payments/reconciliation-lines",
-            get(|| async { "payment-reconciliation-lines" }),
-        )
-        .route(
-            "/admin/payments/reconciliation-lines/{reconciliation_line_id}/resolve",
-            post(|| async { "payment-reconciliation-resolve" }),
-        )
-        .route(
-            "/admin/payments/reconciliation-summary",
-            get(|| async { "payment-reconciliation-summary" }),
-        )
-        .route(
-            "/admin/payments/gateway-accounts",
-            get(|| async { "payment-gateway-accounts" })
-                .post(|| async { "payment-gateway-accounts-upsert" }),
-        )
-        .route(
-            "/admin/payments/channel-policies",
-            get(|| async { "payment-channel-policies" })
-                .post(|| async { "payment-channel-policies-upsert" }),
-        )
         .route("/admin/async-jobs", get(|| async { "async-jobs" }))
         .route(
             "/admin/async-jobs/{job_id}/attempts",
@@ -406,84 +368,40 @@ pub fn admin_router() -> Router {
     try_admin_router().expect("http exposure config should load from process env")
 }
 
-pub fn try_admin_router_with_pool(pool: SqlitePool) -> anyhow::Result<Router> {
-    try_admin_router_with_pool_and_master_key(pool, "local-dev-master-key")
-}
-
 pub fn admin_router_with_pool(pool: SqlitePool) -> Router {
-    try_admin_router_with_pool(pool).expect("http exposure config should load from process env")
-}
-
-pub fn try_admin_router_with_store(store: Arc<dyn AdminStore>) -> anyhow::Result<Router> {
-    try_admin_router_with_store_and_secret_manager(
-        store,
-        CredentialSecretManager::database_encrypted("local-dev-master-key"),
-    )
+    admin_router_with_pool_and_master_key(pool, "local-dev-master-key")
 }
 
 pub fn admin_router_with_store(store: Arc<dyn AdminStore>) -> Router {
-    try_admin_router_with_store(store).expect("http exposure config should load from process env")
-}
-
-pub fn try_admin_router_with_pool_and_master_key(
-    pool: SqlitePool,
-    credential_master_key: impl Into<String>,
-) -> anyhow::Result<Router> {
-    try_admin_router_with_state(AdminApiState::with_master_key(pool, credential_master_key))
+    admin_router_with_store_and_secret_manager(
+        store,
+        CredentialSecretManager::database_encrypted("local-dev-master-key"),
+    )
 }
 
 pub fn admin_router_with_pool_and_master_key(
     pool: SqlitePool,
     credential_master_key: impl Into<String>,
 ) -> Router {
-    try_admin_router_with_pool_and_master_key(pool, credential_master_key)
-        .expect("http exposure config should load from process env")
-}
-
-pub fn try_admin_router_with_pool_and_secret_manager(
-    pool: SqlitePool,
-    secret_manager: CredentialSecretManager,
-) -> anyhow::Result<Router> {
-    try_admin_router_with_state(AdminApiState::with_secret_manager(pool, secret_manager))
+    admin_router_with_state(AdminApiState::with_master_key(pool, credential_master_key))
 }
 
 pub fn admin_router_with_pool_and_secret_manager(
     pool: SqlitePool,
     secret_manager: CredentialSecretManager,
 ) -> Router {
-    try_admin_router_with_pool_and_secret_manager(pool, secret_manager)
-        .expect("http exposure config should load from process env")
-}
-
-pub fn try_admin_router_with_store_and_secret_manager(
-    store: Arc<dyn AdminStore>,
-    secret_manager: CredentialSecretManager,
-) -> anyhow::Result<Router> {
-    try_admin_router_with_store_and_secret_manager_and_jwt_secret(
-        store,
-        secret_manager,
-        DEFAULT_ADMIN_JWT_SIGNING_SECRET,
-    )
+    admin_router_with_state(AdminApiState::with_secret_manager(pool, secret_manager))
 }
 
 pub fn admin_router_with_store_and_secret_manager(
     store: Arc<dyn AdminStore>,
     secret_manager: CredentialSecretManager,
 ) -> Router {
-    try_admin_router_with_store_and_secret_manager(store, secret_manager)
-        .expect("http exposure config should load from process env")
-}
-
-pub fn try_admin_router_with_store_and_secret_manager_and_jwt_secret(
-    store: Arc<dyn AdminStore>,
-    secret_manager: CredentialSecretManager,
-    jwt_signing_secret: impl Into<String>,
-) -> anyhow::Result<Router> {
-    try_admin_router_with_state(AdminApiState::with_store_and_secret_manager_and_jwt_secret(
+    admin_router_with_store_and_secret_manager_and_jwt_secret(
         store,
         secret_manager,
-        jwt_signing_secret,
-    ))
+        DEFAULT_ADMIN_JWT_SIGNING_SECRET,
+    )
 }
 
 pub fn admin_router_with_store_and_secret_manager_and_jwt_secret(
@@ -491,12 +409,11 @@ pub fn admin_router_with_store_and_secret_manager_and_jwt_secret(
     secret_manager: CredentialSecretManager,
     jwt_signing_secret: impl Into<String>,
 ) -> Router {
-    try_admin_router_with_store_and_secret_manager_and_jwt_secret(
+    admin_router_with_state(AdminApiState::with_store_and_secret_manager_and_jwt_secret(
         store,
         secret_manager,
         jwt_signing_secret,
-    )
-    .expect("http exposure config should load from process env")
+    ))
 }
 
 pub fn try_admin_router_with_state(state: AdminApiState) -> anyhow::Result<Router> {
@@ -516,610 +433,188 @@ pub fn admin_router_with_state_and_http_exposure(
 ) -> Router {
     let service_name: Arc<str> = Arc::from("admin");
     let metrics = Arc::new(HttpMetricsRegistry::new("admin"));
-    Router::new()
-        .merge(openapi::admin_docs_router())
-        .route(
-            "/metrics",
-            metrics_route_with_state(metrics.clone(), &http_exposure),
-        )
-        .route("/admin/health", get(|| async { "ok" }))
-        .route("/admin/auth/login", post(auth::login_handler))
-        .route("/admin/auth/me", get(auth::me_handler))
-        .route(
-            "/admin/auth/change-password",
-            post(auth::change_password_handler),
-        )
-        .route(
-            "/admin/users/operators",
-            get(users::list_operator_users_handler).post(users::upsert_operator_user_handler),
-        )
-        .route(
-            "/admin/users/operators/{user_id}",
-            delete(users::delete_operator_user_handler),
-        )
-        .route(
-            "/admin/users/operators/{user_id}/status",
-            post(users::update_operator_user_status_handler),
-        )
-        .route(
-            "/admin/users/operators/{user_id}/password",
-            post(users::reset_operator_user_password_handler),
-        )
-        .route(
-            "/admin/users/portal",
-            get(users::list_portal_users_handler).post(users::upsert_portal_user_handler),
-        )
-        .route(
-            "/admin/users/portal/{user_id}",
-            delete(users::delete_portal_user_handler),
-        )
-        .route(
-            "/admin/users/portal/{user_id}/status",
-            post(users::update_portal_user_status_handler),
-        )
-        .route(
-            "/admin/users/portal/{user_id}/password",
-            post(users::reset_portal_user_password_handler),
-        )
-        .route(
-            "/admin/marketing/coupon-templates",
-            get(marketing::list_marketing_coupon_templates_handler)
-                .post(marketing::create_marketing_coupon_template_handler),
-        )
-        .route(
-            "/admin/marketing/coupon-templates/{coupon_template_id}/status",
-            post(marketing::update_marketing_coupon_template_status_handler),
-        )
-        .route(
-            "/admin/marketing/coupon-templates/{coupon_template_id}/clone",
-            post(marketing::clone_marketing_coupon_template_handler),
-        )
-        .route(
-            "/admin/marketing/coupon-templates/{coupon_template_id}/compare",
-            post(marketing::compare_marketing_coupon_templates_handler),
-        )
-        .route(
-            "/admin/marketing/coupon-templates/{coupon_template_id}/submit-for-approval",
-            post(marketing::submit_marketing_coupon_template_for_approval_handler),
-        )
-        .route(
-            "/admin/marketing/coupon-templates/{coupon_template_id}/approve",
-            post(marketing::approve_marketing_coupon_template_handler),
-        )
-        .route(
-            "/admin/marketing/coupon-templates/{coupon_template_id}/reject",
-            post(marketing::reject_marketing_coupon_template_handler),
-        )
-        .route(
-            "/admin/marketing/coupon-templates/{coupon_template_id}/publish",
-            post(marketing::publish_marketing_coupon_template_handler),
-        )
-        .route(
-            "/admin/marketing/coupon-templates/{coupon_template_id}/schedule",
-            post(marketing::schedule_marketing_coupon_template_handler),
-        )
-        .route(
-            "/admin/marketing/coupon-templates/{coupon_template_id}/retire",
-            post(marketing::retire_marketing_coupon_template_handler),
-        )
-        .route(
-            "/admin/marketing/coupon-templates/{coupon_template_id}/lifecycle-audits",
-            get(marketing::list_marketing_coupon_template_lifecycle_audits_handler),
-        )
-        .route(
-            "/admin/marketing/campaigns",
-            get(marketing::list_marketing_campaigns_handler)
-                .post(marketing::create_marketing_campaign_handler),
-        )
-        .route(
-            "/admin/marketing/campaigns/{marketing_campaign_id}/status",
-            post(marketing::update_marketing_campaign_status_handler),
-        )
-        .route(
-            "/admin/marketing/campaigns/{marketing_campaign_id}/clone",
-            post(marketing::clone_marketing_campaign_handler),
-        )
-        .route(
-            "/admin/marketing/campaigns/{marketing_campaign_id}/compare",
-            post(marketing::compare_marketing_campaigns_handler),
-        )
-        .route(
-            "/admin/marketing/campaigns/{marketing_campaign_id}/submit-for-approval",
-            post(marketing::submit_marketing_campaign_for_approval_handler),
-        )
-        .route(
-            "/admin/marketing/campaigns/{marketing_campaign_id}/approve",
-            post(marketing::approve_marketing_campaign_handler),
-        )
-        .route(
-            "/admin/marketing/campaigns/{marketing_campaign_id}/reject",
-            post(marketing::reject_marketing_campaign_handler),
-        )
-        .route(
-            "/admin/marketing/campaigns/{marketing_campaign_id}/publish",
-            post(marketing::publish_marketing_campaign_handler),
-        )
-        .route(
-            "/admin/marketing/campaigns/{marketing_campaign_id}/schedule",
-            post(marketing::schedule_marketing_campaign_handler),
-        )
-        .route(
-            "/admin/marketing/campaigns/{marketing_campaign_id}/retire",
-            post(marketing::retire_marketing_campaign_handler),
-        )
-        .route(
-            "/admin/marketing/campaigns/{marketing_campaign_id}/lifecycle-audits",
-            get(marketing::list_marketing_campaign_lifecycle_audits_handler),
-        )
-        .route(
-            "/admin/marketing/budgets",
-            get(marketing::list_marketing_budgets_handler)
-                .post(marketing::create_marketing_budget_handler),
-        )
-        .route(
-            "/admin/marketing/budgets/{campaign_budget_id}/status",
-            post(marketing::update_marketing_budget_status_handler),
-        )
-        .route(
-            "/admin/marketing/budgets/{campaign_budget_id}/activate",
-            post(marketing::activate_marketing_campaign_budget_handler),
-        )
-        .route(
-            "/admin/marketing/budgets/{campaign_budget_id}/close",
-            post(marketing::close_marketing_campaign_budget_handler),
-        )
-        .route(
-            "/admin/marketing/budgets/{campaign_budget_id}/lifecycle-audits",
-            get(marketing::list_marketing_campaign_budget_lifecycle_audits_handler),
-        )
-        .route(
-            "/admin/marketing/codes",
-            get(marketing::list_marketing_coupon_codes_handler)
-                .post(marketing::create_marketing_coupon_code_handler),
-        )
-        .route(
-            "/admin/marketing/codes/{coupon_code_id}/status",
-            post(marketing::update_marketing_coupon_code_status_handler),
-        )
-        .route(
-            "/admin/marketing/codes/{coupon_code_id}/disable",
-            post(marketing::disable_marketing_coupon_code_handler),
-        )
-        .route(
-            "/admin/marketing/codes/{coupon_code_id}/restore",
-            post(marketing::restore_marketing_coupon_code_handler),
-        )
-        .route(
-            "/admin/marketing/codes/{coupon_code_id}/lifecycle-audits",
-            get(marketing::list_marketing_coupon_code_lifecycle_audits_handler),
-        )
-        .route(
-            "/admin/marketing/reservations",
-            get(marketing::list_marketing_coupon_reservations_handler),
-        )
-        .route(
-            "/admin/marketing/redemptions",
-            get(marketing::list_marketing_coupon_redemptions_handler),
-        )
-        .route(
-            "/admin/marketing/rollbacks",
-            get(marketing::list_marketing_coupon_rollbacks_handler),
-        )
-        .route(
-            "/admin/tenants",
-            get(tenant::list_tenants_handler).post(tenant::create_tenant_handler),
-        )
-        .route(
-            "/admin/tenants/{tenant_id}",
-            delete(tenant::delete_tenant_handler),
-        )
-        .route(
-            "/admin/tenants/{tenant_id}/providers/readiness",
-            get(catalog::list_tenant_provider_readiness_handler),
-        )
-        .route(
-            "/admin/projects",
-            get(tenant::list_projects_handler).post(tenant::create_project_handler),
-        )
-        .route(
-            "/admin/projects/{project_id}",
-            delete(tenant::delete_project_handler),
-        )
-        .route(
-            "/admin/api-key-groups",
-            get(gateway::list_api_key_groups_handler).post(gateway::create_api_key_group_handler),
-        )
-        .route(
-            "/admin/api-key-groups/{group_id}/status",
-            post(gateway::update_api_key_group_status_handler),
-        )
-        .route(
-            "/admin/api-key-groups/{group_id}",
-            patch(gateway::update_api_key_group_handler)
-                .delete(gateway::delete_api_key_group_handler),
-        )
-        .route(
-            "/admin/api-keys",
-            get(gateway::list_api_keys_handler).post(gateway::create_api_key_handler),
-        )
-        .route(
-            "/admin/api-keys/{hashed_key}/status",
-            post(gateway::update_api_key_status_handler),
-        )
-        .route(
-            "/admin/api-keys/{hashed_key}",
-            put(gateway::update_api_key_handler).delete(gateway::delete_api_key_handler),
-        )
-        .route(
-            "/admin/channels",
-            get(catalog::list_channels_handler).post(catalog::create_channel_handler),
-        )
-        .route(
-            "/admin/channels/{channel_id}",
-            delete(catalog::delete_channel_handler),
-        )
-        .route(
-            "/admin/providers",
-            get(catalog::list_providers_handler).post(catalog::create_provider_handler),
-        )
-        .route(
-            "/admin/providers/official-configs",
-            get(catalog::list_official_provider_configs_handler)
-                .post(catalog::upsert_official_provider_config_handler),
-        )
-        .route(
-            "/admin/providers/{provider_id}",
-            delete(catalog::delete_provider_handler),
-        )
-        .route(
-            "/admin/credentials",
-            get(catalog::list_credentials_handler).post(catalog::create_credential_handler),
-        )
-        .route(
-            "/admin/credentials/{tenant_id}/providers/{provider_id}/keys/{key_reference}",
-            delete(catalog::delete_credential_handler),
-        )
-        .route(
-            "/admin/channel-models",
-            get(catalog::list_channel_models_handler).post(catalog::create_channel_model_handler),
-        )
-        .route(
-            "/admin/channel-models/{channel_id}/models/{model_id}",
-            delete(catalog::delete_channel_model_handler),
-        )
-        .route(
-            "/admin/provider-accounts",
-            get(catalog::list_provider_accounts_handler)
-                .post(catalog::create_provider_account_handler),
-        )
-        .route(
-            "/admin/provider-accounts/{provider_account_id}",
-            delete(catalog::delete_provider_account_handler),
-        )
-        .route(
-            "/admin/provider-models",
-            get(catalog::list_provider_models_handler).post(catalog::create_provider_model_handler),
-        )
-        .route(
-            "/admin/provider-models/{proxy_provider_id}/channels/{channel_id}/models/{model_id}",
-            delete(catalog::delete_provider_model_handler),
-        )
-        .route(
-            "/admin/models",
-            get(catalog::list_models_handler).post(catalog::create_model_handler),
-        )
-        .route(
-            "/admin/models/{external_name}/providers/{provider_id}",
-            delete(catalog::delete_model_handler),
-        )
-        .route(
-            "/admin/model-prices",
-            get(catalog::list_model_prices_handler).post(catalog::create_model_price_handler),
-        )
-        .route(
-            "/admin/model-prices/{channel_id}/models/{model_id}/providers/{proxy_provider_id}",
-            delete(catalog::delete_model_price_handler),
-        )
-        .route(
-            "/admin/extensions/installations",
-            get(runtime::list_extension_installations_handler)
-                .post(runtime::create_extension_installation_handler),
-        )
-        .route(
-            "/admin/extensions/packages",
-            get(runtime::list_extension_packages_handler),
-        )
-        .route(
-            "/admin/extensions/instances",
-            get(runtime::list_extension_instances_handler)
-                .post(runtime::create_extension_instance_handler),
-        )
-        .route(
-            "/admin/extensions/runtime-statuses",
-            get(runtime::list_extension_runtime_statuses_handler),
-        )
-        .route(
-            "/admin/extensions/runtime-reloads",
-            post(runtime::reload_extension_runtimes_handler),
-        )
-        .route(
-            "/admin/extensions/runtime-rollouts",
-            get(runtime::list_extension_runtime_rollouts_handler)
-                .post(runtime::create_extension_runtime_rollout_handler),
-        )
-        .route(
-            "/admin/extensions/runtime-rollouts/{rollout_id}",
-            get(runtime::get_extension_runtime_rollout_handler),
-        )
-        .route(
-            "/admin/runtime-config/rollouts",
-            get(runtime::list_standalone_config_rollouts_handler)
-                .post(runtime::create_standalone_config_rollout_handler),
-        )
-        .route(
-            "/admin/runtime-config/rollouts/{rollout_id}",
-            get(runtime::get_standalone_config_rollout_handler),
-        )
-        .route(
-            "/admin/usage/records",
-            get(billing::list_usage_records_handler),
-        )
-        .route("/admin/usage/summary", get(billing::usage_summary_handler))
-        .route(
-            "/admin/billing/events",
-            get(billing::list_billing_events_handler),
-        )
-        .route(
-            "/admin/billing/events/summary",
-            get(billing::billing_events_summary_handler),
-        )
-        .route(
-            "/admin/billing/ledger",
-            get(billing::list_ledger_entries_handler),
-        )
-        .route(
-            "/admin/billing/summary",
-            get(billing::billing_summary_handler),
-        )
-        .route(
-            "/admin/billing/accounts",
-            get(billing::list_canonical_accounts_handler),
-        )
-        .route(
-            "/admin/billing/accounts/{account_id}/balance",
-            get(billing::get_canonical_account_balance_handler),
-        )
-        .route(
-            "/admin/billing/accounts/{account_id}/benefit-lots",
-            get(billing::list_canonical_account_benefit_lots_handler),
-        )
-        .route(
-            "/admin/billing/accounts/{account_id}/ledger",
-            get(billing::list_canonical_account_ledger_handler),
-        )
-        .route(
-            "/admin/billing/account-holds",
-            get(billing::list_canonical_account_holds_handler),
-        )
-        .route(
-            "/admin/billing/request-settlements",
-            get(billing::list_canonical_request_settlements_handler),
-        )
-        .route(
-            "/admin/commerce/orders",
-            get(commerce::list_recent_commerce_orders_handler),
-        )
-        .route(
-            "/admin/commerce/catalog-publications",
-            get(commerce::list_commercial_catalog_publications_handler),
-        )
-        .route(
-            "/admin/commerce/catalog-publications/{publication_id}",
-            get(commerce::get_commercial_catalog_publication_handler),
-        )
-        .route(
-            "/admin/commerce/catalog-publications/{publication_id}/publish",
-            post(commerce::publish_commercial_catalog_publication_handler),
-        )
-        .route(
-            "/admin/commerce/catalog-publications/{publication_id}/schedule",
-            post(commerce::schedule_commercial_catalog_publication_handler),
-        )
-        .route(
-            "/admin/commerce/catalog-publications/{publication_id}/retire",
-            post(commerce::retire_commercial_catalog_publication_handler),
-        )
-        .route(
-            "/admin/commerce/payment-methods",
-            get(commerce::list_payment_methods_handler),
-        )
-        .route(
-            "/admin/commerce/payment-methods/{payment_method_id}",
-            put(commerce::put_payment_method_handler)
-                .delete(commerce::delete_payment_method_handler),
-        )
-        .route(
-            "/admin/commerce/payment-methods/{payment_method_id}/credential-bindings",
-            get(commerce::list_payment_method_credential_bindings_handler)
-                .put(commerce::replace_payment_method_credential_bindings_handler),
-        )
-        .route(
-            "/admin/commerce/orders/{order_id}/payment-events",
-            get(commerce::list_commerce_payment_events_handler),
-        )
-        .route(
-            "/admin/commerce/orders/{order_id}/payment-attempts",
-            get(commerce::list_commerce_payment_attempts_handler),
-        )
-        .route(
-            "/admin/commerce/orders/{order_id}/refunds",
-            get(commerce::list_commerce_refunds_handler)
-                .post(commerce::create_commerce_refund_handler),
-        )
-        .route(
-            "/admin/commerce/orders/{order_id}/audit",
-            get(commerce::get_commerce_order_audit_handler),
-        )
-        .route(
-            "/admin/commerce/webhook-inbox",
-            get(commerce::list_commerce_webhook_inbox_handler),
-        )
-        .route(
-            "/admin/commerce/webhook-inbox/{webhook_inbox_id}/delivery-attempts",
-            get(commerce::list_commerce_webhook_delivery_attempts_handler),
-        )
-        .route(
-            "/admin/commerce/reconciliation-runs",
-            get(commerce::list_commerce_reconciliation_runs_handler)
-                .post(commerce::create_commerce_reconciliation_run_handler),
-        )
-        .route(
-            "/admin/commerce/reconciliation-runs/{reconciliation_run_id}/items",
-            get(commerce::list_commerce_reconciliation_items_handler),
-        )
-        .route(
-            "/admin/payments/orders",
-            get(payments::list_payment_orders_handler),
-        )
-        .route(
-            "/admin/payments/orders/{payment_order_id}",
-            get(payments::get_payment_order_dossier_handler),
-        )
-        .route(
-            "/admin/payments/refunds",
-            get(payments::list_refund_orders_handler),
-        )
-        .route(
-            "/admin/payments/refunds/{refund_order_id}/approve",
-            post(payments::approve_refund_order_handler),
-        )
-        .route(
-            "/admin/payments/refunds/{refund_order_id}/cancel",
-            post(payments::cancel_refund_order_handler),
-        )
-        .route(
-            "/admin/payments/refunds/{refund_order_id}/start",
-            post(payments::start_refund_order_handler),
-        )
-        .route(
-            "/admin/payments/reconciliation-lines",
-            get(payments::list_payment_reconciliation_lines_handler),
-        )
-        .route(
-            "/admin/payments/reconciliation-lines/{reconciliation_line_id}/resolve",
-            post(payments::resolve_payment_reconciliation_line_handler),
-        )
-        .route(
-            "/admin/payments/reconciliation-summary",
-            get(payments::payment_reconciliation_summary_handler),
-        )
-        .route(
-            "/admin/payments/gateway-accounts",
-            get(payments::list_payment_gateway_accounts_handler)
-                .post(payments::upsert_payment_gateway_account_handler),
-        )
-        .route(
-            "/admin/payments/channel-policies",
-            get(payments::list_payment_channel_policies_handler)
-                .post(payments::upsert_payment_channel_policy_handler),
-        )
-        .route("/admin/async-jobs", get(jobs::list_async_jobs_handler))
-        .route(
-            "/admin/async-jobs/{job_id}/attempts",
-            get(jobs::list_async_job_attempts_handler),
-        )
-        .route(
-            "/admin/async-jobs/{job_id}/assets",
-            get(jobs::list_async_job_assets_handler),
-        )
-        .route(
-            "/admin/async-jobs/{job_id}/callbacks",
-            get(jobs::list_async_job_callbacks_handler),
-        )
-        .route(
-            "/admin/billing/pricing-lifecycle/synchronize",
-            post(pricing::synchronize_canonical_pricing_lifecycle_handler),
-        )
-        .route(
-            "/admin/billing/pricing-plans",
-            get(pricing::list_canonical_pricing_plans_handler)
-                .post(pricing::create_canonical_pricing_plan_handler),
-        )
-        .route(
-            "/admin/billing/pricing-plans/{pricing_plan_id}",
-            put(pricing::update_canonical_pricing_plan_handler),
-        )
-        .route(
-            "/admin/billing/pricing-plans/{pricing_plan_id}/clone",
-            post(pricing::clone_canonical_pricing_plan_handler),
-        )
-        .route(
-            "/admin/billing/pricing-plans/{pricing_plan_id}/schedule",
-            post(pricing::schedule_canonical_pricing_plan_handler),
-        )
-        .route(
-            "/admin/billing/pricing-plans/{pricing_plan_id}/publish",
-            post(pricing::publish_canonical_pricing_plan_handler),
-        )
-        .route(
-            "/admin/billing/pricing-plans/{pricing_plan_id}/retire",
-            post(pricing::retire_canonical_pricing_plan_handler),
-        )
-        .route(
-            "/admin/billing/pricing-rates",
-            get(pricing::list_canonical_pricing_rates_handler)
-                .post(pricing::create_canonical_pricing_rate_handler),
-        )
-        .route(
-            "/admin/billing/pricing-rates/{pricing_rate_id}",
-            put(pricing::update_canonical_pricing_rate_handler),
-        )
-        .route(
-            "/admin/billing/quota-policies",
-            get(pricing::list_quota_policies_handler).post(pricing::create_quota_policy_handler),
-        )
-        .route(
-            "/admin/gateway/rate-limit-policies",
-            get(gateway::list_rate_limit_policies_handler)
-                .post(gateway::create_rate_limit_policy_handler),
-        )
-        .route(
-            "/admin/gateway/rate-limit-windows",
-            get(gateway::list_rate_limit_window_snapshots_handler),
-        )
-        .route(
-            "/admin/routing/policies",
-            get(routing::list_routing_policies_handler)
-                .post(routing::create_routing_policy_handler),
-        )
-        .route(
-            "/admin/routing/profiles",
-            get(routing::list_routing_profiles_handler)
-                .post(routing::create_routing_profile_handler),
-        )
-        .route(
-            "/admin/routing/snapshots",
-            get(routing::list_compiled_routing_snapshots_handler),
-        )
-        .route(
-            "/admin/routing/health-snapshots",
-            get(routing::list_provider_health_snapshots_handler),
-        )
-        .route(
-            "/admin/routing/decision-logs",
-            get(routing::list_routing_decision_logs_handler),
-        )
-        .route(
-            "/admin/routing/simulations",
-            post(routing::simulate_routing_handler),
-        )
-        .layer(axum::middleware::from_fn_with_state(
-            metrics,
-            observe_http_metrics,
-        ))
-        .layer(axum::middleware::from_fn_with_state(
-            service_name,
-            observe_http_tracing,
-        ))
-        .with_state(state)
+    billing_routes::register_billing_routes(catalog_routes::register_catalog_routes(
+        commerce_routes::register_commerce_routes(marketing_routes::register_marketing_routes(
+            Router::new(),
+        )),
+    ))
+    .merge(openapi::admin_docs_router())
+    .route(
+        "/metrics",
+        metrics_route_with_state(metrics.clone(), &http_exposure),
+    )
+    .route("/admin/health", get(|| async { "ok" }))
+    .route("/admin/auth/login", post(auth::login_handler))
+    .route("/admin/auth/me", get(auth::me_handler))
+    .route(
+        "/admin/auth/change-password",
+        post(auth::change_password_handler),
+    )
+    .route(
+        "/admin/users/operators",
+        get(users::list_operator_users_handler).post(users::upsert_operator_user_handler),
+    )
+    .route(
+        "/admin/users/operators/{user_id}",
+        delete(users::delete_operator_user_handler),
+    )
+    .route(
+        "/admin/users/operators/{user_id}/status",
+        post(users::update_operator_user_status_handler),
+    )
+    .route(
+        "/admin/users/operators/{user_id}/password",
+        post(users::reset_operator_user_password_handler),
+    )
+    .route(
+        "/admin/users/portal",
+        get(users::list_portal_users_handler).post(users::upsert_portal_user_handler),
+    )
+    .route(
+        "/admin/users/portal/{user_id}",
+        delete(users::delete_portal_user_handler),
+    )
+    .route(
+        "/admin/users/portal/{user_id}/status",
+        post(users::update_portal_user_status_handler),
+    )
+    .route(
+        "/admin/users/portal/{user_id}/password",
+        post(users::reset_portal_user_password_handler),
+    )
+    .route(
+        "/admin/tenants",
+        get(tenant::list_tenants_handler).post(tenant::create_tenant_handler),
+    )
+    .route(
+        "/admin/tenants/{tenant_id}",
+        delete(tenant::delete_tenant_handler),
+    )
+    .route(
+        "/admin/projects",
+        get(tenant::list_projects_handler).post(tenant::create_project_handler),
+    )
+    .route(
+        "/admin/projects/{project_id}",
+        delete(tenant::delete_project_handler),
+    )
+    .route(
+        "/admin/api-key-groups",
+        get(gateway::list_api_key_groups_handler).post(gateway::create_api_key_group_handler),
+    )
+    .route(
+        "/admin/api-key-groups/{group_id}/status",
+        post(gateway::update_api_key_group_status_handler),
+    )
+    .route(
+        "/admin/api-key-groups/{group_id}",
+        patch(gateway::update_api_key_group_handler).delete(gateway::delete_api_key_group_handler),
+    )
+    .route(
+        "/admin/api-keys",
+        get(gateway::list_api_keys_handler).post(gateway::create_api_key_handler),
+    )
+    .route(
+        "/admin/api-keys/{hashed_key}/status",
+        post(gateway::update_api_key_status_handler),
+    )
+    .route(
+        "/admin/api-keys/{hashed_key}",
+        put(gateway::update_api_key_handler).delete(gateway::delete_api_key_handler),
+    )
+    .route(
+        "/admin/extensions/installations",
+        get(runtime::list_extension_installations_handler)
+            .post(runtime::create_extension_installation_handler),
+    )
+    .route(
+        "/admin/extensions/packages",
+        get(runtime::list_extension_packages_handler),
+    )
+    .route(
+        "/admin/extensions/instances",
+        get(runtime::list_extension_instances_handler)
+            .post(runtime::create_extension_instance_handler),
+    )
+    .route(
+        "/admin/extensions/runtime-statuses",
+        get(runtime::list_extension_runtime_statuses_handler),
+    )
+    .route(
+        "/admin/extensions/runtime-reloads",
+        post(runtime::reload_extension_runtimes_handler),
+    )
+    .route(
+        "/admin/extensions/runtime-rollouts",
+        get(runtime::list_extension_runtime_rollouts_handler)
+            .post(runtime::create_extension_runtime_rollout_handler),
+    )
+    .route(
+        "/admin/extensions/runtime-rollouts/{rollout_id}",
+        get(runtime::get_extension_runtime_rollout_handler),
+    )
+    .route(
+        "/admin/runtime-config/rollouts",
+        get(runtime::list_standalone_config_rollouts_handler)
+            .post(runtime::create_standalone_config_rollout_handler),
+    )
+    .route(
+        "/admin/runtime-config/rollouts/{rollout_id}",
+        get(runtime::get_standalone_config_rollout_handler),
+    )
+    .route("/admin/async-jobs", get(jobs::list_async_jobs_handler))
+    .route(
+        "/admin/async-jobs/{job_id}/attempts",
+        get(jobs::list_async_job_attempts_handler),
+    )
+    .route(
+        "/admin/async-jobs/{job_id}/assets",
+        get(jobs::list_async_job_assets_handler),
+    )
+    .route(
+        "/admin/async-jobs/{job_id}/callbacks",
+        get(jobs::list_async_job_callbacks_handler),
+    )
+    .route(
+        "/admin/gateway/rate-limit-policies",
+        get(gateway::list_rate_limit_policies_handler)
+            .post(gateway::create_rate_limit_policy_handler),
+    )
+    .route(
+        "/admin/gateway/rate-limit-windows",
+        get(gateway::list_rate_limit_window_snapshots_handler),
+    )
+    .route(
+        "/admin/routing/policies",
+        get(routing::list_routing_policies_handler).post(routing::create_routing_policy_handler),
+    )
+    .route(
+        "/admin/routing/profiles",
+        get(routing::list_routing_profiles_handler).post(routing::create_routing_profile_handler),
+    )
+    .route(
+        "/admin/routing/snapshots",
+        get(routing::list_compiled_routing_snapshots_handler),
+    )
+    .route(
+        "/admin/routing/health-snapshots",
+        get(routing::list_provider_health_snapshots_handler),
+    )
+    .route(
+        "/admin/routing/decision-logs",
+        get(routing::list_routing_decision_logs_handler),
+    )
+    .route(
+        "/admin/routing/simulations",
+        post(routing::simulate_routing_handler),
+    )
+    .layer(axum::middleware::from_fn_with_state(
+        metrics,
+        observe_http_metrics,
+    ))
+    .layer(axum::middleware::from_fn_with_state(
+        service_name,
+        observe_http_tracing,
+    ))
+    .with_state(state)
 }

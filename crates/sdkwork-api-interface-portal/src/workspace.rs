@@ -23,7 +23,6 @@ pub(crate) struct PortalGatewayRateLimitSnapshot {
     windows: Vec<RateLimitWindowSnapshot>,
 }
 
-
 pub(crate) async fn workspace_handler(
     claims: AuthenticatedPortalClaims,
     State(state): State<PortalApiState>,
@@ -32,7 +31,6 @@ pub(crate) async fn workspace_handler(
         .await
         .map(Json)
 }
-
 
 pub(crate) async fn dashboard_handler(
     claims: AuthenticatedPortalClaims,
@@ -116,7 +114,6 @@ pub(crate) async fn gateway_rate_limit_snapshot_handler(
         windows,
     }))
 }
-
 
 pub(crate) async fn list_usage_records_handler(
     claims: AuthenticatedPortalClaims,

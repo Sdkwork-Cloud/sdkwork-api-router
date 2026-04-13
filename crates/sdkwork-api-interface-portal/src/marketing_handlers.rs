@@ -5,8 +5,8 @@ pub(crate) async fn validate_marketing_coupon_handler(
     State(state): State<PortalApiState>,
     Json(request): Json<PortalCouponValidationRequest>,
 ) -> Result<Json<PortalCouponValidationResponse>, StatusCode> {
-    let workspace = load_workspace_for_user(state.store.as_ref(), &claims.claims().sub).await?;
-    let subjects = PortalMarketingSubjectSet::new(&workspace, claims.claims());
+    let (workspace, subjects) =
+        load_portal_marketing_workspace_and_subjects(&state, &claims).await?;
     let Some(subject_id) = subjects.subject_id_for_scope(request.subject_scope) else {
         return Err(StatusCode::BAD_REQUEST);
     };
@@ -25,29 +25,18 @@ pub(crate) async fn validate_marketing_coupon_handler(
     .await?;
 
     let now_ms = current_time_millis();
-    let Some(context) =
-        load_marketing_coupon_context_by_value(state.store.as_ref(), &request.coupon_code, now_ms)
-            .await?
-    else {
-        return Err(StatusCode::NOT_FOUND);
-    };
-
-    let decision = validate_coupon_stack(
-        &context.template,
-        &context.campaign,
-        &context.budget,
-        &context.code,
-        now_ms,
+    let ValidatedCouponResult { context, decision } = validate_coupon_for_subject(
+        state.store.as_ref(),
+        &request.coupon_code,
+        request.subject_scope,
+        &subject_id,
+        target_kind,
         request.order_amount_minor,
         request.reserve_amount_minor,
-    );
-    let decision = if decision.eligible
-        && !portal_marketing_target_kind_allowed(&context.template, target_kind)
-    {
-        CouponValidationDecision::rejected("target_kind_not_eligible")
-    } else {
-        decision
-    };
+        now_ms,
+    )
+    .await
+    .map_err(|error| portal_marketing_operation_status(&error))?;
 
     Ok(Json(PortalCouponValidationResponse {
         decision: coupon_validation_decision_response(decision),
@@ -64,8 +53,8 @@ pub(crate) async fn reserve_marketing_coupon_handler(
     headers: HeaderMap,
     Json(request): Json<PortalCouponReservationRequest>,
 ) -> Result<(StatusCode, Json<PortalCouponReservationResponse>), StatusCode> {
-    let workspace = load_workspace_for_user(state.store.as_ref(), &claims.claims().sub).await?;
-    let subjects = PortalMarketingSubjectSet::new(&workspace, claims.claims());
+    let (workspace, subjects) =
+        load_portal_marketing_workspace_and_subjects(&state, &claims).await?;
     let target_kind = request.target_kind.trim();
     let Some(subject_id) = subjects.subject_id_for_scope(request.subject_scope) else {
         return Err(StatusCode::BAD_REQUEST);
@@ -76,67 +65,6 @@ pub(crate) async fn reserve_marketing_coupon_handler(
 
     let idempotency_key =
         resolve_portal_idempotency_key(&headers, request.idempotency_key.as_deref())?;
-    let now_ms = current_time_millis();
-    let coupon_reservation_id = idempotency_key
-        .as_deref()
-        .map(|key| {
-            derive_coupon_reservation_id(request.subject_scope, &subject_id, target_kind, key)
-        })
-        .unwrap_or_else(|| {
-            format!(
-                "coupon_reservation_{}_{}",
-                normalize_coupon_code(&request.coupon_code).to_ascii_lowercase(),
-                now_ms
-            )
-        });
-    if idempotency_key.is_some() {
-        if let Some(existing_reservation) = state
-            .store
-            .find_coupon_reservation_record(&coupon_reservation_id)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        {
-            let Some(existing_code) = state
-                .store
-                .find_coupon_code_record(&existing_reservation.coupon_code_id)
-                .await
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-            else {
-                return Err(StatusCode::INTERNAL_SERVER_ERROR);
-            };
-            let existing_ttl_ms = existing_reservation
-                .expires_at_ms
-                .saturating_sub(existing_reservation.created_at_ms);
-            if existing_reservation.subject_scope != request.subject_scope
-                || existing_reservation.subject_id != subject_id
-                || normalize_coupon_code(&existing_code.code_value)
-                    != normalize_coupon_code(&request.coupon_code)
-                || existing_reservation.budget_reserved_minor != request.reserve_amount_minor
-                || existing_ttl_ms != request.ttl_ms
-            {
-                return Err(StatusCode::CONFLICT);
-            }
-
-            let context = load_marketing_coupon_context_from_code_record(
-                state.store.as_ref(),
-                existing_code,
-                now_ms,
-            )
-            .await?
-            .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
-
-            return Ok((
-                StatusCode::OK,
-                Json(PortalCouponReservationResponse {
-                    reservation: existing_reservation,
-                    template: context.template,
-                    campaign: context.campaign,
-                    budget: context.budget,
-                    code: context.code,
-                }),
-            ));
-        }
-    }
     enforce_portal_coupon_rate_limit(
         state.store.as_ref(),
         &workspace.project.id,
@@ -146,72 +74,36 @@ pub(crate) async fn reserve_marketing_coupon_handler(
         &request.coupon_code,
     )
     .await?;
-
-    let Some(context) =
-        load_marketing_coupon_context_by_value(state.store.as_ref(), &request.coupon_code, now_ms)
-            .await?
-    else {
-        return Err(StatusCode::NOT_FOUND);
-    };
-    if !portal_marketing_target_kind_allowed(&context.template, target_kind) {
-        return Err(StatusCode::BAD_REQUEST);
-    }
-
-    let decision = validate_coupon_stack(
-        &context.template,
-        &context.campaign,
-        &context.budget,
-        &context.code,
-        now_ms,
-        request.reserve_amount_minor,
-        request.reserve_amount_minor,
-    );
-    if !decision.eligible {
-        return Err(StatusCode::CONFLICT);
-    }
-
-    let (reserved_code, reservation) = reserve_coupon_redemption(
-        &context.code,
-        coupon_reservation_id,
-        request.subject_scope,
-        subject_id,
-        request.reserve_amount_minor,
-        now_ms,
-        request.ttl_ms,
+    let now_ms = current_time_millis();
+    let result = reserve_coupon_for_subject(
+        state.store.as_ref(),
+        ReserveCouponInput {
+            coupon_code: &request.coupon_code,
+            subject_scope: request.subject_scope,
+            subject_id: &subject_id,
+            target_kind,
+            order_amount_minor: request.order_amount_minor,
+            reserve_amount_minor: request.reserve_amount_minor,
+            ttl_ms: request.ttl_ms,
+            idempotency_key: idempotency_key.as_deref(),
+            now_ms,
+        },
     )
-    .map_err(|_| StatusCode::BAD_REQUEST)?;
-
-    let atomic_result = state
-        .store
-        .reserve_coupon_redemption_atomic(&AtomicCouponReservationCommand {
-            template_to_persist: None,
-            campaign_to_persist: None,
-            expected_budget: context.budget.clone(),
-            next_budget: reserve_campaign_budget(
-                &context.budget,
-                request.reserve_amount_minor,
-                now_ms,
-            ),
-            expected_code: context.code.clone(),
-            next_code: code_after_reservation(
-                &context.template,
-                &context.code,
-                &reserved_code,
-                now_ms,
-            ),
-            reservation,
-        })
-        .await
-        .map_err(marketing_atomic_status)?;
+    .await
+    .map_err(|error| portal_marketing_operation_status(&error))?;
 
     Ok((
-        StatusCode::CREATED,
+        if result.created {
+            StatusCode::CREATED
+        } else {
+            StatusCode::OK
+        },
         Json(PortalCouponReservationResponse {
-            reservation: atomic_result.reservation,
-            template: context.template,
-            campaign: context.campaign,
-            budget: atomic_result.budget,
-            code: atomic_result.code,
+            reservation: result.reservation,
+            template: result.context.template,
+            campaign: result.context.campaign,
+            budget: result.context.budget,
+            code: result.context.code,
         }),
     ))
 }
@@ -222,125 +114,54 @@ pub(crate) async fn confirm_marketing_coupon_redemption_handler(
     headers: HeaderMap,
     Json(request): Json<PortalCouponRedemptionConfirmRequest>,
 ) -> Result<Json<PortalCouponRedemptionConfirmResponse>, StatusCode> {
-    let workspace = load_workspace_for_user(state.store.as_ref(), &claims.claims().sub).await?;
-    let subjects = PortalMarketingSubjectSet::new(&workspace, claims.claims());
+    let (workspace, subjects) =
+        load_portal_marketing_workspace_and_subjects(&state, &claims).await?;
 
-    let reservation = portal_marketing_reservation_owned_by_subject(
+    let reservation_view = portal_marketing_reservation_context_owned_by_subject(
         state.store.as_ref(),
         &subjects,
         &request.coupon_reservation_id,
     )
     .await?;
-    if request.subsidy_amount_minor > reservation.budget_reserved_minor {
+    let reservation_code_value = reservation_view.code.code_value.clone();
+    let reservation = reservation_view.reservation;
+    let Some(subject_id) = subjects.subject_id_for_scope(reservation.subject_scope) else {
         return Err(StatusCode::BAD_REQUEST);
-    }
+    };
 
     let idempotency_key =
         resolve_portal_idempotency_key(&headers, request.idempotency_key.as_deref())?;
     let now_ms = current_time_millis();
-    let coupon_redemption_id = idempotency_key
-        .as_deref()
-        .map(|key| derive_coupon_redemption_id(&reservation, key))
-        .unwrap_or_else(|| {
-            format!(
-                "coupon_redemption_{}_{}",
-                reservation.coupon_reservation_id, now_ms
-            )
-        });
-    if idempotency_key.is_some() {
-        if let Some(existing_redemption) = state
-            .store
-            .find_coupon_redemption_record(&coupon_redemption_id)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        {
-            if existing_redemption.coupon_reservation_id != reservation.coupon_reservation_id
-                || existing_redemption.subsidy_amount_minor != request.subsidy_amount_minor
-                || existing_redemption.order_id != request.order_id
-                || existing_redemption.payment_event_id != request.payment_event_id
-            {
-                return Err(StatusCode::CONFLICT);
-            }
-
-            let current_reservation = portal_marketing_reservation_owned_by_subject(
-                state.store.as_ref(),
-                &subjects,
-                &existing_redemption.coupon_reservation_id,
-            )
-            .await?;
-            let context = load_marketing_coupon_context_for_code_id(
-                state.store.as_ref(),
-                &existing_redemption.coupon_code_id,
-                now_ms,
-            )
-            .await?;
-
-            return Ok(Json(PortalCouponRedemptionConfirmResponse {
-                reservation: current_reservation,
-                redemption: existing_redemption,
-                budget: context.budget,
-                code: context.code,
-            }));
-        }
-    }
-
-    let Some(code) = state
-        .store
-        .find_coupon_code_record(&reservation.coupon_code_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    else {
-        return Err(StatusCode::NOT_FOUND);
-    };
     enforce_portal_coupon_rate_limit(
         state.store.as_ref(),
         &workspace.project.id,
         CouponRateLimitAction::Confirm,
         reservation.subject_scope,
-        &reservation.subject_id,
-        &code.code_value,
+        &subject_id,
+        &reservation_code_value,
     )
     .await?;
-    let Some(context) =
-        load_marketing_coupon_context_from_code_record(state.store.as_ref(), code, now_ms).await?
-    else {
-        return Err(StatusCode::NOT_FOUND);
-    };
-
-    let (confirmed_reservation, redemption) = confirm_coupon_redemption(
-        &reservation,
-        coupon_redemption_id,
-        context.code.coupon_code_id.clone(),
-        context.template.coupon_template_id.clone(),
-        request.subsidy_amount_minor,
-        request.order_id.clone(),
-        request.payment_event_id.clone(),
-        now_ms,
+    let result = confirm_coupon_for_subject(
+        state.store.as_ref(),
+        ConfirmCouponInput {
+            coupon_reservation_id: &request.coupon_reservation_id,
+            subject_scope: reservation.subject_scope,
+            subject_id: &subject_id,
+            subsidy_amount_minor: request.subsidy_amount_minor,
+            order_id: request.order_id.clone(),
+            payment_event_id: request.payment_event_id.clone(),
+            idempotency_key: idempotency_key.as_deref(),
+            now_ms,
+        },
     )
-    .map_err(|_| StatusCode::CONFLICT)?;
-    let atomic_result = state
-        .store
-        .confirm_coupon_redemption_atomic(&AtomicCouponConfirmationCommand {
-            expected_budget: context.budget.clone(),
-            next_budget: confirm_campaign_budget(
-                &context.budget,
-                request.subsidy_amount_minor,
-                now_ms,
-            ),
-            expected_code: context.code.clone(),
-            next_code: code_after_confirmation(&context.template, &context.code, now_ms),
-            expected_reservation: reservation.clone(),
-            next_reservation: confirmed_reservation,
-            redemption,
-        })
-        .await
-        .map_err(marketing_atomic_status)?;
+    .await
+    .map_err(|error| portal_marketing_operation_status(&error))?;
 
     Ok(Json(PortalCouponRedemptionConfirmResponse {
-        reservation: atomic_result.reservation,
-        redemption: atomic_result.redemption,
-        budget: atomic_result.budget,
-        code: atomic_result.code,
+        reservation: result.reservation,
+        redemption: result.redemption,
+        budget: result.context.budget,
+        code: result.context.code,
     }))
 }
 
@@ -350,126 +171,58 @@ pub(crate) async fn rollback_marketing_coupon_redemption_handler(
     headers: HeaderMap,
     Json(request): Json<PortalCouponRedemptionRollbackRequest>,
 ) -> Result<Json<PortalCouponRedemptionRollbackResponse>, StatusCode> {
-    let workspace = load_workspace_for_user(state.store.as_ref(), &claims.claims().sub).await?;
-    let subjects = PortalMarketingSubjectSet::new(&workspace, claims.claims());
+    let (workspace, subjects) =
+        load_portal_marketing_workspace_and_subjects(&state, &claims).await?;
 
-    let redemption = portal_marketing_redemption_owned_by_subject(
+    let redemption_view = portal_marketing_redemption_context_owned_by_subject(
         state.store.as_ref(),
         &subjects,
         &request.coupon_redemption_id,
     )
     .await?;
-    if request.restored_budget_minor > redemption.subsidy_amount_minor {
+    let redemption_code_value = redemption_view.code.code_value.clone();
+    let redemption = redemption_view.redemption;
+    if request.restored_budget_minor > redemption.budget_consumed_minor {
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    let reservation = portal_marketing_reservation_owned_by_subject(
-        state.store.as_ref(),
-        &subjects,
-        &redemption.coupon_reservation_id,
-    )
-    .await?;
+    let reservation = redemption_view.reservation;
+    let Some(subject_id) = subjects.subject_id_for_scope(reservation.subject_scope) else {
+        return Err(StatusCode::BAD_REQUEST);
+    };
     let idempotency_key =
         resolve_portal_idempotency_key(&headers, request.idempotency_key.as_deref())?;
     let now_ms = current_time_millis();
-    let coupon_rollback_id = idempotency_key
-        .as_deref()
-        .map(|key| derive_coupon_rollback_id(&reservation, key))
-        .unwrap_or_else(|| {
-            format!(
-                "coupon_rollback_{}_{}",
-                redemption.coupon_redemption_id, now_ms
-            )
-        });
-    if idempotency_key.is_some() {
-        if let Some(existing_rollback) =
-            find_coupon_rollback_record(state.store.as_ref(), &coupon_rollback_id).await?
-        {
-            if existing_rollback.coupon_redemption_id != redemption.coupon_redemption_id
-                || existing_rollback.rollback_type != request.rollback_type
-                || existing_rollback.restored_budget_minor != request.restored_budget_minor
-                || existing_rollback.restored_inventory_count != request.restored_inventory_count
-            {
-                return Err(StatusCode::CONFLICT);
-            }
-
-            let current_redemption = portal_marketing_redemption_owned_by_subject(
-                state.store.as_ref(),
-                &subjects,
-                &existing_rollback.coupon_redemption_id,
-            )
-            .await?;
-            let context = load_marketing_coupon_context_for_code_id(
-                state.store.as_ref(),
-                &current_redemption.coupon_code_id,
-                now_ms,
-            )
-            .await?;
-
-            return Ok(Json(PortalCouponRedemptionRollbackResponse {
-                redemption: current_redemption,
-                rollback: existing_rollback,
-                budget: context.budget,
-                code: context.code,
-            }));
-        }
-    }
-
-    let Some(code) = state
-        .store
-        .find_coupon_code_record(&redemption.coupon_code_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    else {
-        return Err(StatusCode::NOT_FOUND);
-    };
     enforce_portal_coupon_rate_limit(
         state.store.as_ref(),
         &workspace.project.id,
         CouponRateLimitAction::Rollback,
         reservation.subject_scope,
-        &reservation.subject_id,
-        &code.code_value,
+        &subject_id,
+        &redemption_code_value,
     )
     .await?;
-    let Some(context) =
-        load_marketing_coupon_context_from_code_record(state.store.as_ref(), code, now_ms).await?
-    else {
-        return Err(StatusCode::NOT_FOUND);
-    };
-
-    let (rolled_back_redemption, rollback) = rollback_coupon_redemption(
-        &redemption,
-        coupon_rollback_id,
-        request.rollback_type,
-        request.restored_budget_minor,
-        request.restored_inventory_count,
-        now_ms,
+    let result = rollback_coupon_for_subject(
+        state.store.as_ref(),
+        RollbackCouponInput {
+            coupon_redemption_id: &request.coupon_redemption_id,
+            subject_scope: reservation.subject_scope,
+            subject_id: &subject_id,
+            rollback_type: request.rollback_type,
+            restored_budget_minor: request.restored_budget_minor,
+            restored_inventory_count: request.restored_inventory_count,
+            idempotency_key: idempotency_key.as_deref(),
+            now_ms,
+        },
     )
-    .map_err(|_| StatusCode::CONFLICT)?;
-    let atomic_result = state
-        .store
-        .rollback_coupon_redemption_atomic(&AtomicCouponRollbackCommand {
-            expected_budget: context.budget.clone(),
-            next_budget: rollback_campaign_budget(
-                &context.budget,
-                request.restored_budget_minor,
-                now_ms,
-            ),
-            expected_code: context.code.clone(),
-            next_code: code_after_rollback(&context.template, &context.code, now_ms),
-            expected_redemption: redemption.clone(),
-            next_redemption: rolled_back_redemption,
-            rollback,
-        })
-        .await
-        .map_err(marketing_atomic_status)?;
+    .await
+    .map_err(|error| portal_marketing_operation_status(&error))?;
 
     Ok(Json(PortalCouponRedemptionRollbackResponse {
-        redemption: atomic_result.redemption,
-        rollback: atomic_result.rollback,
-        budget: atomic_result.budget,
-        code: atomic_result.code,
+        redemption: result.redemption,
+        rollback: result.rollback,
+        budget: result.context.budget,
+        code: result.context.code,
     }))
 }
 
@@ -477,8 +230,7 @@ pub(crate) async fn list_my_coupons_handler(
     claims: AuthenticatedPortalClaims,
     State(state): State<PortalApiState>,
 ) -> Result<Json<PortalMarketingCodesResponse>, StatusCode> {
-    let workspace = load_workspace_for_user(state.store.as_ref(), &claims.claims().sub).await?;
-    let subjects = PortalMarketingSubjectSet::new(&workspace, claims.claims());
+    let (_, subjects) = load_portal_marketing_workspace_and_subjects(&state, &claims).await?;
     let items = load_marketing_code_items(state.store.as_ref(), &subjects).await?;
     let summary = summarize_marketing_code_items(&items);
     Ok(Json(PortalMarketingCodesResponse { summary, items }))
@@ -488,8 +240,8 @@ pub(crate) async fn list_marketing_reward_history_handler(
     claims: AuthenticatedPortalClaims,
     State(state): State<PortalApiState>,
 ) -> Result<Json<Vec<PortalMarketingRewardHistoryItem>>, StatusCode> {
-    let workspace = load_workspace_for_user(state.store.as_ref(), &claims.claims().sub).await?;
-    let subjects = PortalMarketingSubjectSet::new(&workspace, claims.claims());
+    let (workspace, subjects) =
+        load_portal_marketing_workspace_and_subjects(&state, &claims).await?;
     let account_arrival = load_portal_coupon_account_arrival_context(&state, &workspace).await?;
     load_marketing_reward_history_items(state.store.as_ref(), &subjects, Some(&account_arrival))
         .await
@@ -533,8 +285,7 @@ pub(crate) async fn list_marketing_redemptions_handler(
     State(state): State<PortalApiState>,
     Query(query): Query<PortalMarketingRedemptionsQuery>,
 ) -> Result<Json<PortalMarketingRedemptionsResponse>, StatusCode> {
-    let workspace = load_workspace_for_user(state.store.as_ref(), &claims.claims().sub).await?;
-    let subjects = PortalMarketingSubjectSet::new(&workspace, claims.claims());
+    let (_, subjects) = load_portal_marketing_workspace_and_subjects(&state, &claims).await?;
     let items =
         load_marketing_redemptions_for_subject(state.store.as_ref(), &subjects, query.status)
             .await?;
@@ -547,8 +298,7 @@ pub(crate) async fn list_marketing_codes_handler(
     State(state): State<PortalApiState>,
     Query(query): Query<PortalMarketingCodesQuery>,
 ) -> Result<Json<PortalMarketingCodesResponse>, StatusCode> {
-    let workspace = load_workspace_for_user(state.store.as_ref(), &claims.claims().sub).await?;
-    let subjects = PortalMarketingSubjectSet::new(&workspace, claims.claims());
+    let (_, subjects) = load_portal_marketing_workspace_and_subjects(&state, &claims).await?;
     let mut items = load_marketing_code_items(state.store.as_ref(), &subjects).await?;
     if let Some(status) = query.status {
         items.retain(|item| item.code.status == status);
@@ -556,5 +306,3 @@ pub(crate) async fn list_marketing_codes_handler(
     let summary = summarize_marketing_code_items(&items);
     Ok(Json(PortalMarketingCodesResponse { summary, items }))
 }
-
-

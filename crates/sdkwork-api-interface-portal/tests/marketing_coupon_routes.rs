@@ -200,6 +200,67 @@ async fn seed_marketing_records_with_benefit_and_targets(
     store.insert_coupon_code_record(&code).await.unwrap();
 }
 
+async fn seed_custom_marketing_coupon(
+    store: &SqliteAdminStore,
+    template_id: &str,
+    campaign_id: &str,
+    budget_id: &str,
+    code_id: &str,
+    code_value: &str,
+    benefit_kind: MarketingBenefitKind,
+    restriction: CouponRestrictionSpec,
+) {
+    let benefit = match benefit_kind {
+        MarketingBenefitKind::PercentageOff => CouponBenefitSpec::new(benefit_kind)
+            .with_discount_percent(Some(20)),
+        MarketingBenefitKind::FixedAmountOff => CouponBenefitSpec::new(benefit_kind)
+            .with_discount_amount_minor(Some(2_000)),
+        MarketingBenefitKind::GrantUnits => {
+            CouponBenefitSpec::new(benefit_kind).with_grant_units(Some(300))
+        }
+    };
+
+    let template = CouponTemplateRecord::new(
+        template_id,
+        code_value.to_ascii_lowercase(),
+        benefit_kind,
+    )
+    .with_display_name(format!("{code_value} template"))
+    .with_status(CouponTemplateStatus::Active)
+    .with_distribution_kind(CouponDistributionKind::UniqueCode)
+    .with_restriction(restriction)
+    .with_benefit(benefit)
+    .with_created_at_ms(1_710_000_000_000)
+    .with_updated_at_ms(1_710_000_000_000);
+    store
+        .insert_coupon_template_record(&template)
+        .await
+        .unwrap();
+
+    let campaign = MarketingCampaignRecord::new(campaign_id, template_id)
+        .with_display_name(format!("{code_value} campaign"))
+        .with_status(MarketingCampaignStatus::Active)
+        .with_created_at_ms(1_710_000_000_000)
+        .with_updated_at_ms(1_710_000_000_000);
+    store
+        .insert_marketing_campaign_record(&campaign)
+        .await
+        .unwrap();
+
+    let budget = CampaignBudgetRecord::new(budget_id, campaign_id)
+        .with_status(CampaignBudgetStatus::Active)
+        .with_total_budget_minor(5_000)
+        .with_created_at_ms(1_710_000_000_000)
+        .with_updated_at_ms(1_710_000_000_000);
+    store.insert_campaign_budget_record(&budget).await.unwrap();
+
+    let code = CouponCodeRecord::new(code_id, template_id, code_value)
+        .with_status(CouponCodeStatus::Available)
+        .with_created_at_ms(1_710_000_000_000)
+        .with_updated_at_ms(1_710_000_000_000);
+    store.insert_coupon_code_record(&code).await.unwrap();
+}
+
 #[tokio::test]
 async fn portal_marketing_routes_validate_reserve_confirm_rollback_and_list_assets() {
     let pool = memory_pool().await;
@@ -569,7 +630,7 @@ async fn portal_marketing_reservation_rejects_ineligible_target_kind() {
         )
         .await
         .unwrap();
-    assert_eq!(reserved.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(reserved.status(), StatusCode::CONFLICT);
 }
 
 #[tokio::test]
@@ -1335,4 +1396,85 @@ async fn portal_marketing_reward_history_exposes_account_arrival_evidence_for_en
             .unwrap(),
         300.0
     );
+}
+
+#[tokio::test]
+async fn portal_marketing_reservation_uses_order_amount_minor_instead_of_reserve_amount_minor() {
+    let pool = memory_pool().await;
+    let store = SqliteAdminStore::new(pool.clone());
+    seed_custom_marketing_coupon(
+        &store,
+        "template_min_order",
+        "campaign_min_order",
+        "budget_min_order",
+        "code_min_order",
+        "MINORDER20",
+        MarketingBenefitKind::PercentageOff,
+        CouponRestrictionSpec::new(MarketingSubjectScope::Project)
+            .with_min_order_amount_minor(Some(1_000))
+            .with_eligible_target_kinds(vec!["recharge_pack".to_owned()]),
+    )
+    .await;
+
+    let app = sdkwork_api_interface_portal::portal_router_with_pool(pool);
+    let token = portal_token(app.clone()).await;
+
+    let reserved = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/portal/marketing/coupon-reservations")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"coupon_code\":\"MINORDER20\",\"subject_scope\":\"project\",\"target_kind\":\"recharge_pack\",\"order_amount_minor\":5000,\"reserve_amount_minor\":200,\"ttl_ms\":300000}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(reserved.status(), StatusCode::CREATED);
+}
+
+#[tokio::test]
+async fn portal_marketing_validation_supports_account_subject_scope() {
+    let pool = memory_pool().await;
+    let store = SqliteAdminStore::new(pool.clone());
+    seed_custom_marketing_coupon(
+        &store,
+        "template_account_scope",
+        "campaign_account_scope",
+        "budget_account_scope",
+        "code_account_scope",
+        "ACCOUNT20",
+        MarketingBenefitKind::PercentageOff,
+        CouponRestrictionSpec::new(MarketingSubjectScope::Account)
+            .with_eligible_target_kinds(vec!["recharge_pack".to_owned()]),
+    )
+    .await;
+
+    let app = sdkwork_api_interface_portal::portal_router_with_pool(pool);
+    let token = portal_token(app.clone()).await;
+    let workspace = workspace_summary(app.clone(), &token).await;
+    seed_portal_workspace_commercial_account(&store, &workspace).await;
+
+    let validation = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/portal/marketing/coupon-validations")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"coupon_code\":\"ACCOUNT20\",\"subject_scope\":\"account\",\"target_kind\":\"recharge_pack\",\"order_amount_minor\":5000,\"reserve_amount_minor\":500}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(validation.status(), StatusCode::OK);
+    let validation_json = read_json(validation).await;
+    assert_eq!(validation_json["decision"]["eligible"], true);
 }

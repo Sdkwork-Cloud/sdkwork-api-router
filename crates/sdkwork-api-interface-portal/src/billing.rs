@@ -17,7 +17,6 @@ pub(crate) struct PortalBillingAccountHistoryResponse {
     ledger: Vec<AccountLedgerHistoryEntry>,
 }
 
-
 pub(crate) async fn billing_account_handler(
     claims: AuthenticatedPortalClaims,
     State(state): State<PortalApiState>,
@@ -247,4 +246,3 @@ pub(crate) async fn billing_events_summary_handler(
     .await?;
     Ok(Json(summarize_billing_events(&events)))
 }
-

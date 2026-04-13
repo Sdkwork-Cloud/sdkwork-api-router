@@ -261,3 +261,26 @@ async fn preview_quote_rejects_coupon_when_target_kind_is_not_eligible() {
         "unexpected error: {error}"
     );
 }
+
+#[tokio::test]
+async fn preview_quote_does_not_resolve_workspace_seed_coupon_fallback() {
+    let store = build_store().await;
+
+    let error = preview_portal_commerce_quote(
+        &store,
+        &PortalCommerceQuoteRequest {
+            target_kind: "recharge_pack".to_owned(),
+            target_id: "pack-100k".to_owned(),
+            coupon_code: Some("WELCOME100".to_owned()),
+            current_remaining_units: Some(5_000),
+            custom_amount_cents: None,
+        },
+    )
+    .await
+    .expect_err("coupon should not resolve without canonical marketing data");
+
+    assert!(
+        error.to_string().contains("coupon WELCOME100 not found"),
+        "unexpected error: {error}"
+    );
+}

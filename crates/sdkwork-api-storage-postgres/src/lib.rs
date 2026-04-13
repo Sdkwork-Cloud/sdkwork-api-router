@@ -103,7 +103,6 @@ mod payment_kernel_store;
 mod postgres_migration_billing_schema;
 mod postgres_migration_catalog_gateway_schema;
 mod postgres_migration_commerce_jobs_schema;
-mod postgres_migration_compat;
 mod postgres_migration_identity_schema;
 mod postgres_migration_marketing_schema;
 mod postgres_migration_payment_schema;
@@ -120,10 +119,6 @@ pub(crate) use account_support::*;
 pub(crate) use postgres_migration_billing_schema::apply_postgres_billing_schema;
 pub(crate) use postgres_migration_catalog_gateway_schema::apply_postgres_catalog_gateway_schema;
 pub(crate) use postgres_migration_commerce_jobs_schema::apply_postgres_commerce_jobs_schema;
-pub(crate) use postgres_migration_compat::{
-    apply_postgres_legacy_table_compatibility, migrate_postgres_legacy_catalog_records,
-    recreate_postgres_legacy_compatibility_views,
-};
 pub(crate) use postgres_migration_identity_schema::apply_postgres_identity_schema;
 pub(crate) use postgres_migration_marketing_schema::apply_postgres_marketing_schema;
 pub(crate) use postgres_migration_payment_schema::apply_postgres_payment_schema;

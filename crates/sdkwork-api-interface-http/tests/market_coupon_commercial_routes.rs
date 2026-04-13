@@ -126,6 +126,61 @@ async fn seed_marketing_account_entitlement_coupon(store: &SqliteAdminStore) {
     store.insert_coupon_code_record(&code).await.unwrap();
 }
 
+async fn seed_custom_marketing_coupon(
+    store: &SqliteAdminStore,
+    template_id: &str,
+    campaign_id: &str,
+    budget_id: &str,
+    code_id: &str,
+    code_value: &str,
+    benefit_kind: MarketingBenefitKind,
+    restriction: CouponRestrictionSpec,
+) {
+    let benefit = match benefit_kind {
+        MarketingBenefitKind::PercentageOff => CouponBenefitSpec::new(benefit_kind)
+            .with_discount_percent(Some(20)),
+        MarketingBenefitKind::FixedAmountOff => CouponBenefitSpec::new(benefit_kind)
+            .with_discount_amount_minor(Some(2_000)),
+        MarketingBenefitKind::GrantUnits => {
+            CouponBenefitSpec::new(benefit_kind).with_grant_units(Some(300))
+        }
+    };
+
+    let template = CouponTemplateRecord::new(
+        template_id,
+        code_value.to_ascii_lowercase(),
+        benefit_kind,
+    )
+    .with_display_name(format!("{code_value} template"))
+    .with_status(CouponTemplateStatus::Active)
+    .with_distribution_kind(CouponDistributionKind::UniqueCode)
+    .with_restriction(restriction)
+    .with_benefit(benefit)
+    .with_created_at_ms(1_710_000_000_000)
+    .with_updated_at_ms(1_710_000_000_000);
+    store.insert_coupon_template_record(&template).await.unwrap();
+
+    let campaign = MarketingCampaignRecord::new(campaign_id, template_id)
+        .with_display_name(format!("{code_value} campaign"))
+        .with_status(MarketingCampaignStatus::Active)
+        .with_created_at_ms(1_710_000_000_000)
+        .with_updated_at_ms(1_710_000_000_000);
+    store.insert_marketing_campaign_record(&campaign).await.unwrap();
+
+    let budget = CampaignBudgetRecord::new(budget_id, campaign_id)
+        .with_status(CampaignBudgetStatus::Active)
+        .with_total_budget_minor(5_000)
+        .with_created_at_ms(1_710_000_000_000)
+        .with_updated_at_ms(1_710_000_000_000);
+    store.insert_campaign_budget_record(&budget).await.unwrap();
+
+    let code = CouponCodeRecord::new(code_id, template_id, code_value)
+        .with_status(CouponCodeStatus::Available)
+        .with_created_at_ms(1_710_000_000_000)
+        .with_updated_at_ms(1_710_000_000_000);
+    store.insert_coupon_code_record(&code).await.unwrap();
+}
+
 #[tokio::test]
 async fn public_market_routes_expose_products_offers_and_quote_pricing() {
     let tenant_id = "tenant-public-market";
@@ -527,4 +582,44 @@ async fn public_commercial_benefit_lots_route_is_cursor_paginated() {
             .collect::<Vec<_>>(),
         vec![9902, 9903]
     );
+}
+
+#[tokio::test]
+async fn public_coupon_reservation_uses_order_amount_minor_instead_of_reserve_amount_minor() {
+    let tenant_id = "tenant-public-min-order";
+    let project_id = "project-public-min-order";
+    let pool = memory_pool().await;
+    let store = SqliteAdminStore::new(pool.clone());
+    let api_key = support::issue_gateway_api_key(&pool, tenant_id, project_id).await;
+    seed_custom_marketing_coupon(
+        &store,
+        "template_public_min_order",
+        "campaign_public_min_order",
+        "budget_public_min_order",
+        "code_public_min_order",
+        "PUBLICMIN20",
+        MarketingBenefitKind::PercentageOff,
+        CouponRestrictionSpec::new(MarketingSubjectScope::Project)
+            .with_min_order_amount_minor(Some(1_000))
+            .with_eligible_target_kinds(vec!["coupon_redemption".to_owned()]),
+    )
+    .await;
+
+    let app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+    let reserved = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/marketing/coupons/reserve")
+                .header("authorization", format!("Bearer {api_key}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"coupon_code\":\"PUBLICMIN20\",\"subject_scope\":\"project\",\"target_kind\":\"coupon_redemption\",\"order_amount_minor\":5000,\"reserve_amount_minor\":200,\"ttl_ms\":300000}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(reserved.status(), StatusCode::CREATED);
 }

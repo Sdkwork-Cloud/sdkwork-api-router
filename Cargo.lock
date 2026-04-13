@@ -2971,7 +2971,9 @@ dependencies = [
 name = "sdkwork-api-app-marketing"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "sdkwork-api-domain-marketing",
+ "sdkwork-api-storage-core",
 ]
 
 [[package]]

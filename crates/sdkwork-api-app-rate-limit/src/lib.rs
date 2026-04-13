@@ -1,5 +1,6 @@
 use anyhow::{ensure, Result};
 use async_trait::async_trait;
+use sdkwork_api_app_marketing::normalize_coupon_code;
 use sdkwork_api_domain_rate_limit::RateLimitCheckResult;
 use sdkwork_api_storage_core::AdminStore;
 use sha2::{Digest, Sha256};
@@ -241,14 +242,6 @@ where
         requested_requests,
     )
     .await
-}
-
-fn normalize_coupon_code(code: &str) -> String {
-    code.trim()
-        .chars()
-        .filter(|character| !character.is_whitespace())
-        .collect::<String>()
-        .to_ascii_uppercase()
 }
 
 fn now_epoch_millis() -> u64 {

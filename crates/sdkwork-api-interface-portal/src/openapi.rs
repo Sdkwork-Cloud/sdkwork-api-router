@@ -908,11 +908,12 @@ const PORTAL_OPENAPI_DOCUMENT: &str = r##"{
       },
       "PortalCouponReservationRequest": {
         "type": "object",
-        "required": ["coupon_code", "subject_scope", "target_kind", "reserve_amount_minor", "ttl_ms"],
+        "required": ["coupon_code", "subject_scope", "target_kind", "order_amount_minor", "reserve_amount_minor", "ttl_ms"],
         "properties": {
           "coupon_code": { "type": "string" },
           "subject_scope": { "type": "string" },
           "target_kind": { "type": "string" },
+          "order_amount_minor": { "type": "integer", "format": "uint64", "minimum": 0 },
           "reserve_amount_minor": { "type": "integer", "format": "uint64", "minimum": 0 },
           "ttl_ms": { "type": "integer", "format": "uint64", "minimum": 0 },
           "idempotency_key": { "type": ["string", "null"] }

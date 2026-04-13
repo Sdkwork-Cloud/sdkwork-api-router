@@ -34,6 +34,26 @@ impl From<anyhow::Error> for CommerceError {
     }
 }
 
+impl From<sdkwork_api_app_marketing::MarketingOperationError> for CommerceError {
+    fn from(value: sdkwork_api_app_marketing::MarketingOperationError) -> Self {
+        match value {
+            sdkwork_api_app_marketing::MarketingOperationError::InvalidInput(message) => {
+                Self::InvalidInput(message)
+            }
+            sdkwork_api_app_marketing::MarketingOperationError::NotFound(message) => {
+                Self::NotFound(message)
+            }
+            sdkwork_api_app_marketing::MarketingOperationError::Conflict(message)
+            | sdkwork_api_app_marketing::MarketingOperationError::Forbidden(message) => {
+                Self::Conflict(message)
+            }
+            sdkwork_api_app_marketing::MarketingOperationError::Storage(error) => {
+                Self::Storage(error)
+            }
+        }
+    }
+}
+
 pub fn commerce_atomic_coupon_error(error: anyhow::Error) -> CommerceError {
     let message = error.to_string();
     if message.contains("changed concurrently")

@@ -176,6 +176,116 @@ pub(super) async fn seed_portal_payment_attempt(
         .unwrap()
 }
 
+async fn seed_marketing_coupon_fixture(
+    store: &SqliteAdminStore,
+    coupon_template_id: &str,
+    template_key: &str,
+    display_name: &str,
+    campaign_display_name: &str,
+    coupon_code_id: &str,
+    coupon_code_value: &str,
+    benefit: CouponBenefitSpec,
+    template_status: CouponTemplateStatus,
+    campaign_status: MarketingCampaignStatus,
+) {
+    let campaign_id = format!("campaign_{template_key}");
+    let budget_id = format!("budget_{template_key}");
+    let created_at_ms = 1_710_000_000_000;
+
+    let template = CouponTemplateRecord::new(
+        coupon_template_id,
+        template_key,
+        benefit.benefit_kind,
+    )
+    .with_display_name(display_name)
+    .with_status(template_status)
+    .with_distribution_kind(CouponDistributionKind::UniqueCode)
+    .with_restriction(CouponRestrictionSpec::new(MarketingSubjectScope::Project))
+    .with_benefit(benefit)
+    .with_created_at_ms(created_at_ms)
+    .with_updated_at_ms(created_at_ms);
+    store
+        .insert_coupon_template_record(&template)
+        .await
+        .unwrap();
+
+    let campaign = MarketingCampaignRecord::new(&campaign_id, coupon_template_id)
+        .with_display_name(campaign_display_name)
+        .with_status(campaign_status)
+        .with_created_at_ms(created_at_ms)
+        .with_updated_at_ms(created_at_ms);
+    store
+        .insert_marketing_campaign_record(&campaign)
+        .await
+        .unwrap();
+
+    let budget = CampaignBudgetRecord::new(&budget_id, &campaign_id)
+        .with_status(CampaignBudgetStatus::Active)
+        .with_total_budget_minor(5_000)
+        .with_created_at_ms(created_at_ms)
+        .with_updated_at_ms(created_at_ms);
+    store.insert_campaign_budget_record(&budget).await.unwrap();
+
+    let code = CouponCodeRecord::new(coupon_code_id, coupon_template_id, coupon_code_value)
+        .with_status(CouponCodeStatus::Available)
+        .with_created_at_ms(created_at_ms)
+        .with_updated_at_ms(created_at_ms);
+    store.insert_coupon_code_record(&code).await.unwrap();
+}
+
+pub(super) async fn seed_marketing_catalog_coupon_code(
+    store: &SqliteAdminStore,
+    slug: &str,
+    code_value: &str,
+    campaign_status: MarketingCampaignStatus,
+    code_status: CouponCodeStatus,
+) {
+    let created_at_ms = 1_710_000_000_000;
+    let template_id = format!("template_{slug}");
+    let campaign_id = format!("campaign_{slug}");
+    let budget_id = format!("budget_{slug}");
+    let code_id = format!("code_{slug}");
+
+    let template = CouponTemplateRecord::new(&template_id, slug, MarketingBenefitKind::PercentageOff)
+        .with_display_name(format!("{code_value} Campaign"))
+        .with_status(CouponTemplateStatus::Active)
+        .with_distribution_kind(CouponDistributionKind::UniqueCode)
+        .with_restriction(CouponRestrictionSpec::new(MarketingSubjectScope::Project))
+        .with_benefit(
+            CouponBenefitSpec::new(MarketingBenefitKind::PercentageOff)
+                .with_discount_percent(Some(20)),
+        )
+        .with_created_at_ms(created_at_ms)
+        .with_updated_at_ms(created_at_ms);
+    store
+        .insert_coupon_template_record(&template)
+        .await
+        .unwrap();
+
+    let campaign = MarketingCampaignRecord::new(&campaign_id, &template_id)
+        .with_display_name(format!("{code_value} Campaign"))
+        .with_status(campaign_status)
+        .with_created_at_ms(created_at_ms)
+        .with_updated_at_ms(created_at_ms);
+    store
+        .insert_marketing_campaign_record(&campaign)
+        .await
+        .unwrap();
+
+    let budget = CampaignBudgetRecord::new(&budget_id, &campaign_id)
+        .with_status(CampaignBudgetStatus::Active)
+        .with_total_budget_minor(5_000)
+        .with_created_at_ms(created_at_ms)
+        .with_updated_at_ms(created_at_ms);
+    store.insert_campaign_budget_record(&budget).await.unwrap();
+
+    let code = CouponCodeRecord::new(&code_id, &template_id, code_value)
+        .with_status(code_status)
+        .with_created_at_ms(created_at_ms)
+        .with_updated_at_ms(created_at_ms);
+    store.insert_coupon_code_record(&code).await.unwrap();
+}
+
 pub(super) async fn seed_marketing_catalog_coupon(store: &SqliteAdminStore) {
     seed_marketing_catalog_coupon_code(
         store,
@@ -187,57 +297,36 @@ pub(super) async fn seed_marketing_catalog_coupon(store: &SqliteAdminStore) {
     .await;
 }
 
-pub(super) async fn seed_marketing_catalog_coupon_code(
-    store: &SqliteAdminStore,
-    slug: &str,
-    code_value: &str,
-    campaign_status: MarketingCampaignStatus,
-    code_status: CouponCodeStatus,
-) {
-    let template = CouponTemplateRecord::new(
-        format!("template_{slug}"),
-        slug,
-        MarketingBenefitKind::PercentageOff,
+pub(super) async fn seed_marketing_bonus_coupon(store: &SqliteAdminStore) {
+    seed_marketing_coupon_fixture(
+        store,
+        "template_welcome100",
+        "welcome100",
+        "Welcome 100",
+        "Welcome Credits",
+        "code_welcome100",
+        "WELCOME100",
+        CouponBenefitSpec::new(MarketingBenefitKind::GrantUnits).with_grant_units(Some(100)),
+        CouponTemplateStatus::Active,
+        MarketingCampaignStatus::Active,
     )
-    .with_display_name(format!("{code_value} Campaign"))
-    .with_status(CouponTemplateStatus::Active)
-    .with_distribution_kind(CouponDistributionKind::UniqueCode)
-    .with_restriction(CouponRestrictionSpec::new(MarketingSubjectScope::Project))
-    .with_benefit(
-        CouponBenefitSpec::new(MarketingBenefitKind::PercentageOff).with_discount_percent(Some(20)),
+    .await;
+}
+
+pub(super) async fn seed_inactive_marketing_catalog_coupon(store: &SqliteAdminStore) {
+    seed_marketing_coupon_fixture(
+        store,
+        "template_inactive10",
+        "inactive10",
+        "Inactive 10",
+        "Inactive Campaign",
+        "code_inactive10",
+        "INACTIVE10",
+        CouponBenefitSpec::new(MarketingBenefitKind::PercentageOff).with_discount_percent(Some(10)),
+        CouponTemplateStatus::Active,
+        MarketingCampaignStatus::Paused,
     )
-    .with_created_at_ms(1_710_000_000_000)
-    .with_updated_at_ms(1_710_000_000_000);
-    store
-        .insert_coupon_template_record(&template)
-        .await
-        .unwrap();
-
-    let campaign = MarketingCampaignRecord::new(
-        format!("campaign_{slug}"),
-        format!("template_{slug}"),
-    )
-        .with_display_name(format!("{code_value} Campaign"))
-        .with_status(campaign_status)
-        .with_created_at_ms(1_710_000_000_000)
-        .with_updated_at_ms(1_710_000_000_000);
-    store
-        .insert_marketing_campaign_record(&campaign)
-        .await
-        .unwrap();
-
-    let budget = CampaignBudgetRecord::new(format!("budget_{slug}"), format!("campaign_{slug}"))
-        .with_status(CampaignBudgetStatus::Active)
-        .with_total_budget_minor(5_000)
-        .with_created_at_ms(1_710_000_000_000)
-        .with_updated_at_ms(1_710_000_000_000);
-    store.insert_campaign_budget_record(&budget).await.unwrap();
-
-    let code = CouponCodeRecord::new(format!("code_{slug}"), format!("template_{slug}"), code_value)
-        .with_status(code_status)
-        .with_created_at_ms(1_710_000_000_000)
-        .with_updated_at_ms(1_710_000_000_000);
-    store.insert_coupon_code_record(&code).await.unwrap();
+    .await;
 }
 
 pub(super) async fn seed_pricing_plan(

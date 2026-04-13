@@ -81,7 +81,6 @@ pub(crate) struct PortalRoutingSummary {
     provider_options: Vec<PortalRoutingProviderOption>,
 }
 
-
 pub(crate) async fn get_routing_preferences_handler(
     claims: AuthenticatedPortalClaims,
     State(state): State<PortalApiState>,
@@ -251,14 +250,13 @@ pub(crate) async fn routing_summary_handler(
     )
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let provider_options =
-        load_routing_provider_options(
-            state.store.as_ref(),
-            &workspace.tenant.id,
-            &latest_model_hint,
-            &preferences,
-        )
-        .await?;
+    let provider_options = load_routing_provider_options(
+        state.store.as_ref(),
+        &workspace.tenant.id,
+        &latest_model_hint,
+        &preferences,
+    )
+    .await?;
 
     Ok(Json(PortalRoutingSummary {
         project_id: workspace.project.id,
@@ -268,7 +266,6 @@ pub(crate) async fn routing_summary_handler(
         provider_options,
     }))
 }
-
 
 fn portal_route_selection_context<'a>(
     workspace: &'a PortalWorkspaceSummary,
@@ -368,8 +365,8 @@ async fn load_routing_provider_options(
         .collect::<HashSet<_>>();
     let configured_provider_ids =
         sdkwork_api_app_credential::list_configured_provider_ids_for_tenant(store, tenant_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     sort_routing_provider_options(&mut providers, &preference_ranks);
 
     Ok(providers

@@ -385,6 +385,22 @@ pub trait AdminStore: Send + Sync {
             .into_iter()
             .find(|record| record.template_key == template_key))
     }
+    async fn list_coupon_template_records_for_root(
+        &self,
+        root_coupon_template_id: &str,
+    ) -> Result<Vec<CouponTemplateRecord>> {
+        Ok(AdminStore::list_coupon_template_records(self)
+            .await?
+            .into_iter()
+            .filter(|record| {
+                record
+                    .root_coupon_template_id
+                    .as_deref()
+                    .unwrap_or(record.coupon_template_id.as_str())
+                    == root_coupon_template_id
+            })
+            .collect())
+    }
     async fn insert_coupon_template_lifecycle_audit_record(
         &self,
         _record: &CouponTemplateLifecycleAuditRecord,
@@ -406,11 +422,13 @@ pub trait AdminStore: Send + Sync {
         &self,
         coupon_template_id: &str,
     ) -> Result<Vec<CouponTemplateLifecycleAuditRecord>> {
-        Ok(AdminStore::list_coupon_template_lifecycle_audit_records(self)
-            .await?
-            .into_iter()
-            .filter(|record| record.coupon_template_id == coupon_template_id)
-            .collect())
+        Ok(
+            AdminStore::list_coupon_template_lifecycle_audit_records(self)
+                .await?
+                .into_iter()
+                .filter(|record| record.coupon_template_id == coupon_template_id)
+                .collect(),
+        )
     }
     async fn insert_marketing_campaign_record(
         &self,
@@ -427,6 +445,15 @@ pub trait AdminStore: Send + Sync {
             "list_marketing_campaign_records",
         ))
     }
+    async fn find_marketing_campaign_record(
+        &self,
+        marketing_campaign_id: &str,
+    ) -> Result<Option<MarketingCampaignRecord>> {
+        Ok(AdminStore::list_marketing_campaign_records(self)
+            .await?
+            .into_iter()
+            .find(|record| record.marketing_campaign_id == marketing_campaign_id))
+    }
     async fn list_marketing_campaign_records_for_template(
         &self,
         coupon_template_id: &str,
@@ -435,6 +462,22 @@ pub trait AdminStore: Send + Sync {
             .await?
             .into_iter()
             .filter(|record| record.coupon_template_id == coupon_template_id)
+            .collect())
+    }
+    async fn list_marketing_campaign_records_for_root(
+        &self,
+        root_marketing_campaign_id: &str,
+    ) -> Result<Vec<MarketingCampaignRecord>> {
+        Ok(AdminStore::list_marketing_campaign_records(self)
+            .await?
+            .into_iter()
+            .filter(|record| {
+                record
+                    .root_marketing_campaign_id
+                    .as_deref()
+                    .unwrap_or(record.marketing_campaign_id.as_str())
+                    == root_marketing_campaign_id
+            })
             .collect())
     }
     async fn insert_marketing_campaign_lifecycle_audit_record(
@@ -458,11 +501,13 @@ pub trait AdminStore: Send + Sync {
         &self,
         marketing_campaign_id: &str,
     ) -> Result<Vec<MarketingCampaignLifecycleAuditRecord>> {
-        Ok(AdminStore::list_marketing_campaign_lifecycle_audit_records(self)
-            .await?
-            .into_iter()
-            .filter(|record| record.marketing_campaign_id == marketing_campaign_id)
-            .collect())
+        Ok(
+            AdminStore::list_marketing_campaign_lifecycle_audit_records(self)
+                .await?
+                .into_iter()
+                .filter(|record| record.marketing_campaign_id == marketing_campaign_id)
+                .collect(),
+        )
     }
     async fn insert_campaign_budget_record(
         &self,
@@ -478,6 +523,15 @@ pub trait AdminStore: Send + Sync {
             self.dialect(),
             "list_campaign_budget_records",
         ))
+    }
+    async fn find_campaign_budget_record(
+        &self,
+        campaign_budget_id: &str,
+    ) -> Result<Option<CampaignBudgetRecord>> {
+        Ok(AdminStore::list_campaign_budget_records(self)
+            .await?
+            .into_iter()
+            .find(|record| record.campaign_budget_id == campaign_budget_id))
     }
     async fn list_campaign_budget_records_for_campaign(
         &self,
@@ -510,11 +564,13 @@ pub trait AdminStore: Send + Sync {
         &self,
         campaign_budget_id: &str,
     ) -> Result<Vec<CampaignBudgetLifecycleAuditRecord>> {
-        Ok(AdminStore::list_campaign_budget_lifecycle_audit_records(self)
-            .await?
-            .into_iter()
-            .filter(|record| record.campaign_budget_id == campaign_budget_id)
-            .collect())
+        Ok(
+            AdminStore::list_campaign_budget_lifecycle_audit_records(self)
+                .await?
+                .into_iter()
+                .filter(|record| record.campaign_budget_id == campaign_budget_id)
+                .collect(),
+        )
     }
     async fn insert_coupon_code_record(
         &self,
@@ -544,10 +600,14 @@ pub trait AdminStore: Send + Sync {
         &self,
         code_value: &str,
     ) -> Result<Option<CouponCodeRecord>> {
+        let normalized_code_value = sdkwork_api_domain_marketing::normalize_coupon_code(code_value);
         Ok(AdminStore::list_coupon_code_records(self)
             .await?
             .into_iter()
-            .find(|record| record.code_value == code_value))
+            .find(|record| {
+                sdkwork_api_domain_marketing::normalize_coupon_code(&record.code_value)
+                    == normalized_code_value
+            }))
     }
     async fn list_redeemable_coupon_code_records_at(
         &self,
@@ -557,6 +617,37 @@ pub trait AdminStore: Send + Sync {
             .await?
             .into_iter()
             .filter(|record| record.is_redeemable_at(now_ms))
+            .collect())
+    }
+    async fn list_coupon_code_records_for_ids(
+        &self,
+        coupon_code_ids: &[String],
+    ) -> Result<Vec<CouponCodeRecord>> {
+        if coupon_code_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let code_ids = coupon_code_ids
+            .iter()
+            .map(String::as_str)
+            .collect::<std::collections::HashSet<_>>();
+        Ok(AdminStore::list_coupon_code_records(self)
+            .await?
+            .into_iter()
+            .filter(|record| code_ids.contains(record.coupon_code_id.as_str()))
+            .collect())
+    }
+    async fn list_coupon_code_records_for_claimed_subject(
+        &self,
+        subject_scope: MarketingSubjectScope,
+        subject_id: &str,
+    ) -> Result<Vec<CouponCodeRecord>> {
+        Ok(AdminStore::list_coupon_code_records(self)
+            .await?
+            .into_iter()
+            .filter(|record| {
+                record.claimed_subject_scope == Some(subject_scope)
+                    && record.claimed_subject_id.as_deref() == Some(subject_id)
+            })
             .collect())
     }
     async fn insert_coupon_code_lifecycle_audit_record(
@@ -620,6 +711,29 @@ pub trait AdminStore: Send + Sync {
             .filter(|record| record.is_active_at(now_ms))
             .collect())
     }
+    async fn list_coupon_reservation_records_for_code(
+        &self,
+        coupon_code_id: &str,
+    ) -> Result<Vec<CouponReservationRecord>> {
+        Ok(AdminStore::list_coupon_reservation_records(self)
+            .await?
+            .into_iter()
+            .filter(|record| record.coupon_code_id == coupon_code_id)
+            .collect())
+    }
+    async fn list_coupon_reservation_records_for_subject(
+        &self,
+        subject_scope: MarketingSubjectScope,
+        subject_id: &str,
+    ) -> Result<Vec<CouponReservationRecord>> {
+        Ok(AdminStore::list_coupon_reservation_records(self)
+            .await?
+            .into_iter()
+            .filter(|record| {
+                record.subject_scope == subject_scope && record.subject_id == subject_id
+            })
+            .collect())
+    }
     async fn insert_coupon_redemption_record(
         &self,
         _record: &CouponRedemptionRecord,
@@ -644,6 +758,23 @@ pub trait AdminStore: Send + Sync {
             "find_coupon_redemption_record",
         ))
     }
+    async fn list_coupon_redemption_records_for_reservation_ids(
+        &self,
+        coupon_reservation_ids: &[String],
+    ) -> Result<Vec<CouponRedemptionRecord>> {
+        if coupon_reservation_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let reservation_ids = coupon_reservation_ids
+            .iter()
+            .map(String::as_str)
+            .collect::<std::collections::HashSet<_>>();
+        Ok(AdminStore::list_coupon_redemption_records(self)
+            .await?
+            .into_iter()
+            .filter(|record| reservation_ids.contains(record.coupon_reservation_id.as_str()))
+            .collect())
+    }
     async fn insert_coupon_rollback_record(
         &self,
         _record: &CouponRollbackRecord,
@@ -658,6 +789,42 @@ pub trait AdminStore: Send + Sync {
             self.dialect(),
             "list_coupon_rollback_records",
         ))
+    }
+    async fn find_coupon_rollback_record(
+        &self,
+        coupon_rollback_id: &str,
+    ) -> Result<Option<CouponRollbackRecord>> {
+        Ok(AdminStore::list_coupon_rollback_records(self)
+            .await?
+            .into_iter()
+            .find(|record| record.coupon_rollback_id == coupon_rollback_id))
+    }
+    async fn list_coupon_rollback_records_for_redemption(
+        &self,
+        coupon_redemption_id: &str,
+    ) -> Result<Vec<CouponRollbackRecord>> {
+        Ok(AdminStore::list_coupon_rollback_records(self)
+            .await?
+            .into_iter()
+            .filter(|record| record.coupon_redemption_id == coupon_redemption_id)
+            .collect())
+    }
+    async fn list_coupon_rollback_records_for_redemption_ids(
+        &self,
+        coupon_redemption_ids: &[String],
+    ) -> Result<Vec<CouponRollbackRecord>> {
+        if coupon_redemption_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let redemption_ids = coupon_redemption_ids
+            .iter()
+            .map(String::as_str)
+            .collect::<std::collections::HashSet<_>>();
+        Ok(AdminStore::list_coupon_rollback_records(self)
+            .await?
+            .into_iter()
+            .filter(|record| redemption_ids.contains(record.coupon_redemption_id.as_str()))
+            .collect())
     }
     async fn insert_marketing_outbox_event_record(
         &self,
@@ -828,7 +995,10 @@ pub trait AdminStore: Send + Sync {
             "list_payment_methods",
         ))
     }
-    async fn find_payment_method(&self, payment_method_id: &str) -> Result<Option<PaymentMethodRecord>> {
+    async fn find_payment_method(
+        &self,
+        payment_method_id: &str,
+    ) -> Result<Option<PaymentMethodRecord>> {
         Ok(self
             .list_payment_methods()
             .await?
@@ -924,9 +1094,7 @@ pub trait AdminStore: Send + Sync {
             "upsert_commerce_webhook_inbox",
         ))
     }
-    async fn list_commerce_webhook_inbox_records(
-        &self,
-    ) -> Result<Vec<CommerceWebhookInboxRecord>> {
+    async fn list_commerce_webhook_inbox_records(&self) -> Result<Vec<CommerceWebhookInboxRecord>> {
         Err(unsupported_commerce_method(
             self.dialect(),
             "list_commerce_webhook_inbox_records",

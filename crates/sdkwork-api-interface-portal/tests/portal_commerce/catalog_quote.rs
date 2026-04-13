@@ -4,22 +4,9 @@ use super::*;
 async fn portal_commerce_catalog_exposes_plans_packs_and_active_coupons() {
     let pool = memory_pool().await;
     let store = SqliteAdminStore::new(pool.clone());
-    seed_marketing_catalog_coupon_code(
-        &store,
-        "spring20",
-        "SPRING20",
-        MarketingCampaignStatus::Active,
-        CouponCodeStatus::Available,
-    )
-    .await;
-    seed_marketing_catalog_coupon_code(
-        &store,
-        "inactive10",
-        "INACTIVE10",
-        MarketingCampaignStatus::Active,
-        CouponCodeStatus::Disabled,
-    )
-    .await;
+    seed_marketing_catalog_coupon(&store).await;
+    seed_marketing_bonus_coupon(&store).await;
+    seed_inactive_marketing_catalog_coupon(&store).await;
 
     let app = portal_lab_app(pool);
     let token = portal_token(app.clone()).await;
@@ -71,7 +58,12 @@ async fn portal_commerce_catalog_exposes_plans_packs_and_active_coupons() {
         .as_array()
         .unwrap()
         .iter()
-        .any(|coupon| coupon["code"] == "SPRING20"));
+        .any(|coupon| coupon["code"] == "LAUNCH20"));
+    assert!(json["coupons"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|coupon| coupon["code"] == "WELCOME100"));
     assert!(json["coupons"]
         .as_array()
         .unwrap()
@@ -294,14 +286,8 @@ async fn portal_commerce_catalog_requires_authentication() {
 async fn portal_commerce_quote_prices_recharge_and_coupon_redemption() {
     let pool = memory_pool().await;
     let store = SqliteAdminStore::new(pool.clone());
-    seed_marketing_catalog_coupon_code(
-        &store,
-        "spring20",
-        "SPRING20",
-        MarketingCampaignStatus::Active,
-        CouponCodeStatus::Available,
-    )
-    .await;
+    seed_marketing_catalog_coupon(&store).await;
+    seed_marketing_bonus_coupon(&store).await;
 
     let app = portal_lab_app(pool);
     let token = portal_token(app.clone()).await;
@@ -315,7 +301,7 @@ async fn portal_commerce_quote_prices_recharge_and_coupon_redemption() {
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    "{\"target_kind\":\"recharge_pack\",\"target_id\":\"pack-100k\",\"coupon_code\":\"SPRING20\",\"current_remaining_units\":5000}",
+                    "{\"target_kind\":\"recharge_pack\",\"target_id\":\"pack-100k\",\"coupon_code\":\"LAUNCH20\",\"current_remaining_units\":5000}",
                 ))
                 .unwrap(),
         )
@@ -330,7 +316,7 @@ async fn portal_commerce_quote_prices_recharge_and_coupon_redemption() {
     assert_eq!(recharge_json["payable_price_label"], "$32.00");
     assert_eq!(recharge_json["granted_units"], 100000);
     assert_eq!(recharge_json["projected_remaining_units"], 105000);
-    assert_eq!(recharge_json["applied_coupon"]["code"], "SPRING20");
+    assert_eq!(recharge_json["applied_coupon"]["code"], "LAUNCH20");
     assert_eq!(
         recharge_json["pricing_plan_id"],
         "pricing_plan:recharge_pack:pack-100k"
