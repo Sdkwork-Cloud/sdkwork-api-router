@@ -1,8 +1,11 @@
-fn http_exposure_config() -> anyhow::Result<HttpExposureConfig> {
+use axum::http::HeaderValue;
+use sdkwork_api_config::HttpExposureConfig;
+
+pub(super) fn http_exposure_config() -> anyhow::Result<HttpExposureConfig> {
     HttpExposureConfig::from_env()
 }
 
-fn browser_cors_layer(http_exposure: &HttpExposureConfig) -> CorsLayer {
+pub(super) fn browser_cors_layer(http_exposure: &HttpExposureConfig) -> CorsLayer {
     let layer = CorsLayer::new().allow_methods(Any).allow_headers(Any);
     if http_exposure.browser_allowed_origins.is_empty() {
         return layer;
@@ -27,7 +30,7 @@ fn browser_cors_layer(http_exposure: &HttpExposureConfig) -> CorsLayer {
     layer.allow_origin(origins)
 }
 
-fn metrics_route<S>(
+pub(super) fn metrics_route<S>(
     metrics: Arc<HttpMetricsRegistry>,
     http_exposure: &HttpExposureConfig,
 ) -> axum::routing::MethodRouter<S>
