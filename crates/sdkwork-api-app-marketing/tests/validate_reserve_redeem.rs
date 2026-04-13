@@ -85,6 +85,7 @@ fn confirm_and_rollback_coupon_redemption_build_finance_safe_records() {
         "code_launch_20",
         "tpl_launch_20",
         700,
+        700,
         Some("order_demo".to_owned()),
         Some("payevt_demo".to_owned()),
         2_300,
@@ -141,6 +142,7 @@ fn confirm_coupon_redemption_rejects_subsidy_amount_above_reserved_budget() {
         "code_launch_20",
         "tpl_launch_20",
         701,
+        701,
         Some("order_demo".to_owned()),
         Some("payevt_demo".to_owned()),
         2_300,
@@ -149,7 +151,7 @@ fn confirm_coupon_redemption_rejects_subsidy_amount_above_reserved_budget() {
 
     assert_eq!(
         error.to_string(),
-        "subsidy amount exceeds reserved coupon budget"
+        "budget consumption exceeds reserved coupon budget"
     );
 }
 
@@ -173,6 +175,7 @@ fn rollback_coupon_redemption_rejects_restored_budget_above_redeemed_subsidy() {
         "code_launch_20",
         "tpl_launch_20",
         700,
+        700,
         Some("order_demo".to_owned()),
         Some("payevt_demo".to_owned()),
         2_300,
@@ -191,6 +194,6 @@ fn rollback_coupon_redemption_rejects_restored_budget_above_redeemed_subsidy() {
 
     assert_eq!(
         error.to_string(),
-        "restored budget exceeds redeemed coupon subsidy"
+        "restored budget exceeds consumed coupon budget"
     );
 }

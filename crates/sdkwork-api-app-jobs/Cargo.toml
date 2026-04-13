@@ -7,11 +7,10 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
-sdkwork-api-domain-marketing = { path = "../sdkwork-api-domain-marketing" }
+sdkwork-api-app-marketing = { path = "../sdkwork-api-app-marketing" }
 sdkwork-api-domain-jobs = { path = "../sdkwork-api-domain-jobs" }
 sdkwork-api-observability = { path = "../sdkwork-api-observability" }
 sdkwork-api-storage-core = { path = "../sdkwork-api-storage-core" }
-serde_json.workspace = true
 
 [dev-dependencies]
 sdkwork-api-domain-marketing = { path = "../sdkwork-api-domain-marketing" }

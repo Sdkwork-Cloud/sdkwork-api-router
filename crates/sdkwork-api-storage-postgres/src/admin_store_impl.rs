@@ -497,6 +497,13 @@ impl AdminStore for PostgresAdminStore {
         <Self as MarketingStore>::list_marketing_campaign_records(self).await
     }
 
+    async fn find_marketing_campaign_record(
+        &self,
+        marketing_campaign_id: &str,
+    ) -> Result<Option<MarketingCampaignRecord>> {
+        <Self as MarketingStore>::find_marketing_campaign_record(self, marketing_campaign_id).await
+    }
+
     async fn list_marketing_campaign_records_for_template(
         &self,
         coupon_template_id: &str,
@@ -539,6 +546,13 @@ impl AdminStore for PostgresAdminStore {
 
     async fn list_campaign_budget_records(&self) -> Result<Vec<CampaignBudgetRecord>> {
         <Self as MarketingStore>::list_campaign_budget_records(self).await
+    }
+
+    async fn find_campaign_budget_record(
+        &self,
+        campaign_budget_id: &str,
+    ) -> Result<Option<CampaignBudgetRecord>> {
+        <Self as MarketingStore>::find_campaign_budget_record(self, campaign_budget_id).await
     }
 
     async fn list_campaign_budget_records_for_campaign(

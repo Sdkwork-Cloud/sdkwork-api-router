@@ -55,7 +55,6 @@ pub(crate) struct UpdateApiKeyGroupRequest {
     default_routing_profile_id: Option<String>,
 }
 
-
 pub(crate) async fn list_api_keys_handler(
     claims: AuthenticatedPortalClaims,
     State(state): State<PortalApiState>,
@@ -229,4 +228,3 @@ pub(crate) async fn delete_api_key_handler(
         )))
     }
 }
-

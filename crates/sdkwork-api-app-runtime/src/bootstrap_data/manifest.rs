@@ -8,6 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
+use sdkwork_api_app_marketing::normalize_coupon_code;
 use sdkwork_api_domain_billing::{
     AccountBenefitLotRecord, AccountCommerceReconciliationStateRecord, AccountHoldAllocationRecord,
     AccountHoldRecord, AccountHoldStatus, AccountLedgerAllocationRecord, AccountLedgerEntryRecord,
@@ -8163,10 +8164,6 @@ where
     S: Into<String>,
 {
     values.into_iter().map(Into::into).collect()
-}
-
-fn normalize_coupon_code(code: &str) -> String {
-    code.trim().to_ascii_uppercase()
 }
 
 fn provider_health_snapshot_key(record: &ProviderHealthSnapshot) -> String {

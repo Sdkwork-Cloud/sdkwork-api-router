@@ -46,6 +46,112 @@ fn unix_timestamp_ms() -> u64 {
         .as_millis() as u64
 }
 
+async fn admin_post_json(
+    app: &Router,
+    token: &str,
+    uri: &str,
+    body: &str,
+    request_id: Option<&str>,
+) -> axum::response::Response {
+    let mut builder = Request::builder()
+        .method("POST")
+        .uri(uri)
+        .header("authorization", format!("Bearer {token}"))
+        .header("content-type", "application/json");
+    if let Some(request_id) = request_id {
+        builder = builder.header("x-request-id", request_id);
+    }
+    app.clone()
+        .oneshot(builder.body(Body::from(body.to_owned())).unwrap())
+        .await
+        .unwrap()
+}
+
+async fn approve_coupon_template(app: &Router, token: &str, coupon_template_id: &str, scope: &str) {
+    let submitted = admin_post_json(
+        app,
+        token,
+        &format!(
+            "/admin/marketing/coupon-templates/{coupon_template_id}/submit-for-approval"
+        ),
+        r#"{"reason":"submit coupon template for approval"}"#,
+        Some(&format!("{scope}-submit")),
+    )
+    .await;
+    assert_eq!(submitted.status(), StatusCode::OK);
+    assert_eq!(
+        read_json(submitted).await["detail"]["coupon_template"]["approval_state"],
+        "in_review"
+    );
+
+    let approved = admin_post_json(
+        app,
+        token,
+        &format!("/admin/marketing/coupon-templates/{coupon_template_id}/approve"),
+        r#"{"reason":"approve coupon template for lifecycle actions"}"#,
+        Some(&format!("{scope}-approve")),
+    )
+    .await;
+    assert_eq!(approved.status(), StatusCode::OK);
+    assert_eq!(
+        read_json(approved).await["detail"]["coupon_template"]["approval_state"],
+        "approved"
+    );
+}
+
+async fn activate_coupon_template(app: &Router, token: &str, coupon_template_id: &str, scope: &str) {
+    approve_coupon_template(app, token, coupon_template_id, scope).await;
+
+    let published = admin_post_json(
+        app,
+        token,
+        &format!("/admin/marketing/coupon-templates/{coupon_template_id}/publish"),
+        r#"{"reason":"publish coupon template for campaign lifecycle tests"}"#,
+        Some(&format!("{scope}-publish")),
+    )
+    .await;
+    assert_eq!(published.status(), StatusCode::OK);
+    assert_eq!(
+        read_json(published).await["detail"]["coupon_template"]["status"],
+        "active"
+    );
+}
+
+async fn approve_marketing_campaign(
+    app: &Router,
+    token: &str,
+    marketing_campaign_id: &str,
+    scope: &str,
+) {
+    let submitted = admin_post_json(
+        app,
+        token,
+        &format!("/admin/marketing/campaigns/{marketing_campaign_id}/submit-for-approval"),
+        r#"{"reason":"submit coupon campaign for approval"}"#,
+        Some(&format!("{scope}-submit")),
+    )
+    .await;
+    assert_eq!(submitted.status(), StatusCode::OK);
+    assert_eq!(
+        read_json(submitted).await["detail"]["campaign"]["approval_state"],
+        "in_review"
+    );
+
+    let approved = admin_post_json(
+        app,
+        token,
+        &format!("/admin/marketing/campaigns/{marketing_campaign_id}/approve"),
+        r#"{"reason":"approve coupon campaign for lifecycle actions"}"#,
+        Some(&format!("{scope}-approve")),
+    )
+    .await;
+    assert_eq!(approved.status(), StatusCode::OK);
+    assert_eq!(
+        read_json(approved).await["detail"]["campaign"]["approval_state"],
+        "approved"
+    );
+}
+
 #[tokio::test]
 async fn admin_marketing_routes_create_and_list_canonical_coupon_records_without_legacy_coupon_route()
 {
@@ -66,7 +172,7 @@ async fn admin_marketing_routes_create_and_list_canonical_coupon_records_without
                         "coupon_template_id":"template_launch20",
                         "template_key":"launch20",
                         "display_name":"Launch 20",
-                        "status":"active",
+                        "status":"draft",
                         "distribution_kind":"unique_code",
                         "benefit":{"benefit_kind":"percentage_off","discount_percent":20},
                         "restriction":{"subject_scope":"project","stacking_policy":"exclusive"},
@@ -93,7 +199,7 @@ async fn admin_marketing_routes_create_and_list_canonical_coupon_records_without
                         "marketing_campaign_id":"campaign_launch20",
                         "coupon_template_id":"template_launch20",
                         "display_name":"Launch Campaign",
-                        "status":"active",
+                        "status":"draft",
                         "created_at_ms":1710000000000,
                         "updated_at_ms":1710000000000
                     }"#,
@@ -116,7 +222,7 @@ async fn admin_marketing_routes_create_and_list_canonical_coupon_records_without
                     r#"{
                         "campaign_budget_id":"budget_launch20",
                         "marketing_campaign_id":"campaign_launch20",
-                        "status":"active",
+                        "status":"draft",
                         "total_budget_minor":500000,
                         "reserved_budget_minor":0,
                         "consumed_budget_minor":0,
@@ -267,7 +373,7 @@ async fn admin_marketing_status_routes_update_canonical_coupon_records() {
         "coupon_template_id":"template_launch20",
         "template_key":"launch20",
         "display_name":"Launch 20",
-        "status":"active",
+        "status":"draft",
         "distribution_kind":"unique_code",
         "benefit":{"benefit_kind":"percentage_off","discount_percent":20},
         "restriction":{"subject_scope":"project","stacking_policy":"exclusive"},
@@ -278,14 +384,14 @@ async fn admin_marketing_status_routes_update_canonical_coupon_records() {
         "marketing_campaign_id":"campaign_launch20",
         "coupon_template_id":"template_launch20",
         "display_name":"Launch Campaign",
-        "status":"active",
+        "status":"draft",
         "created_at_ms":1710000000000,
         "updated_at_ms":1710000000000
     }"#;
     let budget_payload = r#"{
         "campaign_budget_id":"budget_launch20",
         "marketing_campaign_id":"campaign_launch20",
-        "status":"active",
+        "status":"draft",
         "total_budget_minor":500000,
         "reserved_budget_minor":0,
         "consumed_budget_minor":0,
@@ -408,7 +514,7 @@ async fn admin_marketing_campaign_lifecycle_routes_apply_coupon_semantic_actions
                         "coupon_template_id":"template_campaign_lifecycle",
                         "template_key":"campaign-lifecycle",
                         "display_name":"Campaign Lifecycle",
-                        "status":"active",
+                        "status":"draft",
                         "distribution_kind":"shared_code",
                         "benefit":{"benefit_kind":"percentage_off","discount_percent":15},
                         "restriction":{"subject_scope":"project","stacking_policy":"exclusive"},
@@ -421,6 +527,13 @@ async fn admin_marketing_campaign_lifecycle_routes_apply_coupon_semantic_actions
         .await
         .unwrap();
     assert_eq!(template.status(), StatusCode::CREATED);
+    activate_coupon_template(
+        &app,
+        &token,
+        "template_campaign_lifecycle",
+        "sdkw-test-template-campaign-lifecycle",
+    )
+    .await;
 
     let publish_campaign = app
         .clone()
@@ -447,6 +560,13 @@ async fn admin_marketing_campaign_lifecycle_routes_apply_coupon_semantic_actions
         .await
         .unwrap();
     assert_eq!(publish_campaign.status(), StatusCode::CREATED);
+    approve_marketing_campaign(
+        &app,
+        &token,
+        "campaign_publish_ready",
+        "sdkw-test-campaign-publish-ready",
+    )
+    .await;
 
     let schedule_campaign = app
         .clone()
@@ -473,6 +593,13 @@ async fn admin_marketing_campaign_lifecycle_routes_apply_coupon_semantic_actions
         .await
         .unwrap();
     assert_eq!(schedule_campaign.status(), StatusCode::CREATED);
+    approve_marketing_campaign(
+        &app,
+        &token,
+        "campaign_schedule_ready",
+        "sdkw-test-campaign-schedule-ready",
+    )
+    .await;
 
     let published = app
         .clone()
@@ -566,7 +693,7 @@ async fn admin_marketing_campaign_lifecycle_routes_apply_coupon_semantic_actions
         .unwrap();
     assert_eq!(publish_audits.status(), StatusCode::OK);
     let publish_audits_json = read_json(publish_audits).await;
-    assert_eq!(publish_audits_json.as_array().unwrap().len(), 2);
+    assert_eq!(publish_audits_json.as_array().unwrap().len(), 4);
     assert_eq!(publish_audits_json[0]["action"], "retire");
     assert_eq!(publish_audits_json[0]["outcome"], "applied");
     assert_eq!(publish_audits_json[0]["request_id"], "sdkw-test-campaign-retire-1");
@@ -575,6 +702,16 @@ async fn admin_marketing_campaign_lifecycle_routes_apply_coupon_semantic_actions
     assert_eq!(
         publish_audits_json[1]["request_id"],
         "sdkw-test-campaign-publish-1"
+    );
+    assert_eq!(publish_audits_json[2]["action"], "approve");
+    assert_eq!(
+        publish_audits_json[2]["request_id"],
+        "sdkw-test-campaign-publish-ready-approve"
+    );
+    assert_eq!(publish_audits_json[3]["action"], "submit_for_approval");
+    assert_eq!(
+        publish_audits_json[3]["request_id"],
+        "sdkw-test-campaign-publish-ready-submit"
     );
 
     let schedule_audits = app
@@ -590,11 +727,21 @@ async fn admin_marketing_campaign_lifecycle_routes_apply_coupon_semantic_actions
         .unwrap();
     assert_eq!(schedule_audits.status(), StatusCode::OK);
     let schedule_audits_json = read_json(schedule_audits).await;
-    assert_eq!(schedule_audits_json.as_array().unwrap().len(), 1);
+    assert_eq!(schedule_audits_json.as_array().unwrap().len(), 3);
     assert_eq!(schedule_audits_json[0]["action"], "schedule");
     assert_eq!(
         schedule_audits_json[0]["request_id"],
         "sdkw-test-campaign-schedule-1"
+    );
+    assert_eq!(schedule_audits_json[1]["action"], "approve");
+    assert_eq!(
+        schedule_audits_json[1]["request_id"],
+        "sdkw-test-campaign-schedule-ready-approve"
+    );
+    assert_eq!(schedule_audits_json[2]["action"], "submit_for_approval");
+    assert_eq!(
+        schedule_audits_json[2]["request_id"],
+        "sdkw-test-campaign-schedule-ready-submit"
     );
 }
 
@@ -618,7 +765,7 @@ async fn admin_marketing_campaign_publish_rejects_future_coupon_campaign() {
                         "coupon_template_id":"template_publish_reject",
                         "template_key":"publish-reject",
                         "display_name":"Publish Reject",
-                        "status":"active",
+                        "status":"draft",
                         "distribution_kind":"shared_code",
                         "benefit":{"benefit_kind":"percentage_off","discount_percent":10},
                         "restriction":{"subject_scope":"project","stacking_policy":"exclusive"},
@@ -631,6 +778,13 @@ async fn admin_marketing_campaign_publish_rejects_future_coupon_campaign() {
         .await
         .unwrap();
     assert_eq!(template.status(), StatusCode::CREATED);
+    activate_coupon_template(
+        &app,
+        &token,
+        "template_publish_reject",
+        "sdkw-test-template-publish-reject",
+    )
+    .await;
 
     let campaign = app
         .clone()
@@ -657,6 +811,13 @@ async fn admin_marketing_campaign_publish_rejects_future_coupon_campaign() {
         .await
         .unwrap();
     assert_eq!(campaign.status(), StatusCode::CREATED);
+    approve_marketing_campaign(
+        &app,
+        &token,
+        "campaign_publish_future",
+        "sdkw-test-campaign-publish-future",
+    )
+    .await;
 
     let published = app
         .clone()
@@ -695,12 +856,22 @@ async fn admin_marketing_campaign_publish_rejects_future_coupon_campaign() {
         .unwrap();
     assert_eq!(audits.status(), StatusCode::OK);
     let audits_json = read_json(audits).await;
-    assert_eq!(audits_json.as_array().unwrap().len(), 1);
+    assert_eq!(audits_json.as_array().unwrap().len(), 3);
     assert_eq!(audits_json[0]["action"], "publish");
     assert_eq!(audits_json[0]["outcome"], "rejected");
     assert_eq!(
         audits_json[0]["request_id"],
         "sdkw-test-campaign-publish-rejected-1"
+    );
+    assert_eq!(audits_json[1]["action"], "approve");
+    assert_eq!(
+        audits_json[1]["request_id"],
+        "sdkw-test-campaign-publish-future-approve"
+    );
+    assert_eq!(audits_json[2]["action"], "submit_for_approval");
+    assert_eq!(
+        audits_json[2]["request_id"],
+        "sdkw-test-campaign-publish-future-submit"
     );
     assert!(audits_json[0]["decision_reasons"]
         .as_array()
@@ -729,7 +900,7 @@ async fn admin_marketing_campaign_revision_governance_routes_clone_compare_rejec
                         "coupon_template_id":"template_campaign_revision_source",
                         "template_key":"campaign-revision-template-source",
                         "display_name":"Campaign Revision Template Source",
-                        "status":"active",
+                        "status":"draft",
                         "approval_state":"approved",
                         "revision":1,
                         "distribution_kind":"shared_code",
@@ -744,6 +915,13 @@ async fn admin_marketing_campaign_revision_governance_routes_clone_compare_rejec
         .await
         .unwrap();
     assert_eq!(template.status(), StatusCode::CREATED);
+    activate_coupon_template(
+        &app,
+        &token,
+        "template_campaign_revision_source",
+        "sdkw-test-template-campaign-revision-source",
+    )
+    .await;
 
     let source_campaign = app
         .clone()
@@ -758,7 +936,7 @@ async fn admin_marketing_campaign_revision_governance_routes_clone_compare_rejec
                         "marketing_campaign_id":"campaign_revision_source",
                         "coupon_template_id":"template_campaign_revision_source",
                         "display_name":"Campaign Revision Source",
-                        "status":"active",
+                        "status":"draft",
                         "approval_state":"approved",
                         "revision":1,
                         "created_at_ms":1710000000000,
@@ -1014,6 +1192,115 @@ async fn admin_marketing_campaign_revision_governance_routes_clone_compare_rejec
 }
 
 #[tokio::test]
+async fn admin_marketing_create_routes_reject_lifecycle_fields_on_create() {
+    let pool = memory_pool().await;
+    let app = sdkwork_api_interface_admin::admin_router_with_pool(pool);
+    let token = login_token(app.clone()).await;
+
+    let template = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/marketing/coupon-templates")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{
+                        "coupon_template_id":"template_create_guard",
+                        "template_key":"create-guard",
+                        "display_name":"Create Guard",
+                        "status":"active",
+                        "approval_state":"approved",
+                        "distribution_kind":"unique_code",
+                        "benefit":{"benefit_kind":"percentage_off","discount_percent":20},
+                        "restriction":{"subject_scope":"project","stacking_policy":"exclusive"},
+                        "created_at_ms":1710000000000,
+                        "updated_at_ms":1710000000000
+                    }"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(template.status(), StatusCode::BAD_REQUEST);
+
+    let campaign = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/marketing/campaigns")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{
+                        "marketing_campaign_id":"campaign_create_guard",
+                        "coupon_template_id":"template_create_guard",
+                        "display_name":"Create Guard Campaign",
+                        "status":"active",
+                        "approval_state":"approved",
+                        "created_at_ms":1710000000000,
+                        "updated_at_ms":1710000000000
+                    }"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(campaign.status(), StatusCode::BAD_REQUEST);
+
+    let budget = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/marketing/budgets")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{
+                        "campaign_budget_id":"budget_create_guard",
+                        "marketing_campaign_id":"campaign_create_guard",
+                        "status":"active",
+                        "total_budget_minor":500000,
+                        "reserved_budget_minor":0,
+                        "consumed_budget_minor":0,
+                        "created_at_ms":1710000000000,
+                        "updated_at_ms":1710000000000
+                    }"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(budget.status(), StatusCode::BAD_REQUEST);
+
+    let code = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/marketing/codes")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{
+                        "coupon_code_id":"code_create_guard",
+                        "coupon_template_id":"template_create_guard",
+                        "code_value":"CREATEGUARD",
+                        "status":"reserved",
+                        "created_at_ms":1710000000000,
+                        "updated_at_ms":1710000000000
+                    }"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(code.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn admin_marketing_budget_lifecycle_routes_apply_coupon_semantic_actions() {
     let pool = memory_pool().await;
     let app = sdkwork_api_interface_admin::admin_router_with_pool(pool);
@@ -1032,7 +1319,7 @@ async fn admin_marketing_budget_lifecycle_routes_apply_coupon_semantic_actions()
                         "coupon_template_id":"template_budget_lifecycle",
                         "template_key":"budget-lifecycle",
                         "display_name":"Budget Lifecycle",
-                        "status":"active",
+                        "status":"draft",
                         "distribution_kind":"shared_code",
                         "benefit":{"benefit_kind":"percentage_off","discount_percent":15},
                         "restriction":{"subject_scope":"project","stacking_policy":"exclusive"},
@@ -1059,7 +1346,7 @@ async fn admin_marketing_budget_lifecycle_routes_apply_coupon_semantic_actions()
                         "marketing_campaign_id":"campaign_budget_lifecycle",
                         "coupon_template_id":"template_budget_lifecycle",
                         "display_name":"Budget Lifecycle Campaign",
-                        "status":"active",
+                        "status":"draft",
                         "created_at_ms":1710000000000,
                         "updated_at_ms":1710000000000
                     }"#,
@@ -1084,8 +1371,8 @@ async fn admin_marketing_budget_lifecycle_routes_apply_coupon_semantic_actions()
                         "marketing_campaign_id":"campaign_budget_lifecycle",
                         "status":"draft",
                         "total_budget_minor":500000,
-                        "reserved_budget_minor":25000,
-                        "consumed_budget_minor":50000,
+                        "reserved_budget_minor":0,
+                        "consumed_budget_minor":0,
                         "created_at_ms":1710000000000,
                         "updated_at_ms":1710000000000
                     }"#,
@@ -1195,7 +1482,7 @@ async fn admin_marketing_budget_activate_rejects_budget_without_headroom() {
                         "coupon_template_id":"template_budget_reject",
                         "template_key":"budget-reject",
                         "display_name":"Budget Reject",
-                        "status":"active",
+                        "status":"draft",
                         "distribution_kind":"shared_code",
                         "benefit":{"benefit_kind":"percentage_off","discount_percent":10},
                         "restriction":{"subject_scope":"project","stacking_policy":"exclusive"},
@@ -1222,7 +1509,7 @@ async fn admin_marketing_budget_activate_rejects_budget_without_headroom() {
                         "marketing_campaign_id":"campaign_budget_reject",
                         "coupon_template_id":"template_budget_reject",
                         "display_name":"Budget Reject Campaign",
-                        "status":"active",
+                        "status":"draft",
                         "created_at_ms":1710000000000,
                         "updated_at_ms":1710000000000
                     }"#,
@@ -1245,10 +1532,10 @@ async fn admin_marketing_budget_activate_rejects_budget_without_headroom() {
                     r#"{
                         "campaign_budget_id":"budget_lifecycle_reject",
                         "marketing_campaign_id":"campaign_budget_reject",
-                        "status":"exhausted",
-                        "total_budget_minor":100000,
+                        "status":"draft",
+                        "total_budget_minor":0,
                         "reserved_budget_minor":0,
-                        "consumed_budget_minor":100000,
+                        "consumed_budget_minor":0,
                         "created_at_ms":1710000000000,
                         "updated_at_ms":1710000000000
                     }"#,
@@ -1330,7 +1617,7 @@ async fn admin_marketing_coupon_code_lifecycle_routes_apply_coupon_semantic_acti
                         "coupon_template_id":"template_code_lifecycle",
                         "template_key":"code-lifecycle",
                         "display_name":"Code Lifecycle",
-                        "status":"active",
+                        "status":"draft",
                         "distribution_kind":"unique_code",
                         "benefit":{"benefit_kind":"percentage_off","discount_percent":12},
                         "restriction":{"subject_scope":"project","stacking_policy":"exclusive"},
@@ -1462,7 +1749,7 @@ async fn admin_marketing_coupon_code_restore_rejects_expired_coupon_code() {
                         "coupon_template_id":"template_code_reject",
                         "template_key":"code-reject",
                         "display_name":"Code Reject",
-                        "status":"active",
+                        "status":"draft",
                         "distribution_kind":"unique_code",
                         "benefit":{"benefit_kind":"percentage_off","discount_percent":10},
                         "restriction":{"subject_scope":"project","stacking_policy":"exclusive"},
@@ -1489,7 +1776,7 @@ async fn admin_marketing_coupon_code_restore_rejects_expired_coupon_code() {
                         "coupon_code_id":"code_lifecycle_reject",
                         "coupon_template_id":"template_code_reject",
                         "code_value":"REJECT10",
-                        "status":"disabled",
+                        "status":"available",
                         "expires_at_ms":{},
                         "created_at_ms":1710000000000,
                         "updated_at_ms":1710000000000
@@ -1586,6 +1873,13 @@ async fn admin_marketing_coupon_template_lifecycle_routes_apply_coupon_semantic_
         .await
         .unwrap();
     assert_eq!(publish_template.status(), StatusCode::CREATED);
+    approve_coupon_template(
+        &app,
+        &token,
+        "template_lifecycle_publish",
+        "sdkw-test-template-lifecycle-publish",
+    )
+    .await;
 
     let schedule_template = app
         .clone()
@@ -1615,6 +1909,13 @@ async fn admin_marketing_coupon_template_lifecycle_routes_apply_coupon_semantic_
         .await
         .unwrap();
     assert_eq!(schedule_template.status(), StatusCode::CREATED);
+    approve_coupon_template(
+        &app,
+        &token,
+        "template_lifecycle_schedule",
+        "sdkw-test-template-lifecycle-schedule",
+    )
+    .await;
 
     let published = app
         .clone()
@@ -1709,13 +2010,23 @@ async fn admin_marketing_coupon_template_lifecycle_routes_apply_coupon_semantic_
         .unwrap();
     assert_eq!(publish_audits.status(), StatusCode::OK);
     let publish_audits_json = read_json(publish_audits).await;
-    assert_eq!(publish_audits_json.as_array().unwrap().len(), 2);
+    assert_eq!(publish_audits_json.as_array().unwrap().len(), 4);
     assert_eq!(publish_audits_json[0]["action"], "retire");
     assert_eq!(publish_audits_json[0]["request_id"], "sdkw-test-template-retire-1");
     assert_eq!(publish_audits_json[1]["action"], "publish");
     assert_eq!(
         publish_audits_json[1]["request_id"],
         "sdkw-test-template-publish-1"
+    );
+    assert_eq!(publish_audits_json[2]["action"], "approve");
+    assert_eq!(
+        publish_audits_json[2]["request_id"],
+        "sdkw-test-template-lifecycle-publish-approve"
+    );
+    assert_eq!(publish_audits_json[3]["action"], "submit_for_approval");
+    assert_eq!(
+        publish_audits_json[3]["request_id"],
+        "sdkw-test-template-lifecycle-publish-submit"
     );
 
     let schedule_audits = app
@@ -1733,11 +2044,21 @@ async fn admin_marketing_coupon_template_lifecycle_routes_apply_coupon_semantic_
         .unwrap();
     assert_eq!(schedule_audits.status(), StatusCode::OK);
     let schedule_audits_json = read_json(schedule_audits).await;
-    assert_eq!(schedule_audits_json.as_array().unwrap().len(), 1);
+    assert_eq!(schedule_audits_json.as_array().unwrap().len(), 3);
     assert_eq!(schedule_audits_json[0]["action"], "schedule");
     assert_eq!(
         schedule_audits_json[0]["request_id"],
         "sdkw-test-template-schedule-1"
+    );
+    assert_eq!(schedule_audits_json[1]["action"], "approve");
+    assert_eq!(
+        schedule_audits_json[1]["request_id"],
+        "sdkw-test-template-lifecycle-schedule-approve"
+    );
+    assert_eq!(schedule_audits_json[2]["action"], "submit_for_approval");
+    assert_eq!(
+        schedule_audits_json[2]["request_id"],
+        "sdkw-test-template-lifecycle-schedule-submit"
     );
 }
 
@@ -1776,6 +2097,13 @@ async fn admin_marketing_coupon_template_publish_rejects_future_activation() {
         .await
         .unwrap();
     assert_eq!(template.status(), StatusCode::CREATED);
+    approve_coupon_template(
+        &app,
+        &token,
+        "template_publish_future_activation",
+        "sdkw-test-template-publish-future-activation",
+    )
+    .await;
 
     let published = app
         .clone()
@@ -1818,12 +2146,22 @@ async fn admin_marketing_coupon_template_publish_rejects_future_activation() {
         .unwrap();
     assert_eq!(audits.status(), StatusCode::OK);
     let audits_json = read_json(audits).await;
-    assert_eq!(audits_json.as_array().unwrap().len(), 1);
+    assert_eq!(audits_json.as_array().unwrap().len(), 3);
     assert_eq!(audits_json[0]["action"], "publish");
     assert_eq!(audits_json[0]["outcome"], "rejected");
     assert_eq!(
         audits_json[0]["request_id"],
         "sdkw-test-template-publish-rejected-1"
+    );
+    assert_eq!(audits_json[1]["action"], "approve");
+    assert_eq!(
+        audits_json[1]["request_id"],
+        "sdkw-test-template-publish-future-activation-approve"
+    );
+    assert_eq!(audits_json[2]["action"], "submit_for_approval");
+    assert_eq!(
+        audits_json[2]["request_id"],
+        "sdkw-test-template-publish-future-activation-submit"
     );
     assert!(audits_json[0]["decision_reasons"]
         .as_array()
@@ -1853,7 +2191,7 @@ async fn admin_marketing_coupon_template_revision_governance_routes_clone_compar
                         "coupon_template_id":"template_revision_source",
                         "template_key":"template-revision-source",
                         "display_name":"Template Revision Source",
-                        "status":"active",
+                        "status":"draft",
                         "approval_state":"approved",
                         "revision":1,
                         "distribution_kind":"shared_code",
@@ -2070,3 +2408,4 @@ async fn admin_marketing_coupon_template_revision_governance_routes_clone_compar
     assert!(audits.iter().any(|audit| audit["action"] == "publish"));
     assert!(audits.iter().any(|audit| audit["outcome"] == "rejected"));
 }
+

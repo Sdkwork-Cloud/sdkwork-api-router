@@ -100,10 +100,10 @@ mod sqlite_migration_catalog_gateway_compat;
 mod sqlite_migration_catalog_gateway_schema;
 mod sqlite_migration_commerce_jobs_schema;
 mod sqlite_migration_identity_schema;
-mod sqlite_migration_legacy_compat;
 mod sqlite_migration_marketing_schema;
 mod sqlite_migration_routing_schema;
 mod sqlite_migration_runtime_schema;
+mod sqlite_migration_seed;
 mod sqlite_support;
 mod tenant_store;
 mod usage_billing_store;
@@ -119,10 +119,10 @@ pub(crate) use sqlite_migration_catalog_gateway_compat::apply_sqlite_catalog_gat
 pub(crate) use sqlite_migration_catalog_gateway_schema::apply_sqlite_catalog_gateway_schema;
 pub(crate) use sqlite_migration_commerce_jobs_schema::apply_sqlite_commerce_jobs_schema;
 pub(crate) use sqlite_migration_identity_schema::apply_sqlite_identity_schema;
-pub(crate) use sqlite_migration_legacy_compat::apply_sqlite_legacy_compatibility;
 pub(crate) use sqlite_migration_marketing_schema::apply_sqlite_marketing_schema;
 pub(crate) use sqlite_migration_routing_schema::apply_sqlite_routing_schema;
 pub(crate) use sqlite_migration_runtime_schema::apply_sqlite_runtime_schema;
+pub(crate) use sqlite_migration_seed::seed_sqlite_builtin_channels;
 pub(crate) use sqlite_support::*;
 
 pub use migrations::run_migrations;

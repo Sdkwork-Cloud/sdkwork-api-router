@@ -57,5 +57,3 @@ pub(crate) async fn change_password_handler(
     .map(Json)
     .map_err(portal_error_response)
 }
-
-

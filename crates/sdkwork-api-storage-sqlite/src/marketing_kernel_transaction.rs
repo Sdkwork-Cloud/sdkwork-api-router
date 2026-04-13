@@ -189,13 +189,15 @@ impl MarketingKernelTransaction for SqliteMarketingKernelTx<'_> {
         sqlx::query(
             "INSERT INTO ai_marketing_coupon_reservation (
                 coupon_reservation_id, coupon_code_id, subject_scope, subject_id,
-                reservation_status, expires_at_ms, created_at_ms, updated_at_ms, record_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                reservation_status, budget_reserved_minor, expires_at_ms,
+                created_at_ms, updated_at_ms, record_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(coupon_reservation_id) DO UPDATE SET
                 coupon_code_id = excluded.coupon_code_id,
                 subject_scope = excluded.subject_scope,
                 subject_id = excluded.subject_id,
                 reservation_status = excluded.reservation_status,
+                budget_reserved_minor = excluded.budget_reserved_minor,
                 expires_at_ms = excluded.expires_at_ms,
                 created_at_ms = excluded.created_at_ms,
                 updated_at_ms = excluded.updated_at_ms,
@@ -206,6 +208,7 @@ impl MarketingKernelTransaction for SqliteMarketingKernelTx<'_> {
         .bind(marketing_subject_scope_as_str(record.subject_scope))
         .bind(&record.subject_id)
         .bind(coupon_reservation_status_as_str(record.reservation_status))
+        .bind(i64::try_from(record.budget_reserved_minor)?)
         .bind(i64::try_from(record.expires_at_ms)?)
         .bind(i64::try_from(record.created_at_ms)?)
         .bind(i64::try_from(record.updated_at_ms)?)
@@ -264,11 +267,15 @@ impl MarketingKernelTransaction for SqliteMarketingKernelTx<'_> {
         sqlx::query(
             "INSERT INTO ai_marketing_campaign_budget (
                 campaign_budget_id, marketing_campaign_id, status,
+                total_budget_minor, reserved_budget_minor, consumed_budget_minor,
                 created_at_ms, updated_at_ms, record_json
-            ) VALUES (?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(campaign_budget_id) DO UPDATE SET
                 marketing_campaign_id = excluded.marketing_campaign_id,
                 status = excluded.status,
+                total_budget_minor = excluded.total_budget_minor,
+                reserved_budget_minor = excluded.reserved_budget_minor,
+                consumed_budget_minor = excluded.consumed_budget_minor,
                 created_at_ms = excluded.created_at_ms,
                 updated_at_ms = excluded.updated_at_ms,
                 record_json = excluded.record_json",
@@ -276,6 +283,9 @@ impl MarketingKernelTransaction for SqliteMarketingKernelTx<'_> {
         .bind(&record.campaign_budget_id)
         .bind(&record.marketing_campaign_id)
         .bind(campaign_budget_status_as_str(record.status))
+        .bind(i64::try_from(record.total_budget_minor)?)
+        .bind(i64::try_from(record.reserved_budget_minor)?)
+        .bind(i64::try_from(record.consumed_budget_minor)?)
         .bind(i64::try_from(record.created_at_ms)?)
         .bind(i64::try_from(record.updated_at_ms)?)
         .bind(serde_json::to_string(record)?)
@@ -291,14 +301,16 @@ impl MarketingKernelTransaction for SqliteMarketingKernelTx<'_> {
         sqlx::query(
             "INSERT INTO ai_marketing_coupon_redemption (
                 coupon_redemption_id, coupon_reservation_id, coupon_code_id, coupon_template_id,
-                redemption_status, order_id, payment_event_id, redeemed_at_ms, updated_at_ms,
-                record_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                redemption_status, budget_consumed_minor, subsidy_amount_minor,
+                order_id, payment_event_id, redeemed_at_ms, updated_at_ms, record_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(coupon_redemption_id) DO UPDATE SET
                 coupon_reservation_id = excluded.coupon_reservation_id,
                 coupon_code_id = excluded.coupon_code_id,
                 coupon_template_id = excluded.coupon_template_id,
                 redemption_status = excluded.redemption_status,
+                budget_consumed_minor = excluded.budget_consumed_minor,
+                subsidy_amount_minor = excluded.subsidy_amount_minor,
                 order_id = excluded.order_id,
                 payment_event_id = excluded.payment_event_id,
                 redeemed_at_ms = excluded.redeemed_at_ms,
@@ -310,6 +322,8 @@ impl MarketingKernelTransaction for SqliteMarketingKernelTx<'_> {
         .bind(&record.coupon_code_id)
         .bind(&record.coupon_template_id)
         .bind(coupon_redemption_status_as_str(record.redemption_status))
+        .bind(i64::try_from(record.budget_consumed_minor)?)
+        .bind(i64::try_from(record.subsidy_amount_minor)?)
         .bind(&record.order_id)
         .bind(&record.payment_event_id)
         .bind(i64::try_from(record.redeemed_at_ms)?)
@@ -327,12 +341,15 @@ impl MarketingKernelTransaction for SqliteMarketingKernelTx<'_> {
         sqlx::query(
             "INSERT INTO ai_marketing_coupon_rollback (
                 coupon_rollback_id, coupon_redemption_id, rollback_type, rollback_status,
+                restored_budget_minor, restored_inventory_count,
                 created_at_ms, updated_at_ms, record_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(coupon_rollback_id) DO UPDATE SET
                 coupon_redemption_id = excluded.coupon_redemption_id,
                 rollback_type = excluded.rollback_type,
                 rollback_status = excluded.rollback_status,
+                restored_budget_minor = excluded.restored_budget_minor,
+                restored_inventory_count = excluded.restored_inventory_count,
                 created_at_ms = excluded.created_at_ms,
                 updated_at_ms = excluded.updated_at_ms,
                 record_json = excluded.record_json",
@@ -341,6 +358,8 @@ impl MarketingKernelTransaction for SqliteMarketingKernelTx<'_> {
         .bind(&record.coupon_redemption_id)
         .bind(coupon_rollback_type_as_str(record.rollback_type))
         .bind(coupon_rollback_status_as_str(record.rollback_status))
+        .bind(i64::try_from(record.restored_budget_minor)?)
+        .bind(i64::try_from(record.restored_inventory_count)?)
         .bind(i64::try_from(record.created_at_ms)?)
         .bind(i64::try_from(record.updated_at_ms)?)
         .bind(serde_json::to_string(record)?)

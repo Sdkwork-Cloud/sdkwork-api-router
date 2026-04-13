@@ -1,4 +1,4 @@
-﻿use super::*;
+use super::*;
 
 #[async_trait]
 impl AdminStore for SqliteAdminStore {
@@ -181,8 +181,7 @@ impl AdminStore for SqliteAdminStore {
         channel_id: &str,
         model_id: &str,
     ) -> Result<bool> {
-        SqliteAdminStore::delete_provider_model(self, proxy_provider_id, channel_id, model_id)
-            .await
+        SqliteAdminStore::delete_provider_model(self, proxy_provider_id, channel_id, model_id).await
     }
     async fn insert_model_price(&self, record: &ModelPriceRecord) -> Result<ModelPriceRecord> {
         SqliteAdminStore::insert_model_price(self, record).await
@@ -418,6 +417,13 @@ impl AdminStore for SqliteAdminStore {
     async fn list_marketing_campaign_records(&self) -> Result<Vec<MarketingCampaignRecord>> {
         <Self as MarketingStore>::list_marketing_campaign_records(self).await
     }
+
+    async fn find_marketing_campaign_record(
+        &self,
+        marketing_campaign_id: &str,
+    ) -> Result<Option<MarketingCampaignRecord>> {
+        <Self as MarketingStore>::find_marketing_campaign_record(self, marketing_campaign_id).await
+    }
     async fn list_marketing_campaign_records_for_template(
         &self,
         coupon_template_id: &str,
@@ -458,6 +464,12 @@ impl AdminStore for SqliteAdminStore {
     }
     async fn list_campaign_budget_records(&self) -> Result<Vec<CampaignBudgetRecord>> {
         <Self as MarketingStore>::list_campaign_budget_records(self).await
+    }
+    async fn find_campaign_budget_record(
+        &self,
+        campaign_budget_id: &str,
+    ) -> Result<Option<CampaignBudgetRecord>> {
+        <Self as MarketingStore>::find_campaign_budget_record(self, campaign_budget_id).await
     }
     async fn list_campaign_budget_records_for_campaign(
         &self,
@@ -743,11 +755,8 @@ impl AdminStore for SqliteAdminStore {
         &self,
         idempotency_key: &str,
     ) -> Result<Option<CommercePaymentAttemptRecord>> {
-        SqliteAdminStore::find_commerce_payment_attempt_by_idempotency_key(
-            self,
-            idempotency_key,
-        )
-        .await
+        SqliteAdminStore::find_commerce_payment_attempt_by_idempotency_key(self, idempotency_key)
+            .await
     }
     async fn list_commerce_payment_attempts_for_order(
         &self,
@@ -761,9 +770,7 @@ impl AdminStore for SqliteAdminStore {
     ) -> Result<CommerceWebhookInboxRecord> {
         SqliteAdminStore::upsert_commerce_webhook_inbox(self, record).await
     }
-    async fn list_commerce_webhook_inbox_records(
-        &self,
-    ) -> Result<Vec<CommerceWebhookInboxRecord>> {
+    async fn list_commerce_webhook_inbox_records(&self) -> Result<Vec<CommerceWebhookInboxRecord>> {
         SqliteAdminStore::list_commerce_webhook_inbox_records(self).await
     }
     async fn find_commerce_webhook_inbox_by_dedupe_key(
@@ -1079,4 +1086,3 @@ impl AdminStore for SqliteAdminStore {
         .await
     }
 }
-

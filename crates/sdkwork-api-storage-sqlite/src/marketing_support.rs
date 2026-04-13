@@ -1,7 +1,7 @@
 use super::*;
 
 pub(crate) fn normalize_coupon_code_value(code_value: &str) -> String {
-    code_value.trim().to_ascii_uppercase()
+    sdkwork_api_domain_marketing::normalize_coupon_code(code_value)
 }
 
 pub(crate) fn coupon_template_status_as_str(status: CouponTemplateStatus) -> &'static str {

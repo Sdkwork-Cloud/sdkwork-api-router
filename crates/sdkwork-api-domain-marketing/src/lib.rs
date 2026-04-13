@@ -2,6 +2,10 @@ use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use utoipa::ToSchema;
 
+pub fn normalize_coupon_code(value: &str) -> String {
+    value.trim().to_ascii_uppercase()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MarketingBenefitKind {
@@ -904,10 +908,7 @@ impl CouponTemplateRecord {
         self
     }
 
-    pub fn with_root_coupon_template_id(
-        mut self,
-        root_coupon_template_id: Option<String>,
-    ) -> Self {
+    pub fn with_root_coupon_template_id(mut self, root_coupon_template_id: Option<String>) -> Self {
         self.root_coupon_template_id = root_coupon_template_id;
         self
     }
@@ -1004,10 +1005,7 @@ impl MarketingCampaignRecord {
         self
     }
 
-    pub fn with_approval_state(
-        mut self,
-        approval_state: MarketingCampaignApprovalState,
-    ) -> Self {
+    pub fn with_approval_state(mut self, approval_state: MarketingCampaignApprovalState) -> Self {
         self.approval_state = approval_state;
         self
     }
@@ -1276,6 +1274,8 @@ pub struct CouponRedemptionRecord {
     pub coupon_code_id: String,
     pub coupon_template_id: String,
     pub redemption_status: CouponRedemptionStatus,
+    #[serde(default)]
+    pub budget_consumed_minor: u64,
     pub subsidy_amount_minor: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub order_id: Option<String>,
@@ -1299,6 +1299,7 @@ impl CouponRedemptionRecord {
             coupon_code_id: coupon_code_id.into(),
             coupon_template_id: coupon_template_id.into(),
             redemption_status: CouponRedemptionStatus::Pending,
+            budget_consumed_minor: 0,
             subsidy_amount_minor: 0,
             order_id: None,
             payment_event_id: None,
@@ -1314,6 +1315,11 @@ impl CouponRedemptionRecord {
 
     pub fn with_subsidy_amount_minor(mut self, subsidy_amount_minor: u64) -> Self {
         self.subsidy_amount_minor = subsidy_amount_minor;
+        self
+    }
+
+    pub fn with_budget_consumed_minor(mut self, budget_consumed_minor: u64) -> Self {
+        self.budget_consumed_minor = budget_consumed_minor;
         self
     }
 

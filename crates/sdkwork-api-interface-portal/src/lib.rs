@@ -1,25 +1,24 @@
 use std::collections::{HashMap, HashSet};
-use std::fmt::Write as _;
 use std::sync::Arc;
 
 mod auth;
+mod auth_types;
 mod billing;
 mod commerce;
 mod gateway;
 mod http;
 mod jobs;
 mod marketing;
+mod marketing_types;
 mod openapi;
 mod routing;
-mod workspace;
 mod state;
-mod auth_types;
-mod marketing_types;
+mod workspace;
 
-pub use state::PortalApiState;
 pub(crate) use auth_types::*;
 pub(crate) use commerce::{PortalCommerceReconciliationSummary, PortalOrderCenterEntry};
 pub(crate) use marketing_types::*;
+pub use state::PortalApiState;
 pub(crate) use state::{AuthenticatedPortalClaims, DEFAULT_PORTAL_JWT_SIGNING_SECRET};
 
 use axum::{
@@ -40,13 +39,11 @@ use sdkwork_api_app_commerce::{
     create_portal_commerce_payment_attempt, list_portal_commerce_payment_attempts,
     list_portal_commerce_payment_methods, list_project_commerce_orders,
     load_portal_commerce_catalog, load_portal_commerce_checkout_session_with_policy,
-    load_portal_commerce_order, load_portal_commerce_payment_attempt,
-    load_project_membership, portal_commerce_product_kind,
-    portal_commerce_transaction_kind, preview_portal_commerce_quote,
-    process_portal_stripe_webhook, reclaim_expired_coupon_reservations_for_code_if_needed,
-    settle_portal_commerce_order_with_billing, submit_portal_commerce_order, CommerceError,
-    CommercePaymentAttemptRecord, PaymentMethodRecord, PortalCommerceCatalog,
-    PortalCommerceCheckoutSession, PortalCommerceOrderRecord,
+    load_portal_commerce_order, load_portal_commerce_payment_attempt, load_project_membership,
+    portal_commerce_product_kind, portal_commerce_transaction_kind, preview_portal_commerce_quote,
+    process_portal_stripe_webhook, settle_portal_commerce_order_with_billing,
+    submit_portal_commerce_order, CommerceError, CommercePaymentAttemptRecord, PaymentMethodRecord,
+    PortalCommerceCatalog, PortalCommerceCheckoutSession, PortalCommerceOrderRecord,
     PortalCommercePaymentAttemptCreateRequest, PortalCommercePaymentEventRecord,
     PortalCommercePaymentEventRequest, PortalCommerceQuote, PortalCommerceQuoteRequest,
     PortalCommerceWebhookAck, PortalProjectMembershipRecord,
@@ -65,8 +62,18 @@ use sdkwork_api_app_jobs::{
     find_async_job, list_async_job_assets, list_async_job_attempts, list_async_jobs,
 };
 use sdkwork_api_app_marketing::{
-    confirm_coupon_redemption, reserve_coupon_redemption, rollback_coupon_redemption,
-    validate_coupon_stack, CouponValidationDecision,
+    confirm_coupon_for_subject,
+    list_coupon_code_views_for_subjects, list_coupon_redemptions_for_subjects,
+    list_coupon_reward_history_views_for_subjects, load_coupon_redemption_context_owned_by_subject,
+    load_coupon_reservation_context_owned_by_subject,
+    marketing_subject_scope_token, normalize_coupon_code, reserve_coupon_for_subject,
+    resolve_idempotency_key as resolve_shared_idempotency_key,
+    rollback_coupon_for_subject, summarize_coupon_codes, summarize_coupon_redemptions,
+    validate_coupon_for_subject, ConfirmCouponInput, CouponValidationDecision,
+    MarketingCodeSummary, MarketingCodeView, MarketingOperationError,
+    MarketingRedemptionOwnershipView, MarketingRedemptionSummary,
+    MarketingReservationOwnershipView, MarketingRewardHistoryView, MarketingSubjectSet,
+    ReserveCouponInput, RollbackCouponInput, ValidatedCouponResult,
 };
 use sdkwork_api_app_rate_limit::{
     check_coupon_rate_limit, coupon_actor_bucket, CouponRateLimitAction,
@@ -87,10 +94,9 @@ use sdkwork_api_domain_catalog::ProxyProvider;
 use sdkwork_api_domain_identity::{ApiKeyGroupRecord, GatewayApiKeyRecord, PortalUserProfile};
 use sdkwork_api_domain_jobs::{AsyncJobAssetRecord, AsyncJobAttemptRecord, AsyncJobRecord};
 use sdkwork_api_domain_marketing::{
-    CampaignBudgetRecord, CampaignBudgetStatus, CouponCodeRecord, CouponCodeStatus,
-    CouponDistributionKind, CouponRedemptionRecord, CouponRedemptionStatus,
-    CouponReservationRecord, CouponRollbackRecord, CouponRollbackType, CouponTemplateRecord,
-    MarketingCampaignRecord, MarketingSubjectScope,
+    CampaignBudgetRecord, CouponCodeRecord, CouponCodeStatus, CouponRedemptionRecord,
+    CouponRedemptionStatus, CouponReservationRecord, CouponRollbackRecord, CouponRollbackType,
+    CouponTemplateRecord, MarketingCampaignRecord, MarketingSubjectScope,
 };
 use sdkwork_api_domain_rate_limit::{RateLimitPolicy, RateLimitWindowSnapshot};
 use sdkwork_api_domain_routing::{
@@ -99,18 +105,11 @@ use sdkwork_api_domain_routing::{
 };
 use sdkwork_api_domain_usage::{UsageRecord, UsageSummary};
 use sdkwork_api_observability::{observe_http_metrics, observe_http_tracing, HttpMetricsRegistry};
-use sdkwork_api_storage_core::{
-    AdminStore, AtomicCouponConfirmationCommand, AtomicCouponReservationCommand,
-    AtomicCouponRollbackCommand, Reloadable,
-};
+use sdkwork_api_storage_core::{AdminStore, Reloadable};
 use sdkwork_api_storage_sqlite::SqliteAdminStore;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 use tower_http::cors::{Any, CorsLayer};
-
-
-
 
 pub fn try_portal_router() -> anyhow::Result<Router> {
     let service_name: Arc<str> = Arc::from("portal");
@@ -118,7 +117,10 @@ pub fn try_portal_router() -> anyhow::Result<Router> {
     let http_exposure = http::http_exposure_config()?;
     Ok(Router::new()
         .merge(openapi::portal_docs_router())
-        .route("/metrics", http::metrics_route(metrics.clone(), &http_exposure))
+        .route(
+            "/metrics",
+            http::metrics_route(metrics.clone(), &http_exposure),
+        )
         .route("/portal/health", get(|| async { "ok" }))
         .route("/portal/auth/register", post(|| async { "register" }))
         .route("/portal/auth/login", post(|| async { "login" }))
@@ -359,7 +361,10 @@ pub fn portal_router_with_state_and_http_exposure(
     let metrics = Arc::new(HttpMetricsRegistry::new("portal"));
     Router::new()
         .merge(openapi::portal_docs_router())
-        .route("/metrics", http::metrics_route(metrics.clone(), &http_exposure))
+        .route(
+            "/metrics",
+            http::metrics_route(metrics.clone(), &http_exposure),
+        )
         .route("/portal/health", get(|| async { "ok" }))
         .route("/portal/auth/register", post(auth::register_handler))
         .route("/portal/auth/login", post(auth::login_handler))
@@ -386,7 +391,10 @@ pub fn portal_router_with_state_and_http_exposure(
             "/portal/marketing/coupon-redemptions/rollback",
             post(marketing::rollback_marketing_coupon_redemption_handler),
         )
-        .route("/portal/marketing/my-coupons", get(marketing::list_my_coupons_handler))
+        .route(
+            "/portal/marketing/my-coupons",
+            get(marketing::list_my_coupons_handler),
+        )
         .route(
             "/portal/marketing/reward-history",
             get(marketing::list_marketing_reward_history_handler),
@@ -395,7 +403,10 @@ pub fn portal_router_with_state_and_http_exposure(
             "/portal/marketing/redemptions",
             get(marketing::list_marketing_redemptions_handler),
         )
-        .route("/portal/marketing/codes", get(marketing::list_marketing_codes_handler))
+        .route(
+            "/portal/marketing/codes",
+            get(marketing::list_marketing_codes_handler),
+        )
         .route("/portal/async-jobs", get(jobs::list_async_jobs_handler))
         .route(
             "/portal/async-jobs/{job_id}/attempts",
@@ -409,11 +420,18 @@ pub fn portal_router_with_state_and_http_exposure(
             "/portal/gateway/rate-limit-snapshot",
             get(workspace::gateway_rate_limit_snapshot_handler),
         )
-        .route("/portal/commerce/catalog", get(commerce::commerce_catalog_handler))
-        .route("/portal/commerce/quote", post(commerce::commerce_quote_handler))
+        .route(
+            "/portal/commerce/catalog",
+            get(commerce::commerce_catalog_handler),
+        )
+        .route(
+            "/portal/commerce/quote",
+            post(commerce::commerce_quote_handler),
+        )
         .route(
             "/portal/commerce/orders",
-            get(commerce::list_commerce_orders_handler).post(commerce::create_commerce_order_handler),
+            get(commerce::list_commerce_orders_handler)
+                .post(commerce::create_commerce_order_handler),
         )
         .route(
             "/portal/commerce/orders/{order_id}",
@@ -478,15 +496,25 @@ pub fn portal_router_with_state_and_http_exposure(
         )
         .route(
             "/portal/api-key-groups/{group_id}",
-            patch(gateway::update_api_key_group_handler).delete(gateway::delete_api_key_group_handler),
+            patch(gateway::update_api_key_group_handler)
+                .delete(gateway::delete_api_key_group_handler),
         )
         .route(
             "/portal/api-key-groups/{group_id}/status",
             post(gateway::update_api_key_group_status_handler),
         )
-        .route("/portal/usage/records", get(workspace::list_usage_records_handler))
-        .route("/portal/usage/summary", get(workspace::usage_summary_handler))
-        .route("/portal/billing/account", get(billing::billing_account_handler))
+        .route(
+            "/portal/usage/records",
+            get(workspace::list_usage_records_handler),
+        )
+        .route(
+            "/portal/usage/summary",
+            get(workspace::usage_summary_handler),
+        )
+        .route(
+            "/portal/billing/account",
+            get(billing::billing_account_handler),
+        )
         .route(
             "/portal/billing/account-history",
             get(billing::billing_account_history_handler),
@@ -519,27 +547,44 @@ pub fn portal_router_with_state_and_http_exposure(
             "/portal/billing/pricing-rates",
             get(billing::list_billing_pricing_rates_handler),
         )
-        .route("/portal/billing/summary", get(billing::billing_summary_handler))
-        .route("/portal/billing/ledger", get(billing::list_billing_ledger_handler))
-        .route("/portal/billing/events", get(billing::list_billing_events_handler))
+        .route(
+            "/portal/billing/summary",
+            get(billing::billing_summary_handler),
+        )
+        .route(
+            "/portal/billing/ledger",
+            get(billing::list_billing_ledger_handler),
+        )
+        .route(
+            "/portal/billing/events",
+            get(billing::list_billing_events_handler),
+        )
         .route(
             "/portal/billing/events/summary",
             get(billing::billing_events_summary_handler),
         )
-        .route("/portal/routing/summary", get(routing::routing_summary_handler))
+        .route(
+            "/portal/routing/summary",
+            get(routing::routing_summary_handler),
+        )
         .route(
             "/portal/routing/profiles",
-            get(routing::list_routing_profiles_handler).post(routing::create_routing_profile_handler),
+            get(routing::list_routing_profiles_handler)
+                .post(routing::create_routing_profile_handler),
         )
         .route(
             "/portal/routing/preferences",
-            get(routing::get_routing_preferences_handler).post(routing::save_routing_preferences_handler),
+            get(routing::get_routing_preferences_handler)
+                .post(routing::save_routing_preferences_handler),
         )
         .route(
             "/portal/routing/snapshots",
             get(routing::list_routing_snapshots_handler),
         )
-        .route("/portal/routing/preview", post(routing::preview_routing_handler))
+        .route(
+            "/portal/routing/preview",
+            post(routing::preview_routing_handler),
+        )
         .route(
             "/portal/routing/decision-logs",
             get(routing::list_routing_decision_logs_handler),

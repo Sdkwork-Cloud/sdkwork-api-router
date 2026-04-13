@@ -3,38 +3,10 @@ use super::*;
 #[tokio::test]
 async fn portal_commerce_catalog_exposes_plans_packs_and_active_coupons() {
     let pool = memory_pool().await;
-    sqlx::query(
-        "INSERT INTO ai_coupon_campaigns (id, code, discount_label, audience, remaining, active, note, expires_on, created_at_ms)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind("coupon_spring_launch")
-    .bind("SPRING20")
-    .bind("20% launch discount")
-    .bind("new_signup")
-    .bind(120_i64)
-    .bind(1_i64)
-    .bind("Spring launch campaign")
-    .bind("2026-05-31")
-    .bind(1_710_000_001_i64)
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(
-        "INSERT INTO ai_coupon_campaigns (id, code, discount_label, audience, remaining, active, note, expires_on, created_at_ms)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind("coupon_inactive")
-    .bind("INACTIVE10")
-    .bind("10% inactive discount")
-    .bind("internal")
-    .bind(40_i64)
-    .bind(0_i64)
-    .bind("Inactive campaign")
-    .bind("2026-05-31")
-    .bind(1_710_000_002_i64)
-    .execute(&pool)
-    .await
-    .unwrap();
+    let store = SqliteAdminStore::new(pool.clone());
+    seed_marketing_catalog_coupon(&store).await;
+    seed_marketing_bonus_coupon(&store).await;
+    seed_inactive_marketing_catalog_coupon(&store).await;
 
     let app = portal_lab_app(pool);
     let token = portal_token(app.clone()).await;
@@ -86,7 +58,12 @@ async fn portal_commerce_catalog_exposes_plans_packs_and_active_coupons() {
         .as_array()
         .unwrap()
         .iter()
-        .any(|coupon| coupon["code"] == "SPRING20"));
+        .any(|coupon| coupon["code"] == "LAUNCH20"));
+    assert!(json["coupons"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|coupon| coupon["code"] == "WELCOME100"));
     assert!(json["coupons"]
         .as_array()
         .unwrap()
@@ -308,22 +285,9 @@ async fn portal_commerce_catalog_requires_authentication() {
 #[tokio::test]
 async fn portal_commerce_quote_prices_recharge_and_coupon_redemption() {
     let pool = memory_pool().await;
-    sqlx::query(
-        "INSERT INTO ai_coupon_campaigns (id, code, discount_label, audience, remaining, active, note, expires_on, created_at_ms)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    )
-    .bind("coupon_spring_launch")
-    .bind("SPRING20")
-    .bind("20% launch discount")
-    .bind("new_signup")
-    .bind(120_i64)
-    .bind(1_i64)
-    .bind("Spring launch campaign")
-    .bind("2026-05-31")
-    .bind(1_710_000_001_i64)
-    .execute(&pool)
-    .await
-    .unwrap();
+    let store = SqliteAdminStore::new(pool.clone());
+    seed_marketing_catalog_coupon(&store).await;
+    seed_marketing_bonus_coupon(&store).await;
 
     let app = portal_lab_app(pool);
     let token = portal_token(app.clone()).await;
@@ -337,7 +301,7 @@ async fn portal_commerce_quote_prices_recharge_and_coupon_redemption() {
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    "{\"target_kind\":\"recharge_pack\",\"target_id\":\"pack-100k\",\"coupon_code\":\"SPRING20\",\"current_remaining_units\":5000}",
+                    "{\"target_kind\":\"recharge_pack\",\"target_id\":\"pack-100k\",\"coupon_code\":\"LAUNCH20\",\"current_remaining_units\":5000}",
                 ))
                 .unwrap(),
         )
@@ -352,7 +316,7 @@ async fn portal_commerce_quote_prices_recharge_and_coupon_redemption() {
     assert_eq!(recharge_json["payable_price_label"], "$32.00");
     assert_eq!(recharge_json["granted_units"], 100000);
     assert_eq!(recharge_json["projected_remaining_units"], 105000);
-    assert_eq!(recharge_json["applied_coupon"]["code"], "SPRING20");
+    assert_eq!(recharge_json["applied_coupon"]["code"], "LAUNCH20");
     assert_eq!(
         recharge_json["pricing_plan_id"],
         "pricing_plan:recharge_pack:pack-100k"

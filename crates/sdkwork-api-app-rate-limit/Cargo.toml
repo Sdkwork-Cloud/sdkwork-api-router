@@ -7,6 +7,7 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+sdkwork-api-app-marketing = { path = "../sdkwork-api-app-marketing" }
 sdkwork-api-domain-rate-limit = { path = "../sdkwork-api-domain-rate-limit" }
 sdkwork-api-storage-core = { path = "../sdkwork-api-storage-core" }
 sha2.workspace = true

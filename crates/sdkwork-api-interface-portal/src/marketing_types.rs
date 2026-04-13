@@ -106,6 +106,8 @@ pub(crate) struct PortalCouponReservationRequest {
     pub(crate) coupon_code: String,
     pub(crate) subject_scope: MarketingSubjectScope,
     pub(crate) target_kind: String,
+    #[serde(default)]
+    pub(crate) order_amount_minor: u64,
     pub(crate) reserve_amount_minor: u64,
     pub(crate) ttl_ms: u64,
     #[serde(default)]

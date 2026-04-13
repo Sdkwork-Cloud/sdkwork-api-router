@@ -45,10 +45,6 @@ async fn openapi_routes_expose_admin_api_inventory_with_schema_components() {
     assert!(json["paths"]["/admin/marketing/coupon-templates"]["get"].is_object());
     assert!(json["paths"]["/admin/marketing/coupon-templates"]["post"].is_object());
     assert!(
-        json["paths"]["/admin/marketing/coupon-templates/{coupon_template_id}/status"]["post"]
-            .is_object()
-    );
-    assert!(
         json["paths"]["/admin/marketing/coupon-templates/{coupon_template_id}/clone"]["post"]
             .is_object()
     );
@@ -88,10 +84,6 @@ async fn openapi_routes_expose_admin_api_inventory_with_schema_components() {
     );
     assert!(json["paths"]["/admin/marketing/campaigns"]["get"].is_object());
     assert!(json["paths"]["/admin/marketing/campaigns"]["post"].is_object());
-    assert!(
-        json["paths"]["/admin/marketing/campaigns/{marketing_campaign_id}/status"]["post"]
-            .is_object()
-    );
     assert!(
         json["paths"]["/admin/marketing/campaigns/{marketing_campaign_id}/clone"]["post"]
             .is_object()
@@ -133,9 +125,6 @@ async fn openapi_routes_expose_admin_api_inventory_with_schema_components() {
     assert!(json["paths"]["/admin/marketing/budgets"]["get"].is_object());
     assert!(json["paths"]["/admin/marketing/budgets"]["post"].is_object());
     assert!(
-        json["paths"]["/admin/marketing/budgets/{campaign_budget_id}/status"]["post"].is_object()
-    );
-    assert!(
         json["paths"]["/admin/marketing/budgets/{campaign_budget_id}/activate"]["post"]
             .is_object()
     );
@@ -148,7 +137,6 @@ async fn openapi_routes_expose_admin_api_inventory_with_schema_components() {
     );
     assert!(json["paths"]["/admin/marketing/codes"]["get"].is_object());
     assert!(json["paths"]["/admin/marketing/codes"]["post"].is_object());
-    assert!(json["paths"]["/admin/marketing/codes/{coupon_code_id}/status"]["post"].is_object());
     assert!(
         json["paths"]["/admin/marketing/codes/{coupon_code_id}/disable"]["post"].is_object()
     );
@@ -206,7 +194,6 @@ async fn openapi_routes_expose_admin_api_inventory_with_schema_components() {
     assert!(json["components"]["schemas"]["UpsertPortalUserRequest"].is_object());
     assert!(json["components"]["schemas"]["CouponTemplateRecord"].is_object());
     assert!(json["components"]["schemas"]["CouponTemplateApprovalState"].is_object());
-    assert!(json["components"]["schemas"]["UpdateCouponTemplateStatusRequest"].is_object());
     assert!(json["components"]["schemas"]["CloneCouponTemplateRequest"].is_object());
     assert!(json["components"]["schemas"]["CompareCouponTemplateRequest"].is_object());
     assert!(json["components"]["schemas"]["SubmitCouponTemplateForApprovalRequest"].is_object());
@@ -226,7 +213,6 @@ async fn openapi_routes_expose_admin_api_inventory_with_schema_components() {
     assert!(json["components"]["schemas"]["RetireCouponTemplateRequest"].is_object());
     assert!(json["components"]["schemas"]["MarketingCampaignRecord"].is_object());
     assert!(json["components"]["schemas"]["MarketingCampaignApprovalState"].is_object());
-    assert!(json["components"]["schemas"]["UpdateMarketingCampaignStatusRequest"].is_object());
     assert!(json["components"]["schemas"]["CloneMarketingCampaignRequest"].is_object());
     assert!(json["components"]["schemas"]["CompareMarketingCampaignRequest"].is_object());
     assert!(
@@ -247,7 +233,6 @@ async fn openapi_routes_expose_admin_api_inventory_with_schema_components() {
     assert!(json["components"]["schemas"]["ScheduleMarketingCampaignRequest"].is_object());
     assert!(json["components"]["schemas"]["RetireMarketingCampaignRequest"].is_object());
     assert!(json["components"]["schemas"]["CampaignBudgetRecord"].is_object());
-    assert!(json["components"]["schemas"]["UpdateCampaignBudgetStatusRequest"].is_object());
     assert!(json["components"]["schemas"]["ActivateCampaignBudgetRequest"].is_object());
     assert!(json["components"]["schemas"]["CloseCampaignBudgetRequest"].is_object());
     assert!(json["components"]["schemas"]["CampaignBudgetLifecycleAction"].is_object());
@@ -258,7 +243,6 @@ async fn openapi_routes_expose_admin_api_inventory_with_schema_components() {
     assert!(json["components"]["schemas"]["CampaignBudgetDetail"].is_object());
     assert!(json["components"]["schemas"]["CampaignBudgetMutationResult"].is_object());
     assert!(json["components"]["schemas"]["CouponCodeRecord"].is_object());
-    assert!(json["components"]["schemas"]["UpdateCouponCodeStatusRequest"].is_object());
     assert!(json["components"]["schemas"]["DisableCouponCodeRequest"].is_object());
     assert!(json["components"]["schemas"]["RestoreCouponCodeRequest"].is_object());
     assert!(json["components"]["schemas"]["CouponCodeLifecycleAction"].is_object());
@@ -495,11 +479,6 @@ async fn openapi_routes_expose_admin_api_inventory_with_schema_components() {
         "#/components/schemas/CouponTemplateLifecycleAuditOutcome"
     );
     assert_eq!(
-        json["paths"]["/admin/marketing/campaigns/{marketing_campaign_id}/status"]["post"]
-            ["requestBody"]["content"]["application/json"]["schema"]["$ref"],
-        "#/components/schemas/UpdateMarketingCampaignStatusRequest"
-    );
-    assert_eq!(
         json["paths"]["/admin/marketing/campaigns/{marketing_campaign_id}/lifecycle-audits"]
             ["get"]["responses"]["200"]["content"]["application/json"]["schema"]["items"]["$ref"],
         "#/components/schemas/MarketingCampaignLifecycleAuditRecord"
@@ -569,11 +548,6 @@ async fn openapi_routes_expose_admin_api_inventory_with_schema_components() {
         "#/components/schemas/CampaignBudgetRecord"
     );
     assert_eq!(
-        json["paths"]["/admin/marketing/budgets/{campaign_budget_id}/status"]["post"]
-            ["requestBody"]["content"]["application/json"]["schema"]["$ref"],
-        "#/components/schemas/UpdateCampaignBudgetStatusRequest"
-    );
-    assert_eq!(
         json["paths"]["/admin/marketing/budgets/{campaign_budget_id}/activate"]["post"]
             ["requestBody"]["content"]["application/json"]["schema"]["$ref"],
         "#/components/schemas/ActivateCampaignBudgetRequest"
@@ -637,11 +611,6 @@ async fn openapi_routes_expose_admin_api_inventory_with_schema_components() {
         "#/components/schemas/CouponCodeRecord"
     );
     assert_eq!(
-        json["paths"]["/admin/marketing/codes/{coupon_code_id}/status"]["post"]["requestBody"]
-            ["content"]["application/json"]["schema"]["$ref"],
-        "#/components/schemas/UpdateCouponCodeStatusRequest"
-    );
-    assert_eq!(
         json["paths"]["/admin/marketing/codes/{coupon_code_id}/disable"]["post"]["requestBody"]
             ["content"]["application/json"]["schema"]["$ref"],
         "#/components/schemas/DisableCouponCodeRequest"
@@ -694,11 +663,6 @@ async fn openapi_routes_expose_admin_api_inventory_with_schema_components() {
         json["components"]["schemas"]["CouponCodeLifecycleAuditRecord"]["properties"]["outcome"]
             ["$ref"],
         "#/components/schemas/CouponCodeLifecycleAuditOutcome"
-    );
-    assert_eq!(
-        json["paths"]["/admin/marketing/coupon-templates/{coupon_template_id}/status"]["post"]
-            ["requestBody"]["content"]["application/json"]["schema"]["$ref"],
-        "#/components/schemas/UpdateCouponTemplateStatusRequest"
     );
     assert_eq!(
         json["paths"]["/admin/api-keys"]["post"]["requestBody"]["content"]["application/json"]

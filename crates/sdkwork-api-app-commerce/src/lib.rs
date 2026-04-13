@@ -15,7 +15,6 @@ mod webhook;
 
 use async_trait::async_trait;
 pub use constants::*;
-pub use coupon_catalog::reclaim_expired_coupon_reservations_for_code_if_needed;
 use coupon_catalog::*;
 use coupon_state::*;
 pub use error::{commerce_atomic_coupon_error, CommerceError, CommerceResult};
@@ -57,9 +56,17 @@ use sdkwork_api_app_catalog::{
     CommercialApiProductKind, CommercialCatalogSeedProduct,
 };
 use sdkwork_api_app_identity::GatewayRequestContext;
+pub use sdkwork_api_app_marketing::reclaim_expired_coupon_reservations_for_code_if_needed;
 use sdkwork_api_app_marketing::{
-    confirm_coupon_redemption, reserve_coupon_redemption, rollback_coupon_redemption,
-    validate_coupon_stack, CouponValidationDecision,
+    compute_coupon_reserve_amount_minor, compute_coupon_subsidy_minor, confirm_coupon_for_subject,
+    list_catalog_visible_coupon_views as list_shared_catalog_visible_coupon_views,
+    load_catalog_visible_coupon_resolution_by_value as load_shared_catalog_visible_coupon_resolution_by_value,
+    load_marketing_coupon_context_for_reference as load_shared_marketing_coupon_context_for_reference,
+    load_marketing_order_evidence as load_shared_marketing_order_evidence, normalize_coupon_code,
+    release_coupon_for_subject, reserve_coupon_for_subject, rollback_coupon_for_subject,
+    validate_marketing_coupon_context as validate_shared_marketing_coupon_context,
+    ConfirmCouponInput, MarketingCatalogCouponView, MarketingCouponContext,
+    MarketingCouponContextReference, ReleaseCouponInput, ReserveCouponInput, RollbackCouponInput,
 };
 use sdkwork_api_domain_billing::{
     AccountCommerceReconciliationStateRecord, AccountRecord, PricingPlanRecord, QuotaPolicy,
@@ -75,20 +82,14 @@ use sdkwork_api_domain_commerce::{
     CommerceOrderRecord, CommercePaymentEventProcessingStatus, ProjectMembershipRecord,
 };
 use sdkwork_api_domain_marketing::{
-    CampaignBudgetRecord, CampaignBudgetStatus, CouponBenefitSpec, CouponCodeRecord,
-    CouponCodeStatus, CouponDistributionKind, CouponRedemptionRecord, CouponRedemptionStatus,
-    CouponReservationStatus, CouponRollbackRecord, CouponRollbackStatus, CouponRollbackType,
-    CouponTemplateRecord, CouponTemplateStatus, MarketingBenefitKind, MarketingCampaignRecord,
-    MarketingSubjectScope,
+    CampaignBudgetRecord, CouponCodeRecord, CouponCodeStatus, CouponDistributionKind,
+    CouponRedemptionRecord, CouponRedemptionStatus, CouponRollbackRecord, CouponRollbackStatus,
+    CouponRollbackType, CouponTemplateRecord, MarketingCampaignRecord, MarketingSubjectScope,
 };
 use sdkwork_api_storage_core::AdminStore;
-use sdkwork_api_storage_core::{
-    AtomicCouponConfirmationCommand, AtomicCouponReleaseCommand, AtomicCouponReservationCommand,
-    AtomicCouponRollbackCommand, AtomicCouponRollbackCompensationCommand,
-};
+use sdkwork_api_storage_core::AtomicCouponRollbackCompensationCommand;
 use settlement::*;
 pub(crate) use settlement::{fail_portal_commerce_order, load_project_commerce_order};
-use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 pub use types::{
     AdminCommerceReconciliationRunCreateRequest, AdminCommerceRefundCreateRequest,
@@ -117,15 +118,6 @@ struct CommerceCouponDefinition {
 struct ResolvedCouponDefinition {
     definition: CommerceCouponDefinition,
     marketing: Option<MarketingCouponContext>,
-}
-
-#[derive(Debug, Clone)]
-struct MarketingCouponContext {
-    template: CouponTemplateRecord,
-    campaign: MarketingCampaignRecord,
-    budget: CampaignBudgetRecord,
-    code: CouponCodeRecord,
-    source: String,
 }
 
 #[derive(Debug, Clone)]
@@ -366,19 +358,6 @@ struct CustomRechargeRuleSeed {
     max_amount_cents: u64,
     units_per_cent: u64,
     note: &'static str,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct CouponSeed {
-    id: &'static str,
-    code: &'static str,
-    discount_label: &'static str,
-    audience: &'static str,
-    remaining: u64,
-    note: &'static str,
-    expires_on: &'static str,
-    discount_percent: Option<u8>,
-    bonus_units: u64,
 }
 
 fn subscription_plan_catalog() -> Vec<PortalSubscriptionPlan> {
@@ -712,13 +691,9 @@ fn build_priced_quote(
         pricing_plan_version: catalog_binding.pricing_plan_version,
         pricing_rate_id: catalog_binding.pricing_rate_id,
         pricing_metric_code: catalog_binding.pricing_metric_code,
-        applied_coupon: applied_coupon.map(|coupon| PortalAppliedCoupon {
-            code: coupon.coupon.code,
-            discount_label: coupon.coupon.discount_label,
-            source: coupon.coupon.source,
-            discount_percent: coupon.benefit.discount_percent,
-            bonus_units: coupon.benefit.bonus_units,
-        }),
+        applied_coupon: applied_coupon
+            .as_ref()
+            .map(portal_applied_coupon_from_definition),
         pricing_rule_label: None,
         effective_ratio_label: None,
         source: source.to_owned(),
@@ -755,6 +730,7 @@ fn build_redemption_quote(
     catalog_binding: PortalCommerceCatalogBinding,
 ) -> PortalCommerceQuote {
     let source = coupon.coupon.source.clone();
+    let applied_coupon = portal_applied_coupon_from_definition(&coupon);
     let projected_remaining_units =
         current_remaining_units.map(|units| units.saturating_add(coupon.benefit.bonus_units));
 
@@ -785,16 +761,20 @@ fn build_redemption_quote(
         pricing_plan_version: catalog_binding.pricing_plan_version,
         pricing_rate_id: catalog_binding.pricing_rate_id,
         pricing_metric_code: catalog_binding.pricing_metric_code,
-        applied_coupon: Some(PortalAppliedCoupon {
-            code: coupon.coupon.code,
-            discount_label: coupon.coupon.discount_label,
-            source: source.clone(),
-            discount_percent: coupon.benefit.discount_percent,
-            bonus_units: coupon.benefit.bonus_units,
-        }),
+        applied_coupon: Some(applied_coupon),
         pricing_rule_label: None,
         effective_ratio_label: None,
         source,
+    }
+}
+
+fn portal_applied_coupon_from_definition(coupon: &CommerceCouponDefinition) -> PortalAppliedCoupon {
+    PortalAppliedCoupon {
+        code: coupon.coupon.code.clone(),
+        discount_label: coupon.coupon.discount_label.clone(),
+        source: coupon.coupon.source.clone(),
+        discount_percent: coupon.benefit.discount_percent,
+        bonus_units: coupon.benefit.bonus_units,
     }
 }
 
@@ -819,10 +799,6 @@ pub fn portal_commerce_transaction_kind(target_kind: &str) -> &'static str {
         "coupon_redemption" => "coupon_redemption",
         _ => "product_purchase",
     }
-}
-
-fn normalize_coupon_code(value: &str) -> String {
-    value.trim().to_ascii_uppercase()
 }
 
 fn format_catalog_price_label(price_cents: u64) -> String {
@@ -1085,69 +1061,6 @@ fn custom_recharge_rule_seeds() -> Vec<CustomRechargeRuleSeed> {
             max_amount_cents: 200_000,
             units_per_cent: 33,
             note: "Campaign custom recharges maximize the effective ratio for larger top-ups.",
-        },
-    ]
-}
-
-fn seed_coupon_definitions() -> Vec<CommerceCouponDefinition> {
-    coupon_seeds()
-        .into_iter()
-        .map(|seed| CommerceCouponDefinition {
-            coupon: PortalCommerceCoupon {
-                id: seed.id.to_owned(),
-                code: seed.code.to_owned(),
-                discount_label: seed.discount_label.to_owned(),
-                audience: seed.audience.to_owned(),
-                remaining: seed.remaining,
-                active: true,
-                note: seed.note.to_owned(),
-                expires_on: seed.expires_on.to_owned(),
-                source: "workspace_seed".to_owned(),
-                discount_percent: seed.discount_percent,
-                bonus_units: seed.bonus_units,
-            },
-            benefit: CommerceCouponBenefit {
-                discount_percent: seed.discount_percent,
-                bonus_units: seed.bonus_units,
-            },
-        })
-        .collect()
-}
-
-fn coupon_seeds() -> Vec<CouponSeed> {
-    vec![
-        CouponSeed {
-            id: "seed_welcome100",
-            code: "WELCOME100",
-            discount_label: "+100 starter points",
-            audience: "new_workspace",
-            remaining: 100,
-            note: "Apply during onboarding to offset initial exploration traffic.",
-            expires_on: "rolling",
-            discount_percent: None,
-            bonus_units: 100,
-        },
-        CouponSeed {
-            id: "seed_springboost",
-            code: "SPRINGBOOST",
-            discount_label: "10% off Growth",
-            audience: "growth_upgrade",
-            remaining: 10_000,
-            note: "Use on the next subscription change for a temporary expansion window.",
-            expires_on: "rolling",
-            discount_percent: Some(10),
-            bonus_units: 0,
-        },
-        CouponSeed {
-            id: "seed_teamready",
-            code: "TEAMREADY",
-            discount_label: "Free staging credits",
-            audience: "team_rollout",
-            remaining: 25_000,
-            note: "Unlocks extra staging budget for launch validation.",
-            expires_on: "rolling",
-            discount_percent: None,
-            bonus_units: 25_000,
         },
     ]
 }
