@@ -11,7 +11,7 @@ function readJson(relativePath) {
 }
 
 function readText(relativePath) {
-  return readFileSync(path.join(workspaceRoot, relativePath), 'utf8');
+  return readFileSync(path.join(workspaceRoot, relativePath), 'utf8').replace(/\r\n/g, '\n');
 }
 
 test('check-router-product exposes Windows-safe pnpm and rust runner plans without ambient globals', async () => {
@@ -109,24 +109,30 @@ test('vendored pingora-core patch avoids the known Windows cargo-check dead-code
 
   assert.doesNotMatch(ext, /#\[cfg\(windows\)\]\s*fn ip_local_port_range\(_fd: RawSocket, _low: u16, _high: u16\) -> io::Result<\(\)> \{/);
   assert.match(servicesListening, /#\[cfg\(unix\)\]\s*use std::fs::Permissions;/);
+  const clientCertKeyStart = upstreamPeer.lastIndexOf(
+    '\n\n    fn get_client_cert_key(&self) -> Option<&Arc<CertKey>> {',
+  );
+  assert.notEqual(
+    clientCertKeyStart,
+    -1,
+    'upstreams/peer.rs must keep get_client_cert_key in the expected Peer implementation block',
+  );
   const windowsMatchesSockStart = upstreamPeer.lastIndexOf(
     '#[cfg(windows)]\n    fn matches_sock<V: AsRawSocket>(&self, sock: V) -> bool {',
-  );
-  const windowsMatchesSockEnd = upstreamPeer.indexOf(
-    '\n\n    fn get_client_cert_key(&self) -> Option<&Arc<CertKey>> {',
-    windowsMatchesSockStart,
+    clientCertKeyStart,
   );
   assert.notEqual(
     windowsMatchesSockStart,
     -1,
-    'upstreams/peer.rs must define the Windows matches_sock helper',
+    'upstreams/peer.rs must define the Windows matches_sock helper before get_client_cert_key',
   );
-  assert.notEqual(
-    windowsMatchesSockEnd,
-    -1,
-    'upstreams/peer.rs must keep Windows matches_sock scoped before get_client_cert_key',
+  const windowsMatchesSock = upstreamPeer.slice(windowsMatchesSockStart, clientCertKeyStart);
+  assert.match(
+    windowsMatchesSock,
+    /if self\.get_proxy\(\)\.is_some\(\) \{/,
   );
-  const windowsMatchesSock = upstreamPeer.slice(windowsMatchesSockStart, windowsMatchesSockEnd);
-  assert.match(windowsMatchesSock, /if self\.get_proxy\(\)\.is_some\(\) \{/);
-  assert.doesNotMatch(windowsMatchesSock, /if let Some\(proxy\) = self\.get_proxy\(\)/);
+  assert.doesNotMatch(
+    windowsMatchesSock,
+    /if let Some\(proxy\) = self\.get_proxy\(\)/,
+  );
 });
