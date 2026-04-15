@@ -59,6 +59,7 @@ fn assert_error_contains<T: std::fmt::Debug, E: std::fmt::Display>(
 }
 
 #[test]
+#[serial(capability_catalog_cache)]
 fn local_model_catalog_fallback_requires_configured_store() {
     assert_error_contains(
         list_models("tenant-1", "project-1"),
@@ -75,6 +76,7 @@ fn local_model_catalog_fallback_requires_configured_store() {
 }
 
 #[tokio::test]
+#[serial(capability_catalog_cache)]
 async fn returns_catalog_models_from_store() {
     let store = create_store_with_registered_provider().await;
     store
@@ -92,6 +94,7 @@ async fn returns_catalog_models_from_store() {
 }
 
 #[tokio::test]
+#[serial(capability_catalog_cache)]
 async fn returns_catalog_model_from_store() {
     let store = create_store_with_registered_provider().await;
     store
@@ -111,6 +114,7 @@ async fn returns_catalog_model_from_store() {
 }
 
 #[tokio::test]
+#[serial(capability_catalog_cache)]
 async fn deletes_catalog_model_from_store() {
     let store = create_store_with_registered_provider().await;
     store
@@ -142,7 +146,7 @@ async fn deletes_catalog_model_from_store() {
 }
 
 #[tokio::test]
-#[serial]
+#[serial(capability_catalog_cache)]
 async fn catalog_model_reads_use_configured_capability_catalog_cache_until_invalidated() {
     let _cache_guard = capability_catalog_cache_reset_guard();
     let cache_store: Arc<dyn CacheStore> = Arc::new(MemoryCacheStore::default());
@@ -191,7 +195,7 @@ async fn catalog_model_reads_use_configured_capability_catalog_cache_until_inval
 }
 
 #[tokio::test]
-#[serial]
+#[serial(capability_catalog_cache)]
 async fn deleting_catalog_model_from_store_invalidates_capability_catalog_cache() {
     let _cache_guard = capability_catalog_cache_reset_guard();
     let cache_store: Arc<dyn CacheStore> = Arc::new(MemoryCacheStore::default());
@@ -233,7 +237,7 @@ async fn deleting_catalog_model_from_store_invalidates_capability_catalog_cache(
 }
 
 #[tokio::test]
-#[serial]
+#[serial(capability_catalog_cache)]
 async fn capability_catalog_cache_store_can_be_cleared_for_runtime_isolation() {
     let _cache_guard = capability_catalog_cache_reset_guard();
     let cache_store: Arc<dyn CacheStore> = Arc::new(MemoryCacheStore::default());
