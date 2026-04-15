@@ -44,7 +44,6 @@ sdkwork-api-storage-postgres = { path = "../sdkwork-api-storage-postgres" }
 sdkwork-api-storage-sqlite = { path = "../sdkwork-api-storage-sqlite" }
 sqlx.workspace = true
 utoipa.workspace = true
-utoipa-axum.workspace = true
 utoipa-swagger-ui.workspace = true
 
 [dev-dependencies]

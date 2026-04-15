@@ -38,8 +38,6 @@ sha2.workspace = true
 sqlx.workspace = true
 tower-http.workspace = true
 utoipa.workspace = true
-utoipa-axum.workspace = true
-utoipa-swagger-ui.workspace = true
 
 [dev-dependencies]
 sdkwork-api-domain-commerce = { path = "../sdkwork-api-domain-commerce" }

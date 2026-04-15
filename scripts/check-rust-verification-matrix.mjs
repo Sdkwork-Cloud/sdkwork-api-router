@@ -16,6 +16,7 @@ export const VERIFICATION_GROUPS = [
   'gateway-service',
   'admin-service',
   'portal-service',
+  'dependency-audit',
   'product-runtime',
   'workspace',
 ];
@@ -80,6 +81,28 @@ function cargoStep({
       env,
     }),
     shell: rustRunner.shell,
+    windowsHide: platform === 'win32',
+  };
+}
+
+function nodeStep({
+  label,
+  workspaceRoot,
+  scriptArgs,
+  platform = process.platform,
+  env = process.env,
+} = {}) {
+  return {
+    label,
+    command: process.execPath,
+    args: scriptArgs,
+    cwd: workspaceRoot,
+    env: verificationBaseEnv({
+      workspaceRoot,
+      platform,
+      env,
+    }),
+    shell: false,
     windowsHide: platform === 'win32',
   };
 }
@@ -149,6 +172,16 @@ export function createRustVerificationPlan({
           env,
         }),
       ];
+    case 'dependency-audit':
+      return [
+        nodeStep({
+          label: 'workspace dependency audit',
+          workspaceRoot,
+          scriptArgs: [path.join(workspaceRoot, 'scripts', 'check-rust-dependency-audit.mjs')],
+          platform,
+          env,
+        }),
+      ];
     case 'product-runtime':
       return [
         cargoStep({
@@ -179,6 +212,10 @@ export function createRustVerificationPlan({
     default:
       throw new Error(`unhandled verification group: ${group}`);
   }
+}
+
+function serializePlan(plan) {
+  return plan.map(({ env: _env, ...step }) => step);
 }
 
 function parseArgs(argv = process.argv.slice(2)) {
@@ -250,7 +287,7 @@ async function main() {
   });
 
   if (planFormat === 'json') {
-    console.log(JSON.stringify(plan, null, 2));
+    console.log(JSON.stringify(serializePlan(plan), null, 2));
     return;
   }
 

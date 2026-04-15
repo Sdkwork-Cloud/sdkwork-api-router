@@ -88,7 +88,7 @@ hmac = "0.12"
 keyring = "3.6.3"
 libloading = "0.9"
 rand_core = "0.10"
-reqwest = { version = "0.13", default-features = false, features = ["json", "multipart", "rustls", "stream"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "multipart", "rustls-no-provider", "stream"] }
 serial_test = "3.4"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -103,11 +103,16 @@ toml = "1.1"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 utoipa = { version = "5.4.0", features = ["axum_extras"] }
-utoipa-axum = "0.2.0"
 utoipa-swagger-ui = { version = "9.0.2", features = ["axum", "vendored"] }
 
 [patch.crates-io]
 zip = { path = "vendor/zip-3.0.0" }
+pingora-cache = { path = "vendor/pingora-cache-0.8.0" }
+pingora-core = { path = "vendor/pingora-core-0.8.0" }
+pingora-lru = { path = "vendor/pingora-lru-0.8.0" }
+pingora-proxy = { path = "vendor/pingora-proxy-0.8.0" }
+pingora-runtime = { path = "vendor/pingora-runtime-0.8.0" }
+sqlx-postgres = { path = "vendor/sqlx-postgres-0.8.6" }
 
 [profile.dev]
 debug = 0

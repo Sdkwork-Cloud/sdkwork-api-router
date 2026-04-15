@@ -28,6 +28,7 @@ sdkwork-api-domain-billing = { path = "../sdkwork-api-domain-billing" }
 sdkwork-api-domain-catalog = { path = "../sdkwork-api-domain-catalog" }
 sdkwork-api-domain-marketing = { path = "../sdkwork-api-domain-marketing" }
 sdkwork-api-domain-payment = { path = "../sdkwork-api-domain-payment" }
+sdkwork-api-domain-usage = { path = "../sdkwork-api-domain-usage" }
 sdkwork-api-observability = { path = "../sdkwork-api-observability" }
 sdkwork-api-openapi = { path = "../sdkwork-api-openapi" }
 sdkwork-api-policy-billing = { path = "../sdkwork-api-policy-billing" }
@@ -41,7 +42,6 @@ tokio.workspace = true
 tokio-stream.workspace = true
 tower-http.workspace = true
 utoipa.workspace = true
-utoipa-axum.workspace = true
 utoipa-swagger-ui.workspace = true
 
 [dev-dependencies]

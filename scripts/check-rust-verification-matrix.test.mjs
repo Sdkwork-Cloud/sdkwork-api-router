@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
@@ -15,6 +16,7 @@ test('check-rust-verification-matrix exposes grouped cross-platform cargo plans 
     'gateway-service',
     'admin-service',
     'portal-service',
+    'dependency-audit',
     'product-runtime',
     'workspace',
   ]);
@@ -75,6 +77,19 @@ test('check-rust-verification-matrix exposes grouped cross-platform cargo plans 
     'router-product-service',
   ]);
 
+  const auditPlan = module.createRustVerificationPlan({
+    workspaceRoot,
+    group: 'dependency-audit',
+    platform: 'linux',
+    env: {},
+  });
+  assert.equal(auditPlan.length, 1);
+  assert.equal(auditPlan[0].label, 'workspace dependency audit');
+  assert.equal(auditPlan[0].command, process.execPath);
+  assert.deepEqual(auditPlan[0].args, [
+    path.join(workspaceRoot, 'scripts', 'check-rust-dependency-audit.mjs'),
+  ]);
+
   const windowsPlan = module.createRustVerificationPlan({
     workspaceRoot,
     group: 'gateway-service',
@@ -126,4 +141,29 @@ test('check-rust-verification-matrix exposes grouped cross-platform cargo plans 
   });
   assert.equal(fallbackWindowsPlan[0].command, 'rustup.exe');
   assert.equal(fallbackWindowsPlan[0].shell, true);
+});
+
+test('check-rust-verification-matrix plan json omits inherited environment secrets', () => {
+  const secret = 'sdkwork-matrix-secret';
+  const output = execFileSync(
+    process.execPath,
+    [
+      path.join(workspaceRoot, 'scripts', 'check-rust-verification-matrix.mjs'),
+      '--group',
+      'dependency-audit',
+      '--plan-format',
+      'json',
+    ],
+    {
+      cwd: workspaceRoot,
+      env: {
+        ...process.env,
+        SDKWORK_TEST_SECRET: secret,
+      },
+      encoding: 'utf8',
+    },
+  );
+
+  assert.doesNotMatch(output, new RegExp(secret));
+  assert.doesNotMatch(output, /"env":/);
 });
