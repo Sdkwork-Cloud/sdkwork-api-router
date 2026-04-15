@@ -417,6 +417,7 @@ async fn serve_public_web_axum_async(config: RuntimeHostConfig) -> Result<()> {
     let listener = tokio::net::TcpListener::bind(&bind_addr)
         .await
         .with_context(|| format!("failed to bind runtime host listener to {bind_addr}"))?;
+    sdkwork_api_kernel::ensure_reqwest_rustls_provider();
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .build()

@@ -403,6 +403,7 @@ async fn provider_health_snapshot_from_probe(
 }
 
 fn builtin_upstream_probe_client() -> Result<Client> {
+    sdkwork_api_kernel::ensure_reqwest_rustls_provider();
     Ok(Client::builder()
         .timeout(Duration::from_millis(BUILTIN_UPSTREAM_PROBE_TIMEOUT_MS))
         .build()?)

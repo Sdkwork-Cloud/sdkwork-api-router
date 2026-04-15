@@ -164,6 +164,7 @@ async fn runtime_serves_static_sites_and_proxies_api_routes() {
     .await
     .unwrap();
 
+    sdkwork_api_kernel::ensure_reqwest_rustls_provider();
     let client = Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .build()

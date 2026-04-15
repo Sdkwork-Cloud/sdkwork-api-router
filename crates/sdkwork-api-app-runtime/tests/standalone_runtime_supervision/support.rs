@@ -206,6 +206,7 @@ pub(super) fn health_router(label: &'static str) -> Router {
 }
 
 pub(super) fn http_client() -> Client {
+    sdkwork_api_kernel::ensure_reqwest_rustls_provider();
     Client::builder()
         .timeout(StdDuration::from_millis(200))
         .build()

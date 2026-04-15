@@ -20,6 +20,7 @@ sdkwork-api-app-identity = { path = "../sdkwork-api-app-identity" }
 sdkwork-api-domain-billing = { path = "../sdkwork-api-domain-billing" }
 sdkwork-api-domain-commerce = { path = "../sdkwork-api-domain-commerce" }
 sdkwork-api-domain-marketing = { path = "../sdkwork-api-domain-marketing" }
+sdkwork-api-kernel = { path = "../sdkwork-api-kernel" }
 sdkwork-api-storage-core = { path = "../sdkwork-api-storage-core" }
 sha2_010 = { package = "sha2", version = "0.10" }
 utoipa.workspace = true

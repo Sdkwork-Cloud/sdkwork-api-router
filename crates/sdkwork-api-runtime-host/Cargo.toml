@@ -14,6 +14,7 @@ pingora-core = "0.8"
 pingora-http = "0.8"
 pingora-proxy = "0.8"
 reqwest.workspace = true
+sdkwork-api-kernel = { path = "../sdkwork-api-kernel" }
 tokio = { workspace = true, features = ["net", "rt-multi-thread"] }
 
 [dev-dependencies]

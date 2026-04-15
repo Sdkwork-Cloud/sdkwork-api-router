@@ -115,37 +115,50 @@ export function createDependencyAuditPlan({
   const rustRunner = resolveRustRunner(platform, env);
   const ignoredAdvisories = auditPolicy.allowedWarnings.map((entry) => entry.id);
 
-  const refreshStep = advisoryDbExists
-    ? {
-        label: 'refresh RustSec advisory database',
-        command: gitRunner.command,
-        args: [...gitRunner.args, '-C', advisoryDbPath, 'pull', '--ff-only', '--depth', '1', 'origin', 'main'],
-        cwd: workspaceRoot,
-        env,
-        shell: gitRunner.shell,
-        windowsHide: platform === 'win32',
-      }
-    : {
-        label: 'clone RustSec advisory database',
-        command: gitRunner.command,
-        args: [
-          ...gitRunner.args,
-          'clone',
-          '--depth',
-          '1',
-          '--branch',
-          'main',
-          ADVISORY_DB_URL,
-          advisoryDbPath,
-        ],
-        cwd: workspaceRoot,
-        env,
-        shell: gitRunner.shell,
-        windowsHide: platform === 'win32',
-      };
+  const advisoryDbPlan = advisoryDbExists
+    ? [
+        {
+          label: 'fetch RustSec advisory database',
+          command: gitRunner.command,
+          args: [...gitRunner.args, '-C', advisoryDbPath, 'fetch', '--depth', '1', 'origin', 'main'],
+          cwd: workspaceRoot,
+          env,
+          shell: gitRunner.shell,
+          windowsHide: platform === 'win32',
+        },
+        {
+          label: 'align RustSec advisory database to fetched main',
+          command: gitRunner.command,
+          args: [...gitRunner.args, '-C', advisoryDbPath, 'checkout', '--detach', '--force', 'FETCH_HEAD'],
+          cwd: workspaceRoot,
+          env,
+          shell: gitRunner.shell,
+          windowsHide: platform === 'win32',
+        },
+      ]
+    : [
+        {
+          label: 'clone RustSec advisory database',
+          command: gitRunner.command,
+          args: [
+            ...gitRunner.args,
+            'clone',
+            '--depth',
+            '1',
+            '--branch',
+            'main',
+            ADVISORY_DB_URL,
+            advisoryDbPath,
+          ],
+          cwd: workspaceRoot,
+          env,
+          shell: gitRunner.shell,
+          windowsHide: platform === 'win32',
+        },
+      ];
 
   return [
-    refreshStep,
+    ...advisoryDbPlan,
     {
       label: 'workspace cargo audit',
       command: rustRunner.command,

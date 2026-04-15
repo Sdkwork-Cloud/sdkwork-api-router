@@ -105,6 +105,7 @@ pub async fn create_portal_commerce_payment_attempt(
                 &payment_method.payment_method_id,
             )
             .await?;
+            sdkwork_api_kernel::ensure_reqwest_rustls_provider();
             let client = Client::new();
             let checkout_session = stripe::create_checkout_session(
                 &client,

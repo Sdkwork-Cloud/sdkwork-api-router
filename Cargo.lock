@@ -2708,6 +2708,7 @@ dependencies = [
  "sdkwork-api-domain-billing",
  "sdkwork-api-domain-commerce",
  "sdkwork-api-domain-marketing",
+ "sdkwork-api-kernel",
  "sdkwork-api-storage-core",
  "sdkwork-api-storage-sqlite",
  "serde",
@@ -2747,6 +2748,7 @@ dependencies = [
  "sdkwork-api-domain-routing",
  "sdkwork-api-extension-core",
  "sdkwork-api-extension-host",
+ "sdkwork-api-kernel",
  "sdkwork-api-storage-core",
  "sdkwork-api-storage-sqlite",
  "serde",
@@ -2776,6 +2778,7 @@ dependencies = [
  "sdkwork-api-ext-provider-native-mock",
  "sdkwork-api-extension-core",
  "sdkwork-api-extension-host",
+ "sdkwork-api-kernel",
  "sdkwork-api-observability",
  "sdkwork-api-provider-core",
  "sdkwork-api-provider-ollama",
@@ -2935,6 +2938,7 @@ dependencies = [
  "sdkwork-api-ext-provider-native-mock",
  "sdkwork-api-extension-core",
  "sdkwork-api-extension-host",
+ "sdkwork-api-kernel",
  "sdkwork-api-secret-core",
  "sdkwork-api-storage-core",
  "sdkwork-api-storage-postgres",
@@ -3262,6 +3266,7 @@ dependencies = [
  "sdkwork-api-ext-provider-native-mock",
  "sdkwork-api-extension-core",
  "sdkwork-api-interface-admin",
+ "sdkwork-api-kernel",
  "sdkwork-api-observability",
  "sdkwork-api-openapi",
  "sdkwork-api-policy-billing",
@@ -3329,6 +3334,9 @@ dependencies = [
 [[package]]
 name = "sdkwork-api-kernel"
 version = "0.1.0"
+dependencies = [
+ "rustls",
+]
 
 [[package]]
 name = "sdkwork-api-observability"
@@ -3384,6 +3392,7 @@ dependencies = [
  "sdkwork-api-interface-admin",
  "sdkwork-api-interface-http",
  "sdkwork-api-interface-portal",
+ "sdkwork-api-kernel",
  "sdkwork-api-runtime-host",
  "sdkwork-api-storage-core",
  "sdkwork-api-storage-sqlite",
@@ -3433,6 +3442,7 @@ dependencies = [
  "reqwest",
  "sdkwork-api-contract-openai",
  "sdkwork-api-domain-catalog",
+ "sdkwork-api-kernel",
  "sdkwork-api-provider-core",
  "serde",
  "serde_json",
@@ -3468,6 +3478,7 @@ dependencies = [
  "pingora-http",
  "pingora-proxy",
  "reqwest",
+ "sdkwork-api-kernel",
  "tokio",
 ]
 

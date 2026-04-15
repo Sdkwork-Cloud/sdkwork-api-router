@@ -149,6 +149,7 @@ pub(super) fn cleanup_dir(path: &Path) {
 
 pub(super) async fn wait_for_health(base_url: &str) {
     let health_url = format!("{}/health", base_url.trim_end_matches('/'));
+    sdkwork_api_kernel::ensure_reqwest_rustls_provider();
     for _ in 0..20 {
         if let Ok(response) = reqwest::get(&health_url).await {
             if response.status().is_success() {

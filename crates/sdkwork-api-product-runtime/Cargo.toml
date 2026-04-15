@@ -21,6 +21,7 @@ tokio.workspace = true
 
 [dev-dependencies]
 reqwest.workspace = true
+sdkwork-api-kernel = { path = "../sdkwork-api-kernel" }
 sdkwork-api-storage-sqlite = { path = "../sdkwork-api-storage-sqlite" }
 
 [lib]

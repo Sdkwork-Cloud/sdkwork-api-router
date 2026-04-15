@@ -57,6 +57,7 @@ pub async fn create_admin_commerce_reconciliation_run(
     let mut checked_attempts = 0u64;
     let mut checked_refunds = 0u64;
     let mut secret_cache = BTreeMap::<String, String>::new();
+    sdkwork_api_kernel::ensure_reqwest_rustls_provider();
     let client = Client::new();
 
     let attempts = store

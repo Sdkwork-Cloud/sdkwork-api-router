@@ -67,18 +67,27 @@ test('check-rust-dependency-audit plans advisory DB refresh before cargo audit a
     advisoryDbExists: true,
   });
 
-  assert.equal(refreshedDbPlan[0].label, 'refresh RustSec advisory database');
+  assert.equal(refreshedDbPlan.length, 3);
+  assert.equal(refreshedDbPlan[0].label, 'fetch RustSec advisory database');
   assert.deepEqual(refreshedDbPlan[0].args, [
     '-C',
     path.posix.join('/home/router', '.cargo', 'advisory-db'),
-    'pull',
-    '--ff-only',
+    'fetch',
     '--depth',
     '1',
     'origin',
     'main',
   ]);
+  assert.equal(refreshedDbPlan[1].label, 'align RustSec advisory database to fetched main');
   assert.deepEqual(refreshedDbPlan[1].args, [
+    '-C',
+    path.posix.join('/home/router', '.cargo', 'advisory-db'),
+    'checkout',
+    '--detach',
+    '--force',
+    'FETCH_HEAD',
+  ]);
+  assert.deepEqual(refreshedDbPlan[2].args, [
     'run',
     'stable',
     'cargo',

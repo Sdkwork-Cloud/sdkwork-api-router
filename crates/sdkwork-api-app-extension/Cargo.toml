@@ -14,6 +14,7 @@ sdkwork-api-domain-catalog = { path = "../sdkwork-api-domain-catalog" }
 sdkwork-api-domain-routing = { path = "../sdkwork-api-domain-routing" }
 sdkwork-api-extension-core = { path = "../sdkwork-api-extension-core" }
 sdkwork-api-extension-host = { path = "../sdkwork-api-extension-host" }
+sdkwork-api-kernel = { path = "../sdkwork-api-kernel" }
 sdkwork-api-storage-core = { path = "../sdkwork-api-storage-core" }
 
 [dev-dependencies]

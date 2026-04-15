@@ -1889,5 +1889,6 @@ fn sqlite_url_for(path: PathBuf) -> String {
 }
 
 fn http_client() -> Client {
+    sdkwork_api_kernel::ensure_reqwest_rustls_provider();
     Client::builder().build().unwrap()
 }

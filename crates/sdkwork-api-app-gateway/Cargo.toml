@@ -40,6 +40,7 @@ sdkwork-api-app-catalog = { path = "../sdkwork-api-app-catalog" }
 sdkwork-api-ext-provider-native-mock = { path = "../sdkwork-api-ext-provider-native-mock" }
 sdkwork-api-domain-routing = { path = "../sdkwork-api-domain-routing" }
 sdkwork-api-extension-host = { path = "../sdkwork-api-extension-host" }
+sdkwork-api-kernel = { path = "../sdkwork-api-kernel" }
 toml.workspace = true
 
 [lib]

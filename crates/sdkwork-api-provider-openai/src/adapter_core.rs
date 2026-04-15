@@ -13,6 +13,7 @@ pub struct OpenAiProviderAdapter {
 
 impl OpenAiProviderAdapter {
     pub fn new(base_url: impl Into<String>) -> Self {
+        sdkwork_api_kernel::ensure_reqwest_rustls_provider();
         Self {
             base_url: base_url.into().trim_end_matches('/').to_owned(),
             client: Client::new(),

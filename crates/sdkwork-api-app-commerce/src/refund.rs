@@ -132,6 +132,7 @@ pub async fn create_admin_commerce_refund(
             let secrets =
                 resolve_payment_method_secret_bundle(store, secret_manager, payment_method_id)
                     .await?;
+            sdkwork_api_kernel::ensure_reqwest_rustls_provider();
             let client = Client::new();
             let provider_refund = stripe::create_refund(
                 &client,

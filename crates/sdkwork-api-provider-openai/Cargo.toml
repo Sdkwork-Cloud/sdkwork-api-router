@@ -11,6 +11,7 @@ httpdate.workspace = true
 reqwest.workspace = true
 sdkwork-api-contract-openai = { path = "../sdkwork-api-contract-openai" }
 sdkwork-api-domain-catalog = { path = "../sdkwork-api-domain-catalog" }
+sdkwork-api-kernel = { path = "../sdkwork-api-kernel" }
 sdkwork-api-provider-core = { path = "../sdkwork-api-provider-core" }
 serde.workspace = true
 serde_json.workspace = true
