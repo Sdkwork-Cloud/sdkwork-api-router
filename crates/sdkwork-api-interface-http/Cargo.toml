@@ -29,6 +29,7 @@ sdkwork-api-domain-catalog = { path = "../sdkwork-api-domain-catalog" }
 sdkwork-api-domain-marketing = { path = "../sdkwork-api-domain-marketing" }
 sdkwork-api-domain-payment = { path = "../sdkwork-api-domain-payment" }
 sdkwork-api-domain-usage = { path = "../sdkwork-api-domain-usage" }
+sdkwork-api-kernel = { path = "../sdkwork-api-kernel" }
 sdkwork-api-observability = { path = "../sdkwork-api-observability" }
 sdkwork-api-openapi = { path = "../sdkwork-api-openapi" }
 sdkwork-api-policy-billing = { path = "../sdkwork-api-policy-billing" }
@@ -60,7 +61,6 @@ sdkwork-api-extension-core = { path = "../sdkwork-api-extension-core" }
 sha2.workspace = true
 toml.workspace = true
 sdkwork-api-interface-admin = { path = "../sdkwork-api-interface-admin" }
-sdkwork-api-kernel = { path = "../sdkwork-api-kernel" }
 sdkwork-api-storage-sqlite = { path = "../sdkwork-api-storage-sqlite" }
 serde_json.workspace = true
 tokio.workspace = true

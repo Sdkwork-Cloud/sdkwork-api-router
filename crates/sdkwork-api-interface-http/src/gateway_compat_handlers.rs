@@ -418,7 +418,10 @@ fn standard_protocol_status(status: reqwest::StatusCode) -> StatusCode {
 
 fn standard_protocol_http_client() -> &'static reqwest::Client {
     static STANDARD_PROTOCOL_HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
-    STANDARD_PROTOCOL_HTTP_CLIENT.get_or_init(reqwest::Client::new)
+    STANDARD_PROTOCOL_HTTP_CLIENT.get_or_init(|| {
+        sdkwork_api_kernel::ensure_reqwest_rustls_provider();
+        reqwest::Client::new()
+    })
 }
 
 async fn standard_protocol_error_response(response: reqwest::Response) -> Response {
