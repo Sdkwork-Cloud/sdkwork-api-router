@@ -232,6 +232,90 @@ async fn portal_recharge_payment_events_sync_canonical_account_history_and_recon
 }
 
 #[tokio::test]
+async fn portal_recharge_payment_events_auto_provision_workspace_account_before_credit_sync() {
+    let pool = memory_pool().await;
+    let store = SqliteAdminStore::new(pool.clone());
+    let app = portal_lab_app(pool.clone());
+    let token = portal_token(app.clone()).await;
+    let workspace = portal_workspace(app.clone(), &token).await;
+    let project_id = workspace["project"]["id"].as_str().unwrap().to_owned();
+    let subject = gateway_auth_subject_from_request_context(&workspace_request_context(&workspace));
+
+    seed_portal_recharge_capacity_fixture(&pool, &project_id).await;
+
+    let order_id = create_portal_recharge_order(
+        app.clone(),
+        &token,
+        "{\"target_kind\":\"recharge_pack\",\"target_id\":\"pack-100k\"}",
+    )
+    .await;
+    let settled_event_id = format!("evt_settled_autoprovision_{order_id}");
+
+    let settled_response = apply_portal_payment_event(
+        app.clone(),
+        &token,
+        &order_id,
+        &format!(
+            "{{\"event_type\":\"settled\",\"provider\":\"stripe\",\"provider_event_id\":\"{settled_event_id}\"}}"
+        ),
+    )
+    .await;
+    assert_eq!(settled_response.status(), StatusCode::OK);
+
+    let account = store
+        .find_account_record_by_owner(
+            subject.tenant_id,
+            subject.organization_id,
+            subject.user_id,
+            AccountType::Primary,
+        )
+        .await
+        .unwrap()
+        .expect("workspace commercial account should be provisioned");
+
+    let history_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/portal/billing/account-history")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(history_response.status(), StatusCode::OK);
+    let history_json = read_json(history_response).await;
+    assert_eq!(history_json["account"]["account_id"], account.account_id);
+    assert_eq!(history_json["balance"]["available_balance"], 100000.0);
+    assert_eq!(history_json["benefit_lots"].as_array().unwrap().len(), 1);
+    assert_eq!(history_json["benefit_lots"][0]["source_type"], "order");
+
+    let order_center_response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/portal/commerce/order-center")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(order_center_response.status(), StatusCode::OK);
+    let order_center_json = read_json(order_center_response).await;
+    assert_eq!(
+        order_center_json["reconciliation"]["account_id"],
+        account.account_id
+    );
+    assert_eq!(
+        order_center_json["reconciliation"]["last_reconciled_order_id"],
+        order_id
+    );
+}
+
+#[tokio::test]
 async fn portal_recharge_payment_event_replay_repairs_canonical_account_sync_after_ledger_failure()
 {
     let pool = memory_pool().await;

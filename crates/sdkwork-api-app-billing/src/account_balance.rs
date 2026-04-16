@@ -193,3 +193,51 @@ where
     let subject = gateway_auth_subject_from_request_context(context);
     resolve_payable_account_for_gateway_subject(store, &subject).await
 }
+
+pub async fn ensure_primary_account_for_gateway_request_context<S>(
+    store: &S,
+    context: &IdentityGatewayRequestContext,
+    created_at_ms: u64,
+) -> Result<AccountRecord>
+where
+    S: AccountKernelStore + ?Sized,
+{
+    let subject = gateway_auth_subject_from_request_context(context);
+
+    if let Some(account) = store
+        .find_account_record_by_owner(
+            subject.tenant_id,
+            subject.organization_id,
+            subject.user_id,
+            AccountType::Primary,
+        )
+        .await?
+    {
+        ensure!(
+            account.status == AccountStatus::Active,
+            "primary account {} is not active",
+            account.account_id
+        );
+        return Ok(account);
+    }
+
+    let account = AccountRecord::new(
+        stable_u64(
+            "account-primary-v1",
+            &[
+                subject.tenant_id.to_string(),
+                subject.organization_id.to_string(),
+                subject.user_id.to_string(),
+                "primary".to_owned(),
+            ],
+        ),
+        subject.tenant_id,
+        subject.organization_id,
+        subject.user_id,
+        AccountType::Primary,
+    )
+    .with_created_at_ms(created_at_ms)
+    .with_updated_at_ms(created_at_ms);
+
+    store.insert_account_record(&account).await
+}

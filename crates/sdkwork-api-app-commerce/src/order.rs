@@ -692,6 +692,9 @@ where
     let Some(billing) = commercial_billing else {
         return Ok(None);
     };
+    let Some(account_store) = store.account_kernel_store() else {
+        return Ok(None);
+    };
     let normalized_project_id = project_id.trim();
     if normalized_project_id.is_empty() {
         return Err(CommerceError::InvalidInput(
@@ -716,11 +719,14 @@ where
         canonical_user_id: None,
         canonical_api_key_id: None,
     };
-    let account = billing
-        .resolve_payable_account_for_gateway_request_context(&request_context)
-        .await
-        .map_err(CommerceError::from)?;
-    Ok(account.map(|account| (billing, account)))
+    let account = ensure_primary_account_for_gateway_request_context(
+        account_store,
+        &request_context,
+        current_time_ms()?,
+    )
+    .await
+    .map_err(CommerceError::from)?;
+    Ok(Some((billing, account)))
 }
 
 async fn upsert_commerce_reconciliation_checkpoint(

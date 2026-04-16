@@ -38,7 +38,10 @@ import {
   DialogTitle,
 } from 'sdkwork-router-portal-commons/framework/overlays';
 import { WorkspacePanel } from 'sdkwork-router-portal-commons/framework/workspace';
-import { portalErrorMessage } from 'sdkwork-router-portal-portal-api';
+import {
+  portalErrorMessage,
+  resolveCommercialAccountProvisioningStatus,
+} from 'sdkwork-router-portal-portal-api';
 import type {
   BillingAccountingMode,
   BillingEventCapabilitySummary,
@@ -1255,7 +1258,7 @@ export function PortalBillingPage({ onNavigate }: PortalBillingPageProps) {
       })
       .catch((error) => {
         if (!cancelled) {
-          setStatus(portalErrorMessage(error));
+          setStatus(t(resolveCommercialAccountProvisioningStatus(error) ?? portalErrorMessage(error)));
         }
       });
 
@@ -1368,7 +1371,9 @@ export function PortalBillingPage({ onNavigate }: PortalBillingPageProps) {
       setCheckoutSession(null);
       setProviderCheckoutMethodId(null);
       setProviderCallbackMethodId(null);
-      setCheckoutSessionStatus(portalErrorMessage(error));
+      setCheckoutSessionStatus(
+        t(resolveCommercialAccountProvisioningStatus(error) ?? portalErrorMessage(error)),
+      );
     } finally {
       setCheckoutSessionLoading(false);
     }
@@ -1403,7 +1408,7 @@ export function PortalBillingPage({ onNavigate }: PortalBillingPageProps) {
         ),
       );
     } catch (error) {
-      setCheckoutStatus(portalErrorMessage(error));
+      setCheckoutStatus(t(resolveCommercialAccountProvisioningStatus(error) ?? portalErrorMessage(error)));
     } finally {
       setPreviewLoading(false);
     }
@@ -1458,7 +1463,7 @@ export function PortalBillingPage({ onNavigate }: PortalBillingPageProps) {
       setCouponCode('');
       setCheckoutSelection(null);
     } catch (error) {
-      setCheckoutStatus(portalErrorMessage(error));
+      setCheckoutStatus(t(resolveCommercialAccountProvisioningStatus(error) ?? portalErrorMessage(error)));
     } finally {
       setOrderLoading(false);
     }
@@ -1496,7 +1501,7 @@ export function PortalBillingPage({ onNavigate }: PortalBillingPageProps) {
       );
       await loadCheckoutSession(nextOrder.order_id);
     } catch (error) {
-      setStatus(portalErrorMessage(error));
+      setStatus(t(resolveCommercialAccountProvisioningStatus(error) ?? portalErrorMessage(error)));
     } finally {
       setQueueActionOrderId(null);
       setQueueActionType(null);
@@ -1560,7 +1565,7 @@ export function PortalBillingPage({ onNavigate }: PortalBillingPageProps) {
       );
       await loadCheckoutSession(nextOrder.order_id);
     } catch (error) {
-      setStatus(portalErrorMessage(error));
+      setStatus(t(resolveCommercialAccountProvisioningStatus(error) ?? portalErrorMessage(error)));
     } finally {
       setProviderEventOrderId(null);
       setProviderEventType(null);
@@ -1635,7 +1640,7 @@ export function PortalBillingPage({ onNavigate }: PortalBillingPageProps) {
         }),
       );
     } catch (error) {
-      setStatus(portalErrorMessage(error));
+      setStatus(t(resolveCommercialAccountProvisioningStatus(error) ?? portalErrorMessage(error)));
     } finally {
       setProviderCheckoutMethodId(null);
     }

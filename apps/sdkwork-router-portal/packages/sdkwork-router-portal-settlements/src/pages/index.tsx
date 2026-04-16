@@ -17,7 +17,10 @@ import {
   CardContent,
 } from 'sdkwork-router-portal-commons/framework/layout';
 import { WorkspacePanel } from 'sdkwork-router-portal-commons/framework/workspace';
-import { portalErrorMessage } from 'sdkwork-router-portal-portal-api';
+import {
+  portalErrorMessage,
+  resolveCommercialAccountProvisioningStatus,
+} from 'sdkwork-router-portal-portal-api';
 
 import { loadPortalSettlementsWorkspace } from '../repository';
 import { buildPortalSettlementsViewModel } from '../services';
@@ -168,7 +171,7 @@ export function PortalSettlementsPage({ onNavigate }: PortalSettlementsPageProps
       })
       .catch((error) => {
         if (!cancelled) {
-          setStatus(portalErrorMessage(error));
+          setStatus(t(resolveCommercialAccountProvisioningStatus(error) ?? portalErrorMessage(error)));
         }
       });
 
@@ -180,6 +183,9 @@ export function PortalSettlementsPage({ onNavigate }: PortalSettlementsPageProps
   const viewModel: PortalSettlementsViewModel | null = workspaceData
     ? buildPortalSettlementsViewModel(workspaceData)
     : null;
+  const provisioningStatus = t(
+    'Workspace commercial account is being prepared for this workspace.',
+  );
 
   if (!viewModel) {
     return (
@@ -189,9 +195,13 @@ export function PortalSettlementsPage({ onNavigate }: PortalSettlementsPageProps
       >
         <CardContent className="p-8">
           <EmptyState
-            description={t(
-              'Settlement explorer will appear after the portal loads canonical balance, hold, settlement, and pricing evidence.',
-            )}
+            description={status === provisioningStatus
+              ? t(
+                'Balances, settlements, and pricing evidence will appear once workspace commercial provisioning finishes.',
+              )
+              : t(
+                'Settlement explorer will appear after the portal loads canonical balance, hold, settlement, and pricing evidence.',
+              )}
             title={status || t('Preparing settlement explorer')}
           />
         </CardContent>

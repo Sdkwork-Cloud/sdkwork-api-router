@@ -32,10 +32,10 @@ use axum::{
     Json, Router,
 };
 use sdkwork_api_app_billing::{
-    list_account_ledger_history, list_billing_events, summarize_account_balance,
-    summarize_billing_events, summarize_billing_snapshot, synchronize_due_pricing_plan_lifecycle,
-    AccountBalanceSnapshot, AccountLedgerHistoryEntry, AccountLotBalanceSnapshot,
-    CommercialBillingAdminKernel,
+    ensure_primary_account_for_gateway_request_context, list_account_ledger_history,
+    list_billing_events, summarize_account_balance, summarize_billing_events,
+    summarize_billing_snapshot, synchronize_due_pricing_plan_lifecycle, AccountBalanceSnapshot,
+    AccountLedgerHistoryEntry, AccountLotBalanceSnapshot, CommercialBillingAdminKernel,
 };
 use sdkwork_api_app_commerce::{
     apply_portal_commerce_payment_event_with_billing, cancel_portal_commerce_order,
@@ -982,51 +982,44 @@ async fn account_history_handler(
 
     if snapshot.account.is_none() {
         if let Some(commercial_billing) = state.commercial_billing.as_ref() {
-            if let Some(account) = commercial_billing
-                .resolve_payable_account_for_gateway_request_context(
-                    &portal_workspace_request_context(&workspace),
-                )
+            let account = ensure_portal_workspace_commercial_account(&state, &workspace).await?;
+            let account_id = account.account_id;
+            let balance = commercial_billing
+                .summarize_account_balance(account_id, current_time_millis())
                 .await
-                .map_err(commercial_billing_error_response)?
-            {
-                let account_id = account.account_id;
-                let balance = commercial_billing
-                    .summarize_account_balance(account_id, current_time_millis())
-                    .await
-                    .map_err(commercial_billing_error_response)?;
-                let ledger_entry_ids = payment_store
-                    .list_account_ledger_entry_records()
-                    .await
-                    .map_err(portal_payment_error_response)?
-                    .into_iter()
-                    .filter(|entry| entry.account_id == account_id)
-                    .map(|entry| entry.ledger_entry_id)
-                    .collect::<std::collections::BTreeSet<_>>();
+                .map_err(commercial_billing_error_response)?;
+            let ledger_entry_ids = payment_store
+                .list_account_ledger_entry_records()
+                .await
+                .map_err(portal_payment_error_response)?
+                .into_iter()
+                .filter(|entry| entry.account_id == account_id)
+                .map(|entry| entry.ledger_entry_id)
+                .collect::<std::collections::BTreeSet<_>>();
 
-                snapshot.account = Some(account);
-                snapshot.balance = Some(balance);
-                snapshot.lots = payment_store
-                    .list_account_benefit_lots()
-                    .await
-                    .map_err(portal_payment_error_response)?
-                    .into_iter()
-                    .filter(|lot| lot.account_id == account_id)
-                    .collect();
-                snapshot.ledger_entries = payment_store
-                    .list_account_ledger_entry_records()
-                    .await
-                    .map_err(portal_payment_error_response)?
-                    .into_iter()
-                    .filter(|entry| entry.account_id == account_id)
-                    .collect();
-                snapshot.ledger_allocations = payment_store
-                    .list_account_ledger_allocations()
-                    .await
-                    .map_err(portal_payment_error_response)?
-                    .into_iter()
-                    .filter(|allocation| ledger_entry_ids.contains(&allocation.ledger_entry_id))
-                    .collect();
-            }
+            snapshot.account = Some(account);
+            snapshot.balance = Some(balance);
+            snapshot.lots = payment_store
+                .list_account_benefit_lots()
+                .await
+                .map_err(portal_payment_error_response)?
+                .into_iter()
+                .filter(|lot| lot.account_id == account_id)
+                .collect();
+            snapshot.ledger_entries = payment_store
+                .list_account_ledger_entry_records()
+                .await
+                .map_err(portal_payment_error_response)?
+                .into_iter()
+                .filter(|entry| entry.account_id == account_id)
+                .collect();
+            snapshot.ledger_allocations = payment_store
+                .list_account_ledger_allocations()
+                .await
+                .map_err(portal_payment_error_response)?
+                .into_iter()
+                .filter(|allocation| ledger_entry_ids.contains(&allocation.ledger_entry_id))
+                .collect();
         }
     }
 
@@ -1439,6 +1432,26 @@ fn portal_workspace_request_context(workspace: &PortalWorkspaceSummary) -> Gatew
     }
 }
 
+pub(crate) async fn ensure_portal_workspace_commercial_account(
+    state: &PortalApiState,
+    workspace: &PortalWorkspaceSummary,
+) -> Result<AccountRecord, (StatusCode, Json<ErrorResponse>)> {
+    let request_context = portal_workspace_request_context(workspace);
+    let account_store = state.store.account_kernel_store().ok_or_else(|| {
+        error_response(
+            StatusCode::NOT_IMPLEMENTED,
+            "portal commercial account routes are unavailable for the current storage runtime",
+        )
+    })?;
+    ensure_primary_account_for_gateway_request_context(
+        account_store,
+        &request_context,
+        current_time_millis(),
+    )
+    .await
+    .map_err(commercial_billing_error_response)
+}
+
 async fn load_portal_billing_account_context(
     state: &PortalApiState,
     claims: &AuthenticatedPortalClaims,
@@ -1447,18 +1460,7 @@ async fn load_portal_billing_account_context(
         .await
         .map_err(|status| error_response(status, "portal workspace is unavailable"))?;
     let commercial_billing = commercial_billing_kernel(state)?.clone();
-    let account = commercial_billing
-        .resolve_payable_account_for_gateway_request_context(&portal_workspace_request_context(
-            &workspace,
-        ))
-        .await
-        .map_err(commercial_billing_error_response)?
-        .ok_or_else(|| {
-            error_response(
-                StatusCode::NOT_FOUND,
-                "workspace commercial account is not provisioned",
-            )
-        })?;
+    let account = ensure_portal_workspace_commercial_account(state, &workspace).await?;
     let balance = commercial_billing
         .summarize_account_balance(account.account_id, current_time_millis())
         .await
@@ -1474,15 +1476,7 @@ async fn load_portal_commerce_reconciliation_summary(
     let Some(commercial_billing) = state.commercial_billing.as_ref() else {
         return Ok(None);
     };
-    let account = commercial_billing
-        .resolve_payable_account_for_gateway_request_context(&portal_workspace_request_context(
-            workspace,
-        ))
-        .await
-        .map_err(commercial_billing_error_response)?;
-    let Some(account) = account else {
-        return Ok(None);
-    };
+    let account = ensure_portal_workspace_commercial_account(state, workspace).await?;
     let checkpoint = commercial_billing
         .find_account_commerce_reconciliation_state(account.account_id, &workspace.project.id)
         .await

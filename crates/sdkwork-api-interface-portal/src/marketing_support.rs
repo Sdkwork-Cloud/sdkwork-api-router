@@ -25,17 +25,14 @@ async fn load_portal_marketing_account_id(
     state: &PortalApiState,
     workspace: &PortalWorkspaceSummary,
 ) -> Result<Option<String>, StatusCode> {
-    let Some(commercial_billing) = state.commercial_billing.as_ref() else {
+    if state.commercial_billing.is_none() {
         return Ok(None);
-    };
+    }
 
-    let account = commercial_billing
-        .resolve_payable_account_for_gateway_request_context(&portal_workspace_request_context(
-            workspace,
-        ))
+    let account = ensure_portal_workspace_commercial_account(state, workspace)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(account.map(|record| record.account_id.to_string()))
+    Ok(Some(account.account_id.to_string()))
 }
 
 impl PortalCouponAccountArrivalContext {

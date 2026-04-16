@@ -775,10 +775,13 @@ async fn portal_billing_pricing_reads_auto_activate_due_planned_plan_versions() 
 }
 
 #[tokio::test]
-async fn portal_billing_account_returns_not_found_when_workspace_account_is_missing() {
+async fn portal_billing_account_auto_provisions_workspace_account_when_missing() {
     let pool = memory_pool().await;
+    let store = SqliteAdminStore::new(pool.clone());
     let app = sdkwork_api_interface_portal::portal_router_with_pool(pool);
     let token = portal_token(app.clone()).await;
+    let workspace = portal_workspace(app.clone(), &token).await;
+    let subject = gateway_auth_subject_from_request_context(&workspace_request_context(&workspace));
 
     let response = app
         .oneshot(
@@ -792,10 +795,23 @@ async fn portal_billing_account_returns_not_found_when_workspace_account_is_miss
         .await
         .unwrap();
 
-    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert_eq!(response.status(), StatusCode::OK);
     let json = read_json(response).await;
-    assert_eq!(
-        json["error"]["message"],
-        "workspace commercial account is not provisioned"
-    );
+    assert_eq!(json["account"]["tenant_id"], subject.tenant_id);
+    assert_eq!(json["account"]["organization_id"], subject.organization_id);
+    assert_eq!(json["account"]["user_id"], subject.user_id);
+    assert_eq!(json["account"]["account_type"], "primary");
+    assert_eq!(json["account"]["status"], "active");
+    assert_eq!(json["available_balance"], 0.0);
+
+    let stored_account = store
+        .find_account_record_by_owner(
+            subject.tenant_id,
+            subject.organization_id,
+            subject.user_id,
+            AccountType::Primary,
+        )
+        .await
+        .unwrap();
+    assert!(stored_account.is_some());
 }

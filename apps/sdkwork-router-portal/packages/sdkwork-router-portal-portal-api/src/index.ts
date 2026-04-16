@@ -509,6 +509,21 @@ export function portalErrorMessage(error: unknown): string {
   return 'Portal request failed.';
 }
 
+export function resolveCommercialAccountProvisioningStatus(
+  error: unknown,
+): string | null {
+  const normalizedMessage = portalErrorMessage(error).trim().toLowerCase();
+
+  if (
+    normalizedMessage === 'workspace commercial account is not provisioned'
+    || normalizedMessage === 'commercial account is not provisioned'
+  ) {
+    return 'Workspace commercial account is being prepared for this workspace.';
+  }
+
+  return null;
+}
+
 export function registerPortalUser(input: {
   email: string;
   password: string;

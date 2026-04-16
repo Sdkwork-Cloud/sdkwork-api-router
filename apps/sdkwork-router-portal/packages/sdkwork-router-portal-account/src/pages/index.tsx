@@ -20,7 +20,10 @@ import {
   Card,
   CardContent,
 } from 'sdkwork-router-portal-commons/framework/layout';
-import { portalErrorMessage } from 'sdkwork-router-portal-portal-api';
+import {
+  portalErrorMessage,
+  resolveCommercialAccountProvisioningStatus,
+} from 'sdkwork-router-portal-portal-api';
 import type {
   BillingAccountingMode,
   BillingEventAccountingModeSummary,
@@ -883,7 +886,7 @@ export function PortalAccountPage({ onNavigate }: PortalAccountPageProps) {
       )
       .catch((error) => {
         if (!cancelled) {
-          setStatus(portalErrorMessage(error));
+          setStatus(t(resolveCommercialAccountProvisioningStatus(error) ?? portalErrorMessage(error)));
         }
       });
 
@@ -943,14 +946,22 @@ export function PortalAccountPage({ onNavigate }: PortalAccountPageProps) {
     }
   }, [page, viewModel]);
 
+  const provisioningStatus = t(
+    'Workspace commercial account is being prepared for this workspace.',
+  );
+
   if (!viewModel) {
     return (
       <Card className="border-zinc-200 bg-white shadow-none dark:border-zinc-800 dark:bg-zinc-950">
         <CardContent className="p-8">
           <EmptyState
-            description={t(
-              'Account analytics will appear after the portal loads billing, membership, and usage evidence.',
-            )}
+            description={status === provisioningStatus
+              ? t(
+                'Balances, settlements, and pricing evidence will appear once workspace commercial provisioning finishes.',
+              )
+              : t(
+                'Account analytics will appear after the portal loads billing, membership, and usage evidence.',
+              )}
             title={status || t('Preparing account')}
           />
         </CardContent>

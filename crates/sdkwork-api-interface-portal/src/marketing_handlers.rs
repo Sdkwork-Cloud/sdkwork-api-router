@@ -256,15 +256,9 @@ async fn load_portal_coupon_account_arrival_context(
         return Ok(PortalCouponAccountArrivalContext::default());
     };
 
-    let account = commercial_billing
-        .resolve_payable_account_for_gateway_request_context(&portal_workspace_request_context(
-            workspace,
-        ))
+    let account = ensure_portal_workspace_commercial_account(state, workspace)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let Some(account) = account else {
-        return Ok(PortalCouponAccountArrivalContext::default());
-    };
 
     let lots = commercial_billing
         .list_account_benefit_lots()
