@@ -3,7 +3,8 @@ use super::*;
 #[utoipa::path(
         get,
         path = "/v1/music",
-        tag = "music",
+        operation_id = "music_openai_list",
+        tag = "music.openai",
         security(("bearerAuth" = [])),
         responses(
             (status = 200, description = "Visible music tracks.", body = sdkwork_api_contract_openai::music::MusicTracksResponse),
@@ -16,7 +17,8 @@ pub(crate) async fn music_list() {}
 #[utoipa::path(
         post,
         path = "/v1/music",
-        tag = "music",
+        operation_id = "music_openai_create",
+        tag = "music.openai",
         request_body = sdkwork_api_contract_openai::music::CreateMusicRequest,
         security(("bearerAuth" = [])),
         responses(
@@ -31,7 +33,8 @@ pub(crate) async fn music_create() {}
 #[utoipa::path(
         get,
         path = "/v1/music/{music_id}",
-        tag = "music",
+        operation_id = "music_openai_get",
+        tag = "music.openai",
         params(("music_id" = String, Path, description = "Music track identifier.")),
         security(("bearerAuth" = [])),
         responses(
@@ -46,7 +49,8 @@ pub(crate) async fn music_get() {}
 #[utoipa::path(
         delete,
         path = "/v1/music/{music_id}",
-        tag = "music",
+        operation_id = "music_openai_delete",
+        tag = "music.openai",
         params(("music_id" = String, Path, description = "Music track identifier.")),
         security(("bearerAuth" = [])),
         responses(
@@ -61,7 +65,8 @@ pub(crate) async fn music_delete() {}
 #[utoipa::path(
         get,
         path = "/v1/music/{music_id}/content",
-        tag = "music",
+        operation_id = "music_openai_content_get",
+        tag = "music.openai",
         params(("music_id" = String, Path, description = "Music track identifier.")),
         security(("bearerAuth" = [])),
         responses(
@@ -76,7 +81,8 @@ pub(crate) async fn music_content() {}
 #[utoipa::path(
         post,
         path = "/v1/music/lyrics",
-        tag = "music",
+        operation_id = "music_openai_lyrics_create",
+        tag = "music.openai",
         request_body = sdkwork_api_contract_openai::music::CreateMusicLyricsRequest,
         security(("bearerAuth" = [])),
         responses(

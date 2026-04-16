@@ -28,7 +28,9 @@ OpenAPI is generated from the current `axum` route implementation, so the JSON d
 - `code.claude`: Claude mirror routes on the official `/v1/messages*` surface
 - `code.gemini`: Gemini mirror routes on the official `/v1beta/models/{model}:*` surface
 - `images.openai`: OpenAI image mirror routes on the official `/v1/images/*` surface
+- `audio.openai`: Shared audio mirror routes on the official `/v1/audio/*` surface
 - `video.openai`: Shared video mirror routes on the official `/v1/videos*` surface
+- `music.openai`: Shared music mirror routes on the official `/v1/music*` surface
 - the public contract does not invent wrapper prefixes such as `/code/*`, `/claude/*`, or `/gemini/*`
 
 ## Route Families
@@ -44,7 +46,7 @@ OpenAI-family rows below use the official `/v1` prefix. Claude and Gemini keep t
 | embeddings | `POST /embeddings` | request-model-driven provider selection |
 | moderations | `POST /moderations` | OpenAI-compatible moderation route |
 | images | `POST /images/generations`, `POST /images/edits`, `POST /images/variations` | active public mirror is `images.openai`; provider routing can vary behind the shared OpenAI image contract |
-| audio | `POST /audio/transcriptions`, `POST /audio/translations`, `POST /audio/speech`, `GET /audio/voices`, `POST /audio/voice_consents` | includes binary speech output and voice consent creation |
+| audio | `POST /audio/transcriptions`, `POST /audio/translations`, `POST /audio/speech`, `GET /audio/voices`, `POST /audio/voice_consents` | active public mirror is `audio.openai`; provider routing can vary behind the shared `/v1/audio/*` contract |
 | files | `GET/POST /files`, `GET/DELETE /files/{file_id}`, `GET /files/{file_id}/content` | metadata plus binary content retrieval |
 | uploads | `POST /uploads`, `POST /uploads/{upload_id}/parts`, `POST /uploads/{upload_id}/complete`, `POST /uploads/{upload_id}/cancel` | multipart upload lifecycle |
 | containers | `GET/POST /containers`, `GET/DELETE /containers/{container_id}`, `GET/POST /containers/{container_id}/files`, `GET/DELETE /containers/{container_id}/files/{file_id}`, `GET /containers/{container_id}/files/{file_id}/content` | container and nested file flows |
@@ -58,14 +60,18 @@ OpenAI-family rows below use the official `/v1` prefix. Claude and Gemini keep t
 | realtime | `POST /realtime/sessions` | realtime session creation |
 | evals | `GET/POST /evals`, `GET/POST/DELETE /evals/{eval_id}`, nested runs and output item routes | evaluation workflows |
 | videos | `GET/POST /videos`, retrieve, delete, content, remix, edits, extensions, extend, and character routes | active public mirror is `video.openai`; provider routing can vary behind the shared `/v1/videos*` contract |
-| music | `GET/POST /music`, `GET/DELETE /music/{music_id}`, `GET /music/{music_id}/content`, `POST /music/lyrics` | resource-oriented music generation, retrieval, binary content fetch, and lyrics creation |
+| music | `GET/POST /music`, `GET/DELETE /music/{music_id}`, `GET /music/{music_id}/content`, `POST /music/lyrics` | active public mirror is `music.openai`; provider routing can vary behind the shared `/v1/music*` contract |
 | market | `GET /market/products`, `GET /market/offers`, `POST /market/quotes` | public API product catalog, offer discovery, and quote workflows |
 | marketing | `POST /marketing/coupons/validate`, `POST /marketing/coupons/reserve`, `POST /marketing/coupons/confirm`, `POST /marketing/coupons/rollback` | coupon-first validation, reservation, redemption, and rollback surface |
 | commercial | `GET /commercial/account`, `GET /commercial/account/benefit-lots` | commercial account summary plus benefit-lot traversal and coupon/account-arrival evidence |
 
 Phase 2A keeps the active image mirror contract on the shared OpenAI image routes `/v1/images*` and publishes that family as `images.openai`. Reserved future image mirror families such as `images.nanobanana`, `images.midjourney`, `images.volcengine`, `images.aliyun`, and `images.kling` remain design-time names only until their official protocols are formalized and implemented.
 
+This slice keeps the active audio mirror contract on the shared `/v1/audio/*` routes and publishes that family as `audio.openai`. The public contract stays on the current shared audio surface and does not introduce wrapper paths such as `/audio/openai/*`.
+
 Phase 3A keeps the active video mirror contract on the shared `/v1/videos*` routes and publishes that family as `video.openai`. Reserved future video mirror families such as `video.sora`, `video.minimax`, `video.vidu`, `video.volcengine`, `video.google-veo`, `video.aliyun`, and `video.kling` remain design-time names only until their official protocols are formalized and implemented.
+
+This slice keeps the active music mirror contract on the shared `/v1/music*` routes and publishes that family as `music.openai`. Reserved future music mirror families such as `music.suno`, `music.google`, and `music.minimax` remain design-time names only until their official protocols are formalized and implemented.
 
 ## Gateway Semantics
 

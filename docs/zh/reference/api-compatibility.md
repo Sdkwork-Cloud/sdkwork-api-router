@@ -26,6 +26,10 @@ SDKWork 使用五种执行真值标签来描述网关接口的真实实现方式
 - `code.openai`：OpenAI 与 Codex 的 `/v1/*`
 - `code.claude`：Claude 的 `/v1/messages` 与 `/v1/messages/count_tokens`
 - `code.gemini`：Gemini 的 `/v1beta/models/{model}:*`
+- `images.openai`：OpenAI 图片协议 `/v1/images/*`
+- `audio.openai`：共享音频协议 `/v1/audio/*`
+- `video.openai`：共享视频协议 `/v1/videos*`
+- `music.openai`：共享音乐协议 `/v1/music*`
 
 ## 高价值 API 家族
 
@@ -55,7 +59,11 @@ SDKWork 使用五种执行真值标签来描述网关接口的真实实现方式
 - `/v1/evals`
 - `/v1/videos`
 
-`music` 能力采用资源化 `/v1/music*` 路由，而不是绑定单一上游厂商的私有传输路径，这样可以与图片、视频一样复用统一的路由、计费和插件适配架构。
+`audio` 能力当前以共享 `audio.openai` 镜像家族的形式发布在 `/v1/audio/*` 上，公开契约不会引入 `/audio/openai/*` 这类 wrapper 前缀。
+
+`music` 能力当前以共享 `music.openai` 镜像家族的形式发布在 `/v1/music*` 上，继续采用资源化路由，而不是绑定单一上游厂商的私有传输路径，这样可以与图片、视频一样复用统一的路由、计费和插件适配架构。
+
+图片当前激活的公开镜像家族是 `images.openai`，视频当前激活的公开镜像家族是 `video.openai`。保留镜像家族如 `images.nanobanana`、`images.midjourney`、`images.volcengine`、`images.aliyun`、`images.kling`、`video.sora`、`video.minimax`、`video.vidu`、`video.volcengine`、`video.google-veo`、`video.aliyun`、`video.kling`、`music.suno`、`music.google`、`music.minimax` 当前都只是治理名称，还没有作为公开 OpenAPI tag 或可调用路由发布。
 
 ## Agent 客户端兼容面
 

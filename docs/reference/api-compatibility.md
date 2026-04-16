@@ -23,7 +23,9 @@ These labels describe runtime behavior, not the public URL taxonomy.
 - `code.claude`: Claude on `/v1/messages` and `/v1/messages/count_tokens`
 - `code.gemini`: Gemini on `/v1beta/models/{model}:*`
 - `images.openai`: OpenAI image protocol on `/v1/images/*`
+- `audio.openai`: Shared audio protocol on `/v1/audio/*`
 - `video.openai`: Shared video protocol on `/v1/videos*`
+- `music.openai`: Shared music protocol on `/v1/music*`
 
 ## High-Value API Families
 
@@ -53,11 +55,15 @@ Currently implemented gateway families include:
 - `/v1/evals`
 - `/v1/videos`
 
-The `music` family is exposed as resource-oriented `/v1/music*` routes instead of provider-specific transport paths, so routing, billing, and plugin adapters stay aligned with the same capability-first gateway model used by images and videos.
+The `audio` family is currently published as the shared `audio.openai` mirror family on `/v1/audio/*`. The public contract stays on the current shared audio surface and does not introduce wrapper prefixes such as `/audio/openai/*`.
+
+The `music` family is currently published as the shared `music.openai` mirror family on `/v1/music*`. It remains resource-oriented instead of binding the public contract to one provider transport, so routing, billing, and plugin adapters stay aligned with the same capability-first gateway model used by images and videos.
 
 For images, the currently active public mirror family is `images.openai` on `/v1/images/*`. Reserved future image mirror groups such as `images.nanobanana`, `images.midjourney`, `images.volcengine`, `images.aliyun`, and `images.kling` are governance names only in this phase and are not yet published as active OpenAPI tags or callable public routes.
 
 For video, the currently active public mirror family is `video.openai` on `/v1/videos*`. Reserved future video mirror groups such as `video.sora`, `video.minimax`, `video.vidu`, `video.volcengine`, `video.google-veo`, `video.aliyun`, and `video.kling` are governance names only in this phase and are not yet published as active OpenAPI tags or callable public routes.
+
+For music, the currently active public mirror family is `music.openai` on `/v1/music*`. Reserved future music mirror groups such as `music.suno`, `music.google`, and `music.minimax` are governance names only in this phase and are not yet published as active OpenAPI tags or callable public routes.
 
 The control plane also exposes:
 

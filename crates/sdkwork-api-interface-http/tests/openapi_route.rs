@@ -105,6 +105,46 @@ async fn openapi_routes_expose_gateway_api_inventory() {
     assert!(json["paths"]["/v1/audio/speech"]["post"].is_object());
     assert!(json["paths"]["/v1/audio/voices"]["get"].is_object());
     assert!(json["paths"]["/v1/audio/voice_consents"]["post"].is_object());
+    assert_eq!(
+        json["paths"]["/v1/audio/transcriptions"]["post"]["tags"][0],
+        "audio.openai"
+    );
+    assert_eq!(
+        json["paths"]["/v1/audio/transcriptions"]["post"]["operationId"],
+        "audio_openai_transcriptions_create"
+    );
+    assert_eq!(
+        json["paths"]["/v1/audio/translations"]["post"]["tags"][0],
+        "audio.openai"
+    );
+    assert_eq!(
+        json["paths"]["/v1/audio/translations"]["post"]["operationId"],
+        "audio_openai_translations_create"
+    );
+    assert_eq!(
+        json["paths"]["/v1/audio/speech"]["post"]["tags"][0],
+        "audio.openai"
+    );
+    assert_eq!(
+        json["paths"]["/v1/audio/speech"]["post"]["operationId"],
+        "audio_openai_speech_create"
+    );
+    assert_eq!(
+        json["paths"]["/v1/audio/voices"]["get"]["tags"][0],
+        "audio.openai"
+    );
+    assert_eq!(
+        json["paths"]["/v1/audio/voices"]["get"]["operationId"],
+        "audio_openai_voices_list"
+    );
+    assert_eq!(
+        json["paths"]["/v1/audio/voice_consents"]["post"]["tags"][0],
+        "audio.openai"
+    );
+    assert_eq!(
+        json["paths"]["/v1/audio/voice_consents"]["post"]["operationId"],
+        "audio_openai_voice_consents_create"
+    );
     assert!(json["paths"]["/v1/containers"]["get"].is_object());
     assert!(json["paths"]["/v1/containers"]["post"].is_object());
     assert!(json["paths"]["/v1/containers/{container_id}"]["get"].is_object());
@@ -141,9 +181,18 @@ async fn openapi_routes_expose_gateway_api_inventory() {
     assert!(json["paths"]["/v1/videos/{video_id}/characters/{character_id}"]["get"].is_object());
     assert!(json["paths"]["/v1/videos/{video_id}/characters/{character_id}"]["post"].is_object());
     assert!(json["paths"]["/v1/videos/{video_id}/extend"]["post"].is_object());
-    assert_eq!(json["paths"]["/v1/videos"]["get"]["tags"][0], "video.openai");
-    assert_eq!(json["paths"]["/v1/videos"]["get"]["operationId"], "video_openai_list");
-    assert_eq!(json["paths"]["/v1/videos"]["post"]["tags"][0], "video.openai");
+    assert_eq!(
+        json["paths"]["/v1/videos"]["get"]["tags"][0],
+        "video.openai"
+    );
+    assert_eq!(
+        json["paths"]["/v1/videos"]["get"]["operationId"],
+        "video_openai_list"
+    );
+    assert_eq!(
+        json["paths"]["/v1/videos"]["post"]["tags"][0],
+        "video.openai"
+    );
     assert_eq!(
         json["paths"]["/v1/videos"]["post"]["operationId"],
         "video_openai_create"
@@ -250,6 +299,51 @@ async fn openapi_routes_expose_gateway_api_inventory() {
     assert!(json["paths"]["/v1/music/{music_id}"]["delete"].is_object());
     assert!(json["paths"]["/v1/music/{music_id}/content"]["get"].is_object());
     assert!(json["paths"]["/v1/music/lyrics"]["post"].is_object());
+    assert_eq!(json["paths"]["/v1/music"]["get"]["tags"][0], "music.openai");
+    assert_eq!(
+        json["paths"]["/v1/music"]["get"]["operationId"],
+        "music_openai_list"
+    );
+    assert_eq!(
+        json["paths"]["/v1/music"]["post"]["tags"][0],
+        "music.openai"
+    );
+    assert_eq!(
+        json["paths"]["/v1/music"]["post"]["operationId"],
+        "music_openai_create"
+    );
+    assert_eq!(
+        json["paths"]["/v1/music/{music_id}"]["get"]["tags"][0],
+        "music.openai"
+    );
+    assert_eq!(
+        json["paths"]["/v1/music/{music_id}"]["get"]["operationId"],
+        "music_openai_get"
+    );
+    assert_eq!(
+        json["paths"]["/v1/music/{music_id}"]["delete"]["tags"][0],
+        "music.openai"
+    );
+    assert_eq!(
+        json["paths"]["/v1/music/{music_id}"]["delete"]["operationId"],
+        "music_openai_delete"
+    );
+    assert_eq!(
+        json["paths"]["/v1/music/{music_id}/content"]["get"]["tags"][0],
+        "music.openai"
+    );
+    assert_eq!(
+        json["paths"]["/v1/music/{music_id}/content"]["get"]["operationId"],
+        "music_openai_content_get"
+    );
+    assert_eq!(
+        json["paths"]["/v1/music/lyrics"]["post"]["tags"][0],
+        "music.openai"
+    );
+    assert_eq!(
+        json["paths"]["/v1/music/lyrics"]["post"]["operationId"],
+        "music_openai_lyrics_create"
+    );
     assert!(json["paths"]["/v1/uploads"]["post"].is_object());
     assert!(json["paths"]["/v1/uploads/{upload_id}/parts"]["post"].is_object());
     assert!(json["paths"]["/v1/uploads/{upload_id}/complete"]["post"].is_object());
@@ -360,7 +454,11 @@ async fn openapi_routes_expose_gateway_api_inventory() {
     assert!(tags.iter().any(|tag| tag["name"] == "code.claude"));
     assert!(tags.iter().any(|tag| tag["name"] == "code.gemini"));
     assert!(tags.iter().any(|tag| tag["name"] == "images.openai"));
+    assert!(tags.iter().any(|tag| tag["name"] == "audio.openai"));
     assert!(tags.iter().any(|tag| tag["name"] == "video.openai"));
+    assert!(tags.iter().any(|tag| tag["name"] == "music.openai"));
+    assert!(!tags.iter().any(|tag| tag["name"] == "audio"));
+    assert!(!tags.iter().any(|tag| tag["name"] == "music"));
     assert!(!tags.iter().any(|tag| tag["name"] == "images"));
     assert!(!tags.iter().any(|tag| tag["name"] == "videos"));
     assert!(!tags.iter().any(|tag| tag["name"] == "images.nanobanana"));
@@ -375,15 +473,23 @@ async fn openapi_routes_expose_gateway_api_inventory() {
     assert!(!tags.iter().any(|tag| tag["name"] == "video.google-veo"));
     assert!(!tags.iter().any(|tag| tag["name"] == "video.aliyun"));
     assert!(!tags.iter().any(|tag| tag["name"] == "video.kling"));
+    assert!(!tags.iter().any(|tag| tag["name"] == "music.suno"));
+    assert!(!tags.iter().any(|tag| tag["name"] == "music.google"));
+    assert!(!tags.iter().any(|tag| tag["name"] == "music.minimax"));
     assert!(!tags.iter().any(|tag| tag["name"] == "compatibility"));
     assert!(json["paths"]["/code"].is_null());
     assert!(json["paths"]["/code/chat/completions"].is_null());
     assert!(json["paths"]["/claude/messages"].is_null());
     assert!(json["paths"]["/gemini/models"].is_null());
+    assert!(json["paths"]["/audio/openai/transcriptions"].is_null());
+    assert!(json["paths"]["/v1/audio/openai/transcriptions"].is_null());
     assert!(json["paths"]["/images/openai/generations"].is_null());
     assert!(json["paths"]["/images/nanobanana/generations"].is_null());
     assert!(json["paths"]["/v1/images/nanobanana/generations"].is_null());
     assert!(json["paths"]["/v1/images/midjourney/generations"].is_null());
+    assert!(json["paths"]["/music/openai/tracks"].is_null());
+    assert!(json["paths"]["/music/suno/tracks"].is_null());
+    assert!(json["paths"]["/v1/music/suno/tracks"].is_null());
     assert!(json["paths"]["/video/openai/videos"].is_null());
     assert!(json["paths"]["/video/sora/videos"].is_null());
     assert!(json["paths"]["/v1/videos/sora/create"].is_null());
