@@ -1,10 +1,10 @@
 # Gateway API
 
-The gateway service exposes the OpenAI-compatible data plane under `/v1/*`.
+The gateway service exposes mirror-style public APIs. Official client paths stay unchanged, so existing SDKs and CLIs should only need to switch the `base_url`.
 
 ## Base URL and Auth
 
-- default local base URL: `http://127.0.0.1:8080/v1`
+- default local base URL: `http://127.0.0.1:8080`
 - primary auth: `Authorization: Bearer skw_live_...`
 - health: `GET /health`
 - metrics: `GET /metrics`
@@ -22,7 +22,16 @@ In standalone service mode, expect stateful gateway behavior backed by the admin
 
 OpenAPI is generated from the current `axum` route implementation, so the JSON document and the browser page stay aligned with the live router surface.
 
+## Mirror Protocol Families
+
+- `code.openai`: OpenAI and Codex mirror routes on the official `/v1/*` surface
+- `code.claude`: Claude mirror routes on the official `/v1/messages*` surface
+- `code.gemini`: Gemini mirror routes on the official `/v1beta/models/{model}:*` surface
+- the public contract does not invent wrapper prefixes such as `/code/*`, `/claude/*`, or `/gemini/*`
+
 ## Route Families
+
+OpenAI-family rows below use the official `/v1` prefix. Claude and Gemini keep their official provider paths instead of being remapped into a gateway-specific namespace.
 
 | Family | Routes | Notes |
 |---|---|---|
@@ -52,8 +61,11 @@ OpenAPI is generated from the current `axum` route implementation, so the JSON d
 | marketing | `POST /marketing/coupons/validate`, `POST /marketing/coupons/reserve`, `POST /marketing/coupons/confirm`, `POST /marketing/coupons/rollback` | coupon-first validation, reservation, redemption, and rollback surface |
 | commercial | `GET /commercial/account`, `GET /commercial/account/benefit-lots` | commercial account summary plus benefit-lot traversal and coupon/account-arrival evidence |
 
+Phase 1 documents the current live media contract on shared capability routes such as `/v1/images*`, `/v1/audio*`, `/v1/videos*`, and `/v1/music*`. Provider-specific mirror protocols for media families remain follow-up work.
+
 ## Gateway Semantics
 
+- public contract rule: preserve the official client path and switch only the gateway base URL
 - provider selection is routed through models, route keys, and routing policy
 - usage and billing are recorded against authenticated projects in stateful mode
 - create-like routes may preserve route-key-based provider selection while recording usage against created resource IDs
@@ -73,7 +85,7 @@ OpenAPI is generated from the current `axum` route implementation, so the JSON d
 
 ## Related Docs
 
-- compatibility truth:
+- public contract and execution truth:
   - [API Compatibility](/reference/api-compatibility)
   - [Full Compatibility Matrix](/api/compatibility-matrix)
 - control plane:

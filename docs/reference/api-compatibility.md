@@ -8,6 +8,21 @@ SDKWork tracks compatibility with five execution-truth labels:
 - `emulated`
 - `unsupported`
 
+These labels describe runtime behavior, not the public URL taxonomy.
+
+## Public Contract Rules
+
+- preserve the official provider path and switch only the gateway `base_url`
+- if an OpenAI standard route already exists for a capability, reuse that route as the shared public contract
+- if no shared standard exists, expose the provider's official protocol path as a mirror surface
+- do not invent wrapper prefixes such as `/code/*`, `/claude/*`, or `/gemini/*`
+
+## Mirror Protocol Families
+
+- `code.openai`: OpenAI and Codex on `/v1/*`
+- `code.claude`: Claude on `/v1/messages` and `/v1/messages/count_tokens`
+- `code.gemini`: Gemini on `/v1beta/models/{model}:*`
+
 ## High-Value API Families
 
 Currently implemented gateway families include:
@@ -52,28 +67,28 @@ OpenAI-compatible tool access is the default path for:
 - OpenClaw provider manifests
 - general OpenAI SDK and CLI clients using `/v1/models`, `/v1/chat/completions`, and `/v1/responses`
 
-Two translated gateway surfaces are now first-class:
+Two translated mirror protocol families are first-class public contracts:
 
-- Anthropic Messages compatibility for Claude Code and other Anthropic clients on `POST /v1/messages` and `POST /v1/messages/count_tokens`
-- Gemini Generative Language compatibility for Gemini CLI gateway mode on `POST /v1beta/models/{model}:generateContent`, `POST /v1beta/models/{model}:streamGenerateContent?alt=sse`, and `POST /v1beta/models/{model}:countTokens`
+- Claude mirror protocol for Claude Code and other Anthropic clients on `POST /v1/messages` and `POST /v1/messages/count_tokens`
+- Gemini mirror protocol for Gemini CLI gateway mode on `POST /v1beta/models/{model}:generateContent`, `POST /v1beta/models/{model}:streamGenerateContent?alt=sse`, and `POST /v1beta/models/{model}:countTokens`
 
 These routes do not bypass SDKWork routing. They translate into the same execution path used by the OpenAI-compatible gateway, so provider selection, project routing preferences, quota enforcement, billing, and usage recording stay consistent across all three protocol families.
 
-Stateful deployments accept the compatibility-native auth inputs in addition to bearer tokens:
+Stateful deployments accept the official protocol auth inputs in addition to bearer tokens:
 
-- Anthropic surface: `Authorization: Bearer ...` or `x-api-key`
+- Claude surface: `Authorization: Bearer ...` or `x-api-key`
 - Gemini surface: `Authorization: Bearer ...`, `x-goog-api-key`, or `?key=...`
 
 Compatibility-specific transport details that are now preserved explicitly:
 
-- Anthropic Messages relay keeps `anthropic-version` and `anthropic-beta` when the request fans out to upstream runtime adapters
+- Claude relay keeps `anthropic-version` and `anthropic-beta` when the request fans out to upstream runtime adapters
 - Gemini CLI quick setup is aligned with the current official client path that uses `GOOGLE_GEMINI_BASE_URL` and `GEMINI_API_KEY_AUTH_MECHANISM=bearer`
 
 Inside `sdkwork-router-portal`, the `Gateway` workspace route now surfaces this compatibility story directly in-product so operators can see the relationship between client setup, deployment mode, and billing posture without switching to the docs first.
 
 ## How To Read Compatibility
 
-- use the API reference pages to understand ownership, base paths, and auth
+- use the API reference pages to understand public mirror protocol families, base paths, and auth
 - use this compatibility view to understand execution semantics
 - use the full matrix when you need route-family-level truth across stateful and stateless modes
 

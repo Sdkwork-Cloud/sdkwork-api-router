@@ -1,13 +1,15 @@
 # 网关 API
 
-网关服务在 `/v1/*` 下暴露 OpenAI 兼容数据平面。
+网关服务以镜像协议方式暴露公开 API。官方客户端路径保持不变，因此现有 SDK 和 CLI 理论上只需要切换 `base_url`。
 
 ## 基础地址与鉴权
 
-- 默认本地基地址：`http://127.0.0.1:8080/v1`
+- 默认本地基地址：`http://127.0.0.1:8080`
 - 主要鉴权方式：`Authorization: Bearer skw_live_...`
 - 健康检查：`GET /health`
 - Metrics：`GET /metrics`
+- OpenAPI JSON：`GET /openapi.json`
+- API 清单页面：`GET /docs`
 
 最小首个请求：
 
@@ -18,7 +20,18 @@ curl http://127.0.0.1:8080/v1/models \
 
 在独立服务模式下，网关是一个依赖 admin store 的有状态实现。无状态 gateway runtime 仍以库和运行时形态存在，其覆盖范围通过兼容矩阵文档继续说明。
 
+OpenAPI 直接从当前 `axum` 路由实现生成，因此 JSON 文档与浏览器中的 API 清单会始终跟随真实公开路由面。
+
+## 镜像协议家族
+
+- `code.openai`：OpenAI 与 Codex 的官方 `/v1/*` 镜像协议面
+- `code.claude`：Claude 的官方 `/v1/messages*` 镜像协议面
+- `code.gemini`：Gemini 的官方 `/v1beta/models/{model}:*` 镜像协议面
+- 公开契约不会额外发明 `/code/*`、`/claude/*`、`/gemini/*` 这类 wrapper 前缀
+
 ## 路由家族
+
+下表中的 OpenAI 家族行默认使用官方 `/v1` 前缀。Claude 与 Gemini 保持各自官方路径，不会被改写到网关自定义命名空间中。
 
 | 家族 | 路由 | 说明 |
 |---|---|---|
@@ -45,8 +58,11 @@ curl http://127.0.0.1:8080/v1/models \
 | videos | `GET/POST /videos`，以及 retrieve、delete、content、remix、edits、extensions、extend、character 路由 | 同时覆盖 canonical 与嵌套路由 |
 | music | `GET/POST /music`、`GET/DELETE /music/{music_id}`、`GET /music/{music_id}/content`、`POST /music/lyrics` | 资源化音乐生成、获取、二进制内容读取与歌词生成 |
 
+Phase 1 当前只文档化现有共享能力路由，例如 `/v1/images*`、`/v1/audio*`、`/v1/videos*`、`/v1/music*`。图片、视频、音乐的 provider 专属镜像协议仍属于后续阶段。
+
 ## 网关语义
 
+- 公开契约规则：保留官方客户端路径，只切换网关 `base_url`
 - provider 选择由 models、route keys 和 routing policy 共同决定
 - 在有状态模式下，usage 与 billing 绑定到已鉴权项目
 - 创建类路由在记录 usage 时可同时保留 route-key 选择与创建后的资源 ID 关联
@@ -63,7 +79,7 @@ curl http://127.0.0.1:8080/v1/models \
 
 ## 相关文档
 
-- 兼容真值：
+- 公开契约与执行真值：
   - [API 兼容矩阵](/zh/reference/api-compatibility)
   - [完整兼容矩阵](/api/compatibility-matrix)
 - 控制平面：
