@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateMusicRequest {
     pub model: String,
     pub prompt: String,
@@ -79,7 +80,7 @@ impl CreateMusicRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateMusicLyricsRequest {
     pub prompt: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -100,7 +101,7 @@ impl CreateMusicLyricsRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct MusicObject {
     pub id: String,
     pub object: &'static str,
@@ -171,7 +172,7 @@ impl MusicObject {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct MusicTracksResponse {
     pub object: &'static str,
     pub data: Vec<MusicObject>,
@@ -186,7 +187,7 @@ impl MusicTracksResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct MusicLyricsObject {
     pub id: String,
     pub object: &'static str,
@@ -217,7 +218,7 @@ impl MusicLyricsObject {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct DeleteMusicResponse {
     pub id: String,
     pub object: &'static str,

@@ -256,6 +256,12 @@ async fn openapi_routes_expose_gateway_api_inventory() {
     assert!(json["components"]["schemas"]["RunStepObject"].is_object());
     assert!(json["components"]["schemas"]["ListRunStepsResponse"].is_object());
     assert!(json["components"]["schemas"]["OpenAiErrorResponse"].is_object());
+    assert!(json["components"]["schemas"]["CreateContainerRequest"].is_object());
+    assert!(json["components"]["schemas"]["VideosResponse"].is_object());
+    assert!(json["components"]["schemas"]["MusicTracksResponse"].is_object());
+    assert!(json["components"]["schemas"]["ListWebhooksResponse"].is_object());
+    assert!(json["components"]["schemas"]["ListEvalsResponse"].is_object());
+    assert!(json["components"]["schemas"]["FineTuningJobObject"].is_object());
     assert_eq!(
         json["paths"]["/market/products"]["get"]["responses"]["200"]["content"]["application/json"]
             ["schema"]["$ref"],

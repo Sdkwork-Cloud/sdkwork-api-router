@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateContainerRequest {
     pub name: String,
 }
@@ -11,7 +12,7 @@ impl CreateContainerRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ContainerObject {
     pub id: String,
     pub object: &'static str,
@@ -30,7 +31,7 @@ impl ContainerObject {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ListContainersResponse {
     pub object: &'static str,
     pub data: Vec<ContainerObject>,
@@ -45,7 +46,7 @@ impl ListContainersResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct DeleteContainerResponse {
     pub id: String,
     pub object: &'static str,
@@ -62,7 +63,7 @@ impl DeleteContainerResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateContainerFileRequest {
     pub file_id: String,
 }
@@ -75,7 +76,7 @@ impl CreateContainerFileRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ContainerFileObject {
     pub id: String,
     pub object: &'static str,
@@ -92,7 +93,7 @@ impl ContainerFileObject {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ListContainerFilesResponse {
     pub object: &'static str,
     pub data: Vec<ContainerFileObject>,
@@ -107,7 +108,7 @@ impl ListContainerFilesResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct DeleteContainerFileResponse {
     pub id: String,
     pub object: &'static str,

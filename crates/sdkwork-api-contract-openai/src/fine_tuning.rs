@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateFineTuningJobRequest {
     pub training_file: String,
     pub model: String,
@@ -15,7 +16,7 @@ impl CreateFineTuningJobRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct FineTuningJobObject {
     pub id: String,
     pub object: &'static str,
@@ -52,7 +53,7 @@ impl FineTuningJobObject {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ListFineTuningJobsResponse {
     pub object: &'static str,
     pub data: Vec<FineTuningJobObject>,
@@ -67,7 +68,7 @@ impl ListFineTuningJobsResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct FineTuningJobEventObject {
     pub id: String,
     pub object: &'static str,
@@ -90,7 +91,7 @@ impl FineTuningJobEventObject {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ListFineTuningJobEventsResponse {
     pub object: &'static str,
     pub data: Vec<FineTuningJobEventObject>,
@@ -105,7 +106,7 @@ impl ListFineTuningJobEventsResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct FineTuningJobCheckpointObject {
     pub id: String,
     pub object: &'static str,
@@ -122,7 +123,7 @@ impl FineTuningJobCheckpointObject {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ListFineTuningJobCheckpointsResponse {
     pub object: &'static str,
     pub data: Vec<FineTuningJobCheckpointObject>,
@@ -137,7 +138,7 @@ impl ListFineTuningJobCheckpointsResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateFineTuningCheckpointPermissionsRequest {
     pub project_ids: Vec<String>,
 }
@@ -148,7 +149,7 @@ impl CreateFineTuningCheckpointPermissionsRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct FineTuningCheckpointPermissionObject {
     pub id: String,
     pub object: &'static str,
@@ -165,7 +166,7 @@ impl FineTuningCheckpointPermissionObject {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ListFineTuningCheckpointPermissionsResponse {
     pub object: &'static str,
     pub data: Vec<FineTuningCheckpointPermissionObject>,
@@ -180,7 +181,7 @@ impl ListFineTuningCheckpointPermissionsResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct DeleteFineTuningCheckpointPermissionResponse {
     pub id: String,
     pub object: &'static str,
