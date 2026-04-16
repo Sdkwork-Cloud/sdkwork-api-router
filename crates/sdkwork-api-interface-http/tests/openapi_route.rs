@@ -76,6 +76,30 @@ async fn openapi_routes_expose_gateway_api_inventory() {
     assert!(json["paths"]["/v1/images/generations"]["post"].is_object());
     assert!(json["paths"]["/v1/images/edits"]["post"].is_object());
     assert!(json["paths"]["/v1/images/variations"]["post"].is_object());
+    assert_eq!(
+        json["paths"]["/v1/images/generations"]["post"]["tags"][0],
+        "images.openai"
+    );
+    assert_eq!(
+        json["paths"]["/v1/images/generations"]["post"]["operationId"],
+        "images_openai_generations_create"
+    );
+    assert_eq!(
+        json["paths"]["/v1/images/edits"]["post"]["tags"][0],
+        "images.openai"
+    );
+    assert_eq!(
+        json["paths"]["/v1/images/edits"]["post"]["operationId"],
+        "images_openai_edits_create"
+    );
+    assert_eq!(
+        json["paths"]["/v1/images/variations"]["post"]["tags"][0],
+        "images.openai"
+    );
+    assert_eq!(
+        json["paths"]["/v1/images/variations"]["post"]["operationId"],
+        "images_openai_variations_create"
+    );
     assert!(json["paths"]["/v1/audio/transcriptions"]["post"].is_object());
     assert!(json["paths"]["/v1/audio/translations"]["post"].is_object());
     assert!(json["paths"]["/v1/audio/speech"]["post"].is_object());
@@ -232,11 +256,22 @@ async fn openapi_routes_expose_gateway_api_inventory() {
     assert!(tags.iter().any(|tag| tag["name"] == "code.openai"));
     assert!(tags.iter().any(|tag| tag["name"] == "code.claude"));
     assert!(tags.iter().any(|tag| tag["name"] == "code.gemini"));
+    assert!(tags.iter().any(|tag| tag["name"] == "images.openai"));
+    assert!(!tags.iter().any(|tag| tag["name"] == "images"));
+    assert!(!tags.iter().any(|tag| tag["name"] == "images.nanobanana"));
+    assert!(!tags.iter().any(|tag| tag["name"] == "images.midjourney"));
+    assert!(!tags.iter().any(|tag| tag["name"] == "images.volcengine"));
+    assert!(!tags.iter().any(|tag| tag["name"] == "images.aliyun"));
+    assert!(!tags.iter().any(|tag| tag["name"] == "images.kling"));
     assert!(!tags.iter().any(|tag| tag["name"] == "compatibility"));
     assert!(json["paths"]["/code"].is_null());
     assert!(json["paths"]["/code/chat/completions"].is_null());
     assert!(json["paths"]["/claude/messages"].is_null());
     assert!(json["paths"]["/gemini/models"].is_null());
+    assert!(json["paths"]["/images/openai/generations"].is_null());
+    assert!(json["paths"]["/images/nanobanana/generations"].is_null());
+    assert!(json["paths"]["/v1/images/nanobanana/generations"].is_null());
+    assert!(json["paths"]["/v1/images/midjourney/generations"].is_null());
     assert!(json["components"]["schemas"].is_object());
     assert!(json["components"]["schemas"]["ListModelsResponse"].is_object());
     assert!(json["components"]["schemas"]["GatewayMarketProductsResponse"].is_object());

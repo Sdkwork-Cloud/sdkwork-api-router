@@ -3,7 +3,8 @@ use super::*;
 #[utoipa::path(
         post,
         path = "/v1/images/generations",
-        tag = "images",
+        operation_id = "images_openai_generations_create",
+        tag = "images.openai",
         request_body = CreateImageRequest,
         security(("bearerAuth" = [])),
         responses(
@@ -18,7 +19,8 @@ pub(crate) async fn image_generations() {}
 #[utoipa::path(
         post,
         path = "/v1/images/edits",
-        tag = "images",
+        operation_id = "images_openai_edits_create",
+        tag = "images.openai",
         request_body(
             content = CreateImageEditRequest,
             content_type = "multipart/form-data",
@@ -37,7 +39,8 @@ pub(crate) async fn image_edits() {}
 #[utoipa::path(
         post,
         path = "/v1/images/variations",
-        tag = "images",
+        operation_id = "images_openai_variations_create",
+        tag = "images.openai",
         request_body(
             content = CreateImageVariationRequest,
             content_type = "multipart/form-data",

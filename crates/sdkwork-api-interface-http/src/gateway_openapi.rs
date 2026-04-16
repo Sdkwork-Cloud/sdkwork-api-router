@@ -340,7 +340,7 @@ mod openapi_paths {
         (name = "code.gemini", description = "Official Gemini mirror routes."),
         (name = "conversations", description = "OpenAI-compatible conversation and conversation item routes."),
         (name = "containers", description = "Container lifecycle and container file routes."),
-        (name = "images", description = "Image generation, edit, and variation routes."),
+        (name = "images.openai", description = "Official OpenAI image mirror routes."),
         (name = "audio", description = "Audio transcription, translation, speech, and voice routes."),
         (name = "videos", description = "Video generation, transforms, and character routes."),
         (name = "music", description = "Music generation, retrieval, content, and lyrics routes."),
