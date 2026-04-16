@@ -1,7 +1,8 @@
 use super::*;
 use anyhow::anyhow;
 use sdkwork_api_domain_catalog::{
-    derive_provider_protocol_kind, normalize_provider_default_plugin_family,
+    derive_provider_mirror_protocol_identity, derive_provider_protocol_kind,
+    normalize_provider_default_plugin_family, normalize_provider_mirror_protocol_identity,
     normalize_provider_protocol_kind,
 };
 
@@ -12,6 +13,7 @@ const DEFAULT_STATELESS_PROJECT_ID: &str = "sdkwork-stateless-default";
 pub struct StatelessGatewayUpstream {
     runtime_key: String,
     protocol_kind: String,
+    mirror_protocol_identity: String,
     base_url: String,
     api_key: String,
 }
@@ -38,9 +40,44 @@ impl StatelessGatewayUpstream {
         api_key: impl Into<String>,
     ) -> Self {
         let runtime_key = runtime_key.into();
+        let protocol_kind = normalize_provider_protocol_kind(protocol_kind.into(), &runtime_key);
         Self {
-            protocol_kind: normalize_provider_protocol_kind(protocol_kind.into(), &runtime_key),
+            mirror_protocol_identity: derive_provider_mirror_protocol_identity(
+                &runtime_key,
+                &protocol_kind,
+                Some(&runtime_key),
+            ),
+            protocol_kind,
             runtime_key,
+            base_url: base_url.into(),
+            api_key: api_key.into(),
+        }
+    }
+
+    pub fn new_with_protocol_kind_and_identity(
+        runtime_key: impl Into<String>,
+        protocol_kind: impl Into<String>,
+        mirror_protocol_identity: impl AsRef<str>,
+        base_url: impl Into<String>,
+        api_key: impl Into<String>,
+    ) -> Self {
+        let runtime_key = runtime_key.into();
+        let protocol_kind = normalize_provider_protocol_kind(protocol_kind.into(), &runtime_key);
+        let mirror_protocol_identity = normalize_provider_mirror_protocol_identity(
+            mirror_protocol_identity,
+        )
+        .unwrap_or_else(|| {
+            derive_provider_mirror_protocol_identity(
+                &runtime_key,
+                &protocol_kind,
+                Some(&runtime_key),
+            )
+        });
+
+        Self {
+            runtime_key,
+            protocol_kind,
+            mirror_protocol_identity,
             base_url: base_url.into(),
             api_key: api_key.into(),
         }
@@ -77,6 +114,10 @@ impl StatelessGatewayUpstream {
 
     pub fn protocol_kind(&self) -> &str {
         &self.protocol_kind
+    }
+
+    pub fn mirror_protocol_identity(&self) -> &str {
+        &self.mirror_protocol_identity
     }
 
     pub fn base_url(&self) -> &str {

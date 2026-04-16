@@ -8,6 +8,7 @@ fn legacy_adapter_constructor_derives_protocol_kind() {
 
     assert_eq!(upstream.runtime_key(), "custom-openai");
     assert_eq!(upstream.protocol_kind(), "openai");
+    assert_eq!(upstream.mirror_protocol_identity(), "openai");
 }
 
 #[test]
@@ -20,6 +21,7 @@ fn openrouter_legacy_adapter_constructor_derives_openai_protocol_kind() {
 
     assert_eq!(upstream.runtime_key(), "openrouter");
     assert_eq!(upstream.protocol_kind(), "openai");
+    assert_eq!(upstream.mirror_protocol_identity(), "openai");
 }
 
 #[test]
@@ -32,6 +34,7 @@ fn ollama_legacy_adapter_constructor_derives_custom_protocol_kind() {
 
     assert_eq!(upstream.runtime_key(), "ollama");
     assert_eq!(upstream.protocol_kind(), "custom");
+    assert_eq!(upstream.mirror_protocol_identity(), "ollama");
 }
 
 #[test]
@@ -45,6 +48,7 @@ fn explicit_protocol_constructor_preserves_runtime_runtime_key() {
 
     assert_eq!(upstream.runtime_key(), "native-dynamic");
     assert_eq!(upstream.protocol_kind(), "anthropic");
+    assert_eq!(upstream.mirror_protocol_identity(), "anthropic");
     assert_eq!(upstream.base_url(), "https://relay.example.com");
 }
 
@@ -60,6 +64,7 @@ fn default_plugin_family_constructor_derives_openrouter_identity() {
 
     assert_eq!(upstream.runtime_key(), "openrouter");
     assert_eq!(upstream.protocol_kind(), "openai");
+    assert_eq!(upstream.mirror_protocol_identity(), "openai");
     assert_eq!(upstream.base_url(), "https://openrouter.ai/api/v1");
 }
 
@@ -75,7 +80,37 @@ fn default_plugin_family_constructor_derives_ollama_identity() {
 
     assert_eq!(upstream.runtime_key(), "ollama");
     assert_eq!(upstream.protocol_kind(), "custom");
+    assert_eq!(upstream.mirror_protocol_identity(), "ollama");
     assert_eq!(upstream.base_url(), "http://localhost:11434/v1");
+}
+
+#[test]
+fn custom_protocol_identity_can_be_derived_from_runtime_extension_key() {
+    let upstream = sdkwork_api_interface_http::StatelessGatewayUpstream::new_with_protocol_kind(
+        "sdkwork.provider.suno.relay",
+        "custom",
+        "https://relay.example.com",
+        "sk-test",
+    );
+
+    assert_eq!(upstream.protocol_kind(), "custom");
+    assert_eq!(upstream.mirror_protocol_identity(), "suno");
+}
+
+#[test]
+fn explicit_mirror_identity_constructor_overrides_generic_runtime_key() {
+    let upstream =
+        sdkwork_api_interface_http::StatelessGatewayUpstream::new_with_protocol_kind_and_identity(
+            "native-dynamic",
+            "custom",
+            "kling",
+            "https://relay.example.com",
+            "sk-test",
+        );
+
+    assert_eq!(upstream.runtime_key(), "native-dynamic");
+    assert_eq!(upstream.protocol_kind(), "custom");
+    assert_eq!(upstream.mirror_protocol_identity(), "kling");
 }
 
 #[test]

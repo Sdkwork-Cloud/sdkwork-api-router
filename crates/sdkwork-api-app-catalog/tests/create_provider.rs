@@ -1,9 +1,8 @@
 use sdkwork_api_app_catalog::{
-    create_provider_with_bindings_and_extension_id,
-    create_provider_with_config, create_provider_with_default_plugin_family,
-    create_provider_with_default_plugin_family_and_bindings,
-    create_provider_with_protocol_kind, normalize_provider_integration,
-    provider_integration_view, ProviderIntegrationMode,
+    create_provider_with_bindings_and_extension_id, create_provider_with_config,
+    create_provider_with_default_plugin_family,
+    create_provider_with_default_plugin_family_and_bindings, create_provider_with_protocol_kind,
+    normalize_provider_integration, provider_integration_view, ProviderIntegrationMode,
 };
 use sdkwork_api_domain_catalog::ProviderChannelBinding;
 
@@ -21,6 +20,10 @@ fn creates_provider_for_channel() {
     assert_eq!(provider.adapter_kind, "openai");
     assert_eq!(provider.base_url, "https://api.openai.com");
     assert_eq!(provider.protocol_kind(), "openai");
+    assert_eq!(
+        provider_integration_view(&provider).mirror_protocol_identity,
+        "openai"
+    );
 }
 
 #[test]
@@ -38,6 +41,10 @@ fn creates_provider_with_explicit_protocol_kind() {
     assert_eq!(provider.adapter_kind, "native-dynamic");
     assert_eq!(provider.protocol_kind(), "anthropic");
     assert_eq!(provider.extension_id, "sdkwork.provider.native-dynamic");
+    assert_eq!(
+        provider_integration_view(&provider).mirror_protocol_identity,
+        "anthropic"
+    );
 }
 
 #[test]
@@ -53,6 +60,10 @@ fn creates_standard_passthrough_providers_with_derived_identity() {
     assert_eq!(anthropic.adapter_kind, "anthropic");
     assert_eq!(anthropic.protocol_kind(), "anthropic");
     assert_eq!(anthropic.extension_id, "sdkwork.provider.anthropic");
+    assert_eq!(
+        provider_integration_view(&anthropic).mirror_protocol_identity,
+        "anthropic"
+    );
 
     let gemini = create_provider_with_config(
         "provider-gemini-official",
@@ -65,6 +76,10 @@ fn creates_standard_passthrough_providers_with_derived_identity() {
     assert_eq!(gemini.adapter_kind, "gemini");
     assert_eq!(gemini.protocol_kind(), "gemini");
     assert_eq!(gemini.extension_id, "sdkwork.provider.gemini");
+    assert_eq!(
+        provider_integration_view(&gemini).mirror_protocol_identity,
+        "gemini"
+    );
 }
 
 #[test]
@@ -81,6 +96,10 @@ fn creates_default_plugin_provider_with_derived_identity() {
     assert_eq!(provider.adapter_kind, "openrouter");
     assert_eq!(provider.protocol_kind(), "openai");
     assert_eq!(provider.extension_id, "sdkwork.provider.openrouter");
+    assert_eq!(
+        provider_integration_view(&provider).mirror_protocol_identity,
+        "openai"
+    );
 }
 
 #[test]
@@ -102,25 +121,28 @@ fn creates_default_plugin_provider_with_additional_channel_bindings() {
     assert_eq!(provider.adapter_kind, "openrouter");
     assert_eq!(provider.protocol_kind(), "openai");
     assert_eq!(provider.extension_id, "sdkwork.provider.openrouter");
-    assert!(provider.channel_bindings.contains(&ProviderChannelBinding::primary(
-        "provider-openrouter-main",
-        "openrouter",
-    )));
-    assert!(provider.channel_bindings.contains(&ProviderChannelBinding::new(
-        "provider-openrouter-main",
-        "openai",
-    )));
+    assert_eq!(
+        provider_integration_view(&provider).mirror_protocol_identity,
+        "openai"
+    );
+    assert!(provider
+        .channel_bindings
+        .contains(&ProviderChannelBinding::primary(
+            "provider-openrouter-main",
+            "openrouter",
+        )));
+    assert!(provider
+        .channel_bindings
+        .contains(&ProviderChannelBinding::new(
+            "provider-openrouter-main",
+            "openai",
+        )));
 }
 
 #[test]
 fn normalizes_default_plugin_family_to_canonical_provider_identity() {
-    let openrouter = normalize_provider_integration(
-        None,
-        None,
-        None,
-        Some("openrouter-compatible"),
-    )
-    .unwrap();
+    let openrouter =
+        normalize_provider_integration(None, None, None, Some("openrouter-compatible")).unwrap();
     assert_eq!(openrouter.adapter_kind, "openrouter");
     assert_eq!(openrouter.protocol_kind.as_deref(), Some("openai"));
     assert_eq!(
@@ -128,8 +150,7 @@ fn normalizes_default_plugin_family_to_canonical_provider_identity() {
         Some("sdkwork.provider.openrouter")
     );
 
-    let ollama =
-        normalize_provider_integration(None, None, None, Some("ollama")).unwrap();
+    let ollama = normalize_provider_integration(None, None, None, Some("ollama")).unwrap();
     assert_eq!(ollama.adapter_kind, "ollama");
     assert_eq!(ollama.protocol_kind.as_deref(), Some("custom"));
     assert_eq!(
@@ -137,13 +158,8 @@ fn normalizes_default_plugin_family_to_canonical_provider_identity() {
         Some("sdkwork.provider.ollama")
     );
 
-    let siliconflow = normalize_provider_integration(
-        None,
-        None,
-        None,
-        Some("siliconflow"),
-    )
-    .unwrap();
+    let siliconflow =
+        normalize_provider_integration(None, None, None, Some("siliconflow")).unwrap();
     assert_eq!(siliconflow.adapter_kind, "siliconflow");
     assert_eq!(siliconflow.protocol_kind.as_deref(), Some("openai"));
     assert_eq!(
@@ -154,13 +170,8 @@ fn normalizes_default_plugin_family_to_canonical_provider_identity() {
 
 #[test]
 fn rejects_conflicting_default_plugin_family_identity() {
-    let error = normalize_provider_integration(
-        Some("openai"),
-        None,
-        None,
-        Some("openrouter"),
-    )
-    .unwrap_err();
+    let error =
+        normalize_provider_integration(Some("openai"), None, None, Some("openrouter")).unwrap_err();
 
     assert!(error
         .to_string()
@@ -185,6 +196,10 @@ fn derives_provider_integration_view_from_provider_identity() {
         provider_integration_view(&official).default_plugin_family,
         None
     );
+    assert_eq!(
+        provider_integration_view(&official).mirror_protocol_identity,
+        "openai"
+    );
 
     let openrouter = create_provider_with_default_plugin_family(
         "provider-openrouter-main",
@@ -199,8 +214,14 @@ fn derives_provider_integration_view_from_provider_identity() {
         ProviderIntegrationMode::DefaultPlugin
     );
     assert_eq!(
-        provider_integration_view(&openrouter).default_plugin_family.as_deref(),
+        provider_integration_view(&openrouter)
+            .default_plugin_family
+            .as_deref(),
         Some("openrouter")
+    );
+    assert_eq!(
+        provider_integration_view(&openrouter).mirror_protocol_identity,
+        "openai"
     );
 
     let siliconflow = create_provider_with_default_plugin_family(
@@ -221,6 +242,10 @@ fn derives_provider_integration_view_from_provider_identity() {
             .as_deref(),
         Some("siliconflow")
     );
+    assert_eq!(
+        provider_integration_view(&siliconflow).mirror_protocol_identity,
+        "openai"
+    );
 
     let claude_relay = create_provider_with_bindings_and_extension_id(
         "provider-claude-relay",
@@ -240,5 +265,34 @@ fn derives_provider_integration_view_from_provider_identity() {
     assert_eq!(
         provider_integration_view(&claude_relay).default_plugin_family,
         None
+    );
+    assert_eq!(
+        provider_integration_view(&claude_relay).mirror_protocol_identity,
+        "anthropic"
+    );
+}
+
+#[test]
+fn derives_custom_provider_mirror_identity_from_custom_extension() {
+    let suno_plugin = create_provider_with_bindings_and_extension_id(
+        "provider-suno-plugin",
+        "music",
+        "native-dynamic",
+        Some("custom"),
+        Some("sdkwork.provider.suno.relay"),
+        "https://relay.example.com",
+        "Suno Plugin",
+        &[],
+    )
+    .unwrap();
+
+    assert_eq!(suno_plugin.protocol_kind(), "custom");
+    assert_eq!(
+        provider_integration_view(&suno_plugin).mode,
+        ProviderIntegrationMode::CustomPlugin
+    );
+    assert_eq!(
+        provider_integration_view(&suno_plugin).mirror_protocol_identity,
+        "suno"
     );
 }

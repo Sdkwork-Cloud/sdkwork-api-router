@@ -26,6 +26,7 @@ fn stateless_gateway_config_accepts_custom_identity_and_upstream() {
     assert_eq!(upstream.runtime_key(), "openai");
     assert_eq!(upstream.base_url(), "https://example.com/v1");
     assert_eq!(upstream.api_key(), "sk-stateless");
+    assert_eq!(upstream.mirror_protocol_identity(), "openai");
 }
 
 #[test]
@@ -42,6 +43,7 @@ fn stateless_gateway_config_accepts_default_plugin_upstream_shortcut() {
     let upstream = config.upstream().expect("upstream should be configured");
     assert_eq!(upstream.runtime_key(), "openrouter");
     assert_eq!(upstream.protocol_kind(), "openai");
+    assert_eq!(upstream.mirror_protocol_identity(), "openai");
     assert_eq!(upstream.base_url(), "https://openrouter.ai/api/v1");
     assert_eq!(upstream.api_key(), "sk-openrouter");
 }

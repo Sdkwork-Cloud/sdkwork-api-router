@@ -96,6 +96,14 @@ impl ProxyProvider {
             &self.protocol_kind
         }
     }
+
+    pub fn mirror_protocol_identity(&self) -> String {
+        derive_provider_mirror_protocol_identity(
+            &self.adapter_kind,
+            self.protocol_kind(),
+            Some(&self.extension_id),
+        )
+    }
 }
 
 pub fn derive_provider_extension_id(adapter_kind: &str) -> String {
@@ -176,6 +184,55 @@ pub fn normalize_provider_protocol_kind(
     } else {
         protocol_kind
     }
+}
+
+pub fn normalize_provider_mirror_protocol_identity(
+    mirror_protocol_identity: impl AsRef<str>,
+) -> Option<String> {
+    let trimmed = mirror_protocol_identity.as_ref().trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    Some(sanitize_provider_identity_segment(trimmed))
+}
+
+pub fn derive_provider_mirror_protocol_identity(
+    adapter_kind: &str,
+    protocol_kind: &str,
+    extension_id: Option<&str>,
+) -> String {
+    let normalized_protocol_kind = normalize_provider_protocol_kind(protocol_kind, adapter_kind);
+    match normalized_protocol_kind.as_str() {
+        "openai" | "anthropic" | "gemini" => return normalized_protocol_kind,
+        protocol if protocol != "custom" => {
+            return normalize_provider_mirror_protocol_identity(protocol)
+                .unwrap_or_else(|| protocol.to_owned());
+        }
+        _ => {}
+    }
+
+    if let Some(default_plugin_family) = derive_provider_default_plugin_family(adapter_kind) {
+        if derive_provider_protocol_kind(default_plugin_family) == "custom" {
+            return default_plugin_family.to_owned();
+        }
+    }
+
+    if let Some(identity) = extension_id
+        .and_then(derive_provider_identity_from_extension_id)
+        .or_else(|| normalize_provider_mirror_protocol_identity(adapter_kind))
+    {
+        return identity;
+    }
+
+    "custom".to_owned()
+}
+
+fn derive_provider_identity_from_extension_id(extension_id: &str) -> Option<String> {
+    let prefix = "sdkwork.provider.";
+    let tail = extension_id.strip_prefix(prefix)?;
+    let provider_segment = tail.split('.').next()?;
+    normalize_provider_mirror_protocol_identity(provider_segment)
 }
 
 fn sanitize_provider_identity_segment(adapter_kind: &str) -> String {
