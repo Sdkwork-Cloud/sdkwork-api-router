@@ -202,6 +202,9 @@ export function workspaceAccessLines(settings) {
   lines.push(`[start-workspace]   Gateway Service: ${resolveLoopbackUrl(settings.gatewayBind, '/health')}`);
   lines.push(`[start-workspace]   Admin Service: ${resolveLoopbackUrl(settings.adminBind, '/admin/health')}`);
   lines.push(`[start-workspace]   Portal Service: ${resolveLoopbackUrl(settings.portalBind, '/portal/health')}`);
+  lines.push(`[start-workspace]   Gateway OpenAPI 3.x Schema: ${resolveLoopbackUrl(settings.gatewayBind, '/openapi.json')}`);
+  lines.push(`[start-workspace]   Admin OpenAPI 3.x Schema: ${resolveLoopbackUrl(settings.adminBind, '/admin/openapi.json')}`);
+  lines.push(`[start-workspace]   Portal OpenAPI 3.x Schema: ${resolveLoopbackUrl(settings.portalBind, '/portal/openapi.json')}`);
   lines.push('[start-workspace] Identity Bootstrap');
   lines.push('[start-workspace]   Development identities come from the active bootstrap profile.');
   lines.push('[start-workspace]   Review data/identities/dev.json before sharing a local environment.');

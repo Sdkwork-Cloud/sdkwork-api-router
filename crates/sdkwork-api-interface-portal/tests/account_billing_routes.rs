@@ -1,13 +1,16 @@
 use axum::body::{to_bytes, Body};
 use axum::http::{Request, StatusCode};
-use sdkwork_api_app_identity::{gateway_auth_subject_from_request_context, GatewayRequestContext};
+use sdkwork_api_app_credential::CredentialSecretManager;
+use sdkwork_api_app_payment::ensure_portal_payment_subject_scope;
+use sdkwork_api_app_runtime::build_admin_payment_store_handles_from_config;
+use sdkwork_api_config::StandaloneConfig;
 use sdkwork_api_domain_billing::{
     AccountBenefitLotRecord, AccountBenefitLotStatus, AccountBenefitSourceType, AccountBenefitType,
     AccountHoldRecord, AccountHoldStatus, AccountLedgerAllocationRecord, AccountLedgerEntryRecord,
     AccountLedgerEntryType, AccountRecord, AccountStatus, AccountType, PricingPlanRecord,
     PricingRateRecord, RequestSettlementRecord, RequestSettlementStatus,
 };
-use sdkwork_api_storage_core::AccountKernelStore;
+use sdkwork_api_storage_core::{AccountKernelStore, Reloadable};
 use sdkwork_api_storage_sqlite::SqliteAdminStore;
 use serde_json::Value;
 use sqlx::SqlitePool;
@@ -25,6 +28,13 @@ async fn memory_pool() -> SqlitePool {
 }
 
 async fn portal_token(app: axum::Router) -> String {
+    portal_auth_session(app).await["token"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+async fn portal_auth_session(app: axum::Router) -> Value {
     let register_response = app
         .oneshot(
             Request::builder()
@@ -40,7 +50,26 @@ async fn portal_token(app: axum::Router) -> String {
         .unwrap();
 
     assert_eq!(register_response.status(), StatusCode::CREATED);
-    read_json(register_response).await["token"]
+    read_json(register_response).await
+}
+
+async fn bootstrap_portal_token(app: axum::Router) -> String {
+    let login_response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/portal/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"email\":\"portal@sdkwork.local\",\"password\":\"ChangeMe123!\"}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(login_response.status(), StatusCode::OK);
+    read_json(login_response).await["token"]
         .as_str()
         .unwrap()
         .to_owned()
@@ -63,25 +92,14 @@ async fn portal_workspace(app: axum::Router, token: &str) -> Value {
     read_json(workspace_response).await
 }
 
-fn workspace_request_context(workspace: &Value) -> GatewayRequestContext {
-    GatewayRequestContext {
-        tenant_id: workspace["tenant"]["id"].as_str().unwrap().to_owned(),
-        project_id: workspace["project"]["id"].as_str().unwrap().to_owned(),
-        environment: "portal".to_owned(),
-        api_key_hash: "portal_workspace_scope".to_owned(),
-        api_key_group_id: None,
-        canonical_tenant_id: None,
-        canonical_organization_id: None,
-        canonical_user_id: None,
-        canonical_api_key_id: None,
-    }
-}
-
 async fn seed_portal_workspace_canonical_billing_fixture(
     store: &SqliteAdminStore,
     workspace: &Value,
 ) {
-    let subject = gateway_auth_subject_from_request_context(&workspace_request_context(workspace));
+    let subject =
+        ensure_portal_payment_subject_scope(store, workspace["user"]["id"].as_str().unwrap(), 10)
+            .await
+            .unwrap();
 
     let account = AccountRecord::new(
         7001,
@@ -319,6 +337,43 @@ async fn seed_portal_workspace_canonical_billing_fixture(
         .insert_pricing_plan_record(&foreign_plan)
         .await
         .unwrap();
+}
+
+async fn seed_portal_payment_subject_billing_fixture(
+    store: &SqliteAdminStore,
+    portal_user_id: &str,
+) -> AccountRecord {
+    let subject = ensure_portal_payment_subject_scope(store, portal_user_id, 10)
+        .await
+        .unwrap();
+    let account = AccountRecord::new(
+        9701,
+        subject.tenant_id,
+        subject.organization_id,
+        subject.user_id,
+        AccountType::Primary,
+    )
+    .with_status(AccountStatus::Active)
+    .with_currency_code("USD")
+    .with_credit_unit_code("credit")
+    .with_created_at_ms(10)
+    .with_updated_at_ms(10);
+    let lot = AccountBenefitLotRecord::new(
+        9801,
+        subject.tenant_id,
+        subject.organization_id,
+        account.account_id,
+        subject.user_id,
+        AccountBenefitType::CashCredit,
+    )
+    .with_source_type(AccountBenefitSourceType::Recharge)
+    .with_original_quantity(120.0)
+    .with_remaining_quantity(120.0)
+    .with_created_at_ms(11)
+    .with_updated_at_ms(11);
+    store.insert_account_record(&account).await.unwrap();
+    store.insert_account_benefit_lot(&lot).await.unwrap();
+    account
 }
 
 #[tokio::test]
@@ -575,7 +630,10 @@ async fn portal_billing_pricing_reads_auto_activate_due_planned_plan_versions() 
     let app = sdkwork_api_interface_portal::portal_router_with_pool(pool);
     let token = portal_token(app.clone()).await;
     let workspace = portal_workspace(app.clone(), &token).await;
-    let subject = gateway_auth_subject_from_request_context(&workspace_request_context(&workspace));
+    let subject =
+        ensure_portal_payment_subject_scope(&store, workspace["user"]["id"].as_str().unwrap(), 10)
+            .await
+            .unwrap();
 
     let account = AccountRecord::new(
         7001,
@@ -781,7 +839,10 @@ async fn portal_billing_account_auto_provisions_workspace_account_when_missing()
     let app = sdkwork_api_interface_portal::portal_router_with_pool(pool);
     let token = portal_token(app.clone()).await;
     let workspace = portal_workspace(app.clone(), &token).await;
-    let subject = gateway_auth_subject_from_request_context(&workspace_request_context(&workspace));
+    let subject =
+        ensure_portal_payment_subject_scope(&store, workspace["user"]["id"].as_str().unwrap(), 10)
+            .await
+            .unwrap();
 
     let response = app
         .oneshot(
@@ -814,4 +875,173 @@ async fn portal_billing_account_auto_provisions_workspace_account_when_missing()
         .await
         .unwrap();
     assert!(stored_account.is_some());
+}
+
+#[tokio::test]
+async fn portal_billing_account_and_history_share_same_canonical_payment_account() {
+    let pool = memory_pool().await;
+    let store = SqliteAdminStore::new(pool.clone());
+    let app = sdkwork_api_interface_portal::portal_router_with_pool(pool);
+    let session = portal_auth_session(app.clone()).await;
+    let token = session["token"].as_str().unwrap().to_owned();
+    let portal_user_id = session["user"]["id"].as_str().unwrap();
+    let account = seed_portal_payment_subject_billing_fixture(&store, portal_user_id).await;
+
+    let billing_account = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/portal/billing/account")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(billing_account.status(), StatusCode::OK);
+    let billing_account_json = read_json(billing_account).await;
+
+    let billing_balance = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/portal/billing/account/balance")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(billing_balance.status(), StatusCode::OK);
+    let billing_balance_json = read_json(billing_balance).await;
+
+    let history = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/portal/billing/account-history")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(history.status(), StatusCode::OK);
+    let history_json = read_json(history).await;
+
+    assert_eq!(
+        billing_account_json["account"]["account_id"],
+        account.account_id
+    );
+    assert_eq!(
+        billing_account_json["account"]["tenant_id"],
+        account.tenant_id
+    );
+    assert_eq!(
+        billing_account_json["account"]["organization_id"],
+        account.organization_id
+    );
+    assert_eq!(billing_account_json["account"]["user_id"], account.user_id);
+    assert_eq!(billing_balance_json["account_id"], account.account_id);
+    assert_eq!(history_json["account"]["account_id"], account.account_id);
+    assert_eq!(history_json["balance"]["account_id"], account.account_id);
+    assert_eq!(
+        billing_account_json["account"]["account_id"],
+        history_json["account"]["account_id"]
+    );
+}
+
+#[tokio::test]
+async fn portal_billing_bootstrap_workspace_routes_resolve_runtime_seeded_commercial_account() {
+    let mut config = StandaloneConfig::default();
+    config.database_url = "sqlite::memory:".to_owned();
+    config.bootstrap_profile = "dev".to_owned();
+
+    let handles = build_admin_payment_store_handles_from_config(&config)
+        .await
+        .unwrap();
+    let app = sdkwork_api_interface_portal::portal_router_with_state(
+        sdkwork_api_interface_portal::PortalApiState::with_live_store_secret_manager_commercial_billing_payment_identity_store_and_jwt_secret_handle(
+            Reloadable::new(handles.admin_store.clone()),
+            Reloadable::new(CredentialSecretManager::database_encrypted(
+                "local-dev-master-key",
+            )),
+            Some(Reloadable::new(handles.commercial_billing.clone())),
+            Some(Reloadable::new(handles.payment_store.clone())),
+            Some(Reloadable::new(handles.identity_store.clone())),
+            Reloadable::new("local-dev-portal-jwt-secret".to_owned()),
+        ),
+    );
+    let token = bootstrap_portal_token(app.clone()).await;
+
+    let account = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/portal/billing/account")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(account.status(), StatusCode::OK);
+
+    let balance = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/portal/billing/account/balance")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(balance.status(), StatusCode::OK);
+
+    let history = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/portal/billing/account-history")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(history.status(), StatusCode::OK);
+
+    let pricing_plans = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/portal/billing/pricing-plans")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(pricing_plans.status(), StatusCode::OK);
+
+    let pricing_rates = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/portal/billing/pricing-rates")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(pricing_rates.status(), StatusCode::OK);
 }

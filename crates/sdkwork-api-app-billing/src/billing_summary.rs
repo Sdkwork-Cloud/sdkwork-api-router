@@ -49,7 +49,7 @@ pub fn summarize_billing_snapshot(
 
     let total_entries = entries.len() as u64;
     let total_units = entries.iter().map(|entry| entry.units).sum();
-    let total_amount = entries.iter().map(|entry| entry.amount).sum();
+    let total_amount = normalize_zero(entries.iter().map(|entry| entry.amount).sum());
 
     let mut project_summaries = projects
         .into_values()
@@ -283,11 +283,13 @@ pub fn summarize_billing_events(events: &[BillingEventRecord]) -> BillingEventSu
         total_output_tokens: events.iter().map(|event| event.output_tokens).sum(),
         total_tokens: events.iter().map(|event| event.total_tokens).sum(),
         total_image_count: events.iter().map(|event| event.image_count).sum(),
-        total_audio_seconds: events.iter().map(|event| event.audio_seconds).sum(),
-        total_video_seconds: events.iter().map(|event| event.video_seconds).sum(),
-        total_music_seconds: events.iter().map(|event| event.music_seconds).sum(),
-        total_upstream_cost: events.iter().map(|event| event.upstream_cost).sum(),
-        total_customer_charge: events.iter().map(|event| event.customer_charge).sum(),
+        total_audio_seconds: normalize_zero(events.iter().map(|event| event.audio_seconds).sum()),
+        total_video_seconds: normalize_zero(events.iter().map(|event| event.video_seconds).sum()),
+        total_music_seconds: normalize_zero(events.iter().map(|event| event.music_seconds).sum()),
+        total_upstream_cost: normalize_zero(events.iter().map(|event| event.upstream_cost).sum()),
+        total_customer_charge: normalize_zero(
+            events.iter().map(|event| event.customer_charge).sum(),
+        ),
         projects: project_summaries,
         groups: group_summaries,
         capabilities: capability_summaries,

@@ -18,6 +18,7 @@ const sharedUiPackagePath = 'workspace:*';
 test('auth uses sdkwork shared form primitives instead of legacy admin auth classes', () => {
   const auth = read('packages/sdkwork-router-admin-auth/src/index.tsx');
   const packageJson = readJson('packages/sdkwork-router-admin-auth/package.json');
+  const translations = read('packages/sdkwork-router-admin-core/src/i18nTranslationsCore.ts');
 
   assert.match(auth, /@sdkwork\/ui-pc-react/);
   assert.match(auth, /Button/);
@@ -32,8 +33,30 @@ test('auth uses sdkwork shared form primitives instead of legacy admin auth clas
   assert.match(auth, /max-w-4xl/);
   assert.match(auth, /md:flex-row/);
   assert.match(auth, /bg-zinc-900/);
-  assert.match(auth, /QR login/);
-  assert.match(auth, /Open app to scan/);
+  assert.match(auth, /App sign-in unavailable/);
+  assert.match(
+    auth,
+    /Workspace app sign-in is not enabled for this control plane yet\. Use your operator email and password below to continue\./,
+  );
+  assert.match(
+    auth,
+    /Password recovery is not enabled in this workspace yet\. Contact your control plane owner if you lose access\./,
+  );
+  assert.match(
+    translations,
+    /"Workspace app sign-in is not enabled for this control plane yet\. Use your operator email and password below to continue\."/,
+  );
+  assert.match(
+    translations,
+    /"Password recovery is not enabled in this workspace yet\. Contact your control plane owner if you lose access\."/,
+  );
+  assert.match(auth, /Request access/);
+  assert.match(auth, /Request operator access/);
+  assert.doesNotMatch(auth, /QR login/);
+  assert.doesNotMatch(auth, /Open app to scan/);
+  assert.doesNotMatch(auth, /Forgot password\?/);
+  assert.doesNotMatch(auth, /Sign up/);
+  assert.doesNotMatch(auth, /Create account/);
   assert.doesNotMatch(auth, /adminx-auth-/);
   assert.doesNotMatch(auth, /LeadingIconInput/);
   assert.doesNotMatch(auth, /InlineAlert/);

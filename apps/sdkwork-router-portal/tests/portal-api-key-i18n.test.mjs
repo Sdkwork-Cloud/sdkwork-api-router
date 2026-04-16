@@ -30,6 +30,8 @@ test('portal api key creation and usage flows localize user-facing copy through 
   assert.match(createForm, /placeholder=\{t\('API key group'\)\}/);
   assert.match(createForm, /t\('No group binding'\)/);
   assert.match(createForm, /label=\{t\('Gateway key mode'\)\}/);
+  assert.doesNotMatch(createForm, /placeholder="skw_live_custom_portal_secret"/);
+  assert.match(createForm, /placeholder=\{t\('Example: skw_live_custom_portal_secret'\)\}/);
   assert.match(createForm, /t\('Creating API key\.\.\.'\)/);
 
   assert.match(drawers, /usePortalI18n/);
@@ -67,6 +69,7 @@ test('portal api key creation and usage flows localize user-facing copy through 
   assert.match(commons, /'No group binding'/);
   assert.match(commons, /'Key group'/);
   assert.match(commons, /'Gateway key mode'/);
+  assert.match(commons, /'Example: skw_live_custom_portal_secret'/);
   assert.match(commons, /'Creating API key\.\.\.'/);
   assert.match(commons, /'API key details'/);
   assert.match(commons, /'Manage groups'/);

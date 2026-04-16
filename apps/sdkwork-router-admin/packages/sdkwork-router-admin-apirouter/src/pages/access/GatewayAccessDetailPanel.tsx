@@ -22,6 +22,8 @@ import type { GatewayModelMappingRecord } from '../../services/gatewayOverlaySto
 import { readGatewayApiKeyOverlay } from '../../services/gatewayOverlayStore';
 import {
   copyToClipboard,
+  formatAccountingModeLabel,
+  formatEnvironmentLabel,
   formatTimestamp,
   resolvePlaintextForKey,
 } from './shared';
@@ -67,7 +69,7 @@ export function GatewayAccessDetailPanel({
         </DescriptionItem>
         <DescriptionItem>
           <DescriptionTerm>{t('Environment')}</DescriptionTerm>
-          <DescriptionDetails>{selectedKey.environment}</DescriptionDetails>
+          <DescriptionDetails>{formatEnvironmentLabel(selectedKey.environment, t)}</DescriptionDetails>
         </DescriptionItem>
         <DescriptionItem>
           <DescriptionTerm>{t('Expires at')}</DescriptionTerm>
@@ -111,7 +113,7 @@ export function GatewayAccessDetailPanel({
             <DescriptionItem>
               <DescriptionTerm>{t('Accounting mode')}</DescriptionTerm>
               <DescriptionDetails>
-                {group?.default_accounting_mode ?? t('No accounting override')}
+                {formatAccountingModeLabel(group?.default_accounting_mode, t)}
               </DescriptionDetails>
             </DescriptionItem>
             <DescriptionItem>

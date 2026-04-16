@@ -2,7 +2,9 @@ use sdkwork_api_app_billing::{
     create_billing_event, summarize_billing_events, summarize_billing_snapshot,
     CreateBillingEventInput,
 };
-use sdkwork_api_domain_billing::{BillingAccountingMode, LedgerEntry, QuotaPolicy};
+use sdkwork_api_domain_billing::{
+    BillingAccountingMode, BillingEventRecord, LedgerEntry, QuotaPolicy,
+};
 
 #[test]
 fn summarizes_billing_posture_and_quota_exhaustion_by_project() {
@@ -60,6 +62,35 @@ fn summarizes_billing_posture_and_quota_exhaustion_by_project() {
     assert_eq!(summary.projects[2].quota_limit_units, None);
     assert_eq!(summary.projects[2].remaining_units, None);
     assert!(!summary.projects[2].exhausted);
+}
+
+#[test]
+fn summarizes_billing_posture_without_negative_zero_amount_when_only_quota_policies_exist() {
+    let entries = Vec::new();
+    let policies = vec![QuotaPolicy::new("quota-project-1", "project-1", 100)];
+
+    let summary = summarize_billing_snapshot(&entries, &policies);
+
+    assert_eq!(summary.total_entries, 0);
+    assert_eq!(summary.project_count, 1);
+    assert_eq!(summary.total_units, 0);
+    assert_eq!(summary.total_amount, 0.0);
+    assert!(!summary.total_amount.is_sign_negative());
+    assert_eq!(summary.active_quota_policy_count, 1);
+    assert_eq!(summary.exhausted_project_count, 0);
+    assert_eq!(summary.projects.len(), 1);
+    assert_eq!(summary.projects[0].project_id, "project-1");
+    assert_eq!(summary.projects[0].entry_count, 0);
+    assert_eq!(summary.projects[0].used_units, 0);
+    assert_eq!(summary.projects[0].booked_amount, 0.0);
+    assert!(!summary.projects[0].booked_amount.is_sign_negative());
+    assert_eq!(
+        summary.projects[0].quota_policy_id.as_deref(),
+        Some("quota-project-1")
+    );
+    assert_eq!(summary.projects[0].quota_limit_units, Some(100));
+    assert_eq!(summary.projects[0].remaining_units, Some(100));
+    assert!(!summary.projects[0].exhausted);
 }
 
 #[test]
@@ -227,4 +258,85 @@ fn summarizes_billing_events_by_project_group_capability_and_accounting_mode() {
         BillingAccountingMode::Byok
     );
     assert_eq!(summary.accounting_modes[1].event_count, 1);
+}
+
+#[test]
+fn create_billing_event_normalizes_negative_zero_media_and_financial_inputs() {
+    let event = create_billing_event(CreateBillingEventInput {
+        event_id: "evt_neg_zero",
+        tenant_id: "tenant-1",
+        project_id: "project-1",
+        api_key_group_id: None,
+        capability: "audio",
+        route_key: "gpt-4o-mini-transcribe",
+        usage_model: "gpt-4o-mini-transcribe",
+        provider_id: "provider-openai",
+        accounting_mode: BillingAccountingMode::PlatformCredit,
+        operation_kind: "audio.transcriptions.create",
+        modality: "audio",
+        api_key_hash: None,
+        channel_id: None,
+        reference_id: None,
+        latency_ms: None,
+        units: 0,
+        request_count: 1,
+        input_tokens: 0,
+        output_tokens: 0,
+        total_tokens: 0,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        image_count: 0,
+        audio_seconds: -0.0,
+        video_seconds: -0.0,
+        music_seconds: -0.0,
+        upstream_cost: -0.0,
+        customer_charge: -0.0,
+        applied_routing_profile_id: None,
+        compiled_routing_snapshot_id: None,
+        fallback_reason: None,
+        created_at_ms: 100,
+    })
+    .unwrap();
+
+    assert_eq!(event.audio_seconds, 0.0);
+    assert!(!event.audio_seconds.is_sign_negative());
+    assert_eq!(event.video_seconds, 0.0);
+    assert!(!event.video_seconds.is_sign_negative());
+    assert_eq!(event.music_seconds, 0.0);
+    assert!(!event.music_seconds.is_sign_negative());
+    assert_eq!(event.upstream_cost, 0.0);
+    assert!(!event.upstream_cost.is_sign_negative());
+    assert_eq!(event.customer_charge, 0.0);
+    assert!(!event.customer_charge.is_sign_negative());
+}
+
+#[test]
+fn summarizes_billing_events_without_negative_zero_totals_from_historical_rows() {
+    let events = vec![BillingEventRecord::new(
+        "evt_hist_neg_zero",
+        "tenant-1",
+        "project-1",
+        "audio",
+        "gpt-4o-mini-transcribe",
+        "gpt-4o-mini-transcribe",
+        "provider-openai",
+        BillingAccountingMode::PlatformCredit,
+        100,
+    )
+    .with_operation("audio.transcriptions.create", "audio")
+    .with_media_usage(0, -0.0, -0.0, -0.0)
+    .with_financials(-0.0, -0.0)];
+
+    let summary = summarize_billing_events(&events);
+
+    assert_eq!(summary.total_audio_seconds, 0.0);
+    assert!(!summary.total_audio_seconds.is_sign_negative());
+    assert_eq!(summary.total_video_seconds, 0.0);
+    assert!(!summary.total_video_seconds.is_sign_negative());
+    assert_eq!(summary.total_music_seconds, 0.0);
+    assert!(!summary.total_music_seconds.is_sign_negative());
+    assert_eq!(summary.total_upstream_cost, 0.0);
+    assert!(!summary.total_upstream_cost.is_sign_negative());
+    assert_eq!(summary.total_customer_charge, 0.0);
+    assert!(!summary.total_customer_charge.is_sign_negative());
 }

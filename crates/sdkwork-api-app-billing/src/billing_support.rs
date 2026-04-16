@@ -37,6 +37,14 @@ pub(crate) fn free_quantity(lot: &AccountBenefitLotRecord) -> f64 {
     (lot.remaining_quantity - lot.held_quantity).max(0.0)
 }
 
+pub(crate) fn normalize_zero(value: f64) -> f64 {
+    if value == 0.0 {
+        0.0
+    } else {
+        value
+    }
+}
+
 fn benefit_cash_rank(benefit_type: AccountBenefitType) -> u8 {
     match benefit_type {
         AccountBenefitType::CashCredit => 1,

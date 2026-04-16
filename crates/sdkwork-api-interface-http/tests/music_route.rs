@@ -11,6 +11,12 @@ use tower::ServiceExt;
 
 mod support;
 
+async fn issue_funded_gateway_api_key(pool: &SqlitePool, tenant_id: &str, project_id: &str) -> String {
+    let api_key = support::issue_gateway_api_key(pool, tenant_id, project_id).await;
+    support::seed_primary_commercial_credit_account(pool, tenant_id, project_id, &api_key).await;
+    api_key
+}
+
 #[serial(extension_env)]
 #[tokio::test]
 async fn local_music_routes_follow_truthful_fallback_contract() {
@@ -332,7 +338,7 @@ async fn stateful_music_create_records_music_seconds_in_billing_events() {
     });
 
     let pool = memory_pool().await;
-    let api_key = support::issue_gateway_api_key(&pool, tenant_id, project_id).await;
+    let api_key = issue_funded_gateway_api_key(&pool, tenant_id, project_id).await;
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
     let admin_token = support::issue_admin_token(&pool, admin_app.clone()).await;
     let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);

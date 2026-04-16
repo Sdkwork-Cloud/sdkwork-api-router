@@ -2,7 +2,7 @@
 
 use axum::body::{to_bytes, Body};
 use axum::http::{Request, StatusCode};
-use sdkwork_api_app_identity::{gateway_auth_subject_from_request_context, GatewayRequestContext};
+use sdkwork_api_app_payment::ensure_portal_payment_subject_scope;
 use sdkwork_api_domain_billing::{
     AccountBenefitLotRecord, AccountBenefitLotStatus, AccountBenefitSourceType, AccountBenefitType,
     AccountRecord, AccountStatus, AccountType,
@@ -78,25 +78,17 @@ async fn workspace_summary(app: axum::Router, token: &str) -> Value {
     read_json(response).await
 }
 
-fn workspace_request_context(workspace: &Value) -> GatewayRequestContext {
-    GatewayRequestContext {
-        tenant_id: workspace["tenant"]["id"].as_str().unwrap().to_owned(),
-        project_id: workspace["project"]["id"].as_str().unwrap().to_owned(),
-        environment: "portal".to_owned(),
-        api_key_hash: "portal_workspace_scope".to_owned(),
-        api_key_group_id: None,
-        canonical_tenant_id: None,
-        canonical_organization_id: None,
-        canonical_user_id: None,
-        canonical_api_key_id: None,
-    }
-}
-
 async fn seed_portal_workspace_commercial_account(
     store: &SqliteAdminStore,
     workspace: &Value,
 ) -> AccountRecord {
-    let subject = gateway_auth_subject_from_request_context(&workspace_request_context(workspace));
+    let subject = ensure_portal_payment_subject_scope(
+        store,
+        workspace["user"]["id"].as_str().unwrap(),
+        1_710_000_000_000,
+    )
+    .await
+    .unwrap();
     let account = AccountRecord::new(
         7001,
         subject.tenant_id,
@@ -1507,6 +1499,95 @@ async fn portal_marketing_reward_history_exposes_account_arrival_evidence_for_en
             .unwrap(),
         300.0
     );
+}
+
+#[tokio::test]
+async fn portal_marketing_reward_history_never_serializes_negative_zero_credit_arrival() {
+    let pool = memory_pool().await;
+    let store = SqliteAdminStore::new(pool.clone());
+    seed_marketing_records_with_benefit_and_targets(
+        &store,
+        MarketingBenefitKind::GrantUnits,
+        &["coupon_redemption"],
+    )
+    .await;
+
+    let app = sdkwork_api_interface_portal::portal_router_with_pool(pool);
+    let token = portal_token(app.clone()).await;
+    let workspace = workspace_summary(app.clone(), &token).await;
+    let project_id = workspace["project"]["id"].as_str().unwrap().to_owned();
+    let account = seed_portal_workspace_commercial_account(&store, &workspace).await;
+
+    let reservation = CouponReservationRecord::new(
+        "reservation_reward_pending_arrival",
+        "code_launch20",
+        MarketingSubjectScope::Project,
+        project_id.clone(),
+        1_710_000_040_000,
+    )
+    .with_status(CouponReservationStatus::Confirmed)
+    .with_budget_reserved_minor(0)
+    .with_created_at_ms(1_710_000_000_100)
+    .with_updated_at_ms(1_710_000_000_200);
+    store
+        .insert_coupon_reservation_record(&reservation)
+        .await
+        .unwrap();
+
+    let redemption = CouponRedemptionRecord::new(
+        "redemption_reward_pending_arrival",
+        reservation.coupon_reservation_id.clone(),
+        "code_launch20",
+        "template_launch20",
+        1_710_000_000_300,
+    )
+    .with_status(CouponRedemptionStatus::Redeemed)
+    .with_order_id(Some("order_reward_pending_arrival".to_owned()))
+    .with_updated_at_ms(1_710_000_000_300);
+    store
+        .insert_coupon_redemption_record(&redemption)
+        .await
+        .unwrap();
+
+    let reward_history = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/portal/marketing/reward-history")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(reward_history.status(), StatusCode::OK);
+    let reward_history_json = read_json(reward_history).await;
+    assert_eq!(reward_history_json.as_array().unwrap().len(), 1);
+    assert_eq!(
+        reward_history_json[0]["effect"]["effect_kind"],
+        "account_entitlement"
+    );
+    assert_eq!(
+        reward_history_json[0]["account_arrival"]["order_id"],
+        "order_reward_pending_arrival"
+    );
+    assert_eq!(
+        reward_history_json[0]["account_arrival"]["account_id"],
+        account.account_id
+    );
+    assert_eq!(
+        reward_history_json[0]["account_arrival"]["benefit_lot_count"],
+        0
+    );
+    assert!(reward_history_json[0]["account_arrival"]["benefit_lots"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    let credited_quantity = reward_history_json[0]["account_arrival"]["credited_quantity"]
+        .as_f64()
+        .unwrap();
+    assert_eq!(credited_quantity, 0.0);
+    assert!(!credited_quantity.is_sign_negative());
 }
 
 #[tokio::test]

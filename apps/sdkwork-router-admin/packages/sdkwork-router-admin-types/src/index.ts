@@ -710,8 +710,10 @@ export type CommercialAccountLedgerEntryType =
   | 'manual_adjustment'
   | 'refund';
 
+export type CommercialAccountId = string | number;
+
 export interface CommercialAccountRecord {
-  account_id: number;
+  account_id: CommercialAccountId;
   tenant_id: number;
   organization_id: number;
   user_id: number;
@@ -737,7 +739,7 @@ export interface CommercialAccountLotBalanceSnapshot {
 }
 
 export interface CommercialAccountBalanceSnapshot {
-  account_id: number;
+  account_id: CommercialAccountId;
   available_balance: number;
   held_balance: number;
   consumed_balance: number;
@@ -759,7 +761,7 @@ export interface CommercialAccountBenefitLotRecord {
   lot_id: number;
   tenant_id: number;
   organization_id: number;
-  account_id: number;
+  account_id: CommercialAccountId;
   user_id: number;
   benefit_type: CommercialAccountBenefitType;
   source_type: CommercialAccountBenefitSourceType;
@@ -781,7 +783,7 @@ export interface CommercialAccountHoldRecord {
   hold_id: number;
   tenant_id: number;
   organization_id: number;
-  account_id: number;
+  account_id: CommercialAccountId;
   user_id: number;
   request_id: number;
   status: CommercialAccountHoldStatus;
@@ -798,7 +800,7 @@ export interface CommercialRequestSettlementRecord {
   tenant_id: number;
   organization_id: number;
   request_id: number;
-  account_id: number;
+  account_id: CommercialAccountId;
   user_id: number;
   hold_id?: number | null;
   status: CommercialRequestSettlementStatus;
@@ -818,7 +820,7 @@ export interface CommercialAccountLedgerEntryRecord {
   ledger_entry_id: number;
   tenant_id: number;
   organization_id: number;
-  account_id: number;
+  account_id: CommercialAccountId;
   user_id: number;
   request_id?: number | null;
   hold_id?: number | null;

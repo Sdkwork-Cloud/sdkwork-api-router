@@ -125,6 +125,23 @@ function toOptionalValue(value: string): string | undefined {
   return normalized ? normalized : undefined;
 }
 
+function formatEnvironmentOptionLabel(value: string, t: (text: string) => string): string {
+  switch (value.trim().toLowerCase()) {
+    case 'live':
+      return t('Live');
+    case 'staging':
+      return t('Staging');
+    case 'test':
+      return t('Test');
+    case 'production':
+      return t('Production');
+    case 'development':
+      return t('Development');
+    default:
+      return value;
+  }
+}
+
 export function GatewayApiKeyGroupsDialog({
   onDeleteApiKeyGroup,
   onOpenChange,
@@ -228,10 +245,10 @@ export function GatewayApiKeyGroupsDialog({
     return [...values]
       .filter((value) => value.trim().length > 0)
       .map((value) => ({
-        label: value,
+        label: formatEnvironmentOptionLabel(value, t),
         value,
       }));
-  }, [draft.environment, snapshot.apiKeyGroups, snapshot.apiKeys]);
+  }, [draft.environment, snapshot.apiKeyGroups, snapshot.apiKeys, t]);
 
   const filteredGroups = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase();
@@ -440,13 +457,13 @@ export function GatewayApiKeyGroupsDialog({
                           />
                         </div>
 
-                        <div className="space-y-1 text-sm text-[var(--sdk-color-text-secondary)]">
-                          <div>
-                            {group.tenant_id} / {group.project_id}
-                          </div>
-                          <div>{group.environment}</div>
-                          <div>{group.default_capability_scope ?? t('No default scope')}</div>
-                        </div>
+                            <div className="space-y-1 text-sm text-[var(--sdk-color-text-secondary)]">
+                              <div>
+                                {group.tenant_id} / {group.project_id}
+                              </div>
+                              <div>{formatEnvironmentOptionLabel(group.environment, t)}</div>
+                              <div>{group.default_capability_scope ?? t('No default scope')}</div>
+                            </div>
 
                         <div className="flex flex-wrap gap-2">
                           <Button
@@ -650,9 +667,9 @@ export function GatewayApiKeyGroupsDialog({
                     }
                     options={[
                       { label: t('No accounting override'), value: '' },
-                      { label: 'platform_credit', value: 'platform_credit' },
-                      { label: 'byok', value: 'byok' },
-                      { label: 'passthrough', value: 'passthrough' },
+                      { label: t('Platform credit'), value: 'platform_credit' },
+                      { label: t('BYOK'), value: 'byok' },
+                      { label: t('Passthrough'), value: 'passthrough' },
                     ]}
                     value={draft.default_accounting_mode}
                   />

@@ -3,8 +3,17 @@ use axum::http::{Request, StatusCode};
 use axum::Router;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use ed25519_dalek::SigningKey;
-use sdkwork_api_app_identity::{persist_gateway_api_key, upsert_admin_user};
+use sdkwork_api_app_identity::{
+    create_api_key_group, gateway_auth_subject_from_request_context, hash_gateway_api_key,
+    persist_gateway_api_key, persist_gateway_api_key_with_metadata, upsert_admin_user,
+    ApiKeyGroupInput, GatewayRequestContext, PersistGatewayApiKeyInput,
+};
+use sdkwork_api_domain_billing::{
+    AccountBenefitLotRecord, AccountBenefitSourceType, AccountBenefitType, AccountRecord,
+    AccountStatus, AccountType,
+};
 use sdkwork_api_ext_provider_native_mock::FIXTURE_EXTENSION_ID;
+use sdkwork_api_storage_core::AccountKernelStore;
 use sdkwork_api_storage_sqlite::SqliteAdminStore;
 use serde_json::Value;
 use sqlx::SqlitePool;
@@ -28,6 +37,100 @@ pub async fn issue_gateway_api_key(pool: &SqlitePool, tenant_id: &str, project_i
         .await
         .unwrap()
         .plaintext
+}
+
+#[allow(dead_code)]
+pub async fn issue_gateway_api_key_in_byok_group(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    project_id: &str,
+) -> String {
+    let store = SqliteAdminStore::new(pool.clone());
+    let group = create_api_key_group(
+        &store,
+        ApiKeyGroupInput {
+            tenant_id: tenant_id.to_owned(),
+            project_id: project_id.to_owned(),
+            environment: "live".to_owned(),
+            name: "BYOK Keys".to_owned(),
+            slug: Some("byok-keys".to_owned()),
+            description: None,
+            color: None,
+            default_capability_scope: None,
+            default_routing_profile_id: None,
+            default_accounting_mode: Some("byok".to_owned()),
+        },
+    )
+    .await
+    .unwrap();
+
+    persist_gateway_api_key_with_metadata(
+        &store,
+        PersistGatewayApiKeyInput {
+            tenant_id,
+            project_id,
+            environment: "live",
+            label: "BYOK test key",
+            expires_at_ms: None,
+            plaintext_key: None,
+            notes: None,
+            api_key_group_id: Some(&group.group_id),
+        },
+    )
+    .await
+    .unwrap()
+    .plaintext
+}
+
+#[allow(dead_code)]
+pub async fn seed_primary_commercial_credit_account(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    project_id: &str,
+    api_key: &str,
+) {
+    let store = SqliteAdminStore::new(pool.clone());
+    let request_context = GatewayRequestContext {
+        tenant_id: tenant_id.to_owned(),
+        project_id: project_id.to_owned(),
+        environment: "live".to_owned(),
+        api_key_hash: hash_gateway_api_key(api_key),
+        api_key_group_id: None,
+        canonical_tenant_id: None,
+        canonical_organization_id: None,
+        canonical_user_id: None,
+        canonical_api_key_id: None,
+    };
+    let subject = gateway_auth_subject_from_request_context(&request_context);
+
+    let account = AccountRecord::new(
+        900_001,
+        subject.tenant_id,
+        subject.organization_id,
+        subject.user_id,
+        AccountType::Primary,
+    )
+    .with_status(AccountStatus::Active)
+    .with_created_at_ms(10)
+    .with_updated_at_ms(10);
+    let balance_lot = AccountBenefitLotRecord::new(
+        900_002,
+        subject.tenant_id,
+        subject.organization_id,
+        account.account_id,
+        subject.user_id,
+        AccountBenefitType::CashCredit,
+    )
+    .with_source_type(AccountBenefitSourceType::Recharge)
+    .with_original_quantity(10.0)
+    .with_remaining_quantity(10.0)
+    .with_created_at_ms(11)
+    .with_updated_at_ms(11);
+
+    store.insert_account_record(&account).await.unwrap();
+    AccountKernelStore::insert_account_benefit_lot(&store, &balance_lot)
+        .await
+        .unwrap();
 }
 
 #[allow(dead_code)]

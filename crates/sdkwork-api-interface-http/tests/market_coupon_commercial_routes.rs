@@ -485,6 +485,110 @@ async fn public_coupon_and_commercial_routes_expose_coupon_semantics_and_account
 }
 
 #[tokio::test]
+async fn public_commercial_account_route_auto_provisions_primary_account_when_missing() {
+    let tenant_id = "tenant-public-commercial-autoprovision";
+    let project_id = "project-public-commercial-autoprovision";
+    let pool = memory_pool().await;
+    let store = SqliteAdminStore::new(pool.clone());
+    let api_key = support::issue_gateway_api_key(&pool, tenant_id, project_id).await;
+    let subject = gateway_auth_subject_from_request_context(&gateway_request_context(
+        tenant_id, project_id, &api_key,
+    ));
+
+    let app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/commercial/account")
+                .header("authorization", format!("Bearer {api_key}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let json = read_json(response).await;
+    assert_eq!(json["account"]["tenant_id"], subject.tenant_id);
+    assert_eq!(json["account"]["organization_id"], subject.organization_id);
+    assert_eq!(json["account"]["user_id"], subject.user_id);
+    assert_eq!(json["account"]["account_type"], "primary");
+    assert_eq!(json["account"]["status"], "active");
+    assert_eq!(json["balance"]["available_balance"], 0.0);
+    assert_eq!(json["balance"]["held_balance"], 0.0);
+    assert_eq!(json["balance"]["active_lot_count"], 0);
+
+    let stored_account = store
+        .find_account_record_by_owner(
+            subject.tenant_id,
+            subject.organization_id,
+            subject.user_id,
+            AccountType::Primary,
+        )
+        .await
+        .unwrap();
+    assert!(stored_account.is_some());
+}
+
+#[tokio::test]
+async fn public_coupon_validation_supports_account_scope_without_preseeded_commercial_account() {
+    let tenant_id = "tenant-public-account-scope";
+    let project_id = "project-public-account-scope";
+    let pool = memory_pool().await;
+    let store = SqliteAdminStore::new(pool.clone());
+    let api_key = support::issue_gateway_api_key(&pool, tenant_id, project_id).await;
+    let subject = gateway_auth_subject_from_request_context(&gateway_request_context(
+        tenant_id, project_id, &api_key,
+    ));
+    seed_custom_marketing_coupon(
+        &store,
+        "template_public_account_scope",
+        "campaign_public_account_scope",
+        "budget_public_account_scope",
+        "code_public_account_scope",
+        "PUBLICACCOUNT20",
+        MarketingBenefitKind::PercentageOff,
+        CouponRestrictionSpec::new(MarketingSubjectScope::Account)
+            .with_eligible_target_kinds(vec!["recharge_pack".to_owned()]),
+    )
+    .await;
+
+    let app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/marketing/coupons/validate")
+                .header("authorization", format!("Bearer {api_key}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"coupon_code\":\"PUBLICACCOUNT20\",\"subject_scope\":\"account\",\"target_kind\":\"recharge_pack\",\"order_amount_minor\":5000,\"reserve_amount_minor\":500}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let json = read_json(response).await;
+    assert_eq!(json["decision"]["eligible"], true);
+    assert_eq!(json["effect"]["effect_kind"], "checkout_discount");
+    assert_eq!(json["effect"]["discount_percent"], 20);
+
+    let stored_account = store
+        .find_account_record_by_owner(
+            subject.tenant_id,
+            subject.organization_id,
+            subject.user_id,
+            AccountType::Primary,
+        )
+        .await
+        .unwrap();
+    assert!(stored_account.is_some());
+}
+
+#[tokio::test]
 async fn public_commercial_benefit_lots_route_is_cursor_paginated() {
     let tenant_id = "tenant-public-benefit-lots-page";
     let project_id = "project-public-benefit-lots-page";

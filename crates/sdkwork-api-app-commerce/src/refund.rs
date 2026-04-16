@@ -13,7 +13,7 @@ use sdkwork_api_app_credential::CredentialSecretManager;
 use sdkwork_api_domain_commerce::{
     CommerceOrderRecord, CommercePaymentAttemptRecord, CommerceRefundRecord,
 };
-use sdkwork_api_storage_core::AdminStore;
+use sdkwork_api_storage_core::{AdminStore, CommercialKernelStore};
 
 pub async fn create_admin_commerce_refund(
     store: &dyn AdminStore,
@@ -179,6 +179,7 @@ pub async fn create_admin_commerce_refund(
                 let _ = apply_refund_completion_side_effects(
                     store,
                     commercial_billing,
+                    None,
                     &order,
                     payment_attempt_ref,
                     refund.amount_minor,
@@ -225,6 +226,7 @@ pub async fn list_admin_commerce_refunds_for_order(
 pub(crate) async fn apply_refund_completion_side_effects(
     store: &dyn AdminStore,
     commercial_billing: Option<&dyn CommercialBillingAdminKernel>,
+    payment_store: Option<&dyn CommercialKernelStore>,
     order: &CommerceOrderRecord,
     payment_attempt: Option<&CommercePaymentAttemptRecord>,
     refund_amount_minor: u64,
@@ -246,6 +248,7 @@ pub(crate) async fn apply_refund_completion_side_effects(
         current_order = crate::refund_portal_commerce_order(
             store,
             commercial_billing,
+            payment_store,
             &current_order.user_id,
             &current_order.project_id,
             &current_order.order_id,

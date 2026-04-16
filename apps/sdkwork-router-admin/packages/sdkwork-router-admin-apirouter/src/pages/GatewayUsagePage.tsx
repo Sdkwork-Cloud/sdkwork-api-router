@@ -35,6 +35,7 @@ import {
   filterBillingEvents,
   summarizeBillingEvents,
 } from './billingEventAnalytics';
+import { formatApiKeyReferenceLabel } from './access/shared';
 import { SelectField } from './shared';
 import { GatewayUsageDetailDrawer } from './usage/GatewayUsageDetailDrawer';
 import { GatewayUsageRegistrySection } from './usage/GatewayUsageRegistrySection';
@@ -587,7 +588,7 @@ export function GatewayUsagePage({
                   options={[
                     { label: t('All API keys'), value: 'all' },
                     ...snapshot.apiKeys.map((key) => ({
-                      label: `${key.label || key.project_id} (${key.environment})`,
+                      label: formatApiKeyReferenceLabel(key, t),
                       value: key.hashed_key,
                     })),
                   ]}

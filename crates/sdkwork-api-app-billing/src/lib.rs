@@ -45,9 +45,9 @@ pub(crate) use billing_support::{
     commerce_order_lot_id, commerce_order_refund_ledger_allocation_id,
     commerce_order_refund_ledger_entry_id, commerce_order_source_id, eligible_lots_for_hold,
     ensure_quantity_matches, free_quantity, load_account_ledger_allocations_and_lots,
-    load_hold_allocations_and_lots, validate_commerce_order_credit_lot, write_account_ledger_entry,
-    ACCOUNTING_EPSILON, HOLD_CREATE_LEDGER_SUFFIX, HOLD_RELEASE_LEDGER_SUFFIX,
-    SETTLEMENT_CAPTURE_LEDGER_SUFFIX, SETTLEMENT_RELEASE_LEDGER_SUFFIX,
+    load_hold_allocations_and_lots, normalize_zero, validate_commerce_order_credit_lot,
+    write_account_ledger_entry, ACCOUNTING_EPSILON, HOLD_CREATE_LEDGER_SUFFIX,
+    HOLD_RELEASE_LEDGER_SUFFIX, SETTLEMENT_CAPTURE_LEDGER_SUFFIX, SETTLEMENT_RELEASE_LEDGER_SUFFIX,
 };
 
 pub use account_balance::*;

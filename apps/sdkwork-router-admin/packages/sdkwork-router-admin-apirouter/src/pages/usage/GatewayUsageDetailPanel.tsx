@@ -10,6 +10,7 @@ import type {
   UsageRecord,
 } from 'sdkwork-router-admin-types';
 
+import { formatApiKeyReferenceLabel } from '../access/shared';
 import {
   formatCurrency,
   formatDateTime,
@@ -71,7 +72,7 @@ export function GatewayUsageDetailPanel({
           <DescriptionTerm>{t('API key scope')}</DescriptionTerm>
           <DescriptionDetails>
             {selectedKeyRecord
-              ? `${selectedKeyRecord.label || selectedKeyRecord.project_id} (${selectedKeyRecord.environment})`
+              ? formatApiKeyReferenceLabel(selectedKeyRecord, t)
               : t('All API keys')}
           </DescriptionDetails>
         </DescriptionItem>

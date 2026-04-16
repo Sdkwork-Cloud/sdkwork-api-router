@@ -22,7 +22,9 @@ async fn memory_pool() -> SqlitePool {
 #[tokio::test]
 async fn local_fallback_usage_is_recorded_as_sdkwork_local_provider() {
     let pool = memory_pool().await;
-    let api_key = support::issue_gateway_api_key(&pool, "tenant-runtime", "project-runtime").await;
+    let api_key =
+        support::issue_gateway_api_key_in_byok_group(&pool, "tenant-runtime", "project-runtime")
+            .await;
     let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool.clone());
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
     let admin_token = support::issue_admin_token(&pool, admin_app.clone()).await;

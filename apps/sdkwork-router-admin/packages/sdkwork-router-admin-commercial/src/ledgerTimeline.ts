@@ -1,4 +1,5 @@
 import type {
+  CommercialAccountId,
   CommercialAccountLedgerHistoryEntry,
   CommercialAccountLedgerEntryType,
   CommercialRequestSettlementRecord,
@@ -8,7 +9,7 @@ import type {
 export interface CommercialLedgerTimelineRow {
   id: string;
   ledger_entry_id: number;
-  account_id: number;
+  account_id: CommercialAccountId;
   request_id?: number | null;
   hold_id?: number | null;
   entry_type: CommercialAccountLedgerEntryType;
@@ -28,7 +29,7 @@ export interface CommercialLedgerTimelineRow {
 }
 
 function settlementLookupKey(input: {
-  account_id: number;
+  account_id: CommercialAccountId;
   request_id?: number | null;
   hold_id?: number | null;
 }): string {

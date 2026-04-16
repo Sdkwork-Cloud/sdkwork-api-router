@@ -4,6 +4,7 @@ use axum::http::{Request, StatusCode};
 use axum::response::Response;
 use axum::routing::post;
 use axum::{Json, Router};
+use sdkwork_api_app_identity::{persist_gateway_api_key_with_metadata, PersistGatewayApiKeyInput};
 use serde_json::Value;
 use sqlx::SqlitePool;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -26,6 +27,51 @@ async fn memory_pool() -> SqlitePool {
     sdkwork_api_storage_sqlite::run_migrations("sqlite::memory:")
         .await
         .unwrap()
+}
+
+async fn issue_gateway_api_key_in_byok_group(
+    pool: &SqlitePool,
+    admin_app: &Router,
+    admin_token: &str,
+    tenant_id: &str,
+    project_id: &str,
+) -> String {
+    let create_group = admin_app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/admin/api-key-groups")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    "{{\"tenant_id\":\"{tenant_id}\",\"project_id\":\"{project_id}\",\"environment\":\"live\",\"name\":\"Rate Limit BYOK Keys\",\"slug\":\"rate-limit-byok-keys\",\"default_accounting_mode\":\"byok\"}}"
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(create_group.status(), StatusCode::CREATED);
+    let group_json = read_json(create_group).await;
+    let group_id = group_json["group_id"].as_str().unwrap().to_owned();
+
+    let store = sdkwork_api_storage_sqlite::SqliteAdminStore::new(pool.clone());
+    persist_gateway_api_key_with_metadata(
+        &store,
+        PersistGatewayApiKeyInput {
+            tenant_id,
+            project_id,
+            environment: "live",
+            label: "Rate limit BYOK test key",
+            expires_at_ms: None,
+            plaintext_key: None,
+            notes: None,
+            api_key_group_id: Some(&group_id),
+        },
+    )
+    .await
+    .unwrap()
+    .plaintext
 }
 
 fn header_text<'a>(response: &'a Response, name: &str) -> &'a str {
@@ -187,9 +233,16 @@ async fn gateway_chat_completions_returns_429_when_rate_limit_is_exhausted() {
     });
 
     let pool = memory_pool().await;
-    let api_key = support::issue_gateway_api_key(&pool, "tenant-1", "project-1").await;
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
     let admin_token = support::issue_admin_token(&pool, admin_app.clone()).await;
+    let api_key = issue_gateway_api_key_in_byok_group(
+        &pool,
+        &admin_app,
+        &admin_token,
+        "tenant-1",
+        "project-1",
+    )
+    .await;
     let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
 
     configure_openai_chat_provider(

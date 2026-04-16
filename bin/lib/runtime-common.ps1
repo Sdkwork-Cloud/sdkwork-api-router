@@ -1385,6 +1385,9 @@ function Get-RouterStartupSummaryLines {
     $gatewayDirectUrl = Resolve-RouterHealthUrl -BindAddress $GatewayBind -PathSuffix '/health'
     $adminDirectUrl = Resolve-RouterHealthUrl -BindAddress $AdminBind -PathSuffix '/admin/health'
     $portalDirectUrl = Resolve-RouterHealthUrl -BindAddress $PortalBind -PathSuffix '/portal/health'
+    $gatewayOpenApiUrl = Resolve-RouterHealthUrl -BindAddress $GatewayBind -PathSuffix '/openapi.json'
+    $adminOpenApiUrl = Resolve-RouterHealthUrl -BindAddress $AdminBind -PathSuffix '/admin/openapi.json'
+    $portalOpenApiUrl = Resolve-RouterHealthUrl -BindAddress $PortalBind -PathSuffix '/portal/openapi.json'
     $bootstrapProfile = Get-RouterActiveBootstrapProfile
     $bootstrapIdentityHintPath = Get-RouterBootstrapIdentityHintPath
 
@@ -1416,6 +1419,9 @@ function Get-RouterStartupSummaryLines {
         "  Gateway Service: $gatewayDirectUrl",
         "  Admin Service: $adminDirectUrl",
         "  Portal Service: $portalDirectUrl",
+        "  Gateway OpenAPI 3.x Schema: $gatewayOpenApiUrl",
+        "  Admin OpenAPI 3.x Schema: $adminOpenApiUrl",
+        "  Portal OpenAPI 3.x Schema: $portalOpenApiUrl",
         'Identity Bootstrap',
         "  Local access uses the active bootstrap profile: $bootstrapProfile"
     )

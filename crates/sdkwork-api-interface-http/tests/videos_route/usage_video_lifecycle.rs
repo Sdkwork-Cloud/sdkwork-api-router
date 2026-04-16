@@ -19,7 +19,7 @@ async fn stateful_video_create_usage_uses_created_video_id_for_billing() {
     let pool = memory_pool().await;
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
     let admin_token = support::issue_admin_token(&pool, admin_app.clone()).await;
-    let api_key = support::issue_gateway_api_key(&pool, tenant_id, project_id).await;
+    let api_key = support::issue_gateway_api_key_in_byok_group(&pool, tenant_id, project_id).await;
     let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
 
     let create_channel = admin_app
@@ -208,7 +208,7 @@ async fn stateful_video_remix_usage_uses_created_video_id_for_billing() {
     let pool = memory_pool().await;
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
     let admin_token = support::issue_admin_token(&pool, admin_app.clone()).await;
-    let api_key = support::issue_gateway_api_key(&pool, tenant_id, project_id).await;
+    let api_key = support::issue_gateway_api_key_in_byok_group(&pool, tenant_id, project_id).await;
     let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
 
     let create_channel = admin_app
@@ -395,7 +395,7 @@ async fn stateful_video_extend_usage_uses_created_video_id_for_billing() {
     let pool = memory_pool().await;
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
     let admin_token = support::issue_admin_token(&pool, admin_app.clone()).await;
-    let api_key = support::issue_gateway_api_key(&pool, tenant_id, project_id).await;
+    let api_key = support::issue_gateway_api_key_in_byok_group(&pool, tenant_id, project_id).await;
     let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
 
     let create_channel = admin_app

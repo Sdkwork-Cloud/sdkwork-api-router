@@ -13,6 +13,7 @@ import type {
   CampaignBudgetStatus,
   CommercialAccountBalanceSnapshot,
   CommercialAccountBenefitLotRecord,
+  CommercialAccountId,
   CommercialAccountLedgerHistoryEntry,
   CommercialAccountHoldRecord,
   CommercialPricingLifecycleSynchronizationReport,
@@ -939,7 +940,7 @@ export function listCommercialAccounts(
 }
 
 export function getCommercialAccountBalance(
-  accountId: number,
+  accountId: CommercialAccountId,
   token?: string,
 ): Promise<CommercialAccountBalanceSnapshot> {
   return getJson<CommercialAccountBalanceSnapshot>(
@@ -949,7 +950,7 @@ export function getCommercialAccountBalance(
 }
 
 export function listCommercialAccountBenefitLots(
-  accountId: number,
+  accountId: CommercialAccountId,
   token?: string,
 ): Promise<CommercialAccountBenefitLotRecord[]> {
   return getJson<CommercialAccountBenefitLotRecord[]>(
@@ -959,7 +960,7 @@ export function listCommercialAccountBenefitLots(
 }
 
 export function listCommercialAccountLedger(
-  accountId: number,
+  accountId: CommercialAccountId,
   token?: string,
 ): Promise<CommercialAccountLedgerHistoryEntry[]> {
   return getJson<CommercialAccountLedgerHistoryEntry[]>(

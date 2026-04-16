@@ -509,14 +509,25 @@ export function portalErrorMessage(error: unknown): string {
   return 'Portal request failed.';
 }
 
+function normalizeProvisioningMessageTokens(message: string): string {
+  return message
+    .trim()
+    .toLowerCase()
+    .replace(/[.!?]+$/g, '')
+    .replace(/\s+/g, ' ');
+}
+
 export function resolveCommercialAccountProvisioningStatus(
   error: unknown,
 ): string | null {
-  const normalizedMessage = portalErrorMessage(error).trim().toLowerCase();
+  const normalizedMessage = normalizeProvisioningMessageTokens(portalErrorMessage(error));
 
   if (
-    normalizedMessage === 'workspace commercial account is not provisioned'
-    || normalizedMessage === 'commercial account is not provisioned'
+    normalizedMessage.includes('commercial account')
+    && (
+      normalizedMessage.includes('not provisioned')
+      || normalizedMessage.includes('being prepared')
+    )
   ) {
     return 'Workspace commercial account is being prepared for this workspace.';
   }

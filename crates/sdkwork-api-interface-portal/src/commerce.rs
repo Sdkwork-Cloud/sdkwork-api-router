@@ -240,6 +240,7 @@ pub(crate) async fn settle_commerce_order_handler(
     settle_portal_commerce_order_with_billing(
         state.store.as_ref(),
         state.commercial_billing.as_deref(),
+        state.payment_store.as_deref(),
         &claims.claims().sub,
         &workspace.project.id,
         &order_id,
@@ -304,6 +305,7 @@ pub(crate) async fn apply_commerce_payment_event_handler(
     apply_portal_commerce_payment_event_with_billing(
         state.store.as_ref(),
         state.commercial_billing.as_deref(),
+        state.payment_store.as_deref(),
         &claims.claims().sub,
         &workspace.project.id,
         &order_id,
@@ -509,6 +511,7 @@ pub(crate) async fn stripe_webhook_handler(
     process_portal_stripe_webhook(
         state.store.as_ref(),
         state.commercial_billing.as_deref(),
+        state.payment_store.as_deref(),
         &state.secret_manager,
         &payment_method_id,
         headers

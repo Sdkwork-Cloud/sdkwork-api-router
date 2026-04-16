@@ -128,7 +128,7 @@ export function PaymentRefundDialog({
               onChange={(event: ChangeEvent<HTMLInputElement>) =>
                 setDraft((current) => ({ ...current, amount_minor: event.target.value }))
               }
-              placeholder={String(order.refundable_amount_minor)}
+              placeholder={formatNumber(order.refundable_amount_minor)}
               type="number"
               value={draft.amount_minor}
             />

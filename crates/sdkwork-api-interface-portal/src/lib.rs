@@ -875,8 +875,13 @@ async fn list_commerce_order_center_handler(
         });
     }
 
-    let reconciliation =
-        load_portal_commerce_reconciliation_summary(&state, &workspace, &legacy_orders).await?;
+    let reconciliation = load_portal_commerce_reconciliation_summary(
+        &state,
+        &workspace,
+        &claims.claims().sub,
+        &legacy_orders,
+    )
+    .await?;
 
     Ok(Json(PortalCommerceOrderCenterResponse {
         project_id: workspace.project.id,
@@ -982,7 +987,12 @@ async fn account_history_handler(
 
     if snapshot.account.is_none() {
         if let Some(commercial_billing) = state.commercial_billing.as_ref() {
-            let account = ensure_portal_workspace_commercial_account(&state, &workspace).await?;
+            let account = ensure_portal_canonical_commercial_account(
+                &state,
+                &workspace,
+                &claims.claims().sub,
+            )
+            .await?;
             let account_id = account.account_id;
             let balance = commercial_billing
                 .summarize_account_balance(account_id, current_time_millis())
@@ -1432,24 +1442,33 @@ fn portal_workspace_request_context(workspace: &PortalWorkspaceSummary) -> Gatew
     }
 }
 
-pub(crate) async fn ensure_portal_workspace_commercial_account(
+pub(crate) async fn ensure_portal_canonical_commercial_account(
     state: &PortalApiState,
     workspace: &PortalWorkspaceSummary,
+    portal_user_id: &str,
 ) -> Result<AccountRecord, (StatusCode, Json<ErrorResponse>)> {
-    let request_context = portal_workspace_request_context(workspace);
-    let account_store = state.store.account_kernel_store().ok_or_else(|| {
-        error_response(
-            StatusCode::NOT_IMPLEMENTED,
-            "portal commercial account routes are unavailable for the current storage runtime",
-        )
-    })?;
+    let payment_store = payment_store_kernel(state)?;
+    let identity_store = identity_store_kernel(state)?;
+    let scope = ensure_portal_payment_subject_scope(
+        identity_store.as_ref(),
+        portal_user_id,
+        current_time_millis(),
+    )
+    .await
+    .map_err(portal_payment_error_response)?;
+    let request_context = portal_workspace_request_context(workspace).with_canonical_subject(
+        scope.tenant_id,
+        scope.organization_id,
+        scope.user_id,
+        Some(scope.user_id),
+    );
     ensure_primary_account_for_gateway_request_context(
-        account_store,
+        payment_store.as_ref(),
         &request_context,
         current_time_millis(),
     )
     .await
-    .map_err(commercial_billing_error_response)
+    .map_err(portal_payment_error_response)
 }
 
 async fn load_portal_billing_account_context(
@@ -1460,7 +1479,8 @@ async fn load_portal_billing_account_context(
         .await
         .map_err(|status| error_response(status, "portal workspace is unavailable"))?;
     let commercial_billing = commercial_billing_kernel(state)?.clone();
-    let account = ensure_portal_workspace_commercial_account(state, &workspace).await?;
+    let account =
+        ensure_portal_canonical_commercial_account(state, &workspace, &claims.claims().sub).await?;
     let balance = commercial_billing
         .summarize_account_balance(account.account_id, current_time_millis())
         .await
@@ -1471,12 +1491,14 @@ async fn load_portal_billing_account_context(
 async fn load_portal_commerce_reconciliation_summary(
     state: &PortalApiState,
     workspace: &PortalWorkspaceSummary,
+    portal_user_id: &str,
     order_center_entries: &[PortalOrderCenterEntry],
 ) -> Result<Option<PortalCommerceReconciliationSummary>, (StatusCode, Json<ErrorResponse>)> {
     let Some(commercial_billing) = state.commercial_billing.as_ref() else {
         return Ok(None);
     };
-    let account = ensure_portal_workspace_commercial_account(state, workspace).await?;
+    let account =
+        ensure_portal_canonical_commercial_account(state, workspace, portal_user_id).await?;
     let checkpoint = commercial_billing
         .find_account_commerce_reconciliation_state(account.account_id, &workspace.project.id)
         .await

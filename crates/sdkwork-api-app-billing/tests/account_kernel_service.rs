@@ -72,6 +72,31 @@ async fn summarizes_account_balance_from_canonical_lots() {
 }
 
 #[tokio::test]
+async fn summarizes_empty_account_balance_without_negative_zero_artifacts() {
+    let pool = run_migrations("sqlite::memory:").await.unwrap();
+    let store = SqliteAdminStore::new(pool);
+
+    let account = AccountRecord::new(7002, 1001, 2002, 9001, AccountType::Primary)
+        .with_created_at_ms(10)
+        .with_updated_at_ms(10);
+    store.insert_account_record(&account).await.unwrap();
+
+    let snapshot = summarize_account_balance(&store, 7002, 100).await.unwrap();
+
+    assert_eq!(snapshot.account_id, 7002);
+    assert_eq!(snapshot.available_balance, 0.0);
+    assert!(!snapshot.available_balance.is_sign_negative());
+    assert_eq!(snapshot.held_balance, 0.0);
+    assert!(!snapshot.held_balance.is_sign_negative());
+    assert_eq!(snapshot.consumed_balance, 0.0);
+    assert!(!snapshot.consumed_balance.is_sign_negative());
+    assert_eq!(snapshot.grant_balance, 0.0);
+    assert!(!snapshot.grant_balance.is_sign_negative());
+    assert_eq!(snapshot.active_lot_count, 0);
+    assert!(snapshot.lots.is_empty());
+}
+
+#[tokio::test]
 async fn plans_hold_across_lots_in_spend_order_and_reports_shortfall() {
     let pool = run_migrations("sqlite::memory:").await.unwrap();
     let store = SqliteAdminStore::new(pool);

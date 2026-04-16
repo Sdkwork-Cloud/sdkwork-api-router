@@ -170,6 +170,8 @@ async fn stateful_anthropic_messages_route_accepts_x_api_key_and_records_usage()
 
     let pool = memory_pool().await;
     let api_key = support::issue_gateway_api_key(&pool, "tenant-1", "project-1").await;
+    support::seed_primary_commercial_credit_account(&pool, "tenant-1", "project-1", &api_key)
+        .await;
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
     let admin_token = support::issue_admin_token(&pool, admin_app.clone()).await;
     let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
@@ -382,6 +384,8 @@ async fn stateful_anthropic_messages_route_passthroughs_native_anthropic_protoco
 
     let pool = memory_pool().await;
     let api_key = support::issue_gateway_api_key(&pool, "tenant-1", "project-1").await;
+    support::seed_primary_commercial_credit_account(&pool, "tenant-1", "project-1", &api_key)
+        .await;
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
     let admin_token = support::issue_admin_token(&pool, admin_app.clone()).await;
     let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
@@ -457,6 +461,8 @@ async fn stateful_anthropic_messages_route_derives_protocol_kind_for_legacy_blan
 
     let pool = memory_pool().await;
     let api_key = support::issue_gateway_api_key(&pool, tenant_id, project_id).await;
+    support::seed_primary_commercial_credit_account(&pool, tenant_id, project_id, &api_key)
+        .await;
     let store = SqliteAdminStore::new(pool.clone());
     let secret_manager = CredentialSecretManager::database_encrypted("local-dev-master-key");
     seed_legacy_blank_protocol_anthropic_provider(
@@ -555,6 +561,8 @@ async fn stateful_anthropic_messages_route_fails_over_before_execution_when_prim
 
     let pool = memory_pool().await;
     let api_key = support::issue_gateway_api_key(&pool, tenant_id, project_id).await;
+    support::seed_primary_commercial_credit_account(&pool, tenant_id, project_id, &api_key)
+        .await;
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
     let admin_token = support::issue_admin_token(&pool, admin_app.clone()).await;
     let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
@@ -718,6 +726,8 @@ async fn stateful_anthropic_messages_route_prefers_native_dynamic_raw_plugin_for
 
     let pool = memory_pool().await;
     let api_key = support::issue_gateway_api_key(&pool, "tenant-1", "project-1").await;
+    support::seed_primary_commercial_credit_account(&pool, "tenant-1", "project-1", &api_key)
+        .await;
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
     let admin_token = support::issue_admin_token(&pool, admin_app.clone()).await;
     let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
@@ -793,6 +803,8 @@ async fn stateful_anthropic_messages_route_uses_connector_runtime_translated_fal
 
     let pool = memory_pool().await;
     let api_key = support::issue_gateway_api_key(&pool, "tenant-1", "project-1").await;
+    support::seed_primary_commercial_credit_account(&pool, "tenant-1", "project-1", &api_key)
+        .await;
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
     let admin_token = support::issue_admin_token(&pool, admin_app.clone()).await;
     let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
@@ -854,6 +866,8 @@ async fn stateful_anthropic_messages_route_fails_closed_for_missing_explicit_nat
 ) {
     let pool = memory_pool().await;
     let api_key = support::issue_gateway_api_key(&pool, "tenant-1", "project-1").await;
+    support::seed_primary_commercial_credit_account(&pool, "tenant-1", "project-1", &api_key)
+        .await;
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
     let admin_token = support::issue_admin_token(&pool, admin_app.clone()).await;
     let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
@@ -1177,6 +1191,8 @@ async fn stateful_anthropic_messages_stream_route_prefers_native_dynamic_raw_plu
 
     let pool = memory_pool().await;
     let api_key = support::issue_gateway_api_key(&pool, "tenant-1", "project-1").await;
+    support::seed_primary_commercial_credit_account(&pool, "tenant-1", "project-1", &api_key)
+        .await;
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
     let admin_token = support::issue_admin_token(&pool, admin_app.clone()).await;
     let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);

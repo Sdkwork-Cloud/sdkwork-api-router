@@ -11,6 +11,13 @@ import { portalErrorMessage } from 'sdkwork-router-portal-portal-api';
 
 import type { PortalAuthMode, PortalAuthPageProps } from '../types';
 
+const QR_LOGIN_NOTICE =
+  'Workspace app sign-in is not enabled in this workspace yet. Use your email and password below to continue.';
+const RECOVERY_NOTICE =
+  'Password recovery is not enabled in this workspace yet. Contact your workspace administrator if you lose access.';
+const SSO_NOTICE =
+  'Use the workspace email and password flow for portal access. External SSO remains disabled in this workspace.';
+
 function resolveDevLoginEmailHint() {
   if (!import.meta.env.DEV) {
     return '';
@@ -63,9 +70,7 @@ function authCopy(mode: PortalAuthMode) {
     case 'forgot-password':
       return {
         title: translatePortalText('Recover access'),
-        description: translatePortalText(
-          'Password reset links are not enabled for this workspace yet. Continue back to sign in with your workspace email.',
-        ),
+        description: translatePortalText(RECOVERY_NOTICE),
         submitLabel: translatePortalText('Back to login'),
         alternateLabel: translatePortalText('Create account'),
         alternatePath: '/register',
@@ -129,6 +134,10 @@ export function AuthPage({ signIn, register }: PortalAuthPageProps) {
       setEmail(nextEmail);
     }
   }, [searchParams]);
+
+  useEffect(() => {
+    setFeedback('');
+  }, [mode]);
 
   useEffect(() => {
     if (!showDevAccessHint || !devLoginEmailHint) {
@@ -195,20 +204,23 @@ export function AuthPage({ signIn, register }: PortalAuthPageProps) {
             <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary-600 shadow-lg">
               <QrCode className="h-8 w-8 text-white" />
             </div>
-            <h2 className="mb-2 text-2xl font-bold">{t('QR login')}</h2>
-            <p className="mb-8 max-w-[200px] text-sm text-zinc-400">
-              {t('Open the desktop app and scan this code to continue without typing credentials.')}
+            <h2 className="mb-2 text-2xl font-bold">{t('App sign-in unavailable')}</h2>
+            <p className="mb-8 max-w-[220px] text-sm text-zinc-400">
+              {t(QR_LOGIN_NOTICE)}
             </p>
 
             <div className="mb-6 rounded-2xl bg-white p-4 shadow-xl">
-              <div className="flex h-48 w-48 items-center justify-center rounded-xl border-2 border-dashed border-zinc-300 bg-zinc-100">
+              <div className="flex h-48 w-48 flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-zinc-300 bg-zinc-100">
                 <QrCode className="h-24 w-24 text-zinc-400" />
+                <span className="rounded-full bg-zinc-900 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-white">
+                  {t('Unavailable')}
+                </span>
               </div>
             </div>
 
             <div className="flex items-center gap-2 text-sm text-zinc-400">
               <Smartphone className="h-4 w-4" />
-              <span>{t('Open app to scan')}</span>
+              <span>{t('Use email and password below')}</span>
             </div>
           </div>
         </div>
@@ -252,19 +264,7 @@ export function AuthPage({ signIn, register }: PortalAuthPageProps) {
 
               {mode !== 'forgot-password' ? (
                 <div>
-                  <div className="mb-1.5 flex items-center justify-between">
-                    <Label className="text-zinc-700 dark:text-zinc-300">{t('Password')}</Label>
-                    {mode === 'login' ? (
-                      <Button
-                        className="h-auto rounded-none p-0 text-sm font-medium text-primary-600 shadow-none hover:bg-transparent hover:text-primary-500"
-                        onClick={() => navigate(withRedirect('/forgot-password', { email }))}
-                        type="button"
-                        variant="ghost"
-                      >
-                        {t('Forgot password?')}
-                      </Button>
-                    ) : null}
-                  </div>
+                  <Label className="mb-1.5 block text-zinc-700 dark:text-zinc-300">{t('Password')}</Label>
                   <AuthTextInput
                     autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
                     icon={<Lock className="h-5 w-5" />}
@@ -274,6 +274,11 @@ export function AuthPage({ signIn, register }: PortalAuthPageProps) {
                     type="password"
                     value={password}
                   />
+                  {mode === 'login' ? (
+                    <p className="mt-2 text-xs font-medium text-zinc-500 dark:text-zinc-400">
+                      {t(RECOVERY_NOTICE)}
+                    </p>
+                  ) : null}
                 </div>
               ) : null}
 
@@ -316,6 +321,7 @@ export function AuthPage({ signIn, register }: PortalAuthPageProps) {
                 <div className="mt-6 grid grid-cols-2 gap-3">
                   <Button
                     className="h-auto w-full rounded-xl border border-zinc-200 bg-white px-4 py-2.5 text-sm font-medium text-zinc-700 shadow-sm transition-colors hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                    onClick={() => setFeedback(t(SSO_NOTICE))}
                     type="button"
                     variant="secondary"
                   >
@@ -324,6 +330,7 @@ export function AuthPage({ signIn, register }: PortalAuthPageProps) {
                   </Button>
                   <Button
                     className="h-auto w-full rounded-xl border border-zinc-200 bg-white px-4 py-2.5 text-sm font-medium text-zinc-700 shadow-sm transition-colors hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                    onClick={() => setFeedback(t(SSO_NOTICE))}
                     type="button"
                     variant="secondary"
                   >

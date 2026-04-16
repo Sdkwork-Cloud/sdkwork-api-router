@@ -57,25 +57,14 @@ pub(super) async fn portal_workspace(app: axum::Router, token: &str) -> Value {
     read_json(response).await
 }
 
-pub(super) fn workspace_request_context(workspace: &Value) -> GatewayRequestContext {
-    GatewayRequestContext {
-        tenant_id: workspace["tenant"]["id"].as_str().unwrap().to_owned(),
-        project_id: workspace["project"]["id"].as_str().unwrap().to_owned(),
-        environment: "portal".to_owned(),
-        api_key_hash: "portal_workspace_scope".to_owned(),
-        api_key_group_id: None,
-        canonical_tenant_id: None,
-        canonical_organization_id: None,
-        canonical_user_id: None,
-        canonical_api_key_id: None,
-    }
-}
-
 pub(super) async fn seed_portal_workspace_commercial_account(
     store: &SqliteAdminStore,
     workspace: &Value,
 ) -> AccountRecord {
-    let subject = gateway_auth_subject_from_request_context(&workspace_request_context(workspace));
+    let subject =
+        ensure_portal_payment_subject_scope(store, workspace["user"]["id"].as_str().unwrap(), 10)
+            .await
+            .unwrap();
     let account = AccountRecord::new(
         7001,
         subject.tenant_id,

@@ -93,6 +93,12 @@ async fn memory_pool() -> SqlitePool {
         .unwrap()
 }
 
+async fn issue_funded_gateway_api_key(pool: &SqlitePool, tenant_id: &str, project_id: &str) -> String {
+    let api_key = support::issue_gateway_api_key(pool, tenant_id, project_id).await;
+    support::seed_primary_commercial_credit_account(pool, tenant_id, project_id, &api_key).await;
+    api_key
+}
+
 #[derive(Clone, Default)]
 struct UpstreamCaptureState {
     authorization: Arc<Mutex<Option<String>>>,
@@ -211,7 +217,7 @@ async fn stateful_chat_stream_route_relays_to_openai_compatible_provider() {
     });
 
     let pool = memory_pool().await;
-    let api_key = support::issue_gateway_api_key(&pool, "tenant-1", "project-1").await;
+    let api_key = issue_funded_gateway_api_key(&pool, "tenant-1", "project-1").await;
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
     let admin_token = support::issue_admin_token(&pool, admin_app.clone()).await;
     let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
@@ -346,7 +352,7 @@ async fn stateful_chat_stream_route_relays_to_native_dynamic_provider() {
     let _guard = native_dynamic_env_guard(&extension_root, &public_key);
 
     let pool = memory_pool().await;
-    let api_key = support::issue_gateway_api_key(&pool, "tenant-1", "project-1").await;
+    let api_key = issue_funded_gateway_api_key(&pool, "tenant-1", "project-1").await;
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
     let admin_token = support::issue_admin_token(&pool, admin_app.clone()).await;
     let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);

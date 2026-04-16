@@ -655,10 +655,10 @@ export function GatewayRoutingProfilesDialog({
                     }))
                   }
                   options={[
-                    { label: 'Deterministic priority', value: 'deterministic_priority' },
-                    { label: 'Weighted random', value: 'weighted_random' },
-                    { label: 'SLO aware', value: 'slo_aware' },
-                    { label: 'Geo affinity', value: 'geo_affinity' },
+                    { label: t('Deterministic priority'), value: 'deterministic_priority' },
+                    { label: t('Weighted random'), value: 'weighted_random' },
+                    { label: t('SLO aware'), value: 'slo_aware' },
+                    { label: t('Geo affinity'), value: 'geo_affinity' },
                   ]}
                   value={draft.strategy}
                 />
@@ -685,7 +685,7 @@ export function GatewayRoutingProfilesDialog({
                         max_cost: event.target.value,
                       }))
                     }
-                    placeholder="0.00"
+                    placeholder={t('Example: 0.00 maximum spend')}
                     step="0.0001"
                     type="number"
                     value={draft.max_cost}
@@ -705,7 +705,7 @@ export function GatewayRoutingProfilesDialog({
                         max_latency_ms: event.target.value,
                       }))
                     }
-                    placeholder="1200"
+                    placeholder={t('Example: 1200 ms ceiling')}
                     step="1"
                     type="number"
                     value={draft.max_latency_ms}

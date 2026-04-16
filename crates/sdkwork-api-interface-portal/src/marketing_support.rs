@@ -1,5 +1,13 @@
 use super::*;
 
+fn normalize_zero(value: f64) -> f64 {
+    if value == 0.0 {
+        0.0
+    } else {
+        value
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub(crate) struct PortalCouponAccountArrivalContext {
     account_id: Option<u64>,
@@ -11,7 +19,8 @@ pub(crate) async fn load_portal_marketing_workspace_and_subjects(
     claims: &AuthenticatedPortalClaims,
 ) -> Result<(PortalWorkspaceSummary, MarketingSubjectSet), StatusCode> {
     let workspace = load_workspace_for_user(state.store.as_ref(), &claims.claims().sub).await?;
-    let account_id = load_portal_marketing_account_id(state, &workspace).await?;
+    let account_id =
+        load_portal_marketing_account_id(state, &workspace, &claims.claims().sub).await?;
     let subjects = MarketingSubjectSet::new(
         Some(claims.claims().sub.clone()),
         Some(workspace.project.id.clone()),
@@ -24,12 +33,13 @@ pub(crate) async fn load_portal_marketing_workspace_and_subjects(
 async fn load_portal_marketing_account_id(
     state: &PortalApiState,
     workspace: &PortalWorkspaceSummary,
+    portal_user_id: &str,
 ) -> Result<Option<String>, StatusCode> {
     if state.commercial_billing.is_none() {
         return Ok(None);
     }
 
-    let account = ensure_portal_workspace_commercial_account(state, workspace)
+    let account = ensure_portal_canonical_commercial_account(state, workspace, portal_user_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Some(account.account_id.to_string()))
@@ -301,7 +311,7 @@ fn portal_coupon_account_arrival_summary(
             .then_with(|| left.lot_id.cmp(&right.lot_id))
     });
 
-    let credited_quantity = lots.iter().map(|lot| lot.original_quantity).sum::<f64>();
+    let credited_quantity = normalize_zero(lots.iter().map(|lot| lot.original_quantity).sum());
     let benefit_lots = lots
         .iter()
         .map(portal_coupon_account_arrival_lot_item)

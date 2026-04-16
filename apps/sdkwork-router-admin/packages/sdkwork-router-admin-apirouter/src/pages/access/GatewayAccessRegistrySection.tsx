@@ -31,7 +31,7 @@ import type {
 
 import type { GatewayModelMappingRecord } from '../../services/gatewayOverlayStore';
 import { readGatewayApiKeyOverlay } from '../../services/gatewayOverlayStore';
-import { maskKey, resolvePlaintextForKey } from './shared';
+import { formatEnvironmentLabel, maskKey, resolvePlaintextForKey } from './shared';
 
 type GatewayAccessRegistrySectionProps = {
   activeKeys: number;
@@ -112,7 +112,7 @@ export function GatewayAccessRegistrySection({
           <div>
             {key.tenant_id} / {key.project_id}
           </div>
-          <div>{key.environment}</div>
+          <div>{formatEnvironmentLabel(key.environment, t)}</div>
         </div>
       ),
     },

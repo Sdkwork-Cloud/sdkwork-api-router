@@ -16,6 +16,7 @@ import {
 import { useAdminI18n } from 'sdkwork-router-admin-core';
 import type { AdminWorkspaceSnapshot } from 'sdkwork-router-admin-types';
 
+import { formatApiKeyReferenceLabel } from '../access/shared';
 import { DialogField, SelectField } from '../shared';
 import type { RateLimitDraft } from './shared';
 
@@ -97,7 +98,7 @@ export function GatewayRateLimitPolicyDialog({
                 options={[
                   { label: t('All API keys'), value: '' },
                   ...availableApiKeys.map((apiKey) => ({
-                    label: `${apiKey.label || apiKey.project_id} (${apiKey.environment})`,
+                    label: formatApiKeyReferenceLabel(apiKey, t),
                     value: apiKey.hashed_key,
                   })),
                 ]}

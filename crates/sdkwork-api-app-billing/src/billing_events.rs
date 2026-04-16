@@ -73,6 +73,11 @@ pub fn create_billing_event(input: CreateBillingEventInput<'_>) -> Result<Billin
     } else {
         input.total_tokens
     };
+    let audio_seconds = normalize_zero(input.audio_seconds);
+    let video_seconds = normalize_zero(input.video_seconds);
+    let music_seconds = normalize_zero(input.music_seconds);
+    let upstream_cost = normalize_zero(input.upstream_cost);
+    let customer_charge = normalize_zero(input.customer_charge);
 
     let mut event = BillingEventRecord::new(
         input.event_id.trim(),
@@ -98,11 +103,11 @@ pub fn create_billing_event(input: CreateBillingEventInput<'_>) -> Result<Billin
     .with_cache_token_usage(input.cache_read_tokens, input.cache_write_tokens)
     .with_media_usage(
         input.image_count,
-        input.audio_seconds,
-        input.video_seconds,
-        input.music_seconds,
+        audio_seconds,
+        video_seconds,
+        music_seconds,
     )
-    .with_financials(input.upstream_cost, input.customer_charge)
+    .with_financials(upstream_cost, customer_charge)
     .with_routing_evidence(
         input.applied_routing_profile_id.map(str::trim),
         input.compiled_routing_snapshot_id.map(str::trim),

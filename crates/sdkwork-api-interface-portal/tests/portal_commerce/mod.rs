@@ -1,6 +1,6 @@
 use axum::body::{to_bytes, Body};
 use axum::http::{Request, StatusCode};
-use sdkwork_api_app_identity::{gateway_auth_subject_from_request_context, GatewayRequestContext};
+use sdkwork_api_app_payment::ensure_portal_payment_subject_scope;
 use sdkwork_api_domain_billing::{
     AccountCommerceReconciliationStateRecord, AccountRecord, AccountStatus, AccountType,
 };

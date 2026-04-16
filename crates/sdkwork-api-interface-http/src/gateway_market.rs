@@ -2,7 +2,7 @@ use crate::gateway_prelude::*;
 use crate::GatewayApiState;
 use axum::extract::Query;
 use sdkwork_api_app_billing::{
-    resolve_payable_account_for_gateway_request_context, summarize_account_balance,
+    ensure_primary_account_for_gateway_request_context, summarize_account_balance,
     AccountBalanceSnapshot,
 };
 use sdkwork_api_app_commerce::{

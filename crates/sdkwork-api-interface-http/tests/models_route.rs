@@ -266,6 +266,12 @@ async fn memory_pool() -> SqlitePool {
         .unwrap()
 }
 
+async fn issue_funded_gateway_api_key(pool: &SqlitePool, tenant_id: &str, project_id: &str) -> String {
+    let api_key = support::issue_gateway_api_key(pool, tenant_id, project_id).await;
+    support::seed_primary_commercial_credit_account(pool, tenant_id, project_id, &api_key).await;
+    api_key
+}
+
 async fn seed_openai_provider(store: &SqliteAdminStore) {
     store
         .insert_channel(&Channel::new("openai", "OpenAI"))
@@ -313,7 +319,7 @@ async fn seeded_gateway_store(model_id: &str, api_key: &str) -> Arc<dyn AdminSto
 async fn models_route_reads_persisted_catalog_models() {
     let pool = memory_pool().await;
     seed_openai_provider(&SqliteAdminStore::new(pool.clone())).await;
-    let api_key = support::issue_gateway_api_key(&pool, "tenant-1", "project-1").await;
+    let api_key = issue_funded_gateway_api_key(&pool, "tenant-1", "project-1").await;
     let app = sdkwork_api_interface_http::gateway_router_with_pool(pool.clone());
 
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
@@ -361,7 +367,7 @@ async fn models_route_refreshes_after_admin_catalog_mutation_invalidates_capabil
     let pool = memory_pool().await;
     seed_openai_provider(&SqliteAdminStore::new(pool.clone())).await;
     let api_key =
-        support::issue_gateway_api_key(&pool, "tenant-cache-memory", "project-cache-memory").await;
+        issue_funded_gateway_api_key(&pool, "tenant-cache-memory", "project-cache-memory").await;
     let app = sdkwork_api_interface_http::gateway_router_with_pool(pool.clone());
 
     let initial_response = app
@@ -429,7 +435,7 @@ async fn models_route_refreshes_after_admin_catalog_mutation_invalidates_shared_
     let pool = memory_pool().await;
     seed_openai_provider(&SqliteAdminStore::new(pool.clone())).await;
     let api_key =
-        support::issue_gateway_api_key(&pool, "tenant-cache-redis", "project-cache-redis").await;
+        issue_funded_gateway_api_key(&pool, "tenant-cache-redis", "project-cache-redis").await;
     let app = sdkwork_api_interface_http::gateway_router_with_pool(pool.clone());
 
     let initial_response = app
@@ -540,7 +546,7 @@ async fn gateway_router_uses_replaced_live_store_for_new_requests() {
 async fn model_retrieve_route_reads_persisted_catalog_model() {
     let pool = memory_pool().await;
     seed_openai_provider(&SqliteAdminStore::new(pool.clone())).await;
-    let api_key = support::issue_gateway_api_key(&pool, "tenant-1", "project-1").await;
+    let api_key = issue_funded_gateway_api_key(&pool, "tenant-1", "project-1").await;
     let app = sdkwork_api_interface_http::gateway_router_with_pool(pool.clone());
 
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
@@ -582,7 +588,7 @@ async fn model_retrieve_route_reads_persisted_catalog_model() {
 async fn model_delete_route_removes_persisted_catalog_model() {
     let pool = memory_pool().await;
     seed_openai_provider(&SqliteAdminStore::new(pool.clone())).await;
-    let api_key = support::issue_gateway_api_key(&pool, "tenant-1", "project-1").await;
+    let api_key = issue_funded_gateway_api_key(&pool, "tenant-1", "project-1").await;
     let app = sdkwork_api_interface_http::gateway_router_with_pool(pool.clone());
 
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());

@@ -29,7 +29,7 @@ async fn stateful_responses_route_fails_over_to_backup_provider_and_records_actu
     });
 
     let pool = memory_pool().await;
-    let api_key = support::issue_gateway_api_key(&pool, tenant_id, project_id).await;
+    let api_key = support::issue_gateway_api_key_in_byok_group(&pool, tenant_id, project_id).await;
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
     let admin_token = support::issue_admin_token(&pool, admin_app.clone()).await;
     let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
@@ -200,7 +200,7 @@ async fn stateful_responses_route_fails_over_before_execution_when_primary_lacks
     });
 
     let pool = memory_pool().await;
-    let api_key = support::issue_gateway_api_key(&pool, tenant_id, project_id).await;
+    let api_key = support::issue_gateway_api_key_in_byok_group(&pool, tenant_id, project_id).await;
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
     let admin_token = support::issue_admin_token(&pool, admin_app.clone()).await;
     let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
@@ -340,7 +340,7 @@ async fn stateful_responses_route_fails_over_before_execution_when_primary_requi
     });
 
     let pool = memory_pool().await;
-    let api_key = support::issue_gateway_api_key(&pool, tenant_id, project_id).await;
+    let api_key = support::issue_gateway_api_key_in_byok_group(&pool, tenant_id, project_id).await;
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
     let admin_token = support::issue_admin_token(&pool, admin_app.clone()).await;
     let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
@@ -508,7 +508,7 @@ async fn stateful_responses_route_fails_over_before_execution_when_primary_provi
     });
 
     let pool = memory_pool().await;
-    let api_key = support::issue_gateway_api_key(&pool, tenant_id, project_id).await;
+    let api_key = support::issue_gateway_api_key_in_byok_group(&pool, tenant_id, project_id).await;
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
     let admin_token = support::issue_admin_token(&pool, admin_app.clone()).await;
     let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
@@ -634,7 +634,7 @@ async fn stateful_responses_route_does_not_fail_over_when_policy_disables_execut
     });
 
     let pool = memory_pool().await;
-    let api_key = support::issue_gateway_api_key(&pool, tenant_id, project_id).await;
+    let api_key = support::issue_gateway_api_key_in_byok_group(&pool, tenant_id, project_id).await;
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
     let admin_token = support::issue_admin_token(&pool, admin_app.clone()).await;
     let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
@@ -752,7 +752,7 @@ async fn stateful_responses_stream_route_fails_over_before_execution_when_primar
     });
 
     let pool = memory_pool().await;
-    let api_key = support::issue_gateway_api_key(&pool, tenant_id, project_id).await;
+    let api_key = support::issue_gateway_api_key_in_byok_group(&pool, tenant_id, project_id).await;
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
     let admin_token = support::issue_admin_token(&pool, admin_app.clone()).await;
     let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
@@ -895,7 +895,7 @@ async fn stateful_responses_stream_route_fails_over_before_execution_when_primar
     });
 
     let pool = memory_pool().await;
-    let api_key = support::issue_gateway_api_key(&pool, tenant_id, project_id).await;
+    let api_key = support::issue_gateway_api_key_in_byok_group(&pool, tenant_id, project_id).await;
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
     let admin_token = support::issue_admin_token(&pool, admin_app.clone()).await;
     let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
@@ -1079,7 +1079,7 @@ async fn stateful_responses_stream_route_fails_over_to_backup_provider_and_recor
     });
 
     let pool = memory_pool().await;
-    let api_key = support::issue_gateway_api_key(&pool, tenant_id, project_id).await;
+    let api_key = support::issue_gateway_api_key_in_byok_group(&pool, tenant_id, project_id).await;
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
     let admin_token = support::issue_admin_token(&pool, admin_app.clone()).await;
     let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);

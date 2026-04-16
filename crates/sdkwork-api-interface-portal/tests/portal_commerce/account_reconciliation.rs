@@ -239,7 +239,10 @@ async fn portal_recharge_payment_events_auto_provision_workspace_account_before_
     let token = portal_token(app.clone()).await;
     let workspace = portal_workspace(app.clone(), &token).await;
     let project_id = workspace["project"]["id"].as_str().unwrap().to_owned();
-    let subject = gateway_auth_subject_from_request_context(&workspace_request_context(&workspace));
+    let subject =
+        ensure_portal_payment_subject_scope(&store, workspace["user"]["id"].as_str().unwrap(), 10)
+            .await
+            .unwrap();
 
     seed_portal_recharge_capacity_fixture(&pool, &project_id).await;
 
@@ -271,7 +274,7 @@ async fn portal_recharge_payment_events_auto_provision_workspace_account_before_
         )
         .await
         .unwrap()
-        .expect("workspace commercial account should be provisioned");
+        .expect("canonical payment commercial account should be provisioned");
 
     let history_response = app
         .clone()

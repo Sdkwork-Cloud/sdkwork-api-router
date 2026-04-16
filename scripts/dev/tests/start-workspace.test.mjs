@@ -256,6 +256,9 @@ test('workspaceAccessLines describe unified access, direct service links, and bo
   assert.match(previewLines, /http:\/\/127\.0\.0\.1:9980\/health/);
   assert.match(previewLines, /http:\/\/127\.0\.0\.1:9981\/admin\/health/);
   assert.match(previewLines, /http:\/\/127\.0\.0\.1:9982\/portal\/health/);
+  assert.match(previewLines, /http:\/\/127\.0\.0\.1:9980\/openapi\.json/);
+  assert.match(previewLines, /http:\/\/127\.0\.0\.1:9981\/admin\/openapi\.json/);
+  assert.match(previewLines, /http:\/\/127\.0\.0\.1:9982\/portal\/openapi\.json/);
   assert.match(previewLines, /bootstrap profile/i);
   assert.doesNotMatch(previewLines, /admin@sdkwork\.local/);
   assert.doesNotMatch(previewLines, /portal@sdkwork\.local/);
@@ -278,6 +281,9 @@ test('workspaceAccessLines describe unified access, direct service links, and bo
   assert.match(browserLines, /Frontend Access/);
   assert.match(browserLines, /http:\/\/127\.0\.0\.1:5173\/admin\//);
   assert.match(browserLines, /http:\/\/127\.0\.0\.1:5174\/portal\//);
+  assert.match(browserLines, /http:\/\/127\.0\.0\.1:9980\/openapi\.json/);
+  assert.match(browserLines, /http:\/\/127\.0\.0\.1:9981\/admin\/openapi\.json/);
+  assert.match(browserLines, /http:\/\/127\.0\.0\.1:9982\/portal\/openapi\.json/);
 
   const proxyDevLines = workspaceAccessLines({
     databaseUrl: null,
@@ -297,6 +303,9 @@ test('workspaceAccessLines describe unified access, direct service links, and bo
   assert.match(proxyDevLines, /proxy hot reload/i);
   assert.match(proxyDevLines, /http:\/\/127\.0\.0\.1:9983\/admin\//);
   assert.match(proxyDevLines, /http:\/\/127\.0\.0\.1:9983\/portal\//);
+  assert.match(proxyDevLines, /http:\/\/127\.0\.0\.1:9980\/openapi\.json/);
+  assert.match(proxyDevLines, /http:\/\/127\.0\.0\.1:9981\/admin\/openapi\.json/);
+  assert.match(proxyDevLines, /http:\/\/127\.0\.0\.1:9982\/portal\/openapi\.json/);
 });
 
 test('parseWorkspaceArgs rejects missing values and unknown flags', () => {

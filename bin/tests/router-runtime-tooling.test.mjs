@@ -1068,6 +1068,9 @@ test('runtime-common.ps1 carries startup summary helpers with unified links, dir
   assert.match(script, /\/api\/v1\/health/);
   assert.match(script, /\/admin\/health/);
   assert.match(script, /\/portal\/health/);
+  assert.match(script, /\/openapi\.json/);
+  assert.match(script, /\/admin\/openapi\.json/);
+  assert.match(script, /\/portal\/openapi\.json/);
   assert.match(script, /SDKWORK_BOOTSTRAP_PROFILE/);
   assert.match(script, /SDKWORK_BOOTSTRAP_DATA_DIR/);
   assert.match(script, /active bootstrap profile/);
@@ -1075,6 +1078,25 @@ test('runtime-common.ps1 carries startup summary helpers with unified links, dir
   assert.doesNotMatch(script, /admin@sdkwork\.local/);
   assert.doesNotMatch(script, /portal@sdkwork\.local/);
   assert.doesNotMatch(script, /ChangeMe123!/);
+});
+
+test('Get-RouterStartupSummaryLines includes direct OpenAPI schema URLs for gateway, admin, and portal services', { skip: process.platform !== 'win32' || !canSpawnPowerShellFromNode() }, () => {
+  const commonScript = quoteForPowerShellSingleQuotedString(
+    path.join(repoRoot, 'bin', 'lib', 'runtime-common.ps1'),
+  );
+  const result = runPowerShellCommand(
+    [
+      `. '${commonScript}'`,
+      "$lines = Get-RouterStartupSummaryLines -Mode 'development preview' -WebBind '127.0.0.1:9983' -GatewayBind '127.0.0.1:9980' -AdminBind '127.0.0.1:9981' -PortalBind '127.0.0.1:9982' -UnifiedAccessEnabled $true -AdminAppUrl 'http://127.0.0.1:9983/admin/' -PortalAppUrl 'http://127.0.0.1:9983/portal/' -StdoutLog 'stdout.log' -StderrLog 'stderr.log'",
+      '$lines | ForEach-Object { Write-Output $_ }',
+    ].join('\n'),
+  );
+  const output = `${result.stdout}${result.stderr}`;
+
+  assert.equal(result.status, 0, output);
+  assert.match(output, /Gateway OpenAPI 3\.x Schema: http:\/\/127\.0\.0\.1:9980\/openapi\.json/);
+  assert.match(output, /Admin OpenAPI 3\.x Schema: http:\/\/127\.0\.0\.1:9981\/admin\/openapi\.json/);
+  assert.match(output, /Portal OpenAPI 3\.x Schema: http:\/\/127\.0\.0\.1:9982\/portal\/openapi\.json/);
 });
 
 test('runtime-common.sh carries matching startup summary and bootstrap identity guidance for shell entrypoints', () => {
@@ -1088,6 +1110,9 @@ test('runtime-common.sh carries matching startup summary and bootstrap identity 
   assert.match(script, /router_start_background_process\(\)/);
   assert.match(script, /powershell\.exe -NoProfile -ExecutionPolicy Bypass -Command/);
   assert.match(script, /Identity Bootstrap/);
+  assert.match(script, /\/openapi\.json/);
+  assert.match(script, /\/admin\/openapi\.json/);
+  assert.match(script, /\/portal\/openapi\.json/);
   assert.match(script, /SDKWORK_BOOTSTRAP_PROFILE/);
   assert.match(script, /SDKWORK_BOOTSTRAP_DATA_DIR/);
   assert.match(script, /active bootstrap profile/);

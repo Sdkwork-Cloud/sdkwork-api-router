@@ -15,6 +15,10 @@ import { ADMIN_ROUTE_PATHS, useAdminI18n } from 'sdkwork-router-admin-core';
 type AuthMode = 'login' | 'register' | 'forgot';
 
 const DEFAULT_LOGIN_STATUS = 'Authenticate to open the super-admin workspace.';
+const QR_LOGIN_NOTICE =
+  'Workspace app sign-in is not enabled for this control plane yet. Use your operator email and password below to continue.';
+const RECOVERY_NOTICE =
+  'Password recovery is not enabled in this workspace yet. Contact your control plane owner if you lose access.';
 const SSO_NOTICE =
   'Use the operator email and password flow for admin access. External SSO remains disabled in this workspace.';
 
@@ -68,7 +72,7 @@ function authCopy(mode: AuthMode) {
   switch (mode) {
     case 'register':
       return {
-        title: 'Create operator access',
+        title: 'Request operator access',
         description:
           'Request operator access and continue into the router control plane once an existing admin provisions your identity.',
         submitLabel: 'Request access',
@@ -79,8 +83,7 @@ function authCopy(mode: AuthMode) {
     case 'forgot':
       return {
         title: 'Recover access',
-        description:
-          'Password reset links are not enabled for this workspace yet. Continue back to sign in with your operator email.',
+        description: RECOVERY_NOTICE,
         submitLabel: 'Back to login',
         alternateLabel: 'Create access',
         alternatePath: ADMIN_ROUTE_PATHS.REGISTER,
@@ -92,7 +95,7 @@ function authCopy(mode: AuthMode) {
         title: 'Welcome back',
         description: 'Sign in to continue to your router admin workspace.',
         submitLabel: 'Sign in',
-        alternateLabel: 'Sign up',
+        alternateLabel: 'Request access',
         alternatePath: ADMIN_ROUTE_PATHS.REGISTER,
         modeLabel: 'Sign in',
       };
@@ -231,22 +234,23 @@ export function AdminLoginPage({
             <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-[var(--sdk-color-brand-primary)] shadow-lg">
               <QrCode className="h-8 w-8 text-white" />
             </div>
-            <h2 className="mb-2 text-2xl font-bold">{t('QR login')}</h2>
+            <h2 className="mb-2 text-2xl font-bold">{t('App sign-in unavailable')}</h2>
             <p className="mb-8 max-w-[220px] text-sm text-zinc-400">
-              {t(
-                'Open the SDKWork app and scan this code to continue without typing credentials.',
-              )}
+              {t(QR_LOGIN_NOTICE)}
             </p>
 
             <div className="mb-6 rounded-2xl bg-white p-4 shadow-xl">
-              <div className="flex h-48 w-48 items-center justify-center rounded-xl border-2 border-dashed border-zinc-300 bg-zinc-100">
+              <div className="flex h-48 w-48 flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-zinc-300 bg-zinc-100">
                 <QrCode className="h-24 w-24 text-zinc-400" />
+                <span className="rounded-full bg-zinc-900 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-white">
+                  {t('Unavailable')}
+                </span>
               </div>
             </div>
 
             <div className="flex items-center gap-2 text-sm text-zinc-400">
               <Smartphone className="h-4 w-4" />
-              <span>{t('Open app to scan')}</span>
+              <span>{t('Use operator email and password below')}</span>
             </div>
           </div>
         </div>
@@ -301,21 +305,7 @@ export function AdminLoginPage({
 
               {mode !== 'forgot' ? (
                 <div>
-                  <div className="mb-1.5 flex items-center justify-between">
-                    <Label className="text-zinc-700 dark:text-zinc-300">{t('Password')}</Label>
-                    {mode === 'login' ? (
-                      <Button
-                        className="h-auto rounded-none p-0 text-sm font-medium text-[var(--sdk-color-brand-primary)] shadow-none hover:bg-transparent hover:text-[var(--sdk-color-brand-primary-hover)]"
-                        onClick={() =>
-                          navigate(withRedirect(ADMIN_ROUTE_PATHS.FORGOT_PASSWORD, { email }))
-                        }
-                        type="button"
-                        variant="ghost"
-                      >
-                        {t('Forgot password?')}
-                      </Button>
-                    ) : null}
-                  </div>
+                  <Label className="mb-1.5 block text-zinc-700 dark:text-zinc-300">{t('Password')}</Label>
                   <AuthTextInput
                     autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
                     icon={<Lock className="h-5 w-5" />}
@@ -327,6 +317,11 @@ export function AdminLoginPage({
                     type="password"
                     value={password}
                   />
+                  {mode === 'login' ? (
+                    <p className="mt-2 text-xs font-medium text-zinc-500 dark:text-zinc-400">
+                      {t(RECOVERY_NOTICE)}
+                    </p>
+                  ) : null}
                 </div>
               ) : null}
 
@@ -441,16 +436,16 @@ export function AdminLoginPage({
 
             {mode === 'forgot' ? (
               <div className="mt-4 text-center">
-                <Button
-                  className="h-auto rounded-none p-0 text-sm font-medium text-[var(--sdk-color-brand-primary)] shadow-none hover:bg-transparent hover:text-[var(--sdk-color-brand-primary-hover)]"
-                  onClick={() => navigate(withRedirect(ADMIN_ROUTE_PATHS.REGISTER))}
-                  type="button"
-                  variant="ghost"
-                >
-                  {t('Create account')}
-                </Button>
-              </div>
-            ) : null}
+                    <Button
+                      className="h-auto rounded-none p-0 text-sm font-medium text-[var(--sdk-color-brand-primary)] shadow-none hover:bg-transparent hover:text-[var(--sdk-color-brand-primary-hover)]"
+                      onClick={() => navigate(withRedirect(ADMIN_ROUTE_PATHS.REGISTER))}
+                      type="button"
+                      variant="ghost"
+                    >
+                      {t('Request access')}
+                    </Button>
+                  </div>
+                ) : null}
           </div>
         </div>
       </div>

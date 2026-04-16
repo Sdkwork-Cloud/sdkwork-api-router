@@ -120,20 +120,6 @@ pub(crate) async fn begin_gateway_commercial_admission(
         return Ok(GatewayCommercialAdmissionDecision::LegacyQuota);
     }
 
-    let Some(account) = commercial_billing
-        .resolve_payable_account_for_gateway_request_context(request_context)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "failed to resolve payable account",
-            )
-                .into_response()
-        })?
-    else {
-        return Ok(GatewayCommercialAdmissionDecision::LegacyQuota);
-    };
-
     let now_ms = current_billing_timestamp_ms().map_err(|_| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -141,6 +127,16 @@ pub(crate) async fn begin_gateway_commercial_admission(
         )
             .into_response()
     })?;
+    let account = commercial_billing
+        .ensure_primary_account_for_gateway_request_context(request_context, now_ms)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "failed to resolve payable account",
+            )
+                .into_response()
+        })?;
     let hold_plan = commercial_billing
         .plan_account_hold(
             account.account_id,

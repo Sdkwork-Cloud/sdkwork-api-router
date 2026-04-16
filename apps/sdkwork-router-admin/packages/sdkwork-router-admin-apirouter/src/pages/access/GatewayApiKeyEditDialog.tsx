@@ -20,6 +20,7 @@ import type {
 
 import { DialogField, SelectField } from '../shared';
 import type { EditDraft } from './shared';
+import { formatEnvironmentLabel } from './shared';
 
 type GatewayApiKeyEditDialogProps = {
   availableGroups: ApiKeyGroupRecord[];
@@ -63,7 +64,7 @@ export function GatewayApiKeyEditDialog({
                 <DialogField label={t('Workspace')}>
                   <Input
                     disabled
-                    value={`${editingKey.tenant_id} / ${editingKey.project_id} / ${editingKey.environment}`}
+                    value={`${editingKey.tenant_id} / ${editingKey.project_id} / ${formatEnvironmentLabel(editingKey.environment, t)}`}
                   />
                 </DialogField>
                 <SelectField

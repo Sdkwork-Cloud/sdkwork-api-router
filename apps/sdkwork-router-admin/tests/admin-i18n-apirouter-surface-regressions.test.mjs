@@ -58,6 +58,9 @@ test('apirouter access and routing shell copy are overridden by a dedicated zh-C
     'Policy defaults',
     'Examples: chat,responses or images,audio.',
     'No accounting override',
+    'Platform credit',
+    'BYOK',
+    'Passthrough',
     'Bind to an active routing profile inside the same workspace scope when needed.',
     'No routing profile override',
     'Group updated. Review the refreshed policy state on the left.',
@@ -145,6 +148,11 @@ test('apirouter access and routing shell copy are overridden by a dedicated zh-C
       `expected apirouter surface translation ${key} to be localized instead of English`,
     );
   }
+
+  assert.doesNotMatch(
+    joinedSources,
+    /label:\s*'platform_credit'|label:\s*'byok'|label:\s*'passthrough'/,
+  );
 
   assert.match(i18n, /const ADMIN_ZH_APIROUTER_SURFACE_TRANSLATIONS: Record<string, string> = \{/);
   assert.match(i18nTranslations, /\.\.\.ADMIN_ZH_APIROUTER_SURFACE_TRANSLATIONS,/);

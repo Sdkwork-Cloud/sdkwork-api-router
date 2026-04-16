@@ -154,7 +154,7 @@ async fn stateful_gemini_generate_content_route_accepts_query_key_and_records_us
     });
 
     let pool = memory_pool().await;
-    let api_key = support::issue_gateway_api_key(&pool, "tenant-1", "project-1").await;
+    let api_key = issue_funded_gateway_api_key(&pool, "tenant-1", "project-1").await;
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
     let admin_token = support::issue_admin_token(&pool, admin_app.clone()).await;
     let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
@@ -355,7 +355,7 @@ async fn stateful_gemini_generate_content_route_passthroughs_native_gemini_proto
     support::wait_for_http_health(&format!("http://{address}")).await;
 
     let pool = memory_pool().await;
-    let api_key = support::issue_gateway_api_key(&pool, "tenant-1", "project-1").await;
+    let api_key = issue_funded_gateway_api_key(&pool, "tenant-1", "project-1").await;
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
     let admin_token = support::issue_admin_token(&pool, admin_app.clone()).await;
     let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
@@ -435,7 +435,7 @@ async fn stateful_gemini_generate_content_route_derives_protocol_kind_for_legacy
     support::wait_for_http_health(&format!("http://{address}")).await;
 
     let pool = memory_pool().await;
-    let api_key = support::issue_gateway_api_key(&pool, tenant_id, project_id).await;
+    let api_key = issue_funded_gateway_api_key(&pool, tenant_id, project_id).await;
     let store = SqliteAdminStore::new(pool.clone());
     let secret_manager = CredentialSecretManager::database_encrypted("local-dev-master-key");
     seed_legacy_blank_protocol_gemini_provider(
@@ -507,7 +507,7 @@ async fn stateful_gemini_generate_content_route_prefers_native_dynamic_raw_plugi
     let fixture = support::prepare_native_dynamic_mock_package("gemini-native-dynamic-stateful");
 
     let pool = memory_pool().await;
-    let api_key = support::issue_gateway_api_key(&pool, "tenant-1", "project-1").await;
+    let api_key = issue_funded_gateway_api_key(&pool, "tenant-1", "project-1").await;
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
     let admin_token = support::issue_admin_token(&pool, admin_app.clone()).await;
     let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
@@ -565,7 +565,7 @@ async fn stateful_gemini_generate_content_route_prefers_native_dynamic_raw_plugi
 async fn stateful_gemini_stream_generate_content_route_fails_closed_for_missing_explicit_native_dynamic_binding_and_persists_decision_log(
 ) {
     let pool = memory_pool().await;
-    let api_key = support::issue_gateway_api_key(&pool, "tenant-1", "project-1").await;
+    let api_key = issue_funded_gateway_api_key(&pool, "tenant-1", "project-1").await;
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
     let admin_token = support::issue_admin_token(&pool, admin_app.clone()).await;
     let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
@@ -622,9 +622,12 @@ async fn stateful_gemini_stream_generate_content_route_fails_closed_for_missing_
 async fn stateful_gemini_generate_content_route_returns_invalid_request_for_missing_model_without_usage(
 ) {
     let pool = memory_pool().await;
-    let api_key =
-        support::issue_gateway_api_key(&pool, "tenant-gemini-invalid", "project-gemini-invalid")
-            .await;
+    let api_key = issue_funded_gateway_api_key(
+        &pool,
+        "tenant-gemini-invalid",
+        "project-gemini-invalid",
+    )
+    .await;
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
     let admin_token = support::issue_admin_token(&pool, admin_app.clone()).await;
     let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
@@ -830,7 +833,7 @@ async fn stateless_gemini_stream_generate_content_route_returns_invalid_request_
 async fn stateful_gemini_stream_generate_content_route_returns_invalid_request_for_missing_model_without_usage(
 ) {
     let pool = memory_pool().await;
-    let api_key = support::issue_gateway_api_key(
+    let api_key = issue_funded_gateway_api_key(
         &pool,
         "tenant-gemini-stream-invalid",
         "project-gemini-stream-invalid",
@@ -886,7 +889,7 @@ async fn stateful_gemini_stream_generate_content_route_prefers_native_dynamic_ra
         support::prepare_native_dynamic_mock_package("gemini-native-dynamic-stream-stateful");
 
     let pool = memory_pool().await;
-    let api_key = support::issue_gateway_api_key(&pool, "tenant-1", "project-1").await;
+    let api_key = issue_funded_gateway_api_key(&pool, "tenant-1", "project-1").await;
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
     let admin_token = support::issue_admin_token(&pool, admin_app.clone()).await;
     let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
@@ -966,7 +969,7 @@ async fn stateful_gemini_stream_generate_content_route_uses_connector_runtime_tr
     support::wait_for_http_health(&format!("http://{address}")).await;
 
     let pool = memory_pool().await;
-    let api_key = support::issue_gateway_api_key(&pool, "tenant-1", "project-1").await;
+    let api_key = issue_funded_gateway_api_key(&pool, "tenant-1", "project-1").await;
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
     let admin_token = support::issue_admin_token(&pool, admin_app.clone()).await;
     let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
@@ -1151,7 +1154,7 @@ async fn gemini_count_tokens_route_returns_invalid_request_for_missing_model() {
 async fn stateful_gemini_count_tokens_route_returns_invalid_request_for_missing_model_without_usage(
 ) {
     let pool = memory_pool().await;
-    let api_key = support::issue_gateway_api_key(
+    let api_key = issue_funded_gateway_api_key(
         &pool,
         "tenant-gemini-count-invalid",
         "project-gemini-count-invalid",
@@ -1212,6 +1215,12 @@ async fn memory_pool() -> SqlitePool {
     sdkwork_api_storage_sqlite::run_migrations("sqlite::memory:")
         .await
         .unwrap()
+}
+
+async fn issue_funded_gateway_api_key(pool: &SqlitePool, tenant_id: &str, project_id: &str) -> String {
+    let api_key = support::issue_gateway_api_key(pool, tenant_id, project_id).await;
+    support::seed_primary_commercial_credit_account(pool, tenant_id, project_id, &api_key).await;
+    api_key
 }
 
 async fn create_openai_provider(admin_app: &Router, admin_token: &str, address: &str) {

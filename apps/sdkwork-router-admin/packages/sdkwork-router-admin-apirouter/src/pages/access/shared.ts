@@ -62,8 +62,57 @@ export const QUICK_SETUP_CLIENT_LABELS: Record<ApiKeySetupClientId, string> = {
   openclaw: 'OpenClaw',
 };
 
+type AccessTranslate = (text: string) => string;
+
 export function formatTimestamp(value?: number | null): string {
   return formatAdminDateTime(value);
+}
+
+export function formatEnvironmentLabel(
+  value: string,
+  translate: AccessTranslate = translateAdminText,
+): string {
+  switch (value.trim().toLowerCase()) {
+    case 'live':
+      return translate('Live');
+    case 'staging':
+      return translate('Staging');
+    case 'test':
+      return translate('Test');
+    case 'production':
+      return translate('Production');
+    case 'development':
+      return translate('Development');
+    default:
+      return value;
+  }
+}
+
+export function formatAccountingModeLabel(
+  value: string | null | undefined,
+  translate: AccessTranslate = translateAdminText,
+): string {
+  if (!value?.trim()) {
+    return translate('No accounting override');
+  }
+
+  switch (value.trim().toLowerCase()) {
+    case 'platform_credit':
+      return translate('Platform credit');
+    case 'byok':
+      return translate('BYOK');
+    case 'passthrough':
+      return translate('Passthrough');
+    default:
+      return value;
+  }
+}
+
+export function formatApiKeyReferenceLabel(
+  key: GatewayApiKeyRecord,
+  translate: AccessTranslate = translateAdminText,
+): string {
+  return `${key.label || key.project_id} (${formatEnvironmentLabel(key.environment, translate)})`;
 }
 
 export function formatExpiryInput(value?: number | null): string {

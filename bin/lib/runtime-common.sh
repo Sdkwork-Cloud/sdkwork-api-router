@@ -988,6 +988,9 @@ router_startup_summary() {
   GATEWAY_DIRECT_URL=$(router_resolve_loopback_url "$GATEWAY_BIND" "/health")
   ADMIN_DIRECT_URL=$(router_resolve_loopback_url "$ADMIN_BIND" "/admin/health")
   PORTAL_DIRECT_URL=$(router_resolve_loopback_url "$PORTAL_BIND" "/portal/health")
+  GATEWAY_OPENAPI_URL=$(router_resolve_loopback_url "$GATEWAY_BIND" "/openapi.json")
+  ADMIN_OPENAPI_URL=$(router_resolve_loopback_url "$ADMIN_BIND" "/admin/openapi.json")
+  PORTAL_OPENAPI_URL=$(router_resolve_loopback_url "$PORTAL_BIND" "/portal/openapi.json")
   BOOTSTRAP_PROFILE=$(router_active_bootstrap_profile)
   BOOTSTRAP_IDENTITY_HINT_PATH=$(router_bootstrap_identity_hint_path)
 
@@ -1012,6 +1015,9 @@ router_startup_summary() {
   router_log_detail 'Gateway Service' "$GATEWAY_DIRECT_URL"
   router_log_detail 'Admin Service' "$ADMIN_DIRECT_URL"
   router_log_detail 'Portal Service' "$PORTAL_DIRECT_URL"
+  router_log_detail 'Gateway OpenAPI 3.x Schema' "$GATEWAY_OPENAPI_URL"
+  router_log_detail 'Admin OpenAPI 3.x Schema' "$ADMIN_OPENAPI_URL"
+  router_log_detail 'Portal OpenAPI 3.x Schema' "$PORTAL_OPENAPI_URL"
 
   router_log 'Identity Bootstrap'
   router_log_detail 'Local access' "uses the active bootstrap profile: $BOOTSTRAP_PROFILE"

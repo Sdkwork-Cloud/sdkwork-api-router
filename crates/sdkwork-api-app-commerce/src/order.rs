@@ -274,12 +274,14 @@ pub async fn settle_portal_commerce_order(
     project_id: &str,
     order_id: &str,
 ) -> CommerceResult<CommerceOrderRecord> {
-    settle_portal_commerce_order_with_billing(store, None, user_id, project_id, order_id).await
+    settle_portal_commerce_order_with_billing(store, None, None, user_id, project_id, order_id)
+        .await
 }
 
 pub async fn settle_portal_commerce_order_with_billing(
     store: &dyn AdminStore,
     commercial_billing: Option<&dyn CommercialBillingAdminKernel>,
+    payment_store: Option<&dyn CommercialKernelStore>,
     user_id: &str,
     project_id: &str,
     order_id: &str,
@@ -287,6 +289,7 @@ pub async fn settle_portal_commerce_order_with_billing(
     settle_portal_commerce_order_with_payment_event(
         store,
         commercial_billing,
+        payment_store,
         user_id,
         project_id,
         order_id,
@@ -296,13 +299,19 @@ pub async fn settle_portal_commerce_order_with_billing(
 }
 
 pub async fn settle_portal_commerce_order_from_verified_payment(
-    store: &dyn AdminStore,
+    store: &dyn CommercialKernelStore,
     user_id: &str,
     project_id: &str,
     order_id: &str,
 ) -> CommerceResult<CommerceOrderRecord> {
     settle_portal_commerce_order_with_payment_event(
-        store, None, user_id, project_id, order_id, None,
+        store,
+        None,
+        Some(store),
+        user_id,
+        project_id,
+        order_id,
+        None,
     )
     .await
 }
@@ -310,6 +319,7 @@ pub async fn settle_portal_commerce_order_from_verified_payment(
 pub(crate) async fn settle_portal_commerce_order_with_payment_event(
     store: &dyn AdminStore,
     commercial_billing: Option<&dyn CommercialBillingAdminKernel>,
+    payment_store: Option<&dyn CommercialKernelStore>,
     user_id: &str,
     project_id: &str,
     order_id: &str,
@@ -348,6 +358,7 @@ pub(crate) async fn settle_portal_commerce_order_with_payment_event(
             sync_fulfilled_commerce_order_account_state(
                 store,
                 commercial_billing,
+                payment_store,
                 normalized_project_id,
                 &order,
             )
@@ -360,6 +371,7 @@ pub(crate) async fn settle_portal_commerce_order_with_payment_event(
                 sync_fulfilled_commerce_order_account_state(
                     store,
                     commercial_billing,
+                    payment_store,
                     normalized_project_id,
                     &order,
                 )
@@ -397,6 +409,7 @@ pub(crate) async fn settle_portal_commerce_order_with_payment_event(
             sync_fulfilled_commerce_order_account_state(
                 store,
                 commercial_billing,
+                payment_store,
                 normalized_project_id,
                 &order,
             )
@@ -474,6 +487,7 @@ pub async fn cancel_portal_commerce_order(
 pub(crate) async fn refund_portal_commerce_order(
     store: &dyn AdminStore,
     commercial_billing: Option<&dyn CommercialBillingAdminKernel>,
+    payment_store: Option<&dyn CommercialKernelStore>,
     user_id: &str,
     project_id: &str,
     order_id: &str,
@@ -520,6 +534,7 @@ pub(crate) async fn refund_portal_commerce_order(
             sync_refunded_commerce_order_account_state(
                 store,
                 commercial_billing,
+                payment_store,
                 normalized_project_id,
                 &order,
             )
@@ -562,6 +577,7 @@ pub(crate) async fn refund_portal_commerce_order(
             sync_refunded_commerce_order_account_state(
                 store,
                 commercial_billing,
+                payment_store,
                 normalized_project_id,
                 &order,
             )
@@ -611,23 +627,28 @@ pub async fn apply_portal_commerce_payment_event(
     order_id: &str,
     request: &PortalCommercePaymentEventRequest,
 ) -> CommerceResult<CommerceOrderRecord> {
-    apply_portal_commerce_payment_event_with_billing(
-        store, None, user_id, project_id, order_id, request,
-    )
-    .await
+    apply_portal_commerce_payment_event_with_billing(store, None, None, user_id, project_id, order_id, request)
+        .await
 }
 
 async fn sync_fulfilled_commerce_order_account_state<T>(
     store: &T,
     commercial_billing: Option<&dyn CommercialBillingAdminKernel>,
+    payment_store: Option<&dyn CommercialKernelStore>,
     project_id: &str,
     order: &CommerceOrderRecord,
 ) -> CommerceResult<()>
 where
     T: AdminStore + ?Sized,
 {
-    let Some((billing, account)) =
-        resolve_project_commercial_billing_account(store, commercial_billing, project_id).await?
+    let Some((billing, account)) = resolve_project_commercial_billing_account(
+        store,
+        commercial_billing,
+        payment_store,
+        project_id,
+        order,
+    )
+    .await?
     else {
         return Ok(());
     };
@@ -653,14 +674,21 @@ where
 async fn sync_refunded_commerce_order_account_state<T>(
     store: &T,
     commercial_billing: Option<&dyn CommercialBillingAdminKernel>,
+    payment_store: Option<&dyn CommercialKernelStore>,
     project_id: &str,
     order: &CommerceOrderRecord,
 ) -> CommerceResult<()>
 where
     T: AdminStore + ?Sized,
 {
-    let Some((billing, account)) =
-        resolve_project_commercial_billing_account(store, commercial_billing, project_id).await?
+    let Some((billing, account)) = resolve_project_commercial_billing_account(
+        store,
+        commercial_billing,
+        payment_store,
+        project_id,
+        order,
+    )
+    .await?
     else {
         return Ok(());
     };
@@ -684,7 +712,9 @@ where
 async fn resolve_project_commercial_billing_account<'a, T>(
     store: &T,
     commercial_billing: Option<&'a dyn CommercialBillingAdminKernel>,
+    payment_store: Option<&dyn CommercialKernelStore>,
     project_id: &str,
+    order: &CommerceOrderRecord,
 ) -> CommerceResult<Option<(&'a dyn CommercialBillingAdminKernel, AccountRecord)>>
 where
     T: AdminStore + ?Sized,
@@ -708,6 +738,41 @@ where
         .ok_or_else(|| {
             CommerceError::NotFound(format!("project {normalized_project_id} not found"))
         })?;
+    if let Some(payment_store) = payment_store {
+        if let Some(payment_order) = payment_store
+            .list_payment_order_records()
+            .await
+            .map_err(CommerceError::from)?
+            .into_iter()
+            .find(|payment_order| payment_order.commerce_order_id == order.order_id)
+        {
+            let request_context = GatewayRequestContext {
+                tenant_id: project.tenant_id.clone(),
+                project_id: project.id.clone(),
+                environment: "portal".to_owned(),
+                api_key_hash: PORTAL_WORKSPACE_SCOPE_KEY_HASH.to_owned(),
+                api_key_group_id: None,
+                canonical_tenant_id: None,
+                canonical_organization_id: None,
+                canonical_user_id: None,
+                canonical_api_key_id: None,
+            }
+            .with_canonical_subject(
+                payment_order.tenant_id,
+                payment_order.organization_id,
+                payment_order.user_id,
+                Some(payment_order.user_id),
+            );
+            let account = ensure_primary_account_for_gateway_request_context(
+                payment_store,
+                &request_context,
+                current_time_ms()?,
+            )
+            .await
+            .map_err(CommerceError::from)?;
+            return Ok(Some((billing, account)));
+        }
+    }
     let request_context = GatewayRequestContext {
         tenant_id: project.tenant_id,
         project_id: project.id,

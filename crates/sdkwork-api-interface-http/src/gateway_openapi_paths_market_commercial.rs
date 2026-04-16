@@ -121,7 +121,6 @@ pub(crate) async fn marketing_coupon_rollback() {}
     responses(
         (status = 200, description = "Resolved commercial account and balance.", body = GatewayCommercialAccountResponse),
         (status = 401, description = "Missing or invalid gateway API key.", body = GatewayApiErrorResponse),
-        (status = 404, description = "Commercial account is not provisioned.", body = GatewayApiErrorResponse),
         (status = 501, description = "Commercial account runtime is unavailable for the current store.", body = GatewayApiErrorResponse),
         (status = 500, description = "Gateway failed to load the commercial account.", body = GatewayApiErrorResponse)
     )
@@ -140,7 +139,6 @@ pub(crate) async fn commercial_account() {}
     responses(
         (status = 200, description = "Visible commercial account benefit lots.", body = GatewayCommercialBenefitLotsResponse),
         (status = 401, description = "Missing or invalid gateway API key.", body = GatewayApiErrorResponse),
-        (status = 404, description = "Commercial account is not provisioned.", body = GatewayApiErrorResponse),
         (status = 501, description = "Commercial account runtime is unavailable for the current store.", body = GatewayApiErrorResponse),
         (status = 500, description = "Gateway failed to load commercial account benefit lots.", body = GatewayApiErrorResponse)
     )

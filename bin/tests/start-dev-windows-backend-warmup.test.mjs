@@ -147,3 +147,57 @@ test('start-dev.ps1 accepts GNU-style --proxy-dev and emits a proxy hot-reload p
     rmSync(devHome, { recursive: true, force: true });
   }
 });
+
+test('start-dev.ps1 accepts GNU-style space-separated value options', {
+  skip: !canSpawnPowerShellFromNode(),
+}, () => {
+  const devHome = mkdtempSync(path.join(os.tmpdir(), 'sdkwork-router-gnu-value-home-'));
+  const runDir = path.join(devHome, 'run');
+  const planFile = path.join(runDir, 'start-workspace.plan.txt');
+
+  mkdirSync(runDir, { recursive: true });
+
+  try {
+    const result = spawnSync(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        path.join(binRoot, 'start-dev.ps1'),
+        '--wait-seconds',
+        '5',
+        '--gateway-bind',
+        '127.0.0.1:29980',
+        '--admin-bind',
+        '127.0.0.1:29981',
+        '--portal-bind',
+        '127.0.0.1:29982',
+        '--web-bind',
+        '127.0.0.1:29983',
+        '--dry-run',
+      ],
+      {
+        cwd: binRoot,
+        env: {
+          ...process.env,
+          SDKWORK_ROUTER_DEV_HOME: devHome,
+        },
+        encoding: 'utf8',
+      },
+    );
+
+    const output = `${result.stdout ?? ''}${result.stderr ?? ''}`;
+    assert.equal(result.status, 0, output);
+    assert.ok(existsSync(planFile), 'expected GNU-style dry-run plan file to be written');
+
+    const planContents = readFileSync(planFile, 'utf8');
+    assert.match(planContents, /SDKWORK_GATEWAY_BIND=127\.0\.0\.1:29980/);
+    assert.match(planContents, /SDKWORK_ADMIN_BIND=127\.0\.0\.1:29981/);
+    assert.match(planContents, /SDKWORK_PORTAL_BIND=127\.0\.0\.1:29982/);
+    assert.match(planContents, /SDKWORK_WEB_BIND=127\.0\.0\.1:29983/);
+  } finally {
+    rmSync(devHome, { recursive: true, force: true });
+  }
+});

@@ -13,11 +13,12 @@ use sdkwork_api_app_credential::CredentialSecretManager;
 use sdkwork_api_domain_commerce::{
     CommerceRefundRecord, CommerceWebhookDeliveryAttemptRecord, CommerceWebhookInboxRecord,
 };
-use sdkwork_api_storage_core::AdminStore;
+use sdkwork_api_storage_core::{AdminStore, CommercialKernelStore};
 
 pub async fn process_portal_stripe_webhook(
     store: &dyn AdminStore,
     commercial_billing: Option<&dyn CommercialBillingAdminKernel>,
+    payment_store: Option<&dyn CommercialKernelStore>,
     secret_manager: &CredentialSecretManager,
     payment_method_id: &str,
     signature_header: Option<&str>,
@@ -165,6 +166,7 @@ pub async fn process_portal_stripe_webhook(
                 let _ = apply_portal_commerce_payment_event_with_billing(
                     store,
                     commercial_billing,
+                    payment_store,
                     user_id,
                     project_id,
                     order_id,
@@ -216,6 +218,7 @@ pub async fn process_portal_stripe_webhook(
                 let _ = apply_portal_commerce_payment_event_with_billing(
                     store,
                     commercial_billing,
+                    payment_store,
                     user_id,
                     project_id,
                     order_id,
@@ -267,6 +270,7 @@ pub async fn process_portal_stripe_webhook(
                 let _ = apply_portal_commerce_payment_event_with_billing(
                     store,
                     commercial_billing,
+                    payment_store,
                     user_id,
                     project_id,
                     order_id,
@@ -333,6 +337,7 @@ pub async fn process_portal_stripe_webhook(
                     let _ = apply_refund_completion_side_effects(
                         store,
                         commercial_billing,
+                        payment_store,
                         &order,
                         payment_attempt.as_ref(),
                         *amount_minor,

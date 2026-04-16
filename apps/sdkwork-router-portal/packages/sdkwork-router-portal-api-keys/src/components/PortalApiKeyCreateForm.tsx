@@ -199,7 +199,7 @@ export function PortalApiKeyCreateForm({
                   <Input
                     autoComplete="off"
                     className="font-mono"
-                    placeholder="skw_live_custom_portal_secret"
+                    placeholder={t('Example: skw_live_custom_portal_secret')}
                     spellCheck={false}
                     value={formState.customKey}
                     onChange={(event: ChangeEvent<HTMLInputElement>) =>

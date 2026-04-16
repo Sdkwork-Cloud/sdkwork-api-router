@@ -21,13 +21,14 @@ where
         .collect::<Vec<_>>();
     let active_lots = eligible_lots_for_hold(&account_lots, now_ms);
 
-    let available_balance = active_lots.iter().map(|lot| free_quantity(lot)).sum();
-    let held_balance = account_lots.iter().map(|lot| lot.held_quantity).sum();
+    let available_balance = normalize_zero(active_lots.iter().map(|lot| free_quantity(lot)).sum());
+    let held_balance = normalize_zero(account_lots.iter().map(|lot| lot.held_quantity).sum());
     let consumed_balance = account_lots
         .iter()
         .map(|lot| (lot.original_quantity - lot.remaining_quantity).max(0.0))
         .sum();
-    let grant_balance = account_lots.iter().map(|lot| lot.original_quantity).sum();
+    let consumed_balance = normalize_zero(consumed_balance);
+    let grant_balance = normalize_zero(account_lots.iter().map(|lot| lot.original_quantity).sum());
     let lots = active_lots
         .into_iter()
         .map(|lot| AccountLotBalanceSnapshot {
@@ -38,7 +39,7 @@ where
             original_quantity: lot.original_quantity,
             remaining_quantity: lot.remaining_quantity,
             held_quantity: lot.held_quantity,
-            available_quantity: free_quantity(lot),
+            available_quantity: normalize_zero(free_quantity(lot)),
         })
         .collect::<Vec<_>>();
 

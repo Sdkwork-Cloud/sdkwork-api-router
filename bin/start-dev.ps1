@@ -24,23 +24,27 @@ $ErrorActionPreference = 'Stop'
 
 function Read-RouterRemainingOptionValue {
     param(
-        [Parameter(Mandatory = $true)][string[]]$Args,
-        [Parameter(Mandatory = $true)][ref]$Index,
-        [Parameter(Mandatory = $true)][string]$Arg,
+        [Parameter(Mandatory = $true)][string[]]$ArgumentValues,
+        [Parameter(Mandatory = $true)][int]$CurrentIndex,
         [Parameter(Mandatory = $true)][string]$OptionName,
-        [string]$InlineValue = $null
+        [AllowNull()][object]$InlineValue = $null
     )
 
     if ($null -ne $InlineValue) {
-        return $InlineValue
+        return [pscustomobject]@{
+            Value = [string]$InlineValue
+            NextIndex = $CurrentIndex
+        }
     }
 
-    if (($Index.Value + 1) -ge $Args.Count) {
+    if (($CurrentIndex + 1) -ge $ArgumentValues.Count) {
         Throw-RouterError "$OptionName requires a value"
     }
 
-    $Index.Value += 1
-    return $Args[$Index.Value]
+    return [pscustomobject]@{
+        Value = $ArgumentValues[$CurrentIndex + 1]
+        NextIndex = $CurrentIndex + 1
+    }
 }
 
 function Get-RouterManagedDevCargoTargetDir {
@@ -200,7 +204,9 @@ if ($RemainingArgs.Count -gt 0) {
                 break
             }
             '--wait-seconds' {
-                $waitSecondsValue = Read-RouterRemainingOptionValue -Args $RemainingArgs -Index ([ref]$index) -Arg $arg -OptionName $optionName -InlineValue $inlineValue
+                $resolvedOptionValue = Read-RouterRemainingOptionValue -ArgumentValues $RemainingArgs -CurrentIndex $index -OptionName $optionName -InlineValue $inlineValue
+                $index = $resolvedOptionValue.NextIndex
+                $waitSecondsValue = $resolvedOptionValue.Value
                 try {
                     $WaitSeconds = [int]$waitSecondsValue
                 } catch {
@@ -209,23 +215,33 @@ if ($RemainingArgs.Count -gt 0) {
                 break
             }
             '--database-url' {
-                $DatabaseUrl = Read-RouterRemainingOptionValue -Args $RemainingArgs -Index ([ref]$index) -Arg $arg -OptionName $optionName -InlineValue $inlineValue
+                $resolvedOptionValue = Read-RouterRemainingOptionValue -ArgumentValues $RemainingArgs -CurrentIndex $index -OptionName $optionName -InlineValue $inlineValue
+                $index = $resolvedOptionValue.NextIndex
+                $DatabaseUrl = $resolvedOptionValue.Value
                 break
             }
             '--gateway-bind' {
-                $GatewayBind = Read-RouterRemainingOptionValue -Args $RemainingArgs -Index ([ref]$index) -Arg $arg -OptionName $optionName -InlineValue $inlineValue
+                $resolvedOptionValue = Read-RouterRemainingOptionValue -ArgumentValues $RemainingArgs -CurrentIndex $index -OptionName $optionName -InlineValue $inlineValue
+                $index = $resolvedOptionValue.NextIndex
+                $GatewayBind = $resolvedOptionValue.Value
                 break
             }
             '--admin-bind' {
-                $AdminBind = Read-RouterRemainingOptionValue -Args $RemainingArgs -Index ([ref]$index) -Arg $arg -OptionName $optionName -InlineValue $inlineValue
+                $resolvedOptionValue = Read-RouterRemainingOptionValue -ArgumentValues $RemainingArgs -CurrentIndex $index -OptionName $optionName -InlineValue $inlineValue
+                $index = $resolvedOptionValue.NextIndex
+                $AdminBind = $resolvedOptionValue.Value
                 break
             }
             '--portal-bind' {
-                $PortalBind = Read-RouterRemainingOptionValue -Args $RemainingArgs -Index ([ref]$index) -Arg $arg -OptionName $optionName -InlineValue $inlineValue
+                $resolvedOptionValue = Read-RouterRemainingOptionValue -ArgumentValues $RemainingArgs -CurrentIndex $index -OptionName $optionName -InlineValue $inlineValue
+                $index = $resolvedOptionValue.NextIndex
+                $PortalBind = $resolvedOptionValue.Value
                 break
             }
             '--web-bind' {
-                $WebBind = Read-RouterRemainingOptionValue -Args $RemainingArgs -Index ([ref]$index) -Arg $arg -OptionName $optionName -InlineValue $inlineValue
+                $resolvedOptionValue = Read-RouterRemainingOptionValue -ArgumentValues $RemainingArgs -CurrentIndex $index -OptionName $optionName -InlineValue $inlineValue
+                $index = $resolvedOptionValue.NextIndex
+                $WebBind = $resolvedOptionValue.Value
                 break
             }
             default {

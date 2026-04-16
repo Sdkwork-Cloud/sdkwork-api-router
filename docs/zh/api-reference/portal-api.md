@@ -54,7 +54,7 @@ curl -X POST http://127.0.0.1:8082/portal/auth/change-password \
 | workspace | `GET /portal/workspace` | 查看调用者拥有的默认工作区 |
 | dashboard | `GET /portal/dashboard` | 返回当前项目的工作区身份、用量与计费组合快照 |
 | usage | `GET /portal/usage/records`、`GET /portal/usage/summary` | 返回最近请求、token-unit 历史与聚合请求统计 |
-| billing | `GET /portal/billing/summary`、`GET /portal/billing/ledger` | 返回 quota 态势、已用或剩余额度以及账本视图 |
+| billing | `GET /portal/billing/summary`、`GET /portal/billing/ledger`、`GET /portal/billing/events`、`GET /portal/billing/events/summary`、`GET /portal/billing/account`、`GET /portal/billing/account/balance`、`GET /portal/billing/account-history`、`GET /portal/billing/account/benefit-lots`、`GET /portal/billing/account/holds`、`GET /portal/billing/account/request-settlements`、`GET /portal/billing/pricing-plans`、`GET /portal/billing/pricing-rates` | 返回 quota 态势、工作区范围内的 Billing 2.0 事件视图，以及面向租户的规范化商业账户可见性 |
 | API keys | `GET /portal/api-keys`、`POST /portal/api-keys` | 自助查询和创建 gateway API key |
 
 ## 典型用户路径
@@ -79,3 +79,27 @@ curl -X POST http://127.0.0.1:8082/portal/auth/change-password \
   - [公开门户](/zh/getting-started/public-portal)
 - operator 控制平面：
   - [管理端 API](/zh/api-reference/admin-api)
+
+## 计费事件说明
+
+- `GET /portal/billing/events` 仅返回当前认证工作区租户与项目范围内可见的计费事件
+- `GET /portal/billing/events/summary` 仅对当前工作区可见的计费事件做聚合，聚合维度包括：
+  - 项目
+  - API key 分组
+  - 能力
+  - 计费模式
+- 事件摘要会暴露网关事件账本已经记录的多模态维度，包括：
+  - token 总量
+  - `image_count`
+  - `audio_seconds`
+  - `video_seconds`
+  - `music_seconds`
+
+## 规范化商业账户说明
+
+- `GET /portal/billing/account` 返回当前认证工作区的主商业账户，并汇总可用、冻结、消耗与授予余额态势
+- `GET /portal/billing/account/balance` 返回同一工作区账户的实时余额快照
+- `GET /portal/billing/account-history` 返回同一工作区账户及其账本时间线、有效权益批次、冻结记录和已结算请求，便于门户渲染完整的自助账户历史视图
+- `GET /portal/billing/account/benefit-lots`、`GET /portal/billing/account/holds` 与 `GET /portal/billing/account/request-settlements` 都严格限定在当前工作区范围内，不会泄露其他租户或项目的账户数据
+- `GET /portal/billing/pricing-plans` 与 `GET /portal/billing/pricing-rates` 仅暴露绑定到当前工作区商业范围的定价记录
+- portal 商业账户相关路由会在账户缺失时自动补齐工作区主商业账户，因此已认证的工作区读取请求会返回规范化的空余额账户视图，而不是仅用于 bootstrap 的 `404`

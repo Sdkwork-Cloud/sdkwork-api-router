@@ -242,7 +242,9 @@ pub(crate) async fn list_marketing_reward_history_handler(
 ) -> Result<Json<Vec<PortalMarketingRewardHistoryItem>>, StatusCode> {
     let (workspace, subjects) =
         load_portal_marketing_workspace_and_subjects(&state, &claims).await?;
-    let account_arrival = load_portal_coupon_account_arrival_context(&state, &workspace).await?;
+    let account_arrival =
+        load_portal_coupon_account_arrival_context(&state, &workspace, &claims.claims().sub)
+            .await?;
     load_marketing_reward_history_items(state.store.as_ref(), &subjects, Some(&account_arrival))
         .await
         .map(Json)
@@ -251,12 +253,13 @@ pub(crate) async fn list_marketing_reward_history_handler(
 async fn load_portal_coupon_account_arrival_context(
     state: &PortalApiState,
     workspace: &PortalWorkspaceSummary,
+    portal_user_id: &str,
 ) -> Result<PortalCouponAccountArrivalContext, StatusCode> {
     let Some(commercial_billing) = state.commercial_billing.as_ref() else {
         return Ok(PortalCouponAccountArrivalContext::default());
     };
 
-    let account = ensure_portal_workspace_commercial_account(state, workspace)
+    let account = ensure_portal_canonical_commercial_account(state, workspace, portal_user_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 

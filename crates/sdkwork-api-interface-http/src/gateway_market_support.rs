@@ -97,15 +97,13 @@ pub(super) async fn resolve_gateway_account_record(
     request: &AuthenticatedGatewayRequest,
 ) -> Result<AccountRecord, Response> {
     let account_store = gateway_account_kernel_store(state)?;
-    resolve_payable_account_for_gateway_request_context(account_store, request.context())
-        .await
-        .map_err(|_| gateway_internal_error_response("failed to resolve commercial account"))?
-        .ok_or_else(|| {
-            gateway_error_response(
-                StatusCode::NOT_FOUND,
-                "commercial account is not provisioned",
-            )
-        })
+    Ok(ensure_primary_account_for_gateway_request_context(
+        account_store,
+        request.context(),
+        gateway_current_time_millis()?,
+    )
+    .await
+    .map_err(|_| gateway_internal_error_response("failed to resolve commercial account"))?)
 }
 
 pub(super) fn gateway_coupon_validation_decision_response(

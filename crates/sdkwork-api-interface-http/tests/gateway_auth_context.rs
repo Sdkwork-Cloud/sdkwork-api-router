@@ -81,6 +81,13 @@ async fn stateful_gateway_requires_api_key_and_uses_request_context() {
     )
     .await
     .unwrap();
+    support::seed_primary_commercial_credit_account(
+        &pool,
+        "tenant-live",
+        "project-live",
+        &created.plaintext,
+    )
+    .await;
 
     let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool.clone());
 

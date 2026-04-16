@@ -109,6 +109,38 @@ function toOptionalValue(value: string): string | null {
   return trimmed.length ? trimmed : null;
 }
 
+function formatEnvironmentLabel(
+  value: string,
+  t: (text: string) => string,
+): string {
+  switch (value.trim().toLowerCase()) {
+    case 'live':
+      return t('Live');
+    case 'staging':
+      return t('Staging');
+    case 'test':
+      return t('Test');
+    default:
+      return value;
+  }
+}
+
+function formatAccountingModeLabel(
+  value: string,
+  t: (text: string) => string,
+): string {
+  switch (value.trim().toLowerCase()) {
+    case 'platform_credit':
+      return t('Platform credit');
+    case 'byok':
+      return t('BYOK');
+    case 'passthrough':
+      return t('Passthrough');
+    default:
+      return value;
+  }
+}
+
 function buildEnvironmentOptions(
   groups: ApiKeyGroupRecord[],
   currentEnvironment: string,
@@ -384,9 +416,9 @@ export function PortalApiKeyGroupsDialog({
                       </div>
 
                       <div className="mt-3 flex flex-wrap gap-2 text-xs text-zinc-500 dark:text-zinc-400">
-                        <Badge variant="outline">{group.environment}</Badge>
+                        <Badge variant="outline">{formatEnvironmentLabel(group.environment, t)}</Badge>
                         {group.default_accounting_mode ? (
-                          <Badge variant="outline">{group.default_accounting_mode}</Badge>
+                          <Badge variant="outline">{formatAccountingModeLabel(group.default_accounting_mode, t)}</Badge>
                         ) : null}
                       </div>
 
@@ -471,7 +503,7 @@ export function PortalApiKeyGroupsDialog({
                     <SelectContent>
                       {environmentOptions.map((option) => (
                         <SelectItem key={option} value={option}>
-                          {option}
+                          {formatEnvironmentLabel(option, t)}
                         </SelectItem>
                       ))}
                     </SelectContent>

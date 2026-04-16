@@ -22,7 +22,7 @@ import type {
   GatewayRouteMode,
 } from '../../services/gatewayOverlayStore';
 import { DialogField, SelectField } from '../shared';
-import type { RouteDraft } from './shared';
+import { formatApiKeyReferenceLabel, type RouteDraft } from './shared';
 
 type GatewayApiKeyRouteDialogProps = {
   modelMappings: GatewayModelMappingRecord[];
@@ -63,7 +63,7 @@ export function GatewayApiKeyRouteDialog({
                 <DialogField label={t('API key')}>
                   <Input
                     disabled
-                    value={`${routeKey.label || routeKey.project_id} (${routeKey.environment})`}
+                    value={formatApiKeyReferenceLabel(routeKey, t)}
                   />
                 </DialogField>
                 <SelectField<'system-generated' | 'custom'>

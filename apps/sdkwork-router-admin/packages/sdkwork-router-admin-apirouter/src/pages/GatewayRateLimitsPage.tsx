@@ -13,6 +13,7 @@ import { Plus, Search } from 'lucide-react';
 import { useAdminI18n } from 'sdkwork-router-admin-core';
 import type { AdminPageProps } from 'sdkwork-router-admin-types';
 
+import { formatApiKeyReferenceLabel } from './access/shared';
 import { SelectField } from './shared';
 import { GatewayRateLimitPolicyDialog } from './rate-limits/GatewayRateLimitPolicyDialog';
 import { GatewayRateLimitsDetailDrawer } from './rate-limits/GatewayRateLimitsDetailDrawer';
@@ -121,7 +122,7 @@ export function GatewayRateLimitsPage({
           const windowRecord = latestWindowByPolicyId.get(policy.policy_id) ?? null;
           const projectName = projectById.get(policy.project_id)?.name ?? null;
           const apiKeyLabel = matchedApiKey
-            ? `${matchedApiKey.label || matchedApiKey.project_id} (${matchedApiKey.environment})`
+            ? formatApiKeyReferenceLabel(matchedApiKey, t)
             : policy.api_key_hash ?? null;
 
           return {

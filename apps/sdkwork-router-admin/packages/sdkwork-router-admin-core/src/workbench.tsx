@@ -55,6 +55,7 @@ import {
   readAdminSessionToken,
 } from 'sdkwork-router-admin-admin-api';
 import type {
+  CommercialAccountId,
   AdminSessionUser,
   AdminWorkspaceSnapshot,
   CommercialAccountSummary,
@@ -83,8 +84,8 @@ function selectCommercialLedgerAccountIds(
   commercialAccounts: CommercialAccountSummary[],
   commercialRequestSettlements: CommercialRequestSettlementRecord[],
   maxAccounts = 8,
-): number[] {
-  const selected = new Set<number>();
+): CommercialAccountId[] {
+  const selected = new Set<CommercialAccountId>();
 
   const recentSettlementAccountIds = [...commercialRequestSettlements]
     .sort((left, right) =>

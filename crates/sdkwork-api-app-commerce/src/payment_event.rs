@@ -2,7 +2,7 @@ use sdkwork_api_app_billing::CommercialBillingAdminKernel;
 use sdkwork_api_domain_commerce::{
     CommerceOrderRecord, CommercePaymentEventProcessingStatus, CommercePaymentEventRecord,
 };
-use sdkwork_api_storage_core::AdminStore;
+use sdkwork_api_storage_core::{AdminStore, CommercialKernelStore};
 
 use crate::constants::{
     COMMERCE_PAYMENT_PROVIDER_ALIPAY, COMMERCE_PAYMENT_PROVIDER_MANUAL_LAB,
@@ -16,6 +16,7 @@ use crate::types::{PortalCommerceCheckoutSessionMethod, PortalCommercePaymentEve
 pub async fn apply_portal_commerce_payment_event_with_billing(
     store: &dyn AdminStore,
     commercial_billing: Option<&dyn CommercialBillingAdminKernel>,
+    payment_store: Option<&dyn CommercialKernelStore>,
     user_id: &str,
     project_id: &str,
     order_id: &str,
@@ -111,6 +112,7 @@ pub async fn apply_portal_commerce_payment_event_with_billing(
             super::settle_portal_commerce_order_with_payment_event(
                 store,
                 commercial_billing,
+                payment_store,
                 normalized_user_id,
                 normalized_project_id,
                 normalized_order_id,
@@ -140,6 +142,7 @@ pub async fn apply_portal_commerce_payment_event_with_billing(
             super::refund_portal_commerce_order(
                 store,
                 commercial_billing,
+                payment_store,
                 normalized_user_id,
                 normalized_project_id,
                 normalized_order_id,

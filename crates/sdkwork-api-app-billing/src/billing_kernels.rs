@@ -2,6 +2,12 @@ use super::*;
 
 #[async_trait]
 pub trait GatewayCommercialBillingKernel: Send + Sync {
+    async fn ensure_primary_account_for_gateway_request_context(
+        &self,
+        context: &IdentityGatewayRequestContext,
+        created_at_ms: u64,
+    ) -> Result<AccountRecord>;
+
     async fn resolve_payable_account_for_gateway_request_context(
         &self,
         context: &IdentityGatewayRequestContext,
@@ -35,6 +41,15 @@ impl<T> GatewayCommercialBillingKernel for T
 where
     T: AccountKernelStore + AccountKernelTransactionExecutor + Send + Sync + ?Sized,
 {
+    async fn ensure_primary_account_for_gateway_request_context(
+        &self,
+        context: &IdentityGatewayRequestContext,
+        created_at_ms: u64,
+    ) -> Result<AccountRecord> {
+        crate::ensure_primary_account_for_gateway_request_context(self, context, created_at_ms)
+            .await
+    }
+
     async fn resolve_payable_account_for_gateway_request_context(
         &self,
         context: &IdentityGatewayRequestContext,

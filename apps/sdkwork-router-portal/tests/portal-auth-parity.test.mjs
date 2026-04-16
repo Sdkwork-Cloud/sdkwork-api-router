@@ -80,11 +80,16 @@ test('portal auth package exposes a single router-driven auth page', () => {
   assert.doesNotMatch(authPage, /onNavigate\('login'\)|onNavigate\('register'\)/);
 });
 
-test('portal auth visuals follow the claw-style split card layout instead of the custom portal story shell', () => {
+test('portal auth visuals keep the split layout while making unsupported workspace app sign-in explicit', () => {
   const authPage = read('packages/sdkwork-router-portal-auth/src/pages/AuthPage.tsx');
   const appRoutes = read('packages/sdkwork-router-portal-core/src/application/router/AppRoutes.tsx');
 
   assert.match(authPage, /QrCode/);
+  assert.match(authPage, /App sign-in unavailable/);
+  assert.match(
+    authPage,
+    /Workspace app sign-in is not enabled in this workspace yet\. Use your email and password below to continue\./,
+  );
   assert.match(authPage, /GitHub/);
   assert.match(authPage, /Google/);
   assert.match(authPage, /GitBranch/);
@@ -107,6 +112,8 @@ test('portal auth visuals follow the claw-style split card layout instead of the
   assert.match(authPage, /md:w-2\/5/);
   assert.match(authPage, /md:w-3\/5/);
   assert.match(authPage, /withRedirect\('/);
+  assert.doesNotMatch(authPage, /QR login/);
+  assert.doesNotMatch(authPage, /Open app to scan/);
   assert.doesNotMatch(authPage, /LeadingIconInput/);
   assert.match(authPage, /absolute left-4 top-1\/2/);
   assert.doesNotMatch(authPage, /<button/);
@@ -114,13 +121,26 @@ test('portal auth visuals follow the claw-style split card layout instead of the
   assert.doesNotMatch(appRoutes, /function AuthLayout/);
 });
 
-test('portal auth localizes qr guidance and field placeholders through the shared i18n layer', () => {
+test('portal auth localizes unsupported sign-in and recovery guidance through the shared i18n layer', () => {
   const authPage = read('packages/sdkwork-router-portal-auth/src/pages/AuthPage.tsx');
   const commons = read('packages/sdkwork-router-portal-commons/src/index.tsx');
+  const zh = read('packages/sdkwork-router-portal-commons/src/portalMessages.zh-CN.ts');
 
   assert.match(
     authPage,
-    /t\('Open the desktop app and scan this code to continue without typing credentials\.'\)/,
+    /const QR_LOGIN_NOTICE =\s+'Workspace app sign-in is not enabled in this workspace yet\. Use your email and password below to continue\.';/,
+  );
+  assert.match(
+    authPage,
+    /const RECOVERY_NOTICE =\s+'Password recovery is not enabled in this workspace yet\. Contact your workspace administrator if you lose access\.';/,
+  );
+  assert.match(
+    authPage,
+    /t\(QR_LOGIN_NOTICE\)/,
+  );
+  assert.match(
+    authPage,
+    /t\(RECOVERY_NOTICE\)/,
   );
   assert.match(
     authPage,
@@ -133,8 +153,16 @@ test('portal auth localizes qr guidance and field placeholders through the share
   assert.match(authPage, /placeholder=\{t\('Workspace owner'\)\}/);
   assert.match(authPage, /placeholder=\{t\('name@example\.com'\)\}/);
   assert.match(authPage, /placeholder=\{mode === 'register' \? t\('Create a password'\) : t\('Enter your password'\)\}/);
+  assert.doesNotMatch(authPage, /Forgot password\?/);
 
-  assert.match(commons, /'Open the desktop app and scan this code to continue without typing credentials\.'/);
+  assert.match(
+    commons,
+    /'Workspace app sign-in is not enabled in this workspace yet\. Use your email and password below to continue\.'/,
+  );
+  assert.match(
+    commons,
+    /'Password recovery is not enabled in this workspace yet\. Contact your workspace administrator if you lose access\.'/,
+  );
   assert.match(
     commons,
     /'Local development uses identities from the active bootstrap profile\. Email hint: \{email\}\. Enter the matching password from your runtime configuration\.'/,
@@ -147,6 +175,34 @@ test('portal auth localizes qr guidance and field placeholders through the share
   assert.match(commons, /'name@example\.com'/);
   assert.match(commons, /'Create a password'/);
   assert.match(commons, /'Enter your password'/);
+  assert.match(
+    zh,
+    /'Workspace app sign-in is not enabled in this workspace yet\. Use your email and password below to continue\.':/,
+  );
+  assert.match(
+    zh,
+    /'Password recovery is not enabled in this workspace yet\. Contact your workspace administrator if you lose access\.':/,
+  );
+});
+
+test('portal auth shows explicit feedback when unsupported external sign-in options are selected', () => {
+  const authPage = read('packages/sdkwork-router-portal-auth/src/pages/AuthPage.tsx');
+  const commons = read('packages/sdkwork-router-portal-commons/src/index.tsx');
+  const zh = read('packages/sdkwork-router-portal-commons/src/portalMessages.zh-CN.ts');
+
+  assert.match(
+    authPage,
+    /Use the workspace email and password flow for portal access\. External SSO remains disabled in this workspace\./,
+  );
+  assert.match(authPage, /setFeedback\(t\(SSO_NOTICE\)\)/);
+  assert.match(
+    commons,
+    /'Use the workspace email and password flow for portal access\. External SSO remains disabled in this workspace\.'/,
+  );
+  assert.match(
+    zh,
+    /'Use the workspace email and password flow for portal access\. External SSO remains disabled in this workspace\.':/,
+  );
 });
 
 test('portal sidebar user control is wired to shared auth state instead of legacy profile-dock props', () => {

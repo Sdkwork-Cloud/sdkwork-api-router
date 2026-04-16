@@ -97,6 +97,89 @@ async fn video_extensions_pending_route_holds_and_reconciles_canonical_video_pri
     .await;
 }
 
+#[tokio::test]
+async fn video_pending_route_without_preseeded_account_auto_provisions_account_and_rejects_for_insufficient_balance(
+) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let upstream_state = UpstreamCaptureState::default();
+    let pending_response = serde_json::json!({
+        "object":"list",
+        "data":[{
+            "id":"video_1_remix",
+            "object":"video",
+            "status":"processing",
+            "model":"veo-3"
+        }]
+    });
+    let upstream = Router::new()
+        .route(
+            "/v1/videos/video_1/remix",
+            post({
+                let pending_response = pending_response.clone();
+                move |State(state): State<UpstreamCaptureState>, headers: axum::http::HeaderMap| {
+                    let pending_response = pending_response.clone();
+                    async move {
+                        *state.authorization.lock().unwrap() = headers
+                            .get("authorization")
+                            .and_then(|value| value.to_str().ok())
+                            .map(ToOwned::to_owned);
+                        (StatusCode::OK, Json(pending_response))
+                    }
+                }
+            }),
+        )
+        .with_state(upstream_state.clone());
+    tokio::spawn(async move {
+        axum::serve(listener, upstream).await.unwrap();
+    });
+
+    let pool = memory_pool().await;
+    let seeded = seed_dual_scoped_gateway_identity(&pool).await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(&pool, admin_app.clone()).await;
+    configure_video_provider_with_custom_price(
+        admin_app,
+        &admin_token,
+        &format!("http://{address}"),
+        "provider-video-mutation-no-account",
+        "video_1",
+        "veo-3",
+        "per_minute_video",
+        0.05,
+        0.30,
+    )
+    .await;
+
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool.clone());
+    let store = SqliteAdminStore::new(pool);
+    let response = gateway_app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/videos/video_1/remix")
+                .header("authorization", format!("Bearer {}", seeded.plaintext))
+                .header("content-type", "application/json")
+                .body(Body::from("{\"prompt\":\"Make it sunset\"}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::PAYMENT_REQUIRED);
+    let json = read_json(response).await;
+    assert_eq!(json["error"]["code"], "insufficient_balance");
+    assert!(upstream_state.authorization.lock().unwrap().is_none());
+
+    let account = store
+        .find_account_record_by_owner(1001, 2002, 9001, AccountType::Primary)
+        .await
+        .unwrap();
+    assert!(account.is_some());
+    assert!(store.list_account_holds().await.unwrap().is_empty());
+    assert!(store.list_request_meter_facts().await.unwrap().is_empty());
+}
+
 async fn run_pending_video_mutation_reconcile_case(case: VideoMutationCase) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -334,6 +417,33 @@ async fn seed_dual_scoped_gateway_account(
     lot_quantity: f64,
 ) -> SeededGatewayAccount {
     let store = SqliteAdminStore::new(pool.clone());
+    let created = seed_dual_scoped_gateway_identity(pool).await;
+
+    let account = AccountRecord::new(account_id, 1001, 2002, 9001, AccountType::Primary)
+        .with_created_at_ms(30)
+        .with_updated_at_ms(30);
+    store.insert_account_record(&account).await.unwrap();
+
+    let lot = AccountBenefitLotRecord::new(
+        lot_id,
+        1001,
+        2002,
+        account_id,
+        9001,
+        AccountBenefitType::CashCredit,
+    )
+    .with_source_type(AccountBenefitSourceType::Recharge)
+    .with_original_quantity(lot_quantity)
+    .with_remaining_quantity(lot_quantity)
+    .with_created_at_ms(40)
+    .with_updated_at_ms(40);
+    store.insert_account_benefit_lot(&lot).await.unwrap();
+
+    created
+}
+
+async fn seed_dual_scoped_gateway_identity(pool: &SqlitePool) -> SeededGatewayAccount {
+    let store = SqliteAdminStore::new(pool.clone());
     let created = persist_gateway_api_key_with_metadata(
         &store,
         PersistGatewayApiKeyInput {
@@ -369,26 +479,6 @@ async fn seed_dual_scoped_gateway_account(
         )
         .await
         .unwrap();
-
-    let account = AccountRecord::new(account_id, 1001, 2002, 9001, AccountType::Primary)
-        .with_created_at_ms(30)
-        .with_updated_at_ms(30);
-    store.insert_account_record(&account).await.unwrap();
-
-    let lot = AccountBenefitLotRecord::new(
-        lot_id,
-        1001,
-        2002,
-        account_id,
-        9001,
-        AccountBenefitType::CashCredit,
-    )
-    .with_source_type(AccountBenefitSourceType::Recharge)
-    .with_original_quantity(lot_quantity)
-    .with_remaining_quantity(lot_quantity)
-    .with_created_at_ms(40)
-    .with_updated_at_ms(40);
-    store.insert_account_benefit_lot(&lot).await.unwrap();
 
     SeededGatewayAccount {
         plaintext: created.plaintext,

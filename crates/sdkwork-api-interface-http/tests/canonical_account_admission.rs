@@ -573,3 +573,65 @@ async fn stateful_gemini_generate_content_route_captures_platform_credit_hold_in
     assert_eq!(response.status(), StatusCode::OK);
     assert_platform_credit_settlement(&store, account.account_id, 0.10).await;
 }
+
+#[tokio::test]
+async fn stateful_chat_route_without_preseeded_account_auto_provisions_account_and_rejects_for_insufficient_balance(
+) {
+    let tenant_id = "tenant-commercial-admission-auto-account";
+    let project_id = "project-commercial-admission-auto-account";
+    let pool = memory_pool().await;
+    let store = SqliteAdminStore::new(pool.clone());
+    let api_key = support::issue_gateway_api_key(&pool, tenant_id, project_id).await;
+    let request_context = GatewayRequestContext {
+        tenant_id: tenant_id.to_owned(),
+        project_id: project_id.to_owned(),
+        environment: "live".to_owned(),
+        api_key_hash: hash_gateway_api_key(&api_key),
+        api_key_group_id: None,
+        canonical_tenant_id: None,
+        canonical_organization_id: None,
+        canonical_user_id: None,
+        canonical_api_key_id: None,
+    };
+    let subject = gateway_auth_subject_from_request_context(&request_context);
+    configure_stateful_openai_upstream(&pool, tenant_id, &["gpt-4.1"]).await;
+
+    let app = sdkwork_api_interface_http::gateway_router_with_pool(pool.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/chat/completions")
+                .header("authorization", format!("Bearer {api_key}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    "{\"model\":\"gpt-4.1\",\"messages\":[{\"role\":\"user\",\"content\":\"bill canonically without a seeded account\"}]}",
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response_body_text(response).await;
+    assert_eq!(status, StatusCode::PAYMENT_REQUIRED, "unexpected body: {body}");
+    assert!(body.contains("insufficient_balance"), "unexpected body: {body}");
+
+    let account = store
+        .find_account_record_by_owner(
+            subject.tenant_id,
+            subject.organization_id,
+            subject.user_id,
+            AccountType::Primary,
+        )
+        .await
+        .unwrap()
+        .expect("primary account should be auto provisioned");
+    assert_eq!(account.status, AccountStatus::Active);
+    assert!(store.list_account_holds().await.unwrap().is_empty());
+    assert!(store
+        .list_request_settlement_records()
+        .await
+        .unwrap()
+        .is_empty());
+}
