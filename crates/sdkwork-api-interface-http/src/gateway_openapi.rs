@@ -53,6 +53,15 @@ use utoipa::{Modify, OpenApi};
 #[path = "gateway_openapi_paths_assistants_threads.rs"]
 mod paths_assistants_threads;
 #[allow(dead_code)]
+#[path = "gateway_openapi_paths_code_claude.rs"]
+mod paths_code_claude;
+#[allow(dead_code)]
+#[path = "gateway_openapi_paths_code_gemini.rs"]
+mod paths_code_gemini;
+#[allow(dead_code)]
+#[path = "gateway_openapi_paths_code_openai.rs"]
+mod paths_code_openai;
+#[allow(dead_code)]
 #[path = "gateway_openapi_paths_files_batches.rs"]
 mod paths_files_batches;
 #[allow(dead_code)]
@@ -70,6 +79,9 @@ mod paths_vector_compat;
 
 mod openapi_paths {
     pub(crate) use super::paths_assistants_threads::*;
+    pub(crate) use super::paths_code_claude::*;
+    pub(crate) use super::paths_code_gemini::*;
+    pub(crate) use super::paths_code_openai::*;
     pub(crate) use super::paths_files_batches::*;
     pub(crate) use super::paths_market_commercial::*;
     pub(crate) use super::paths_media::*;
@@ -179,14 +191,11 @@ mod openapi_paths {
         openapi_paths::gemini_models_compat
     ),
     tags(
-        (name = "system", description = "Gateway health and system-facing routes."),
-        (name = "models", description = "Model listing and model metadata routes."),
-        (name = "chat", description = "OpenAI-compatible chat completion routes."),
-        (name = "completions", description = "OpenAI-compatible text completion routes."),
-        (name = "responses", description = "OpenAI-compatible response generation routes."),
+        (name = "system.sdkwork", description = "Gateway health and system-facing routes."),
+        (name = "code.openai", description = "Official OpenAI and Codex mirror routes."),
+        (name = "code.claude", description = "Official Claude mirror routes."),
+        (name = "code.gemini", description = "Official Gemini mirror routes."),
         (name = "conversations", description = "OpenAI-compatible conversation and conversation item routes."),
-        (name = "embeddings", description = "Embedding generation routes."),
-        (name = "moderations", description = "Moderation and safety evaluation routes."),
         (name = "images", description = "Image generation, edit, and variation routes."),
         (name = "audio", description = "Audio transcription, translation, speech, and voice routes."),
         (name = "files", description = "File upload, listing, and retrieval routes."),
@@ -199,8 +208,7 @@ mod openapi_paths {
         (name = "realtime", description = "Realtime session bootstrap routes."),
         (name = "market", description = "Public API product catalog and quote routes."),
         (name = "marketing", description = "Coupon-first marketing validation and redemption routes."),
-        (name = "commercial", description = "Commercial account and benefit-lot visibility routes."),
-        (name = "compatibility", description = "Anthropic and Gemini compatibility routes.")
+        (name = "commercial", description = "Commercial account and benefit-lot visibility routes.")
     )
 )]
 struct GatewayApiDoc;

@@ -144,6 +144,15 @@ async fn openapi_routes_expose_gateway_api_inventory() {
     assert!(json["paths"]["/v1/messages"]["post"].is_object());
     assert!(json["paths"]["/v1/messages/count_tokens"]["post"].is_object());
     assert!(json["paths"]["/v1beta/models/{tail}"]["post"].is_object());
+    let tags = json["tags"].as_array().unwrap();
+    assert!(tags.iter().any(|tag| tag["name"] == "code.openai"));
+    assert!(tags.iter().any(|tag| tag["name"] == "code.claude"));
+    assert!(tags.iter().any(|tag| tag["name"] == "code.gemini"));
+    assert!(!tags.iter().any(|tag| tag["name"] == "compatibility"));
+    assert!(json["paths"]["/code"].is_null());
+    assert!(json["paths"]["/code/chat/completions"].is_null());
+    assert!(json["paths"]["/claude/messages"].is_null());
+    assert!(json["paths"]["/gemini/models"].is_null());
     assert!(json["components"]["schemas"].is_object());
     assert!(json["components"]["schemas"]["ListModelsResponse"].is_object());
     assert!(json["components"]["schemas"]["GatewayMarketProductsResponse"].is_object());
