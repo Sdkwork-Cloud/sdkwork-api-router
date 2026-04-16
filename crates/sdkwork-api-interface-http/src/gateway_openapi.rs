@@ -342,7 +342,7 @@ mod openapi_paths {
         (name = "containers", description = "Container lifecycle and container file routes."),
         (name = "images.openai", description = "Official OpenAI image mirror routes."),
         (name = "audio", description = "Audio transcription, translation, speech, and voice routes."),
-        (name = "videos", description = "Video generation, transforms, and character routes."),
+        (name = "video.openai", description = "Official shared video mirror routes."),
         (name = "music", description = "Music generation, retrieval, content, and lyrics routes."),
         (name = "files", description = "File upload, listing, and retrieval routes."),
         (name = "uploads", description = "Multi-part upload lifecycle routes."),

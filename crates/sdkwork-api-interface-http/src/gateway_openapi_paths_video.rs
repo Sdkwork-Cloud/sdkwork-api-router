@@ -3,7 +3,8 @@ use super::*;
 #[utoipa::path(
         get,
         path = "/v1/videos",
-        tag = "videos",
+        operation_id = "video_openai_list",
+        tag = "video.openai",
         security(("bearerAuth" = [])),
         responses(
             (status = 200, description = "Visible videos.", body = sdkwork_api_contract_openai::videos::VideosResponse),
@@ -16,7 +17,8 @@ pub(crate) async fn videos_list() {}
 #[utoipa::path(
         post,
         path = "/v1/videos",
-        tag = "videos",
+        operation_id = "video_openai_create",
+        tag = "video.openai",
         request_body = sdkwork_api_contract_openai::videos::CreateVideoRequest,
         security(("bearerAuth" = [])),
         responses(
@@ -31,7 +33,8 @@ pub(crate) async fn videos_create() {}
 #[utoipa::path(
         get,
         path = "/v1/videos/{video_id}",
-        tag = "videos",
+        operation_id = "video_openai_get",
+        tag = "video.openai",
         params(("video_id" = String, Path, description = "Video identifier.")),
         security(("bearerAuth" = [])),
         responses(
@@ -46,7 +49,8 @@ pub(crate) async fn video_get() {}
 #[utoipa::path(
         delete,
         path = "/v1/videos/{video_id}",
-        tag = "videos",
+        operation_id = "video_openai_delete",
+        tag = "video.openai",
         params(("video_id" = String, Path, description = "Video identifier.")),
         security(("bearerAuth" = [])),
         responses(
@@ -61,7 +65,8 @@ pub(crate) async fn video_delete() {}
 #[utoipa::path(
         get,
         path = "/v1/videos/{video_id}/content",
-        tag = "videos",
+        operation_id = "video_openai_content_get",
+        tag = "video.openai",
         params(("video_id" = String, Path, description = "Video identifier.")),
         security(("bearerAuth" = [])),
         responses(
@@ -76,7 +81,8 @@ pub(crate) async fn video_content() {}
 #[utoipa::path(
         post,
         path = "/v1/videos/{video_id}/remix",
-        tag = "videos",
+        operation_id = "video_openai_remix_create",
+        tag = "video.openai",
         params(("video_id" = String, Path, description = "Video identifier.")),
         request_body = sdkwork_api_contract_openai::videos::RemixVideoRequest,
         security(("bearerAuth" = [])),
@@ -93,7 +99,8 @@ pub(crate) async fn video_remix() {}
 #[utoipa::path(
         post,
         path = "/v1/videos/characters",
-        tag = "videos",
+        operation_id = "video_openai_characters_create",
+        tag = "video.openai",
         request_body = sdkwork_api_contract_openai::videos::CreateVideoCharacterRequest,
         security(("bearerAuth" = [])),
         responses(
@@ -108,7 +115,8 @@ pub(crate) async fn video_characters_create() {}
 #[utoipa::path(
         get,
         path = "/v1/videos/characters/{character_id}",
-        tag = "videos",
+        operation_id = "video_openai_character_canonical_get",
+        tag = "video.openai",
         params(("character_id" = String, Path, description = "Video character identifier.")),
         security(("bearerAuth" = [])),
         responses(
@@ -123,7 +131,8 @@ pub(crate) async fn video_character_canonical_get() {}
 #[utoipa::path(
         post,
         path = "/v1/videos/edits",
-        tag = "videos",
+        operation_id = "video_openai_edits_create",
+        tag = "video.openai",
         request_body = sdkwork_api_contract_openai::videos::EditVideoRequest,
         security(("bearerAuth" = [])),
         responses(
@@ -138,7 +147,8 @@ pub(crate) async fn video_edits() {}
 #[utoipa::path(
         post,
         path = "/v1/videos/extensions",
-        tag = "videos",
+        operation_id = "video_openai_extensions_create",
+        tag = "video.openai",
         request_body = sdkwork_api_contract_openai::videos::ExtendVideoRequest,
         security(("bearerAuth" = [])),
         responses(
@@ -153,7 +163,8 @@ pub(crate) async fn video_extensions() {}
 #[utoipa::path(
         get,
         path = "/v1/videos/{video_id}/characters",
-        tag = "videos",
+        operation_id = "video_openai_characters_list",
+        tag = "video.openai",
         params(("video_id" = String, Path, description = "Video identifier.")),
         security(("bearerAuth" = [])),
         responses(
@@ -168,7 +179,8 @@ pub(crate) async fn video_characters_list() {}
 #[utoipa::path(
         get,
         path = "/v1/videos/{video_id}/characters/{character_id}",
-        tag = "videos",
+        operation_id = "video_openai_character_get",
+        tag = "video.openai",
         params(
             ("video_id" = String, Path, description = "Video identifier."),
             ("character_id" = String, Path, description = "Video character identifier.")
@@ -186,7 +198,8 @@ pub(crate) async fn video_character_get() {}
 #[utoipa::path(
         post,
         path = "/v1/videos/{video_id}/characters/{character_id}",
-        tag = "videos",
+        operation_id = "video_openai_character_update",
+        tag = "video.openai",
         params(
             ("video_id" = String, Path, description = "Video identifier."),
             ("character_id" = String, Path, description = "Video character identifier.")
@@ -206,7 +219,8 @@ pub(crate) async fn video_character_update() {}
 #[utoipa::path(
         post,
         path = "/v1/videos/{video_id}/extend",
-        tag = "videos",
+        operation_id = "video_openai_extend_create",
+        tag = "video.openai",
         params(("video_id" = String, Path, description = "Video identifier.")),
         request_body = sdkwork_api_contract_openai::videos::ExtendVideoRequest,
         security(("bearerAuth" = [])),

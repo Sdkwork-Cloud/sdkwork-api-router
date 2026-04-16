@@ -141,6 +141,109 @@ async fn openapi_routes_expose_gateway_api_inventory() {
     assert!(json["paths"]["/v1/videos/{video_id}/characters/{character_id}"]["get"].is_object());
     assert!(json["paths"]["/v1/videos/{video_id}/characters/{character_id}"]["post"].is_object());
     assert!(json["paths"]["/v1/videos/{video_id}/extend"]["post"].is_object());
+    assert_eq!(json["paths"]["/v1/videos"]["get"]["tags"][0], "video.openai");
+    assert_eq!(json["paths"]["/v1/videos"]["get"]["operationId"], "video_openai_list");
+    assert_eq!(json["paths"]["/v1/videos"]["post"]["tags"][0], "video.openai");
+    assert_eq!(
+        json["paths"]["/v1/videos"]["post"]["operationId"],
+        "video_openai_create"
+    );
+    assert_eq!(
+        json["paths"]["/v1/videos/{video_id}"]["get"]["tags"][0],
+        "video.openai"
+    );
+    assert_eq!(
+        json["paths"]["/v1/videos/{video_id}"]["get"]["operationId"],
+        "video_openai_get"
+    );
+    assert_eq!(
+        json["paths"]["/v1/videos/{video_id}"]["delete"]["tags"][0],
+        "video.openai"
+    );
+    assert_eq!(
+        json["paths"]["/v1/videos/{video_id}"]["delete"]["operationId"],
+        "video_openai_delete"
+    );
+    assert_eq!(
+        json["paths"]["/v1/videos/{video_id}/content"]["get"]["tags"][0],
+        "video.openai"
+    );
+    assert_eq!(
+        json["paths"]["/v1/videos/{video_id}/content"]["get"]["operationId"],
+        "video_openai_content_get"
+    );
+    assert_eq!(
+        json["paths"]["/v1/videos/{video_id}/remix"]["post"]["tags"][0],
+        "video.openai"
+    );
+    assert_eq!(
+        json["paths"]["/v1/videos/{video_id}/remix"]["post"]["operationId"],
+        "video_openai_remix_create"
+    );
+    assert_eq!(
+        json["paths"]["/v1/videos/characters"]["post"]["tags"][0],
+        "video.openai"
+    );
+    assert_eq!(
+        json["paths"]["/v1/videos/characters"]["post"]["operationId"],
+        "video_openai_characters_create"
+    );
+    assert_eq!(
+        json["paths"]["/v1/videos/characters/{character_id}"]["get"]["tags"][0],
+        "video.openai"
+    );
+    assert_eq!(
+        json["paths"]["/v1/videos/characters/{character_id}"]["get"]["operationId"],
+        "video_openai_character_canonical_get"
+    );
+    assert_eq!(
+        json["paths"]["/v1/videos/edits"]["post"]["tags"][0],
+        "video.openai"
+    );
+    assert_eq!(
+        json["paths"]["/v1/videos/edits"]["post"]["operationId"],
+        "video_openai_edits_create"
+    );
+    assert_eq!(
+        json["paths"]["/v1/videos/extensions"]["post"]["tags"][0],
+        "video.openai"
+    );
+    assert_eq!(
+        json["paths"]["/v1/videos/extensions"]["post"]["operationId"],
+        "video_openai_extensions_create"
+    );
+    assert_eq!(
+        json["paths"]["/v1/videos/{video_id}/characters"]["get"]["tags"][0],
+        "video.openai"
+    );
+    assert_eq!(
+        json["paths"]["/v1/videos/{video_id}/characters"]["get"]["operationId"],
+        "video_openai_characters_list"
+    );
+    assert_eq!(
+        json["paths"]["/v1/videos/{video_id}/characters/{character_id}"]["get"]["tags"][0],
+        "video.openai"
+    );
+    assert_eq!(
+        json["paths"]["/v1/videos/{video_id}/characters/{character_id}"]["get"]["operationId"],
+        "video_openai_character_get"
+    );
+    assert_eq!(
+        json["paths"]["/v1/videos/{video_id}/characters/{character_id}"]["post"]["tags"][0],
+        "video.openai"
+    );
+    assert_eq!(
+        json["paths"]["/v1/videos/{video_id}/characters/{character_id}"]["post"]["operationId"],
+        "video_openai_character_update"
+    );
+    assert_eq!(
+        json["paths"]["/v1/videos/{video_id}/extend"]["post"]["tags"][0],
+        "video.openai"
+    );
+    assert_eq!(
+        json["paths"]["/v1/videos/{video_id}/extend"]["post"]["operationId"],
+        "video_openai_extend_create"
+    );
     assert!(json["paths"]["/v1/music"]["get"].is_object());
     assert!(json["paths"]["/v1/music"]["post"].is_object());
     assert!(json["paths"]["/v1/music/{music_id}"]["get"].is_object());
@@ -257,12 +360,21 @@ async fn openapi_routes_expose_gateway_api_inventory() {
     assert!(tags.iter().any(|tag| tag["name"] == "code.claude"));
     assert!(tags.iter().any(|tag| tag["name"] == "code.gemini"));
     assert!(tags.iter().any(|tag| tag["name"] == "images.openai"));
+    assert!(tags.iter().any(|tag| tag["name"] == "video.openai"));
     assert!(!tags.iter().any(|tag| tag["name"] == "images"));
+    assert!(!tags.iter().any(|tag| tag["name"] == "videos"));
     assert!(!tags.iter().any(|tag| tag["name"] == "images.nanobanana"));
     assert!(!tags.iter().any(|tag| tag["name"] == "images.midjourney"));
     assert!(!tags.iter().any(|tag| tag["name"] == "images.volcengine"));
     assert!(!tags.iter().any(|tag| tag["name"] == "images.aliyun"));
     assert!(!tags.iter().any(|tag| tag["name"] == "images.kling"));
+    assert!(!tags.iter().any(|tag| tag["name"] == "video.sora"));
+    assert!(!tags.iter().any(|tag| tag["name"] == "video.minimax"));
+    assert!(!tags.iter().any(|tag| tag["name"] == "video.vidu"));
+    assert!(!tags.iter().any(|tag| tag["name"] == "video.volcengine"));
+    assert!(!tags.iter().any(|tag| tag["name"] == "video.google-veo"));
+    assert!(!tags.iter().any(|tag| tag["name"] == "video.aliyun"));
+    assert!(!tags.iter().any(|tag| tag["name"] == "video.kling"));
     assert!(!tags.iter().any(|tag| tag["name"] == "compatibility"));
     assert!(json["paths"]["/code"].is_null());
     assert!(json["paths"]["/code/chat/completions"].is_null());
@@ -272,6 +384,10 @@ async fn openapi_routes_expose_gateway_api_inventory() {
     assert!(json["paths"]["/images/nanobanana/generations"].is_null());
     assert!(json["paths"]["/v1/images/nanobanana/generations"].is_null());
     assert!(json["paths"]["/v1/images/midjourney/generations"].is_null());
+    assert!(json["paths"]["/video/openai/videos"].is_null());
+    assert!(json["paths"]["/video/sora/videos"].is_null());
+    assert!(json["paths"]["/v1/videos/sora/create"].is_null());
+    assert!(json["paths"]["/v1/video/create"].is_null());
     assert!(json["components"]["schemas"].is_object());
     assert!(json["components"]["schemas"]["ListModelsResponse"].is_object());
     assert!(json["components"]["schemas"]["GatewayMarketProductsResponse"].is_object());
