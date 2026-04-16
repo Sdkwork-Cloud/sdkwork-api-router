@@ -35,7 +35,8 @@ async fn stateful_responses_route_relays_to_openai_compatible_provider() {
     });
 
     let pool = memory_pool().await;
-    let api_key = support::issue_gateway_api_key_in_byok_group(&pool, "tenant-1", "project-1").await;
+    let api_key =
+        support::issue_gateway_api_key_in_byok_group(&pool, "tenant-1", "project-1").await;
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
     let admin_token = support::issue_admin_token(&pool, admin_app.clone()).await;
     let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);

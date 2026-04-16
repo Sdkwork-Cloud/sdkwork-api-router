@@ -49,9 +49,7 @@ async fn openapi_routes_expose_gateway_api_inventory() {
     assert!(json["paths"]["/v1/chat/completions/{completion_id}"]["get"].is_object());
     assert!(json["paths"]["/v1/chat/completions/{completion_id}"]["post"].is_object());
     assert!(json["paths"]["/v1/chat/completions/{completion_id}"]["delete"].is_object());
-    assert!(
-        json["paths"]["/v1/chat/completions/{completion_id}/messages"]["get"].is_object()
-    );
+    assert!(json["paths"]["/v1/chat/completions/{completion_id}/messages"]["get"].is_object());
     assert!(json["paths"]["/v1/completions"]["post"].is_object());
     assert!(json["paths"]["/v1/responses"]["post"].is_object());
     assert!(json["paths"]["/v1/responses/input_tokens"]["post"].is_object());
@@ -89,15 +87,10 @@ async fn openapi_routes_expose_gateway_api_inventory() {
     assert!(json["paths"]["/v1/containers/{container_id}"]["delete"].is_object());
     assert!(json["paths"]["/v1/containers/{container_id}/files"]["get"].is_object());
     assert!(json["paths"]["/v1/containers/{container_id}/files"]["post"].is_object());
+    assert!(json["paths"]["/v1/containers/{container_id}/files/{file_id}"]["get"].is_object());
+    assert!(json["paths"]["/v1/containers/{container_id}/files/{file_id}"]["delete"].is_object());
     assert!(
-        json["paths"]["/v1/containers/{container_id}/files/{file_id}"]["get"].is_object()
-    );
-    assert!(
-        json["paths"]["/v1/containers/{container_id}/files/{file_id}"]["delete"].is_object()
-    );
-    assert!(
-        json["paths"]["/v1/containers/{container_id}/files/{file_id}/content"]["get"]
-            .is_object()
+        json["paths"]["/v1/containers/{container_id}/files/{file_id}/content"]["get"].is_object()
     );
     assert!(json["paths"]["/v1/assistants"]["get"].is_object());
     assert!(json["paths"]["/v1/assistants"]["post"].is_object());
@@ -121,12 +114,8 @@ async fn openapi_routes_expose_gateway_api_inventory() {
     assert!(json["paths"]["/v1/videos/edits"]["post"].is_object());
     assert!(json["paths"]["/v1/videos/extensions"]["post"].is_object());
     assert!(json["paths"]["/v1/videos/{video_id}/characters"]["get"].is_object());
-    assert!(
-        json["paths"]["/v1/videos/{video_id}/characters/{character_id}"]["get"].is_object()
-    );
-    assert!(
-        json["paths"]["/v1/videos/{video_id}/characters/{character_id}"]["post"].is_object()
-    );
+    assert!(json["paths"]["/v1/videos/{video_id}/characters/{character_id}"]["get"].is_object());
+    assert!(json["paths"]["/v1/videos/{video_id}/characters/{character_id}"]["post"].is_object());
     assert!(json["paths"]["/v1/videos/{video_id}/extend"]["post"].is_object());
     assert!(json["paths"]["/v1/music"]["get"].is_object());
     assert!(json["paths"]["/v1/music"]["post"].is_object());
@@ -172,21 +161,13 @@ async fn openapi_routes_expose_gateway_api_inventory() {
     assert!(json["paths"]["/v1/fine_tuning/jobs"]["get"].is_object());
     assert!(json["paths"]["/v1/fine_tuning/jobs"]["post"].is_object());
     assert!(json["paths"]["/v1/fine_tuning/jobs/{fine_tuning_job_id}"]["get"].is_object());
-    assert!(
-        json["paths"]["/v1/fine_tuning/jobs/{fine_tuning_job_id}/cancel"]["post"].is_object()
-    );
-    assert!(
-        json["paths"]["/v1/fine_tuning/jobs/{fine_tuning_job_id}/events"]["get"].is_object()
-    );
+    assert!(json["paths"]["/v1/fine_tuning/jobs/{fine_tuning_job_id}/cancel"]["post"].is_object());
+    assert!(json["paths"]["/v1/fine_tuning/jobs/{fine_tuning_job_id}/events"]["get"].is_object());
     assert!(
         json["paths"]["/v1/fine_tuning/jobs/{fine_tuning_job_id}/checkpoints"]["get"].is_object()
     );
-    assert!(
-        json["paths"]["/v1/fine_tuning/jobs/{fine_tuning_job_id}/pause"]["post"].is_object()
-    );
-    assert!(
-        json["paths"]["/v1/fine_tuning/jobs/{fine_tuning_job_id}/resume"]["post"].is_object()
-    );
+    assert!(json["paths"]["/v1/fine_tuning/jobs/{fine_tuning_job_id}/pause"]["post"].is_object());
+    assert!(json["paths"]["/v1/fine_tuning/jobs/{fine_tuning_job_id}/resume"]["post"].is_object());
     assert!(
         json["paths"]["/v1/fine_tuning/checkpoints/{fine_tuned_model_checkpoint}/permissions"]
             ["get"]
@@ -197,11 +178,10 @@ async fn openapi_routes_expose_gateway_api_inventory() {
             ["post"]
             .is_object()
     );
-    assert!(
-        json["paths"]["/v1/fine_tuning/checkpoints/{fine_tuned_model_checkpoint}/permissions/{permission_id}"]
-            ["delete"]
-            .is_object()
-    );
+    assert!(json["paths"]
+        ["/v1/fine_tuning/checkpoints/{fine_tuned_model_checkpoint}/permissions/{permission_id}"]
+        ["delete"]
+        .is_object());
     assert!(json["paths"]["/v1/webhooks"]["get"].is_object());
     assert!(json["paths"]["/v1/webhooks"]["post"].is_object());
     assert!(json["paths"]["/v1/webhooks/{webhook_id}"]["get"].is_object());
@@ -217,9 +197,7 @@ async fn openapi_routes_expose_gateway_api_inventory() {
     assert!(json["paths"]["/v1/evals/{eval_id}/runs/{run_id}"]["get"].is_object());
     assert!(json["paths"]["/v1/evals/{eval_id}/runs/{run_id}"]["delete"].is_object());
     assert!(json["paths"]["/v1/evals/{eval_id}/runs/{run_id}/cancel"]["post"].is_object());
-    assert!(
-        json["paths"]["/v1/evals/{eval_id}/runs/{run_id}/output_items"]["get"].is_object()
-    );
+    assert!(json["paths"]["/v1/evals/{eval_id}/runs/{run_id}/output_items"]["get"].is_object());
     assert!(
         json["paths"]["/v1/evals/{eval_id}/runs/{run_id}/output_items/{output_item_id}"]["get"]
             .is_object()

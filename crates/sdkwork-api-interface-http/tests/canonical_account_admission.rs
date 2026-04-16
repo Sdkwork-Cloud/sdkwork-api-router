@@ -614,8 +614,15 @@ async fn stateful_chat_route_without_preseeded_account_auto_provisions_account_a
 
     let status = response.status();
     let body = response_body_text(response).await;
-    assert_eq!(status, StatusCode::PAYMENT_REQUIRED, "unexpected body: {body}");
-    assert!(body.contains("insufficient_balance"), "unexpected body: {body}");
+    assert_eq!(
+        status,
+        StatusCode::PAYMENT_REQUIRED,
+        "unexpected body: {body}"
+    );
+    assert!(
+        body.contains("insufficient_balance"),
+        "unexpected body: {body}"
+    );
 
     let account = store
         .find_account_record_by_owner(

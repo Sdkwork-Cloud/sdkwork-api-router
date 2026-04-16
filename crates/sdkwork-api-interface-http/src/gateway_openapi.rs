@@ -50,6 +50,9 @@ use utoipa::openapi::Server;
 use utoipa::{Modify, OpenApi};
 
 #[allow(dead_code)]
+#[path = "gateway_openapi_paths_agents.rs"]
+mod paths_agents;
+#[allow(dead_code)]
 #[path = "gateway_openapi_paths_assistants_threads.rs"]
 mod paths_assistants_threads;
 #[allow(dead_code)]
@@ -61,9 +64,6 @@ mod paths_code_gemini;
 #[allow(dead_code)]
 #[path = "gateway_openapi_paths_code_openai.rs"]
 mod paths_code_openai;
-#[allow(dead_code)]
-#[path = "gateway_openapi_paths_agents.rs"]
-mod paths_agents;
 #[allow(dead_code)]
 #[path = "gateway_openapi_paths_files_batches.rs"]
 mod paths_files_batches;
@@ -102,8 +102,8 @@ mod openapi_paths {
     pub(crate) use super::paths_jobs::*;
     pub(crate) use super::paths_market_commercial::*;
     pub(crate) use super::paths_media::*;
-    pub(crate) use super::paths_music::*;
     pub(crate) use super::paths_models_chat::*;
+    pub(crate) use super::paths_music::*;
     pub(crate) use super::paths_storage::*;
     pub(crate) use super::paths_vector_compat::*;
     pub(crate) use super::paths_video::*;
