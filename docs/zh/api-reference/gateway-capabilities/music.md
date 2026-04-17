@@ -8,6 +8,15 @@
 |---|---|---|---|
 | 默认共享音乐家族 | `music.openai` | `/v1/music*` | list、create、retrieve、delete、content、lyrics 继续沿用共享音乐契约 |
 
+## 共享默认 API 清单
+
+- `GET /v1/music`
+- `POST /v1/music`
+- `GET /v1/music/{music_id}`
+- `DELETE /v1/music/{music_id}`
+- `GET /v1/music/{music_id}/content`
+- `POST /v1/music/lyrics`
+
 ## Music 目录
 
 | 目录 | 真实家族 | 公开路径家族 | 状态 | 说明 |

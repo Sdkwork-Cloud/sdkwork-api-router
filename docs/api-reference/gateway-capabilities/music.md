@@ -8,6 +8,15 @@ The music capability index starts with the shared default contract and then list
 |---|---|---|---|
 | default shared music family | `music.openai` | `/v1/music*` | list, create, retrieve, delete, content, and lyrics stay on the shared OpenAI-style music contract |
 
+## Shared Default API Inventory
+
+- `GET /v1/music`
+- `POST /v1/music`
+- `GET /v1/music/{music_id}`
+- `DELETE /v1/music/{music_id}`
+- `GET /v1/music/{music_id}/content`
+- `POST /v1/music/lyrics`
+
 ## Music Directories
 
 | Directory | Live family | Public path family | Status | Notes |

@@ -8,6 +8,16 @@ Browse the gateway code and agent-oriented surfaces by capability first.
 |---|---|---|---|
 | default shared code family | `code.openai` | `/v1/*` | OpenAI-compatible data plane, including Codex-capable flows |
 
+## Shared Default API Inventory
+
+- `GET /v1/models`
+- `GET /v1/models/{model_id}`
+- `POST /v1/chat/completions`
+- `POST /v1/completions`
+- `POST /v1/responses`
+- `POST /v1/embeddings`
+- `POST /v1/moderations`
+
 ## Provider Directories
 
 | Directory | Live family | Public path family | Notes |

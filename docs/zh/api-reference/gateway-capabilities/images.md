@@ -8,6 +8,12 @@
 |---|---|---|---|
 | 默认共享图片家族 | `images.openai` | `/v1/images/*` | generations、edits、variations 继续沿用 OpenAI 官方图片契约 |
 
+## 共享默认 API 清单
+
+- `POST /v1/images/generations`
+- `POST /v1/images/edits`
+- `POST /v1/images/variations`
+
 ## Images 目录
 
 | 目录 | 真实家族 | 公开路径家族 | 状态 | 说明 |

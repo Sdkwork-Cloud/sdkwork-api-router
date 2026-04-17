@@ -8,6 +8,15 @@ The video capability index starts with the shared default contract and then list
 |---|---|---|---|
 | default shared video family | `video.openai` | `/v1/videos*` | OpenAI video routes, including Sora 2 and Sora 2 Pro, stay on the shared official transport |
 
+## Shared Default API Inventory
+
+- `GET /v1/videos`
+- `POST /v1/videos`
+- `GET /v1/videos/{video_id}`
+- `GET /v1/videos/{video_id}/content`
+- `POST /v1/videos/{video_id}/remix`
+- `POST /v1/videos/{video_id}/edits`
+
 ## Video Directories
 
 | Directory | Live family | Public path family | Status | Notes |

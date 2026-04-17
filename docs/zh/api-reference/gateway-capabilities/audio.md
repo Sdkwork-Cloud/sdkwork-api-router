@@ -8,7 +8,7 @@
 |---|---|---|---|---|
 | 默认共享 audio 家族 | `audio.openai` | `/v1/audio/*` | active | transcription、translation、speech、voices、voice consent 都继续使用共享音频契约 |
 
-## 主要路由
+## 共享默认 API 清单
 
 - `POST /v1/audio/transcriptions`
 - `POST /v1/audio/translations`

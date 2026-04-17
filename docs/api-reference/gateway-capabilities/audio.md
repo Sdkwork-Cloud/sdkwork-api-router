@@ -8,7 +8,7 @@ The audio capability index currently has one shared live family.
 |---|---|---|---|---|
 | default shared audio family | `audio.openai` | `/v1/audio/*` | active | transcription, translation, speech, voices, and voice consent stay on the shared audio contract |
 
-## Primary Routes
+## Shared Default API Inventory
 
 - `POST /v1/audio/transcriptions`
 - `POST /v1/audio/translations`

@@ -8,6 +8,16 @@
 |---|---|---|---|
 | 默认共享 code 家族 | `code.openai` | `/v1/*` | OpenAI 兼容数据面，同时覆盖 Codex 能力 |
 
+## 共享默认 API 清单
+
+- `GET /v1/models`
+- `GET /v1/models/{model_id}`
+- `POST /v1/chat/completions`
+- `POST /v1/completions`
+- `POST /v1/responses`
+- `POST /v1/embeddings`
+- `POST /v1/moderations`
+
 ## 目录
 
 | 目录 | 真实家族 | 公开路径家族 | 说明 |

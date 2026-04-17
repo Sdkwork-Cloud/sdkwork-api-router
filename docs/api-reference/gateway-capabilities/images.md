@@ -8,6 +8,12 @@ The image capability index starts with the shared default contract and then list
 |---|---|---|---|
 | default shared image family | `images.openai` | `/v1/images/*` | generations, edits, and variations stay on the official OpenAI image contract |
 
+## Shared Default API Inventory
+
+- `POST /v1/images/generations`
+- `POST /v1/images/edits`
+- `POST /v1/images/variations`
+
 ## Image Directories
 
 | Directory | Live family | Public path family | Status | Notes |

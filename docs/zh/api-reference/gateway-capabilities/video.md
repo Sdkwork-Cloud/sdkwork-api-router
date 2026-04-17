@@ -8,6 +8,15 @@
 |---|---|---|---|
 | 默认共享视频家族 | `video.openai` | `/v1/videos*` | OpenAI 视频路由继续复用官方协议，并覆盖 Sora 2 与 Sora 2 Pro |
 
+## 共享默认 API 清单
+
+- `GET /v1/videos`
+- `POST /v1/videos`
+- `GET /v1/videos/{video_id}`
+- `GET /v1/videos/{video_id}/content`
+- `POST /v1/videos/{video_id}/remix`
+- `POST /v1/videos/{video_id}/edits`
+
 ## Video 目录
 
 | 目录 | 真实家族 | 公开路径家族 | 状态 | 说明 |
