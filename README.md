@@ -89,12 +89,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\install.ps1 -Mode syst
 Validate the generated production config before service registration:
 
 ```bash
-node bin/router-ops.mjs validate-config --mode system
+./validate-config.sh --home <install-root>
 ```
 
 ```powershell
-node .\bin\router-ops.mjs validate-config --mode system
+powershell -NoProfile -ExecutionPolicy Bypass -File .\validate-config.ps1 -Home <install-root>
 ```
+
+After installation, the installed runtime also exposes:
+
+- `<install-root>/bin/validate-config.sh`
+- `<install-root>\bin\validate-config.ps1`
 
 Then continue with:
 

@@ -1227,8 +1227,10 @@ export function createInstallPlan({
   const runtimeScripts = [
     'start.sh',
     'stop.sh',
+    'validate-config.sh',
     'start.ps1',
     'stop.ps1',
+    'validate-config.ps1',
   ];
   for (const scriptName of runtimeScripts) {
     files.push({

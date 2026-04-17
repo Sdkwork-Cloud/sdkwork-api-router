@@ -109,11 +109,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\install.ps1 -Mode syst
 在注册系统服务前校验生成后的配置：
 
 ```bash
-node bin/router-ops.mjs validate-config --mode system
+./validate-config.sh --home <install-root>
 ```
 
 ```powershell
-node .\bin\router-ops.mjs validate-config --mode system
+powershell -NoProfile -ExecutionPolicy Bypass -File .\validate-config.ps1 -Home <install-root>
 ```
 
 继续阅读：

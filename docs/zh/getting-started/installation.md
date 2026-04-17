@@ -4,7 +4,7 @@
 
 ## 你将安装什么
 
-SDKWork API Server 不是单一二进制，而是一套工作区：
+SDKWork API Router 不是单一二进制，而是一套工作区：
 
 - 三个独立 Rust 服务
 - 一个位于 `console/`、同时支持浏览器和 Tauri 的 operator 控制台

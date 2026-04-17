@@ -1,6 +1,6 @@
 # Runtime Modes
 
-SDKWork API Server supports several practical runtime shapes. The important distinction is not only server versus desktop, but also whether you want raw source control or a managed script lifecycle.
+SDKWork API Router supports several practical runtime shapes. The important distinction is not only server versus desktop, but also whether you want raw source control or a managed script lifecycle.
 
 ## Raw Standalone Service Mode
 

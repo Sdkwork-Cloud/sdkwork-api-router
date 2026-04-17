@@ -92,14 +92,24 @@ Recommended first edits:
 
 ## Validate Before Service Registration
 
-From the build/release tooling environment, run:
+From the installed runtime home, run:
 
 ```bash
-node bin/router-ops.mjs validate-config --mode system
+./bin/validate-config.sh
 ```
 
 ```powershell
-node .\bin\router-ops.mjs validate-config --mode system
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\validate-config.ps1
+```
+
+If you are validating a generated install from the build/release repository instead of from the installed runtime home, you can still run:
+
+```bash
+node bin/router-ops.mjs validate-config --mode system --home <install-root>
+```
+
+```powershell
+node .\bin\router-ops.mjs validate-config --mode system --home <install-root>
 ```
 
 Validation checks:

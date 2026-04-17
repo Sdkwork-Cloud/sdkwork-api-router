@@ -15,11 +15,11 @@
 在注册服务或重启生产服务前，先执行：
 
 ```bash
-node bin/router-ops.mjs validate-config --mode system
+./bin/validate-config.sh
 ```
 
 ```powershell
-node .\bin\router-ops.mjs validate-config --mode system
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\validate-config.ps1
 ```
 
 ## 前台运行契约

@@ -4,7 +4,7 @@ This page covers prerequisites, repository bootstrap, and first-run verification
 
 ## What You Are Installing
 
-SDKWork API Server is not a single binary. The repository contains:
+SDKWork API Router is not a single binary. The repository contains:
 
 - three standalone Rust services
 - a browser/Tauri operator console under `console/`

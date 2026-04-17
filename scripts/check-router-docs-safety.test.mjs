@@ -91,9 +91,11 @@ test('installation docs clone the current sdkwork-api-router repository in both 
   assert.match(installation, /git clone https:\/\/github\.com\/Sdkwork-Cloud\/sdkwork-api-router\.git/);
   assert.match(installation, /cd sdkwork-api-router/);
   assert.doesNotMatch(installation, /sdkwork-api-server/);
+  assert.doesNotMatch(installation, /SDKWork API Server/);
   assert.match(installationZh, /git clone https:\/\/github\.com\/Sdkwork-Cloud\/sdkwork-api-router\.git/);
   assert.match(installationZh, /cd sdkwork-api-router/);
   assert.doesNotMatch(installationZh, /sdkwork-api-server/);
+  assert.doesNotMatch(installationZh, /SDKWork API Server/);
 });
 
 test('active router docs and localized README stay aligned to sdkwork-api-router naming and config-file-first precedence', () => {
@@ -102,6 +104,8 @@ test('active router docs and localized README stay aligned to sdkwork-api-router
   const configurationZh = readWorkspaceFile('docs/zh/operations/configuration.md');
   const sourceDevelopment = readWorkspaceFile('docs/getting-started/source-development.md');
   const sourceDevelopmentZh = readWorkspaceFile('docs/zh/getting-started/source-development.md');
+  const runtimeModes = readWorkspaceFile('docs/getting-started/runtime-modes.md');
+  const runtimeModesZh = readWorkspaceFile('docs/zh/getting-started/runtime-modes.md');
 
   assert.match(readmeZh, /^\uFEFF?# sdkwork-api-router$/m);
   assert.match(readmeZh, /内建默认值\s*->\s*环境变量兜底\s*->\s*配置文件\s*->\s*CLI/);
@@ -112,8 +116,32 @@ test('active router docs and localized README stay aligned to sdkwork-api-router
   assert.doesNotMatch(configurationZh, /sdkwork-api-server/);
   assert.doesNotMatch(sourceDevelopment, /sdkwork-api-server/);
   assert.doesNotMatch(sourceDevelopmentZh, /sdkwork-api-server/);
+  assert.doesNotMatch(runtimeModes, /SDKWork API Server/);
+  assert.doesNotMatch(runtimeModesZh, /SDKWork API Server/);
   assert.match(configuration, /built-in defaults\s*->\s*environment fallback\s*->\s*config file\s*->\s*CLI/i);
   assert.match(configuration, /system installs default to PostgreSQL/i);
+});
+
+test('production deployment docs expose installed validate-config entrypoints in both locales', () => {
+  const deploy = readWorkspaceFile('docs/getting-started/production-deployment.md');
+  const deployZh = readWorkspaceFile('docs/zh/getting-started/production-deployment.md');
+  const serviceManagement = readWorkspaceFile('docs/operations/service-management.md');
+  const serviceManagementZh = readWorkspaceFile('docs/zh/operations/service-management.md');
+  const readme = readWorkspaceFile('README.md');
+  const readmeZh = readWorkspaceFile('README.zh-CN.md');
+
+  assert.match(deploy, /bin\/validate-config\.sh/);
+  assert.match(deploy, /bin\\validate-config\.ps1/);
+  assert.match(deployZh, /bin\/validate-config\.sh/);
+  assert.match(deployZh, /bin\\validate-config\.ps1/);
+  assert.match(serviceManagement, /bin\/validate-config\.sh/);
+  assert.match(serviceManagement, /bin\\validate-config\.ps1/);
+  assert.match(serviceManagementZh, /bin\/validate-config\.sh/);
+  assert.match(serviceManagementZh, /bin\\validate-config\.ps1/);
+  assert.match(readme, /validate-config\.sh/);
+  assert.match(readme, /validate-config\.ps1/);
+  assert.match(readmeZh, /validate-config\.sh/);
+  assert.match(readmeZh, /validate-config\.ps1/);
 });
 
 test('gateway api reference publishes capability-first navigation in both locales', () => {

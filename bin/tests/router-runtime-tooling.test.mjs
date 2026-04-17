@@ -703,7 +703,9 @@ test('createInstallPlan copies product assets, runtime scripts, and service desc
   assert.equal(plan.directories.includes(path.join(installRoot, 'sites', 'portal')), true);
   assert.equal(plan.directories.includes(path.join(installRoot, 'var', 'log')), true);
   assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('bin', 'start.sh'))), true);
+  assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('bin', 'validate-config.sh'))), true);
   assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('bin', 'stop.ps1'))), true);
+  assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('bin', 'validate-config.ps1'))), true);
   assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('service', 'launchd', 'com.sdkwork.api-router.plist'))), true);
   assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('service', 'systemd', 'sdkwork-api-router.service'))), true);
   assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('service', 'windows-task', 'sdkwork-api-router.xml'))), true);
@@ -1296,6 +1298,16 @@ test('start.ps1 and stop.ps1 resolve router-product-service through a shared Pow
   assert.doesNotMatch(stopScript, /\$binaryName = 'router-product-service\.exe'/);
 });
 
+test('validate-config entrypoints delegate to the managed start entrypoints in dry-run mode', () => {
+  const validateConfigPs1 = readFileSync(path.join(repoRoot, 'bin', 'validate-config.ps1'), 'utf8');
+  const validateConfigSh = readFileSync(path.join(repoRoot, 'bin', 'validate-config.sh'), 'utf8');
+
+  assert.match(validateConfigPs1, /start\.ps1/);
+  assert.match(validateConfigPs1, /-DryRun @args/);
+  assert.match(validateConfigSh, /start\.sh/);
+  assert.match(validateConfigSh, /--dry-run "\$@"/);
+});
+
 test('PowerShell stop scripts pass ProcessId into the shared process-tree helper', () => {
   const stopDevScript = readFileSync(path.join(repoRoot, 'bin', 'stop-dev.ps1'), 'utf8');
   const stopScript = readFileSync(path.join(repoRoot, 'bin', 'stop.ps1'), 'utf8');
@@ -1494,6 +1506,7 @@ test('repository-root wrapper scripts delegate to the managed bin entrypoints', 
     'start.sh',
     'stop-dev.sh',
     'stop.sh',
+    'validate-config.sh',
   ];
   const powershellWrappers = [
     'build.ps1',
@@ -1502,6 +1515,7 @@ test('repository-root wrapper scripts delegate to the managed bin entrypoints', 
     'start.ps1',
     'stop-dev.ps1',
     'stop.ps1',
+    'validate-config.ps1',
   ];
 
   for (const scriptName of shellWrappers) {

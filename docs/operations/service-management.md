@@ -12,14 +12,24 @@ This page defines the supported service-manager contract for production installs
 
 ## Pre-Start Validation
 
-Before registering or restarting a production service, run:
+Before registering or restarting a production service, run the installed validation entrypoint:
 
 ```bash
-node bin/router-ops.mjs validate-config --mode system
+./bin/validate-config.sh
 ```
 
 ```powershell
-node .\bin\router-ops.mjs validate-config --mode system
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\validate-config.ps1
+```
+
+From a build/release repository checkout, the source-side fallback remains:
+
+```bash
+node bin/router-ops.mjs validate-config --mode system --home <install-root>
+```
+
+```powershell
+node .\bin\router-ops.mjs validate-config --mode system --home <install-root>
 ```
 
 ## Foreground Runtime Contract
