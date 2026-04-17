@@ -576,6 +576,47 @@ test('createInstallPlan copies product assets, runtime scripts, and service desc
   assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('sites', 'portal', 'dist'))), true);
 });
 
+test('createInstallPlan keeps portable mode on the repo-local install root', async () => {
+  const module = await loadModule();
+  const plan = module.createInstallPlan({
+    repoRoot,
+    mode: 'portable',
+    platform: 'linux',
+  });
+
+  assert.equal(plan.mode, 'portable');
+  assert.equal(
+    toPortablePath(plan.directories[0]),
+    `${toPortablePath(repoRoot)}/artifacts/install/sdkwork-api-router/current`,
+  );
+  assert.equal(
+    plan.files.some((file) => toPortablePath(file.targetPath) === `${toPortablePath(plan.directories[0])}/config/router.env`),
+    true,
+  );
+});
+
+test('createInstallPlan system mode emits linux standard program, config, and state directories', async () => {
+  const module = await loadModule();
+  const plan = module.createInstallPlan({
+    repoRoot,
+    mode: 'system',
+    platform: 'linux',
+  });
+  const directories = plan.directories.map((directoryPath) => toPortablePath(directoryPath));
+  const targetFiles = plan.files.map((file) => toPortablePath(file.targetPath));
+
+  assert.equal(plan.mode, 'system');
+  assert.equal(directories.includes('/opt/sdkwork-api-router/current'), true);
+  assert.equal(directories.includes('/etc/sdkwork-api-router'), true);
+  assert.equal(directories.includes('/etc/sdkwork-api-router/conf.d'), true);
+  assert.equal(directories.includes('/var/lib/sdkwork-api-router'), true);
+  assert.equal(directories.includes('/var/log/sdkwork-api-router'), true);
+  assert.equal(directories.includes('/run/sdkwork-api-router'), true);
+  assert.equal(targetFiles.includes('/etc/sdkwork-api-router/router.yaml'), true);
+  assert.equal(targetFiles.includes('/etc/sdkwork-api-router/router.env'), true);
+  assert.equal(targetFiles.includes('/etc/sdkwork-api-router/router.env.example'), true);
+});
+
 test('createInstallPlan reads release binaries from the managed short Windows target directory when needed', async () => {
   const module = await loadModule();
   const installRoot = path.join(repoRoot, 'artifacts', 'install', 'sdkwork-api-router', 'current');
@@ -638,6 +679,22 @@ test('renderRuntimeEnvTemplate defaults release runtime to writable local data a
   assert.match(envFile, /SDKWORK_PORTAL_BIND="127\.0\.0\.1:8082"/);
   assert.match(envFile, /SDKWORK_ADMIN_SITE_DIR="\/opt\/sdkwork-api-router\/current\/sites\/admin\/dist"/);
   assert.match(envFile, /SDKWORK_PORTAL_SITE_DIR="\/opt\/sdkwork-api-router\/current\/sites\/portal\/dist"/);
+});
+
+test('renderRuntimeEnvTemplate system mode prefers config-file discovery and PostgreSQL placeholders', async () => {
+  const module = await loadModule();
+  const envFile = module.renderRuntimeEnvTemplate({
+    installRoot: '/opt/sdkwork-api-router/current',
+    mode: 'system',
+    platform: 'linux',
+  });
+
+  assert.match(envFile, /SDKWORK_CONFIG_DIR="\/etc\/sdkwork-api-router"/);
+  assert.match(envFile, /SDKWORK_CONFIG_FILE="\/etc\/sdkwork-api-router\/router\.yaml"/);
+  assert.match(envFile, /SDKWORK_DATABASE_URL="postgresql:\/\/sdkwork:change-me@127\.0\.0\.1:5432\/sdkwork_api_router"/);
+  assert.match(envFile, /SDKWORK_ADMIN_SITE_DIR="\/opt\/sdkwork-api-router\/current\/sites\/admin\/dist"/);
+  assert.match(envFile, /SDKWORK_PORTAL_SITE_DIR="\/opt\/sdkwork-api-router\/current\/sites\/portal\/dist"/);
+  assert.doesNotMatch(envFile, /sqlite:\/\/\/opt\/sdkwork-api-router\/current\/var\/data\/sdkwork-api-router\.db/);
 });
 
 test('production start scripts default to product server-mode binds instead of managed dev preview binds', () => {
@@ -967,6 +1024,25 @@ test('router-ops install rejects --home without a following value', () => {
   });
 });
 
+test('router-ops install parses system mode', () => {
+  return loadRouterOpsModule().then(({ parseArgs }) => {
+    const options = parseArgs(['install', '--mode', 'system']);
+
+    assert.equal(options.command, 'install');
+    assert.equal(options.mode, 'system');
+  });
+});
+
+test('router-ops install parses portable mode with a custom home', () => {
+  return loadRouterOpsModule().then(({ parseArgs }) => {
+    const options = parseArgs(['install', '--mode', 'portable', '--home', 'D:/custom/router']);
+
+    assert.equal(options.command, 'install');
+    assert.equal(options.mode, 'portable');
+    assert.equal(toPortablePath(options.installRoot), 'D:/custom/router');
+  });
+});
+
 test('router-ops install rejects --home when the next token is another flag', () => {
   return loadRouterOpsModule().then(({ parseArgs }) => {
     assert.throws(
@@ -990,6 +1066,15 @@ test('router-ops rejects install-only flags during build', () => {
     assert.throws(
       () => parseArgs(['build', '--home', 'artifacts/install/custom']),
       /--home is only supported for the install command/,
+    );
+  });
+});
+
+test('router-ops rejects an install mode without a following value', () => {
+  return loadRouterOpsModule().then(({ parseArgs }) => {
+    assert.throws(
+      () => parseArgs(['install', '--mode']),
+      /--mode requires a value/,
     );
   });
 });

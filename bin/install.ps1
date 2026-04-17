@@ -15,6 +15,14 @@ for ($index = 0; $index -lt $args.Count; $index += 1) {
             $translatedArgs += '--dry-run'
             continue
         }
+        '^(?i)-Mode$' {
+            if (($index + 1) -ge $args.Count) {
+                throw '--mode requires a value'
+            }
+            $index += 1
+            $translatedArgs += '--mode', ([string]$args[$index])
+            continue
+        }
         '^(?i)-Home$' {
             if (($index + 1) -ge $args.Count) {
                 throw '--home requires a value'

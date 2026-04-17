@@ -56,8 +56,165 @@ export function defaultReleaseOutputDir(repoRoot) {
   return path.join(repoRoot, 'artifacts', 'release');
 }
 
-export function defaultInstallRoot(repoRoot) {
-  return path.join(repoRoot, 'artifacts', 'install', 'sdkwork-api-router', 'current');
+function normalizeInstallMode(mode = 'portable') {
+  const normalized = String(mode ?? 'portable').trim().toLowerCase() || 'portable';
+  if (!['portable', 'system'].includes(normalized)) {
+    throw new Error(`unsupported install mode: ${mode}`);
+  }
+
+  return normalized;
+}
+
+function runtimePathApi(platform = process.platform) {
+  return normalizeRuntimePlatform(platform) === 'win32' ? path.win32 : path.posix;
+}
+
+function sqliteUrlForFilePath(filePath) {
+  const normalized = toPortablePath(filePath);
+  return normalized.startsWith('/') ? `sqlite://${normalized}` : `sqlite:///${normalized}`;
+}
+
+function resolveSystemLayoutRoots({
+  platform = process.platform,
+  env = process.env,
+} = {}) {
+  const runtimePlatform = normalizeRuntimePlatform(platform);
+  const pathApi = runtimePathApi(runtimePlatform);
+
+  if (runtimePlatform === 'win32') {
+    const programFilesRoot = env.ProgramFiles ?? 'C:\\Program Files';
+    const programDataRoot = env.ProgramData ?? 'C:\\ProgramData';
+
+    return {
+      installRoot: pathApi.join(programFilesRoot, 'sdkwork-api-router', 'current'),
+      configRoot: pathApi.join(programDataRoot, 'sdkwork-api-router'),
+      dataRoot: pathApi.join(programDataRoot, 'sdkwork-api-router', 'data'),
+      logRoot: pathApi.join(programDataRoot, 'sdkwork-api-router', 'log'),
+      runRoot: pathApi.join(programDataRoot, 'sdkwork-api-router', 'run'),
+    };
+  }
+
+  if (runtimePlatform === 'darwin') {
+    return {
+      installRoot: pathApi.join('/usr/local/lib', 'sdkwork-api-router', 'current'),
+      configRoot: pathApi.join('/Library/Application Support', 'sdkwork-api-router'),
+      dataRoot: pathApi.join('/Library/Application Support', 'sdkwork-api-router', 'data'),
+      logRoot: pathApi.join('/Library/Logs', 'sdkwork-api-router'),
+      runRoot: pathApi.join('/Library/Application Support', 'sdkwork-api-router', 'run'),
+    };
+  }
+
+  return {
+    installRoot: pathApi.join('/opt', 'sdkwork-api-router', 'current'),
+    configRoot: pathApi.join('/etc', 'sdkwork-api-router'),
+    dataRoot: pathApi.join('/var', 'lib', 'sdkwork-api-router'),
+    logRoot: pathApi.join('/var', 'log', 'sdkwork-api-router'),
+    runRoot: pathApi.join('/run', 'sdkwork-api-router'),
+  };
+}
+
+function resolveRuntimeLayout({
+  installRoot,
+  mode = 'portable',
+  platform = process.platform,
+  env = process.env,
+} = {}) {
+  const normalizedMode = normalizeInstallMode(mode);
+  const runtimePlatform = normalizeRuntimePlatform(platform);
+
+  if (normalizedMode === 'system') {
+    const roots = resolveSystemLayoutRoots({
+      platform: runtimePlatform,
+      env,
+    });
+    const pathApi = runtimePathApi(runtimePlatform);
+    const programRoot = installRoot ?? roots.installRoot;
+
+    return {
+      mode: normalizedMode,
+      runtimePlatform,
+      pathApi,
+      installRoot: programRoot,
+      binDir: pathApi.join(programRoot, 'bin'),
+      binLibDir: pathApi.join(programRoot, 'bin', 'lib'),
+      staticDataDir: pathApi.join(programRoot, 'data'),
+      serviceSystemdDir: pathApi.join(programRoot, 'service', 'systemd'),
+      serviceLaunchdDir: pathApi.join(programRoot, 'service', 'launchd'),
+      serviceWindowsTaskDir: pathApi.join(programRoot, 'service', 'windows-task'),
+      sitesAdminDir: pathApi.join(programRoot, 'sites', 'admin'),
+      sitesPortalDir: pathApi.join(programRoot, 'sites', 'portal'),
+      adminSiteDistDir: pathApi.join(programRoot, 'sites', 'admin', 'dist'),
+      portalSiteDistDir: pathApi.join(programRoot, 'sites', 'portal', 'dist'),
+      configRoot: roots.configRoot,
+      configFile: pathApi.join(roots.configRoot, 'router.yaml'),
+      configFragmentDir: pathApi.join(roots.configRoot, 'conf.d'),
+      envFile: pathApi.join(roots.configRoot, 'router.env'),
+      envExampleFile: pathApi.join(roots.configRoot, 'router.env.example'),
+      dataRoot: roots.dataRoot,
+      logRoot: roots.logRoot,
+      runRoot: roots.runRoot,
+      routerBinary: pathApi.join(
+        programRoot,
+        'bin',
+        withExecutable('router-product-service', runtimePlatform),
+      ),
+    };
+  }
+
+  const programRoot = installRoot;
+  return {
+    mode: normalizedMode,
+    runtimePlatform,
+    pathApi: path,
+    installRoot: programRoot,
+    binDir: path.join(programRoot, 'bin'),
+    binLibDir: path.join(programRoot, 'bin', 'lib'),
+    staticDataDir: path.join(programRoot, 'data'),
+    serviceSystemdDir: path.join(programRoot, 'service', 'systemd'),
+    serviceLaunchdDir: path.join(programRoot, 'service', 'launchd'),
+    serviceWindowsTaskDir: path.join(programRoot, 'service', 'windows-task'),
+    sitesAdminDir: path.join(programRoot, 'sites', 'admin'),
+    sitesPortalDir: path.join(programRoot, 'sites', 'portal'),
+    adminSiteDistDir: path.join(programRoot, 'sites', 'admin', 'dist'),
+    portalSiteDistDir: path.join(programRoot, 'sites', 'portal', 'dist'),
+    configRoot: path.join(programRoot, 'config'),
+    configFile: path.join(programRoot, 'config', 'router.yaml'),
+    configFragmentDir: path.join(programRoot, 'config', 'conf.d'),
+    envFile: path.join(programRoot, 'config', 'router.env'),
+    envExampleFile: path.join(programRoot, 'config', 'router.env.example'),
+    dataRoot: path.join(programRoot, 'var', 'data'),
+    logRoot: path.join(programRoot, 'var', 'log'),
+    runRoot: path.join(programRoot, 'var', 'run'),
+    routerBinary: path.join(
+      programRoot,
+      'bin',
+      withExecutable('router-product-service', runtimePlatform),
+    ),
+  };
+}
+
+function defaultDatabaseUrlForLayout(layout) {
+  if (layout.mode === 'system') {
+    return 'postgresql://sdkwork:change-me@127.0.0.1:5432/sdkwork_api_router';
+  }
+
+  return sqliteUrlForFilePath(layout.pathApi.join(layout.dataRoot, 'sdkwork-api-router.db'));
+}
+
+export function defaultInstallRoot(repoRoot, {
+  mode = 'portable',
+  platform = process.platform,
+  env = process.env,
+} = {}) {
+  const normalizedMode = normalizeInstallMode(mode);
+  if (normalizedMode === 'portable') {
+    return path.join(repoRoot, 'artifacts', 'install', 'sdkwork-api-router', 'current');
+  }
+
+  return resolveSystemLayoutRoots({
+    platform,
+    env,
+  }).installRoot;
 }
 
 function quoteEnvValue(value) {
@@ -267,24 +424,29 @@ export function createReleaseBuildPlan({
 
 export function renderRuntimeEnvTemplate({
   installRoot,
+  mode = 'portable',
   platform = process.platform,
+  env = process.env,
   defaults = PROD_DEFAULTS,
 } = {}) {
-  const runtimePlatform = normalizeRuntimePlatform(platform);
-  const portableRoot = toPortablePath(installRoot);
-  const binaryPath = toPortablePath(
-    path.join(installRoot, 'bin', withExecutable('router-product-service', runtimePlatform)),
-  );
-  const configDir = `${portableRoot}/config`;
-  const dataDir = `${portableRoot}/var/data`;
-  const adminSiteDir = `${portableRoot}/sites/admin/dist`;
-  const portalSiteDir = `${portableRoot}/sites/portal/dist`;
+  const layout = resolveRuntimeLayout({
+    installRoot,
+    mode,
+    platform,
+    env,
+  });
+  const configDir = toPortablePath(layout.configRoot);
+  const configFile = toPortablePath(layout.configFile);
+  const binaryPath = toPortablePath(layout.routerBinary);
+  const adminSiteDir = toPortablePath(layout.adminSiteDistDir);
+  const portalSiteDir = toPortablePath(layout.portalSiteDistDir);
 
   return [
     '# SDKWork Router production runtime defaults',
-    '# Values in this file can be changed without editing the scripts.',
+    '# Canonical runtime config should live in router.yaml.',
     `SDKWORK_CONFIG_DIR=${quoteEnvValue(configDir)}`,
-    `SDKWORK_DATABASE_URL=${quoteEnvValue(`sqlite://${dataDir}/sdkwork-api-router.db`)}`,
+    `SDKWORK_CONFIG_FILE=${quoteEnvValue(configFile)}`,
+    `SDKWORK_DATABASE_URL=${quoteEnvValue(defaultDatabaseUrlForLayout(layout))}`,
     `SDKWORK_WEB_BIND=${quoteEnvValue(defaults.webBind)}`,
     `SDKWORK_GATEWAY_BIND=${quoteEnvValue(defaults.gatewayBind)}`,
     `SDKWORK_ADMIN_BIND=${quoteEnvValue(defaults.adminBind)}`,
@@ -296,13 +458,48 @@ export function renderRuntimeEnvTemplate({
   ].join('\n');
 }
 
+function renderRouterConfigTemplate({
+  installRoot,
+  mode = 'portable',
+  platform = process.platform,
+  env = process.env,
+  defaults = PROD_DEFAULTS,
+} = {}) {
+  const layout = resolveRuntimeLayout({
+    installRoot,
+    mode,
+    platform,
+    env,
+  });
+
+  return [
+    '# SDKWork Router canonical runtime config',
+    `gateway_bind: "${defaults.gatewayBind}"`,
+    `admin_bind: "${defaults.adminBind}"`,
+    `portal_bind: "${defaults.portalBind}"`,
+    `database_url: "${defaultDatabaseUrlForLayout(layout)}"`,
+    'bootstrap_profile: "prod"',
+    'allow_insecure_dev_defaults: false',
+    '',
+  ].join('\n');
+}
+
 export function renderSystemdUnit({
   installRoot,
+  mode = 'portable',
+  platform = process.platform,
+  env = process.env,
   serviceName = 'sdkwork-api-router',
 } = {}) {
-  const portableRoot = toPortablePath(installRoot);
-  const startScript = `${portableRoot}/bin/start.sh`;
-  const envFile = `${portableRoot}/config/router.env`;
+  const layout = resolveRuntimeLayout({
+    installRoot,
+    mode,
+    platform,
+    env,
+  });
+  const portableRoot = toPortablePath(layout.installRoot);
+  const startScript = toPortablePath(layout.pathApi.join(layout.binDir, 'start.sh'));
+  const envFile = toPortablePath(layout.envFile);
 
   return [
     '[Unit]',
@@ -335,12 +532,25 @@ function xmlEscape(value) {
 
 export function renderLaunchdPlist({
   installRoot,
+  mode = 'portable',
+  platform = process.platform,
+  env = process.env,
   serviceName = 'com.sdkwork.api-router',
 } = {}) {
-  const portableRoot = toPortablePath(installRoot);
-  const startScript = `${portableRoot}/bin/start.sh`;
-  const stdoutPath = `${portableRoot}/var/log/router-product-service.launchd.stdout.log`;
-  const stderrPath = `${portableRoot}/var/log/router-product-service.launchd.stderr.log`;
+  const layout = resolveRuntimeLayout({
+    installRoot,
+    mode,
+    platform,
+    env,
+  });
+  const portableRoot = toPortablePath(layout.installRoot);
+  const startScript = toPortablePath(layout.pathApi.join(layout.binDir, 'start.sh'));
+  const stdoutPath = toPortablePath(
+    layout.pathApi.join(layout.logRoot, 'router-product-service.launchd.stdout.log'),
+  );
+  const stderrPath = toPortablePath(
+    layout.pathApi.join(layout.logRoot, 'router-product-service.launchd.stderr.log'),
+  );
 
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
@@ -374,10 +584,19 @@ export function renderLaunchdPlist({
 
 export function renderWindowsTaskXml({
   installRoot,
+  mode = 'portable',
+  platform = process.platform,
+  env = process.env,
   taskName = 'sdkwork-api-router',
 } = {}) {
-  const portableRoot = toPortablePath(installRoot);
-  const startScript = `${portableRoot}/bin/start.ps1`;
+  const layout = resolveRuntimeLayout({
+    installRoot,
+    mode,
+    platform,
+    env,
+  });
+  const portableRoot = toPortablePath(layout.installRoot);
+  const startScript = toPortablePath(layout.pathApi.join(layout.binDir, 'start.ps1'));
   const taskAuthor = xmlEscape(taskName);
   const command = 'powershell.exe';
   const argumentsText = [
@@ -749,12 +968,25 @@ export function renderWindowsTaskUninstallScript({
 
 export function createInstallPlan({
   repoRoot,
-  installRoot = defaultInstallRoot(repoRoot),
+  installRoot,
+  mode = 'portable',
   platform = process.platform,
   arch = process.arch,
   env = process.env,
 } = {}) {
   const runtimePlatform = normalizeRuntimePlatform(platform);
+  const normalizedMode = normalizeInstallMode(mode);
+  const resolvedInstallRoot = installRoot ?? defaultInstallRoot(repoRoot, {
+    mode: normalizedMode,
+    platform: runtimePlatform,
+    env,
+  });
+  const layout = resolveRuntimeLayout({
+    installRoot: resolvedInstallRoot,
+    mode: normalizedMode,
+    platform: runtimePlatform,
+    env,
+  });
   const target = resolveDesktopReleaseTarget({
     platform: runtimePlatform,
     arch,
@@ -769,21 +1001,22 @@ export function createInstallPlan({
     target.targetTriple,
     'release',
   );
-  const directories = [
-    installRoot,
-    path.join(installRoot, 'bin'),
-    path.join(installRoot, 'bin', 'lib'),
-    path.join(installRoot, 'config'),
-    path.join(installRoot, 'data'),
-    path.join(installRoot, 'service', 'systemd'),
-    path.join(installRoot, 'service', 'launchd'),
-    path.join(installRoot, 'service', 'windows-task'),
-    path.join(installRoot, 'sites', 'admin'),
-    path.join(installRoot, 'sites', 'portal'),
-    path.join(installRoot, 'var', 'data'),
-    path.join(installRoot, 'var', 'log'),
-    path.join(installRoot, 'var', 'run'),
-  ];
+  const directories = Array.from(new Set([
+    layout.installRoot,
+    layout.binDir,
+    layout.binLibDir,
+    layout.configRoot,
+    layout.configFragmentDir,
+    layout.staticDataDir,
+    layout.serviceSystemdDir,
+    layout.serviceLaunchdDir,
+    layout.serviceWindowsTaskDir,
+    layout.sitesAdminDir,
+    layout.sitesPortalDir,
+    layout.dataRoot,
+    layout.logRoot,
+    layout.runRoot,
+  ]));
 
   const files = [];
 
@@ -791,7 +1024,10 @@ export function createInstallPlan({
     files.push({
       type: 'file',
       sourcePath: path.join(releaseRoot, withExecutable(binaryName, runtimePlatform)),
-      targetPath: path.join(installRoot, 'bin', withExecutable(binaryName, runtimePlatform)),
+      targetPath: layout.pathApi.join(
+        layout.binDir,
+        withExecutable(binaryName, runtimePlatform),
+      ),
     });
   }
 
@@ -805,7 +1041,7 @@ export function createInstallPlan({
     files.push({
       type: 'file',
       sourcePath: path.join(repoRoot, 'bin', scriptName),
-      targetPath: path.join(installRoot, 'bin', scriptName),
+      targetPath: layout.pathApi.join(layout.binDir, scriptName),
     });
   }
 
@@ -814,7 +1050,7 @@ export function createInstallPlan({
     files.push({
       type: 'file',
       sourcePath: path.join(repoRoot, 'bin', 'lib', libName),
-      targetPath: path.join(installRoot, 'bin', 'lib', libName),
+      targetPath: layout.pathApi.join(layout.binLibDir, libName),
     });
   }
 
@@ -822,105 +1058,150 @@ export function createInstallPlan({
     {
       type: 'directory',
       sourcePath: path.join(repoRoot, 'data'),
-      targetPath: path.join(installRoot, 'data'),
+      targetPath: layout.staticDataDir,
     },
     {
       type: 'directory',
       sourcePath: path.join(repoRoot, 'apps', 'sdkwork-router-admin', 'dist'),
-      targetPath: path.join(installRoot, 'sites', 'admin', 'dist'),
+      targetPath: layout.adminSiteDistDir,
     },
     {
       type: 'directory',
       sourcePath: path.join(repoRoot, 'apps', 'sdkwork-router-portal', 'dist'),
-      targetPath: path.join(installRoot, 'sites', 'portal', 'dist'),
+      targetPath: layout.portalSiteDistDir,
     },
     {
       type: 'text',
-      targetPath: path.join(installRoot, 'config', 'router.env'),
-      contents: renderRuntimeEnvTemplate({
-        installRoot,
+      targetPath: layout.configFile,
+      contents: renderRouterConfigTemplate({
+        installRoot: layout.installRoot,
+        mode: normalizedMode,
         platform: runtimePlatform,
+        env,
       }),
       skipIfExists: true,
     },
     {
       type: 'text',
-      targetPath: path.join(installRoot, 'config', 'router.env.example'),
+      targetPath: layout.envFile,
       contents: renderRuntimeEnvTemplate({
-        installRoot,
+        installRoot: layout.installRoot,
+        mode: normalizedMode,
         platform: runtimePlatform,
+        env,
+      }),
+      skipIfExists: true,
+    },
+    {
+      type: 'text',
+      targetPath: layout.envExampleFile,
+      contents: renderRuntimeEnvTemplate({
+        installRoot: layout.installRoot,
+        mode: normalizedMode,
+        platform: runtimePlatform,
+        env,
       }),
     },
     {
       type: 'text',
-      targetPath: path.join(installRoot, 'service', 'systemd', 'sdkwork-api-router.service'),
+      targetPath: layout.pathApi.join(
+        layout.serviceSystemdDir,
+        'sdkwork-api-router.service',
+      ),
       contents: renderSystemdUnit({
-        installRoot,
+        installRoot: layout.installRoot,
+        mode: normalizedMode,
+        platform: runtimePlatform,
+        env,
       }),
     },
     {
       type: 'text',
-      targetPath: path.join(installRoot, 'service', 'systemd', 'install-service.sh'),
+      targetPath: layout.pathApi.join(layout.serviceSystemdDir, 'install-service.sh'),
       contents: renderSystemdInstallScript(),
       mode: 0o755,
     },
     {
       type: 'text',
-      targetPath: path.join(installRoot, 'service', 'systemd', 'uninstall-service.sh'),
+      targetPath: layout.pathApi.join(layout.serviceSystemdDir, 'uninstall-service.sh'),
       contents: renderSystemdUninstallScript(),
       mode: 0o755,
     },
     {
       type: 'text',
-      targetPath: path.join(installRoot, 'service', 'launchd', 'com.sdkwork.api-router.plist'),
+      targetPath: layout.pathApi.join(
+        layout.serviceLaunchdDir,
+        'com.sdkwork.api-router.plist',
+      ),
       contents: renderLaunchdPlist({
-        installRoot,
+        installRoot: layout.installRoot,
+        mode: normalizedMode,
+        platform: runtimePlatform,
+        env,
       }),
     },
     {
       type: 'text',
-      targetPath: path.join(installRoot, 'service', 'launchd', 'install-service.sh'),
+      targetPath: layout.pathApi.join(layout.serviceLaunchdDir, 'install-service.sh'),
       contents: renderLaunchdInstallScript(),
       mode: 0o755,
     },
     {
       type: 'text',
-      targetPath: path.join(installRoot, 'service', 'launchd', 'uninstall-service.sh'),
+      targetPath: layout.pathApi.join(layout.serviceLaunchdDir, 'uninstall-service.sh'),
       contents: renderLaunchdUninstallScript(),
       mode: 0o755,
     },
     {
       type: 'text',
-      targetPath: path.join(installRoot, 'service', 'windows-task', 'sdkwork-api-router.xml'),
+      targetPath: layout.pathApi.join(
+        layout.serviceWindowsTaskDir,
+        'sdkwork-api-router.xml',
+      ),
       contents: renderWindowsTaskXml({
-        installRoot,
+        installRoot: layout.installRoot,
+        mode: normalizedMode,
+        platform: runtimePlatform,
+        env,
       }),
     },
     {
       type: 'text',
-      targetPath: path.join(installRoot, 'service', 'windows-task', 'install-service.ps1'),
+      targetPath: layout.pathApi.join(
+        layout.serviceWindowsTaskDir,
+        'install-service.ps1',
+      ),
       contents: renderWindowsTaskInstallScript(),
     },
     {
       type: 'text',
-      targetPath: path.join(installRoot, 'service', 'windows-task', 'uninstall-service.ps1'),
+      targetPath: layout.pathApi.join(
+        layout.serviceWindowsTaskDir,
+        'uninstall-service.ps1',
+      ),
       contents: renderWindowsTaskUninstallScript(),
     },
     {
       type: 'text',
-      targetPath: path.join(installRoot, 'release-manifest.json'),
+      targetPath: layout.pathApi.join(layout.installRoot, 'release-manifest.json'),
       contents: `${JSON.stringify({
         runtime: 'sdkwork-api-router',
+        installMode: normalizedMode,
         target,
         installedBinaries: RELEASE_BINARY_NAMES,
         bootstrapDataRoot: 'data',
-        mutableDataRoot: path.join('var', 'data'),
+        configRoot: layout.configRoot,
+        configFile: layout.configFile,
+        mutableDataRoot: layout.dataRoot,
+        logRoot: layout.logRoot,
+        runRoot: layout.runRoot,
         installedAt: new Date().toISOString(),
       }, null, 2)}\n`,
     },
   );
 
   return {
+    mode: normalizedMode,
     target,
     directories,
     files,

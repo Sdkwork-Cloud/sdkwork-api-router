@@ -16,7 +16,8 @@ import {
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const BUILD_ONLY_FLAGS = new Set(['--install', '--skip-docs', '--skip-console']);
-const INSTALL_ONLY_FLAGS = new Set(['--force', '--home']);
+const INSTALL_ONLY_FLAGS = new Set(['--force', '--home', '--mode']);
+const INSTALL_MODES = new Set(['portable', 'system']);
 
 class UserInputError extends Error {}
 
@@ -25,7 +26,7 @@ function printUsage() {
     [
       'Usage:',
       '  node bin/router-ops.mjs build [--install] [--skip-docs] [--skip-console] [--dry-run]',
-      '  node bin/router-ops.mjs install [--home <dir>] [--force] [--dry-run]',
+      '  node bin/router-ops.mjs install [--mode <portable|system>] [--home <dir>] [--force] [--dry-run]',
     ].join('\n'),
   );
 }
@@ -52,12 +53,13 @@ export function parseArgs(argv) {
   const [command, ...rest] = argv;
   const options = {
     command,
+    mode: 'portable',
     installDependencies: false,
     includeDocs: true,
     includeConsole: true,
     force: false,
     dryRun: false,
-    installRoot: defaultInstallRoot(repoRoot),
+    installRoot: null,
   };
 
   for (let index = 0; index < rest.length; index += 1) {
@@ -86,6 +88,15 @@ export function parseArgs(argv) {
       case '--dry-run':
         options.dryRun = true;
         break;
+      case '--mode': {
+        const mode = String(readOptionValue(token, next)).trim().toLowerCase();
+        if (!INSTALL_MODES.has(mode)) {
+          throw new UserInputError(`unsupported install mode: ${mode}`);
+        }
+        options.mode = mode;
+        index += 1;
+        break;
+      }
       case '--home':
         options.installRoot = path.resolve(readOptionValue(token, next));
         index += 1;
@@ -93,6 +104,14 @@ export function parseArgs(argv) {
       default:
         throw new UserInputError(`unknown option: ${token}`);
     }
+  }
+
+  if (options.command === 'install' && !options.installRoot) {
+    options.installRoot = defaultInstallRoot(repoRoot, {
+      mode: options.mode,
+      platform: process.platform,
+      env: process.env,
+    });
   }
 
   return options;
@@ -146,6 +165,7 @@ async function main() {
   if (options.command === 'install') {
     const plan = createInstallPlan({
       repoRoot,
+      mode: options.mode,
       installRoot: options.installRoot,
     });
 
