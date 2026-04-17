@@ -90,6 +90,40 @@ The table below uses the exact OpenAPI tag names exposed by `/openapi.json`. Sha
 | `marketing` | `POST /marketing/coupons/validate`, `POST /marketing/coupons/reserve`, `POST /marketing/coupons/confirm`, `POST /marketing/coupons/rollback` | coupon-first validation, reservation, redemption, and rollback surface |
 | `commercial` | `GET /commercial/account`, `GET /commercial/account/benefit-lots` | commercial account summary plus benefit-lot traversal and coupon/account-arrival evidence |
 
+## OpenAPI Tag To Capability Docs
+
+Use this section when you want to jump from a live OpenAPI tag to the capability-first docs tree.
+
+| OpenAPI tag | Capability docs | State | Notes |
+|---|---|---|---|
+| `audio.openai` | [audio](/api-reference/gateway-capabilities/audio) | live | shared audio family on `/v1/audio/*` |
+| `code.openai` | [code/openai](/api-reference/gateway-capabilities/code/openai) | live | shared OpenAI and Codex family |
+| `code.claude` | [code/claude](/api-reference/gateway-capabilities/code/claude) | live | official Claude mirror family |
+| `code.gemini` | [code/gemini](/api-reference/gateway-capabilities/code/gemini) | live | official Gemini mirror family |
+| `images.openai` | [images/openai](/api-reference/gateway-capabilities/images/openai) | live | shared default image family |
+| `images.kling` | [images/kling](/api-reference/gateway-capabilities/images/kling) | live | shared DashScope image transport |
+| `images.aliyun` | [images/aliyun](/api-reference/gateway-capabilities/images/aliyun) | live | shared DashScope image transport |
+| `images.volcengine` | [images/volcengine](/api-reference/gateway-capabilities/images/volcengine) | live | official Volcengine Ark image transport |
+| `video.openai` | [video/openai](/api-reference/gateway-capabilities/video/openai) | live | shared default video family |
+| `video.kling` | [video/kling](/api-reference/gateway-capabilities/video/kling) | live | shared DashScope video transport |
+| `video.aliyun` | [video/aliyun](/api-reference/gateway-capabilities/video/aliyun) | live | shared DashScope video transport |
+| `video.google-veo` | [video/google-veo](/api-reference/gateway-capabilities/video/google-veo) | live | official Vertex AI Veo transport |
+| `video.minimax` | [video/minimax](/api-reference/gateway-capabilities/video/minimax) | live | official MiniMax video transport |
+| `video.vidu` | [video/vidu](/api-reference/gateway-capabilities/video/vidu) | live | official Vidu video transport |
+| `video.volcengine` | [video/volcengine](/api-reference/gateway-capabilities/video/volcengine) | live | official Volcengine video transport |
+| `music.openai` | [music/openai](/api-reference/gateway-capabilities/music/openai) | live | shared default music family |
+| `music.google` | [music/google](/api-reference/gateway-capabilities/music/google) | live | official Google music transport |
+| `music.minimax` | [music/minimax](/api-reference/gateway-capabilities/music/minimax) | live | official MiniMax music transport |
+| `music.suno` | [music/suno](/api-reference/gateway-capabilities/music/suno) | live | official Suno music transport |
+
+The capability docs tree also includes docs-only entries that are useful for discovery but do not publish their own live OpenAPI tags:
+
+| Docs-only capability directory | Maps to | State | Notes |
+|---|---|---|---|
+| [images/nanobanana](/api-reference/gateway-capabilities/images/nanobanana) | `code.gemini` | alias | image-first alias for Gemini-native image generation |
+| [images/midjourney](/api-reference/gateway-capabilities/images/midjourney) | none | unpublished | documented gap under the base-URL-only mirror rule |
+| [video/sora2](/api-reference/gateway-capabilities/video/sora2) | `video.openai` | alias | Sora 2 and Sora 2 Pro stay on the shared OpenAI video transport |
+
 The gateway now publishes four active image mirror tags across three public path families: the shared `images.openai` contract on `/v1/images*`, the provider-specific `images.kling` and `images.aliyun` tags on the shared official DashScope `/api/v1/services/aigc/image-generation/generation` and `/api/v1/tasks/{task_id}` paths, and the provider-specific `images.volcengine` tag on Volcengine Ark's official `/api/v3/images/generations` path. Nano Banana stays on Google's official Gemini `/v1beta/models/{model}:generateContent` surface and is therefore documented under `code.gemini` instead of a separate `images.nanobanana` family. `images.midjourney` remains unpublished because Midjourney does not provide an official API surface that can be mirrored by switching only `base_url`.
 
 This slice keeps the active audio mirror contract on the shared `/v1/audio/*` routes and publishes that family as `audio.openai`. The public contract stays on the current shared audio surface and does not introduce wrapper paths such as `/audio/openai/*`.
