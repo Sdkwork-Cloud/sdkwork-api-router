@@ -55,7 +55,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\build.ps1
 - 仅在 Windows 入口脚本和 CI 中设置 Windows 专属的 `CMAKE_GENERATOR`、`HOST_CMAKE_GENERATOR`
 - 不要把 Visual Studio 的 CMake 生成器默认值写进全局 Cargo 配置或 Unix shell profile
 - 如果在 Docker 中执行 Unix installed-runtime smoke，`cargo build` 与 `run-unix-installed-runtime-smoke.mjs` 两步必须使用同一个 `CARGO_TARGET_DIR`
-- Linux 容器镜像需要提供 `ss`、`netstat` 或 `lsof`，这样运行时端口预检才能正确确认端口占用情况
+- 即使 `ss`、`netstat` 和 `lsof` 都不可用，运行时仍能正确启动；如果你希望在启动前获得更丰富的端口冲突诊断，建议额外安装其中任意一个工具
 
 ## 生成原生生产安装
 

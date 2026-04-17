@@ -55,7 +55,7 @@ Cross-platform release hygiene:
 - keep Windows-only `CMAKE_GENERATOR` and `HOST_CMAKE_GENERATOR` settings scoped to Windows entrypoints and CI jobs
 - do not persist Visual Studio CMake generator defaults in global Cargo config or Unix shell profiles
 - when you run Unix installed-runtime smoke inside Docker, keep the same `CARGO_TARGET_DIR` for the `cargo build` and `run-unix-installed-runtime-smoke.mjs` steps
-- ensure the Linux container image includes `ss`, `netstat`, or `lsof` so the runtime port preflight can verify bind availability
+- the runtime starts correctly even when `ss`, `netstat`, and `lsof` are unavailable; install one of them when you want richer bind-conflict diagnostics during preflight
 
 ## Generate A Native Production Install
 

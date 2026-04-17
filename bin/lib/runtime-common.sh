@@ -6,6 +6,10 @@ router_log() {
   printf '[sdkwork-router] %s\n' "$*"
 }
 
+router_log_stderr() {
+  printf '[sdkwork-router] %s\n' "$*" >&2
+}
+
 router_die() {
   printf '[sdkwork-router] ERROR: %s\n' "$*" >&2
   exit 1
@@ -489,12 +493,12 @@ router_bind_port() {
 
 router_collect_bind_conflicts_windows() {
   if ! command -v powershell.exe >/dev/null 2>&1; then
-    router_log 'WARNING: unable to preflight port conflicts because powershell.exe is unavailable.'
+    router_log_stderr 'WARNING: unable to preflight port conflicts because powershell.exe is unavailable.'
     return 0
   fi
 
   if [ -z "${SCRIPT_DIR:-}" ] || [ ! -f "$SCRIPT_DIR/lib/runtime-common.ps1" ]; then
-    router_log 'WARNING: unable to preflight port conflicts because runtime-common.ps1 is unavailable.'
+    router_log_stderr 'WARNING: unable to preflight port conflicts because runtime-common.ps1 is unavailable.'
     return 0
   fi
 
@@ -546,7 +550,7 @@ router_collect_bind_conflicts() {
     return 0
   fi
 
-  router_log 'WARNING: unable to preflight port conflicts because lsof, ss, and netstat are unavailable.'
+  router_log_stderr 'WARNING: unable to preflight port conflicts because lsof, ss, and netstat are unavailable.'
 }
 
 router_assert_bind_addresses_available() {

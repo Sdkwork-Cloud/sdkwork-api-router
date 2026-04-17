@@ -2427,3 +2427,38 @@ test('start scripts preflight bind conflicts before background launch and shell 
   assert.match(startDevPs1, /\$preflightBindAddresses \+= @\('127\.0\.0\.1:5173', '127\.0\.0\.1:5174'\)/);
   assert.match(startDevSh, /router_assert_bind_addresses_available[\s\S]*127\.0\.0\.1:5173[\s\S]*127\.0\.0\.1:5174/);
 });
+
+test('unix bind preflight warnings do not get misclassified as real port conflicts when probe tools are unavailable', { skip: !canSpawnUnixShellFromNode() }, () => {
+  const fakeBinDir = createTempDir('bind-preflight-no-tools-');
+
+  try {
+    writeFileSync(
+      path.join(fakeBinDir, 'uname'),
+      [
+        '#!/usr/bin/env sh',
+        "printf '%s\\n' 'Linux'",
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    chmodSync(path.join(fakeBinDir, 'uname'), 0o755);
+
+    const result = runUnixShellCommand(
+      [
+        `PATH=${quoteForBash(process.platform === 'win32' ? toGitBashPath(fakeBinDir) : fakeBinDir)}`,
+        `. ${quoteForBash(process.platform === 'win32' ? toGitBashPath(path.join(repoRoot, 'bin', 'lib', 'runtime-common.sh')) : path.join(repoRoot, 'bin', 'lib', 'runtime-common.sh'))}`,
+        `router_assert_bind_addresses_available 'production runtime' '127.0.0.1:3001'`,
+      ].join(' && '),
+      {
+        cwd: repoRoot,
+      },
+    );
+
+    const combinedOutput = `${result.stdout}${result.stderr}`;
+    assert.equal(result.status, 0, combinedOutput);
+    assert.match(combinedOutput, /unable to preflight port conflicts because lsof, ss, and netstat are unavailable/i);
+    assert.doesNotMatch(combinedOutput, /cannot start because required listen ports are already in use/i);
+  } finally {
+    removeTempRuntimeHome(fakeBinDir);
+  }
+});
