@@ -121,6 +121,7 @@ The gateway now publishes four active music mirror families: the shared `music.o
 ## Related Docs
 
 - [Gateway Capability Index](/api-reference/gateway-capabilities)
+- [Capability Matrix](/api-reference/gateway-capabilities/matrix)
 - public contract and execution truth:
   - [API Compatibility](/reference/api-compatibility)
   - [Full Compatibility Matrix](/api/compatibility-matrix)

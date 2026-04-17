@@ -14,6 +14,7 @@ Use this index when you want to browse the gateway by workload family instead of
 
 | Family | Shared default family first | Provider or alias directories |
 |---|---|---|
+| [Audio](/api-reference/gateway-capabilities/audio) | `audio.openai` on `/v1/audio/*` | `openai` |
 | [Code](/api-reference/gateway-capabilities/code) | `code.openai` on `/v1/*` | `openai`, `claude`, `gemini` |
 | [Images](/api-reference/gateway-capabilities/images) | `images.openai` on `/v1/images/*` | `openai`, `kling`, `aliyun`, `volcengine`, `nanobanana`, `midjourney` |
 | [Video](/api-reference/gateway-capabilities/video) | `video.openai` on `/v1/videos*` | `openai`, `sora2`, `kling`, `aliyun`, `google-veo`, `minimax`, `vidu`, `volcengine` |
@@ -33,6 +34,8 @@ Examples:
 
 ## Related Docs
 
+- [Capability Matrix](/api-reference/gateway-capabilities/matrix)
+- [Audio Families](/api-reference/gateway-capabilities/audio)
 - [Gateway API](/api-reference/gateway-api)
 - [API Compatibility](/reference/api-compatibility)
 - [Full Compatibility Matrix](/api/compatibility-matrix)

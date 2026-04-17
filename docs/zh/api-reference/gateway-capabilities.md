@@ -14,6 +14,7 @@
 
 | 家族 | 先看共享默认家族 | 再看 provider 或别名目录 |
 |---|---|---|
+| [Audio](/zh/api-reference/gateway-capabilities/audio) | `audio.openai`，路径 `/v1/audio/*` | `openai` |
 | [Code](/zh/api-reference/gateway-capabilities/code) | `code.openai`，路径 `/v1/*` | `openai`、`claude`、`gemini` |
 | [Images](/zh/api-reference/gateway-capabilities/images) | `images.openai`，路径 `/v1/images/*` | `openai`、`kling`、`aliyun`、`volcengine`、`nanobanana`、`midjourney` |
 | [Video](/zh/api-reference/gateway-capabilities/video) | `video.openai`，路径 `/v1/videos*` | `openai`、`sora2`、`kling`、`aliyun`、`google-veo`、`minimax`、`vidu`、`volcengine` |
@@ -33,6 +34,8 @@
 
 ## 相关文档
 
+- [能力矩阵](/zh/api-reference/gateway-capabilities/matrix)
+- [Audio 家族](/zh/api-reference/gateway-capabilities/audio)
 - [网关 API](/zh/api-reference/gateway-api)
 - [API 兼容矩阵](/zh/reference/api-compatibility)
 - [完整兼容矩阵](/api/compatibility-matrix)

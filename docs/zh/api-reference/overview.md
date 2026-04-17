@@ -103,6 +103,7 @@ curl http://127.0.0.1:8080/v1/models \
 ## 各服务参考页
 
 - [网关能力索引](/zh/api-reference/gateway-capabilities)
+- [能力矩阵](/zh/api-reference/gateway-capabilities/matrix)
 - [网关 API](/zh/api-reference/gateway-api)
 - [管理端 API](/zh/api-reference/admin-api)
 - [门户 API](/zh/api-reference/portal-api)

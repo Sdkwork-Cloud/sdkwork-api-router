@@ -87,16 +87,20 @@ test('README and getting-started docs align to config-file-first production guid
 test('gateway api reference publishes capability-first navigation in both locales', () => {
   const requiredFiles = [
     'docs/api-reference/gateway-capabilities.md',
+    'docs/api-reference/gateway-capabilities/audio.md',
     'docs/api-reference/gateway-capabilities/code.md',
     'docs/api-reference/gateway-capabilities/images.md',
+    'docs/api-reference/gateway-capabilities/matrix.md',
     'docs/api-reference/gateway-capabilities/video.md',
     'docs/api-reference/gateway-capabilities/music.md',
     'docs/api-reference/gateway-capabilities/images/nanobanana.md',
     'docs/api-reference/gateway-capabilities/images/midjourney.md',
     'docs/api-reference/gateway-capabilities/video/sora2.md',
     'docs/zh/api-reference/gateway-capabilities.md',
+    'docs/zh/api-reference/gateway-capabilities/audio.md',
     'docs/zh/api-reference/gateway-capabilities/code.md',
     'docs/zh/api-reference/gateway-capabilities/images.md',
+    'docs/zh/api-reference/gateway-capabilities/matrix.md',
     'docs/zh/api-reference/gateway-capabilities/video.md',
     'docs/zh/api-reference/gateway-capabilities/music.md',
     'docs/zh/api-reference/gateway-capabilities/images/nanobanana.md',
@@ -113,18 +117,35 @@ test('gateway api reference publishes capability-first navigation in both locale
   const overviewZh = readWorkspaceFile('docs/zh/api-reference/overview.md');
   const gatewayApi = readWorkspaceFile('docs/api-reference/gateway-api.md');
   const gatewayApiZh = readWorkspaceFile('docs/zh/api-reference/gateway-api.md');
+  const capabilityIndex = readWorkspaceFile('docs/api-reference/gateway-capabilities.md');
+  const capabilityIndexZh = readWorkspaceFile('docs/zh/api-reference/gateway-capabilities.md');
+  const audioCapability = readWorkspaceFile('docs/api-reference/gateway-capabilities/audio.md');
   const imagesCapability = readWorkspaceFile('docs/api-reference/gateway-capabilities/images.md');
+  const matrixCapability = readWorkspaceFile('docs/api-reference/gateway-capabilities/matrix.md');
   const videoCapability = readWorkspaceFile('docs/api-reference/gateway-capabilities/video.md');
 
   assert.match(vitepressConfig, /\/api-reference\/gateway-capabilities/);
+  assert.match(vitepressConfig, /\/api-reference\/gateway-capabilities\/audio/);
+  assert.match(vitepressConfig, /\/api-reference\/gateway-capabilities\/matrix/);
   assert.match(vitepressConfig, /\/zh\/api-reference\/gateway-capabilities/);
+  assert.match(vitepressConfig, /\/zh\/api-reference\/gateway-capabilities\/audio/);
+  assert.match(vitepressConfig, /\/zh\/api-reference\/gateway-capabilities\/matrix/);
   assert.match(overview, /Gateway Capability Index/);
   assert.match(overviewZh, /Gateway Capability Index|能力目录|能力索引/);
   assert.match(gatewayApi, /Gateway Capability Index/);
   assert.match(gatewayApiZh, /Gateway Capability Index|能力目录|能力索引/);
+  assert.match(capabilityIndex, /\[Audio\]/);
+  assert.match(capabilityIndexZh, /Audio/);
+  assert.match(audioCapability, /audio\.openai/);
+  assert.match(audioCapability, /`\/v1\/audio\/\*`/);
   assert.match(imagesCapability, /`\/v1\/images\/\*`/);
   assert.match(imagesCapability, /nanobanana/i);
   assert.match(imagesCapability, /midjourney/i);
+  assert.match(matrixCapability, /audio\.openai/);
+  assert.match(matrixCapability, /images\.midjourney/);
+  assert.match(matrixCapability, /video\.sora2|sora2/i);
+  assert.match(matrixCapability, /unpublished/i);
+  assert.match(matrixCapability, /alias/i);
   assert.match(videoCapability, /`\/v1\/videos\*`/);
   assert.match(videoCapability, /sora2/i);
 });
