@@ -104,7 +104,7 @@ async fn creates_canonical_ai_tables_with_only_ai_prefixed_physical_tables() {
 #[tokio::test]
 async fn creates_parent_directories_for_file_backed_sqlite_urls() {
     let root = temp_sqlite_root("auto-parent-dirs");
-    let database_path = root.join("nested").join("sdkwork-api-server.db");
+    let database_path = root.join("nested").join("sdkwork-api-router.db");
     let database_url = sqlite_url_for(&database_path);
 
     assert!(!database_path.parent().unwrap().exists());
@@ -121,7 +121,7 @@ async fn creates_parent_directories_for_file_backed_sqlite_urls() {
 #[tokio::test]
 async fn migrates_legacy_tables_into_canonical_ai_tables_and_replaces_old_names_with_views() {
     let root = temp_sqlite_root("legacy-to-canonical");
-    let database_path = root.join("legacy").join("sdkwork-api-server.db");
+    let database_path = root.join("legacy").join("sdkwork-api-router.db");
     let database_url = sqlite_url_for(&database_path);
 
     seed_legacy_schema(&database_url).await;

@@ -1,7 +1,48 @@
 #!/usr/bin/env node
 
+import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
+
+function resolveExistingManagedWindowsTargetRoot(workspaceRoot, env = process.env) {
+  const candidateRoots = [
+    env.SDKWORK_WINDOWS_TARGET_ROOT,
+    env.TEMP,
+    env.TMP,
+  ];
+
+  for (const candidateRoot of candidateRoots) {
+    const configuredRoot = String(candidateRoot ?? '').trim();
+    if (configuredRoot.length === 0) {
+      continue;
+    }
+
+    const resolvedRoot = path.isAbsolute(configuredRoot)
+      ? configuredRoot
+      : path.resolve(workspaceRoot, configuredRoot);
+    if (existsSync(resolvedRoot)) {
+      return resolvedRoot;
+    }
+  }
+
+  return '';
+}
+
+function managedWindowsWorkspaceTargetLeaf(workspaceRoot) {
+  const resolvedWorkspaceRoot = path.resolve(workspaceRoot);
+  const normalizedWorkspaceRoot = resolvedWorkspaceRoot.replaceAll('\\', '/').toLowerCase();
+  const workspaceName = path.basename(resolvedWorkspaceRoot)
+    .toLowerCase()
+    .replaceAll(/[^a-z0-9]+/g, '')
+    .slice(0, 12) || 'workspace';
+  const workspaceHash = createHash('sha1')
+    .update(normalizedWorkspaceRoot)
+    .digest('hex')
+    .slice(0, 10);
+
+  return `${workspaceName}-${workspaceHash}`;
+}
 
 export function resolveWorkspaceTargetDir({
   workspaceRoot,
@@ -21,6 +62,15 @@ export function resolveWorkspaceTargetDir({
 
   if (platform !== 'win32') {
     return path.join(workspaceRoot, 'target');
+  }
+
+  const managedWindowsTargetRoot = resolveExistingManagedWindowsTargetRoot(workspaceRoot, env);
+  if (managedWindowsTargetRoot.length > 0) {
+    return path.join(
+      managedWindowsTargetRoot,
+      'sdkwork-target',
+      managedWindowsWorkspaceTargetLeaf(workspaceRoot),
+    );
   }
 
   return path.join(workspaceRoot, 'bin', '.sdkwork-target-vs2022');

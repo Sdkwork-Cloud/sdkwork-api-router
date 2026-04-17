@@ -31,7 +31,7 @@ test('parseWorkspaceArgs returns browser-mode defaults', () => {
 test('parseWorkspaceArgs forwards install, preview, proxy-dev, tauri, and bind overrides', () => {
   const settings = parseWorkspaceArgs([
     '--database-url',
-    'postgres://postgres:postgres@127.0.0.1:5432/sdkwork_api_server',
+    'postgres://postgres:postgres@127.0.0.1:5432/sdkwork_api_router',
     '--stop-file',
     '.tmp/start-workspace.stop',
     '--gateway-bind',
@@ -51,7 +51,7 @@ test('parseWorkspaceArgs forwards install, preview, proxy-dev, tauri, and bind o
 
   assert.equal(
     settings.databaseUrl,
-    'postgres://postgres:postgres@127.0.0.1:5432/sdkwork_api_server',
+    'postgres://postgres:postgres@127.0.0.1:5432/sdkwork_api_router',
   );
   assert.equal(settings.stopFile, '.tmp/start-workspace.stop');
   assert.equal(settings.gatewayBind, '0.0.0.0:18080');
@@ -95,7 +95,7 @@ test('buildWorkspaceCommandPlan keeps local config defaults when database overri
 
 test('buildWorkspaceCommandPlan forwards backend and console flags to child scripts', () => {
   const plan = buildWorkspaceCommandPlan({
-    databaseUrl: 'postgres://postgres:postgres@127.0.0.1:5432/sdkwork_api_server',
+    databaseUrl: 'postgres://postgres:postgres@127.0.0.1:5432/sdkwork_api_router',
     gatewayBind: '0.0.0.0:18080',
     adminBind: '0.0.0.0:18081',
     portalBind: '0.0.0.0:18082',
@@ -112,7 +112,7 @@ test('buildWorkspaceCommandPlan forwards backend and console flags to child scri
   assert.deepEqual(plan.backend.args, [
     'scripts/dev/start-stack.mjs',
     '--database-url',
-    'postgres://postgres:postgres@127.0.0.1:5432/sdkwork_api_server',
+    'postgres://postgres:postgres@127.0.0.1:5432/sdkwork_api_router',
     '--gateway-bind',
     '0.0.0.0:18080',
     '--admin-bind',
@@ -149,7 +149,7 @@ test('buildWorkspaceCommandPlan forwards backend and console flags to child scri
 
 test('buildWorkspaceCommandPlan forwards backend binds to preview web host', () => {
   const plan = buildWorkspaceCommandPlan({
-    databaseUrl: 'sqlite:///tmp/sdkwork-router-e2e/sdkwork-api-server.db',
+    databaseUrl: 'sqlite:///tmp/sdkwork-router-e2e/sdkwork-api-router.db',
     gatewayBind: '127.0.0.1:18080',
     adminBind: '127.0.0.1:18081',
     portalBind: '127.0.0.1:18082',

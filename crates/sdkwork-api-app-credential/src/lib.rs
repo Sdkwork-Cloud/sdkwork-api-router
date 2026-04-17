@@ -84,7 +84,7 @@ impl CredentialSecretManager {
             SecretBackendKind::DatabaseEncrypted,
             master_key,
             "sdkwork-api-secrets.json",
-            "sdkwork-api-server",
+            "sdkwork-api-router",
         )
     }
 
@@ -93,7 +93,7 @@ impl CredentialSecretManager {
             SecretBackendKind::LocalEncryptedFile,
             master_key,
             path,
-            "sdkwork-api-server",
+            "sdkwork-api-router",
         )
     }
 
@@ -801,6 +801,18 @@ mod tests {
         let missing = provider_credential_readiness_view(false);
         assert!(!missing.ready);
         assert_eq!(missing.state, ProviderCredentialReadinessState::Missing);
+    }
+
+    #[test]
+    fn built_in_secret_manager_helpers_use_router_keyring_service_name() {
+        let database_manager = CredentialSecretManager::database_encrypted("local-dev-master-key");
+        let local_file_manager = CredentialSecretManager::local_encrypted_file(
+            "local-dev-master-key",
+            "sdkwork-api-secrets.json",
+        );
+
+        assert_eq!(database_manager.secret_keyring_service, "sdkwork-api-router");
+        assert_eq!(local_file_manager.secret_keyring_service, "sdkwork-api-router");
     }
 
     struct RecordingCredentialInventoryStore {

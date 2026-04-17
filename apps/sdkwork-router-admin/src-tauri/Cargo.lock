@@ -208,28 +208,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
-name = "aws-lc-rs"
-version = "1.16.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a054912289d18629dc78375ba2c3726a3afe3ff71b4edba9dedfca0e3446d1fc"
-dependencies = [
- "aws-lc-sys",
- "zeroize",
-]
-
-[[package]]
-name = "aws-lc-sys"
-version = "0.39.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "83a25cf98105baa966497416dbd42565ce3a8cf8dbfd59803ec9ad46f3126399"
-dependencies = [
- "cc",
- "cmake",
- "dunce",
- "fs_extra",
-]
-
-[[package]]
 name = "axum"
 version = "0.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -600,12 +578,6 @@ name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
-
-[[package]]
-name = "cfg_aliases"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
 name = "chrono"
@@ -1495,12 +1467,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fs_extra"
-version = "1.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42703706b716c37f96a77aea830392ad231f44c9e9a67872fa5548707e11b11c"
-
-[[package]]
 name = "futf"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1745,10 +1711,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff2abc00be7fca6ebc474524697ae276ad847ad0a6b3faa4bcb027e9a4614ad0"
 dependencies = [
  "cfg-if",
- "js-sys",
  "libc",
  "wasi 0.11.1+wasi-snapshot-preview1",
- "wasm-bindgen",
 ]
 
 [[package]]
@@ -1758,11 +1722,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "899def5c37c4fd7b2664648c28120ecec138e4d395b459e5ca34f9cce2dd77fd"
 dependencies = [
  "cfg-if",
- "js-sys",
  "libc",
  "r-efi 5.3.0",
  "wasip2",
- "wasm-bindgen",
 ]
 
 [[package]]
@@ -2698,12 +2660,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lru-slab"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
-
-[[package]]
 name = "mac"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3240,12 +3196,6 @@ dependencies = [
  "rand_core 0.6.4",
  "subtle",
 ]
-
-[[package]]
-name = "paste"
-version = "1.0.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
 name = "pem"
@@ -3871,62 +3821,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "quinn"
-version = "0.11.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9e20a958963c291dc322d98411f541009df2ced7b5a4f2bd52337638cfccf20"
-dependencies = [
- "bytes",
- "cfg_aliases",
- "pin-project-lite",
- "quinn-proto",
- "quinn-udp",
- "rustc-hash",
- "rustls",
- "socket2",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "web-time",
-]
-
-[[package]]
-name = "quinn-proto"
-version = "0.11.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "434b42fec591c96ef50e21e886936e66d3cc3f737104fdb9b737c40ffb94c098"
-dependencies = [
- "aws-lc-rs",
- "bytes",
- "getrandom 0.3.4",
- "lru-slab",
- "rand 0.9.2",
- "ring",
- "rustc-hash",
- "rustls",
- "rustls-pki-types",
- "slab",
- "thiserror 2.0.18",
- "tinyvec",
- "tracing",
- "web-time",
-]
-
-[[package]]
-name = "quinn-udp"
-version = "0.5.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "addec6a0dcad8a8d96a771f815f0eaf55f9d1805756410b39f5fa81332574cbd"
-dependencies = [
- "cfg_aliases",
- "libc",
- "once_cell",
- "socket2",
- "tracing",
- "windows-sys 0.60.2",
-]
-
-[[package]]
 name = "quote"
 version = "1.0.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4038,12 +3932,6 @@ checksum = "76afc826de14238e6e8c374ddcc1fa19e374fd8dd986b0d2af0d02377261d83c"
 dependencies = [
  "getrandom 0.3.4",
 ]
-
-[[package]]
-name = "rand_core"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c8d0fd677905edcbeedbf2edb6494d676f0e98d54d5cf9bda0b061cb8fb8aba"
 
 [[package]]
 name = "rand_hc"
@@ -4168,7 +4056,6 @@ dependencies = [
  "mime_guess",
  "percent-encoding",
  "pin-project-lite",
- "quinn",
  "rustls",
  "rustls-pki-types",
  "rustls-platform-verifier",
@@ -4292,7 +4179,6 @@ version = "0.23.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "758025cb5fccfd3bc2fd74708fd4682be41d99e5dff73c377c0646c6012c73a4"
 dependencies = [
- "aws-lc-rs",
  "once_cell",
  "ring",
  "rustls-pki-types",
@@ -4319,7 +4205,6 @@ version = "1.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be040f8b0a225e40375822a563fa9524378b9d63112f53e19ffff34df5d33fdd"
 dependencies = [
- "web-time",
  "zeroize",
 ]
 
@@ -4356,7 +4241,6 @@ version = "0.103.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df33b2b81ac578cabaf06b89b0631153a3f416b0a886e8a7a1707fb51abbd1ef"
 dependencies = [
- "aws-lc-rs",
  "ring",
  "rustls-pki-types",
  "untrusted",
@@ -4457,11 +4341,15 @@ dependencies = [
  "async-trait",
  "sdkwork-api-app-identity",
  "sdkwork-api-domain-billing",
+ "sdkwork-api-domain-commerce",
  "sdkwork-api-domain-identity",
+ "sdkwork-api-domain-payment",
  "sdkwork-api-policy-quota",
  "sdkwork-api-storage-core",
  "sdkwork-api-storage-sqlite",
  "serde",
+ "serde_json",
+ "sha2 0.11.0",
  "utoipa",
 ]
 
@@ -4470,9 +4358,11 @@ name = "sdkwork-api-app-catalog"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "sdkwork-api-domain-billing",
  "sdkwork-api-domain-catalog",
  "sdkwork-api-storage-core",
- "sdkwork-api-storage-sqlite",
+ "serde",
+ "utoipa",
 ]
 
 [[package]]
@@ -4481,22 +4371,23 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "sdkwork-api-app-coupon",
+ "hmac",
+ "reqwest",
+ "sdkwork-api-app-billing",
+ "sdkwork-api-app-catalog",
+ "sdkwork-api-app-credential",
+ "sdkwork-api-app-identity",
+ "sdkwork-api-app-marketing",
  "sdkwork-api-domain-billing",
  "sdkwork-api-domain-commerce",
- "sdkwork-api-domain-coupon",
+ "sdkwork-api-domain-marketing",
+ "sdkwork-api-kernel",
  "sdkwork-api-storage-core",
  "serde",
+ "serde_json",
+ "serde_urlencoded",
+ "sha2 0.10.9",
  "utoipa",
-]
-
-[[package]]
-name = "sdkwork-api-app-coupon"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "sdkwork-api-domain-coupon",
- "sdkwork-api-storage-core",
 ]
 
 [[package]]
@@ -4511,6 +4402,8 @@ dependencies = [
  "sdkwork-api-secret-local",
  "sdkwork-api-storage-core",
  "sdkwork-api-storage-sqlite",
+ "serde",
+ "utoipa",
 ]
 
 [[package]]
@@ -4523,6 +4416,7 @@ dependencies = [
  "sdkwork-api-domain-routing",
  "sdkwork-api-extension-core",
  "sdkwork-api-extension-host",
+ "sdkwork-api-kernel",
  "sdkwork-api-storage-core",
  "serde",
  "serde_json",
@@ -4537,6 +4431,7 @@ dependencies = [
  "base64 0.22.1",
  "reqwest",
  "sdkwork-api-app-credential",
+ "sdkwork-api-app-rate-limit",
  "sdkwork-api-app-routing",
  "sdkwork-api-cache-core",
  "sdkwork-api-cache-memory",
@@ -4545,6 +4440,7 @@ dependencies = [
  "sdkwork-api-domain-routing",
  "sdkwork-api-extension-core",
  "sdkwork-api-extension-host",
+ "sdkwork-api-observability",
  "sdkwork-api-provider-core",
  "sdkwork-api-provider-ollama",
  "sdkwork-api-provider-openai",
@@ -4554,6 +4450,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "utoipa",
 ]
 
 [[package]]
@@ -4562,8 +4459,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "argon2",
+ "hmac",
  "jsonwebtoken",
- "rand_core 0.10.0",
+ "rand_core 0.6.4",
  "sdkwork-api-domain-billing",
  "sdkwork-api-domain-identity",
  "sdkwork-api-domain-routing",
@@ -4572,6 +4470,7 @@ dependencies = [
  "sdkwork-api-storage-sqlite",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "sha2 0.11.0",
  "utoipa",
 ]
@@ -4582,8 +4481,39 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "sdkwork-api-app-marketing",
  "sdkwork-api-domain-jobs",
+ "sdkwork-api-observability",
  "sdkwork-api-storage-core",
+]
+
+[[package]]
+name = "sdkwork-api-app-marketing"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "sdkwork-api-domain-marketing",
+ "sdkwork-api-storage-core",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "utoipa",
+]
+
+[[package]]
+name = "sdkwork-api-app-payment"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "sdkwork-api-app-billing",
+ "sdkwork-api-app-commerce",
+ "sdkwork-api-domain-billing",
+ "sdkwork-api-domain-commerce",
+ "sdkwork-api-domain-identity",
+ "sdkwork-api-domain-payment",
+ "sdkwork-api-storage-core",
+ "serde",
+ "sha2 0.11.0",
 ]
 
 [[package]]
@@ -4592,8 +4522,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "sdkwork-api-app-marketing",
  "sdkwork-api-domain-rate-limit",
  "sdkwork-api-storage-core",
+ "sha2 0.11.0",
 ]
 
 [[package]]
@@ -4602,6 +4534,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "sdkwork-api-app-extension",
+ "sdkwork-api-cache-core",
  "sdkwork-api-domain-catalog",
  "sdkwork-api-domain-routing",
  "sdkwork-api-extension-core",
@@ -4616,20 +4549,38 @@ name = "sdkwork-api-app-runtime"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "argon2",
  "async-trait",
  "axum",
  "futures-util",
  "sdkwork-api-app-billing",
+ "sdkwork-api-app-catalog",
  "sdkwork-api-app-credential",
  "sdkwork-api-app-extension",
  "sdkwork-api-app-gateway",
+ "sdkwork-api-app-marketing",
  "sdkwork-api-cache-core",
  "sdkwork-api-cache-memory",
  "sdkwork-api-cache-redis",
  "sdkwork-api-config",
+ "sdkwork-api-domain-billing",
+ "sdkwork-api-domain-catalog",
+ "sdkwork-api-domain-commerce",
+ "sdkwork-api-domain-credential",
+ "sdkwork-api-domain-identity",
+ "sdkwork-api-domain-jobs",
+ "sdkwork-api-domain-marketing",
+ "sdkwork-api-domain-rate-limit",
+ "sdkwork-api-domain-routing",
+ "sdkwork-api-domain-tenant",
+ "sdkwork-api-domain-usage",
+ "sdkwork-api-extension-core",
  "sdkwork-api-storage-core",
  "sdkwork-api-storage-postgres",
  "sdkwork-api-storage-sqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
  "tokio",
 ]
 
@@ -4718,6 +4669,7 @@ name = "sdkwork-api-domain-catalog"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "utoipa",
 ]
 
 [[package]]
@@ -4726,13 +4678,6 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "utoipa",
-]
-
-[[package]]
-name = "sdkwork-api-domain-coupon"
-version = "0.1.0"
-dependencies = [
- "serde",
 ]
 
 [[package]]
@@ -4756,6 +4701,22 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "utoipa",
+]
+
+[[package]]
+name = "sdkwork-api-domain-marketing"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "utoipa",
+]
+
+[[package]]
+name = "sdkwork-api-domain-payment"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -4836,23 +4797,28 @@ dependencies = [
  "axum",
  "sdkwork-api-app-billing",
  "sdkwork-api-app-catalog",
- "sdkwork-api-app-coupon",
+ "sdkwork-api-app-commerce",
  "sdkwork-api-app-credential",
  "sdkwork-api-app-extension",
  "sdkwork-api-app-gateway",
  "sdkwork-api-app-identity",
  "sdkwork-api-app-jobs",
+ "sdkwork-api-app-marketing",
+ "sdkwork-api-app-payment",
  "sdkwork-api-app-rate-limit",
  "sdkwork-api-app-routing",
  "sdkwork-api-app-runtime",
  "sdkwork-api-app-tenant",
  "sdkwork-api-app-usage",
+ "sdkwork-api-config",
  "sdkwork-api-domain-billing",
  "sdkwork-api-domain-catalog",
- "sdkwork-api-domain-coupon",
+ "sdkwork-api-domain-commerce",
  "sdkwork-api-domain-credential",
  "sdkwork-api-domain-identity",
  "sdkwork-api-domain-jobs",
+ "sdkwork-api-domain-marketing",
+ "sdkwork-api-domain-payment",
  "sdkwork-api-domain-rate-limit",
  "sdkwork-api-domain-routing",
  "sdkwork-api-domain-tenant",
@@ -4860,12 +4826,12 @@ dependencies = [
  "sdkwork-api-extension-core",
  "sdkwork-api-observability",
  "sdkwork-api-storage-core",
+ "sdkwork-api-storage-postgres",
  "sdkwork-api-storage-sqlite",
  "serde",
  "serde_json",
  "sqlx",
  "utoipa",
- "utoipa-axum",
  "utoipa-swagger-ui",
 ]
 
@@ -4880,15 +4846,26 @@ dependencies = [
  "futures-util",
  "reqwest",
  "sdkwork-api-app-billing",
+ "sdkwork-api-app-commerce",
  "sdkwork-api-app-credential",
  "sdkwork-api-app-gateway",
  "sdkwork-api-app-identity",
+ "sdkwork-api-app-marketing",
+ "sdkwork-api-app-payment",
  "sdkwork-api-app-rate-limit",
  "sdkwork-api-app-routing",
  "sdkwork-api-app-usage",
+ "sdkwork-api-config",
  "sdkwork-api-contract-openai",
+ "sdkwork-api-domain-billing",
+ "sdkwork-api-domain-catalog",
+ "sdkwork-api-domain-marketing",
+ "sdkwork-api-domain-payment",
  "sdkwork-api-domain-rate-limit",
+ "sdkwork-api-domain-usage",
+ "sdkwork-api-kernel",
  "sdkwork-api-observability",
+ "sdkwork-api-openapi",
  "sdkwork-api-policy-billing",
  "sdkwork-api-provider-core",
  "sdkwork-api-storage-core",
@@ -4900,7 +4877,6 @@ dependencies = [
  "tokio-stream",
  "tower-http",
  "utoipa",
- "utoipa-axum",
  "utoipa-swagger-ui",
 ]
 
@@ -4911,28 +4887,43 @@ dependencies = [
  "anyhow",
  "axum",
  "sdkwork-api-app-billing",
+ "sdkwork-api-app-catalog",
  "sdkwork-api-app-commerce",
- "sdkwork-api-app-coupon",
+ "sdkwork-api-app-credential",
  "sdkwork-api-app-identity",
  "sdkwork-api-app-jobs",
+ "sdkwork-api-app-marketing",
+ "sdkwork-api-app-payment",
+ "sdkwork-api-app-rate-limit",
  "sdkwork-api-app-routing",
  "sdkwork-api-app-usage",
+ "sdkwork-api-config",
  "sdkwork-api-domain-billing",
  "sdkwork-api-domain-catalog",
  "sdkwork-api-domain-identity",
  "sdkwork-api-domain-jobs",
+ "sdkwork-api-domain-marketing",
+ "sdkwork-api-domain-payment",
  "sdkwork-api-domain-rate-limit",
  "sdkwork-api-domain-routing",
  "sdkwork-api-domain-usage",
  "sdkwork-api-observability",
  "sdkwork-api-storage-core",
+ "sdkwork-api-storage-postgres",
  "sdkwork-api-storage-sqlite",
  "serde",
+ "serde_json",
+ "sha2 0.11.0",
  "sqlx",
  "tower-http",
  "utoipa",
- "utoipa-axum",
- "utoipa-swagger-ui",
+]
+
+[[package]]
+name = "sdkwork-api-kernel"
+version = "0.1.0"
+dependencies = [
+ "rustls",
 ]
 
 [[package]]
@@ -4940,8 +4931,16 @@ name = "sdkwork-api-observability"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "sdkwork-api-openapi"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
 ]
 
 [[package]]
@@ -4973,6 +4972,7 @@ dependencies = [
  "anyhow",
  "sdkwork-api-app-credential",
  "sdkwork-api-app-gateway",
+ "sdkwork-api-app-rate-limit",
  "sdkwork-api-app-runtime",
  "sdkwork-api-config",
  "sdkwork-api-interface-admin",
@@ -5017,9 +5017,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "httpdate",
  "reqwest",
  "sdkwork-api-contract-openai",
  "sdkwork-api-domain-catalog",
+ "sdkwork-api-kernel",
  "sdkwork-api-provider-core",
  "serde",
  "serde_json",
@@ -5052,6 +5054,7 @@ dependencies = [
  "pingora-http",
  "pingora-proxy",
  "reqwest",
+ "sdkwork-api-kernel",
  "tokio",
 ]
 
@@ -5094,16 +5097,18 @@ dependencies = [
  "sdkwork-api-domain-billing",
  "sdkwork-api-domain-catalog",
  "sdkwork-api-domain-commerce",
- "sdkwork-api-domain-coupon",
  "sdkwork-api-domain-credential",
  "sdkwork-api-domain-identity",
  "sdkwork-api-domain-jobs",
+ "sdkwork-api-domain-marketing",
+ "sdkwork-api-domain-payment",
  "sdkwork-api-domain-rate-limit",
  "sdkwork-api-domain-routing",
  "sdkwork-api-domain-tenant",
  "sdkwork-api-domain-usage",
  "sdkwork-api-extension-core",
  "sdkwork-api-secret-core",
+ "serde",
 ]
 
 [[package]]
@@ -5115,10 +5120,11 @@ dependencies = [
  "sdkwork-api-domain-billing",
  "sdkwork-api-domain-catalog",
  "sdkwork-api-domain-commerce",
- "sdkwork-api-domain-coupon",
  "sdkwork-api-domain-credential",
  "sdkwork-api-domain-identity",
  "sdkwork-api-domain-jobs",
+ "sdkwork-api-domain-marketing",
+ "sdkwork-api-domain-payment",
  "sdkwork-api-domain-rate-limit",
  "sdkwork-api-domain-routing",
  "sdkwork-api-domain-tenant",
@@ -5139,10 +5145,11 @@ dependencies = [
  "sdkwork-api-domain-billing",
  "sdkwork-api-domain-catalog",
  "sdkwork-api-domain-commerce",
- "sdkwork-api-domain-coupon",
  "sdkwork-api-domain-credential",
  "sdkwork-api-domain-identity",
  "sdkwork-api-domain-jobs",
+ "sdkwork-api-domain-marketing",
+ "sdkwork-api-domain-payment",
  "sdkwork-api-domain-rate-limit",
  "sdkwork-api-domain-routing",
  "sdkwork-api-domain-tenant",
@@ -6855,19 +6862,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "utoipa-axum"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c25bae5bccc842449ec0c5ddc5cbb6a3a1eaeac4503895dc105a1138f8234a0"
-dependencies = [
- "axum",
- "paste",
- "tower-layer",
- "tower-service",
- "utoipa",
-]
-
-[[package]]
 name = "utoipa-gen"
 version = "5.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7122,16 +7116,6 @@ name = "web-sys"
 version = "0.3.94"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cd70027e39b12f0849461e08ffc50b9cd7688d942c1c8e3c7b22273236b4dd0a"
-dependencies = [
- "js-sys",
- "wasm-bindgen",
-]
-
-[[package]]
-name = "web-time"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a6580f308b1fad9207618087a65c04e7a10bc77e02c8e84e9b00dd4b12fa0bb"
 dependencies = [
  "js-sys",
  "wasm-bindgen",

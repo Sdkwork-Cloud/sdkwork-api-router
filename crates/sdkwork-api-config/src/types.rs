@@ -36,7 +36,7 @@ impl LocalConfigPaths {
             secondary_config_yml: root_dir.join("config.yml"),
             fallback_config_json: root_dir.join("config.json"),
             config_fragment_dir: root_dir.join("conf.d"),
-            database_file: root_dir.join("sdkwork-api-server.db"),
+            database_file: root_dir.join("sdkwork-api-router.db"),
             secret_local_file: root_dir.join("secrets.json"),
             extensions_dir: root_dir.join("extensions"),
             root_dir,

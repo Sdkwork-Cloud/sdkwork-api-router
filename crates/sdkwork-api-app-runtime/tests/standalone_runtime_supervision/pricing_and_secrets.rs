@@ -150,7 +150,7 @@ async fn standalone_runtime_supervision_reloads_secret_manager_after_config_file
             "initial-master-key",
             Vec::new(),
             &initial_secret_file,
-            "sdkwork-api-server",
+            "sdkwork-api-router",
         ));
     persist_credential_with_secret_and_manager(
         live_store.snapshot().as_ref(),

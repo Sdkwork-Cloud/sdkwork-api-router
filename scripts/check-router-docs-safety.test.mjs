@@ -84,6 +84,38 @@ test('README and getting-started docs align to config-file-first production guid
   assert.doesNotMatch(deployReadme, /system install/i);
 });
 
+test('installation docs clone the current sdkwork-api-router repository in both locales', () => {
+  const installation = readWorkspaceFile('docs/getting-started/installation.md');
+  const installationZh = readWorkspaceFile('docs/zh/getting-started/installation.md');
+
+  assert.match(installation, /git clone https:\/\/github\.com\/Sdkwork-Cloud\/sdkwork-api-router\.git/);
+  assert.match(installation, /cd sdkwork-api-router/);
+  assert.doesNotMatch(installation, /sdkwork-api-server/);
+  assert.match(installationZh, /git clone https:\/\/github\.com\/Sdkwork-Cloud\/sdkwork-api-router\.git/);
+  assert.match(installationZh, /cd sdkwork-api-router/);
+  assert.doesNotMatch(installationZh, /sdkwork-api-server/);
+});
+
+test('active router docs and localized README stay aligned to sdkwork-api-router naming and config-file-first precedence', () => {
+  const readmeZh = readWorkspaceFile('README.zh-CN.md');
+  const configuration = readWorkspaceFile('docs/operations/configuration.md');
+  const configurationZh = readWorkspaceFile('docs/zh/operations/configuration.md');
+  const sourceDevelopment = readWorkspaceFile('docs/getting-started/source-development.md');
+  const sourceDevelopmentZh = readWorkspaceFile('docs/zh/getting-started/source-development.md');
+
+  assert.match(readmeZh, /^\uFEFF?# sdkwork-api-router$/m);
+  assert.match(readmeZh, /内建默认值\s*->\s*环境变量兜底\s*->\s*配置文件\s*->\s*CLI/);
+  assert.match(readmeZh, /生产部署|Production Deployment/);
+  assert.match(readmeZh, /系统安装默认使用 PostgreSQL|system installs default to PostgreSQL/i);
+  assert.doesNotMatch(readmeZh, /sdkwork-api-server/);
+  assert.doesNotMatch(configuration, /sdkwork-api-server/);
+  assert.doesNotMatch(configurationZh, /sdkwork-api-server/);
+  assert.doesNotMatch(sourceDevelopment, /sdkwork-api-server/);
+  assert.doesNotMatch(sourceDevelopmentZh, /sdkwork-api-server/);
+  assert.match(configuration, /built-in defaults\s*->\s*environment fallback\s*->\s*config file\s*->\s*CLI/i);
+  assert.match(configuration, /system installs default to PostgreSQL/i);
+});
+
 test('gateway api reference publishes capability-first navigation in both locales', () => {
   const requiredFiles = [
     'docs/api-reference/gateway-capabilities.md',

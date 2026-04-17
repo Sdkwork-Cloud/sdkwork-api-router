@@ -107,6 +107,7 @@ utoipa = { version = "5.4.0", features = ["axum_extras"] }
 utoipa-swagger-ui = { version = "9.0.2", features = ["axum", "vendored"] }
 
 [patch.crates-io]
+cc = { path = "vendor/cc-1.2.60" }
 zip = { path = "vendor/zip-3.0.0" }
 pingora-cache = { path = "vendor/pingora-cache-0.8.0" }
 pingora-core = { path = "vendor/pingora-core-0.8.0" }

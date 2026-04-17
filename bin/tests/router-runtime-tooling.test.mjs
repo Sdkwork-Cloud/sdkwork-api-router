@@ -506,6 +506,64 @@ test('createReleaseBuildPlan builds release binaries, web apps, and native packa
   ]);
 });
 
+test('createReleaseBuildPlan schedules pnpm install when frontend plugin packages are missing from an existing node_modules tree', async () => {
+  const module = await loadModule();
+  const fixtureRoot = createTempDir('release-build-plan-frontend-health-');
+  const appRoots = {
+    admin: path.join(fixtureRoot, 'apps', 'sdkwork-router-admin'),
+    portal: path.join(fixtureRoot, 'apps', 'sdkwork-router-portal'),
+    console: path.join(fixtureRoot, 'console'),
+    docs: path.join(fixtureRoot, 'docs'),
+  };
+
+  try {
+    for (const appRoot of Object.values(appRoots)) {
+      mkdirSync(appRoot, { recursive: true });
+    }
+
+    for (const appKey of ['admin', 'portal', 'console']) {
+      const nodeModulesRoot = path.join(appRoots[appKey], 'node_modules');
+      const binRoot = path.join(nodeModulesRoot, '.bin');
+      mkdirSync(binRoot, { recursive: true });
+      writeFileSync(path.join(nodeModulesRoot, '.modules.yaml'), 'layoutVersion: 5\n', 'utf8');
+
+      for (const packageName of ['typescript', 'vite']) {
+        mkdirSync(path.join(nodeModulesRoot, packageName), { recursive: true });
+        writeFileSync(
+          path.join(nodeModulesRoot, packageName, 'package.json'),
+          `{"name":"${packageName}"}\n`,
+          'utf8',
+        );
+      }
+
+      for (const commandName of ['tsc.cmd', 'vite.cmd']) {
+        writeFileSync(path.join(binRoot, commandName), '', 'utf8');
+      }
+    }
+
+    const plan = module.createReleaseBuildPlan({
+      repoRoot: fixtureRoot,
+      platform: 'win32',
+      arch: 'x64',
+      env: {
+        USERPROFILE: 'C:/Users/admin',
+        TEMP: 'C:/Temp',
+      },
+      includeDocs: false,
+      includeConsole: true,
+    });
+
+    for (const label of ['admin app install', 'portal app install', 'console install']) {
+      const installStep = plan.steps.find((step) => step.label === label);
+      assert.ok(installStep, `expected ${label} when required plugin packages are missing`);
+      assert.match(installStep.args[4], /--dir/);
+      assert.match(installStep.args[4], /\binstall\b/);
+    }
+  } finally {
+    removeTempRuntimeHome(fixtureRoot);
+  }
+});
+
 test('createReleaseBuildPlan normalizes broken Windows CMake generator defaults for release cargo builds', async () => {
   const module = await loadModule();
 
@@ -524,10 +582,8 @@ test('createReleaseBuildPlan normalizes broken Windows CMake generator defaults 
 
   assert.equal(plan.steps[0].env.CMAKE_GENERATOR, 'Visual Studio 17 2022');
   assert.equal(plan.steps[0].env.HOST_CMAKE_GENERATOR, 'Visual Studio 17 2022');
-  assert.equal(
-    plan.steps[0].env.CARGO_TARGET_DIR,
-    path.join(repoRoot, 'bin', '.sdkwork-target-vs2022'),
-  );
+  assert.match(plan.steps[0].env.CARGO_TARGET_DIR, /^C:\\Temp\\sdkwork-target\\/i);
+  assert.doesNotMatch(plan.steps[0].env.CARGO_TARGET_DIR, /[\\/]bin[\\/]\.sdkwork-target-vs2022/i);
 });
 
 test('createReleaseBuildPlan defaults Windows release cargo builds to a single job and propagates that to downstream steps', async () => {
@@ -575,6 +631,60 @@ test('createReleaseBuildPlan respects an explicit Windows cargo job override', a
   assert.notEqual(jobIndex, -1, 'expected cargo build to keep an explicit job count');
   assert.equal(plan.steps[0].args[jobIndex + 1], '4');
   assert.equal(plan.steps[0].env.CARGO_BUILD_JOBS, '4');
+});
+
+test('createReleaseBuildPlan uses the shared Windows-safe pnpm launcher for frontend release steps', async () => {
+  const module = await loadModule();
+
+  const plan = module.createReleaseBuildPlan({
+    repoRoot,
+    platform: 'win32',
+    arch: 'x64',
+    env: {
+      USERPROFILE: 'C:/Users/admin',
+      TEMP: 'C:/Temp',
+    },
+    includeDocs: true,
+    includeConsole: true,
+  });
+
+  const adminBuildStep = plan.steps.find((step) => step.label === 'admin app build');
+  assert.ok(adminBuildStep, 'expected an admin app build step');
+  assert.equal(adminBuildStep.command, 'powershell.exe');
+  assert.deepEqual(adminBuildStep.args.slice(0, 4), [
+    '-NoProfile',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-Command',
+  ]);
+  assert.match(adminBuildStep.args[4], /pnpm\.cjs/);
+  assert.match(adminBuildStep.args[4], /sdkwork-router-admin/);
+  assert.match(adminBuildStep.args[4], /\bbuild\b/);
+  assert.equal(adminBuildStep.shell, false);
+  assert.equal(adminBuildStep.windowsHide, true);
+  assert.match(adminBuildStep.env.NODE_OPTIONS ?? '', /vite-windows-realpath-preload\.mjs/);
+});
+
+test('createReleaseBuildPlan injects the Windows cc-rs reproducible-build workaround for release cargo builds', async () => {
+  const module = await loadModule();
+
+  const plan = module.createReleaseBuildPlan({
+    repoRoot,
+    platform: 'win32',
+    arch: 'x64',
+    env: {
+      USERPROFILE: 'C:/Users/admin',
+      TEMP: 'C:/Temp',
+    },
+    includeDocs: false,
+    includeConsole: false,
+  });
+
+  assert.equal(plan.steps[0].env.SDKWORK_CC_DISABLE_BREPRO, '1');
+  assert.equal(
+    plan.steps.find((step) => step.label === 'admin desktop release build')?.env.SDKWORK_CC_DISABLE_BREPRO,
+    '1',
+  );
 });
 
 test('createInstallPlan copies product assets, runtime scripts, and service descriptors into install home', async () => {
@@ -694,10 +804,8 @@ test('createInstallPlan reads release binaries from the managed short Windows ta
 
   const binaryCopy = plan.files.find((file) => file.targetPath.endsWith(path.join('bin', 'router-product-service.exe')));
   assert.ok(binaryCopy, 'expected router-product-service.exe copy entry');
-  assert.equal(
-    binaryCopy.sourcePath,
-    path.join(repoRoot, 'bin', '.sdkwork-target-vs2022', 'x86_64-pc-windows-msvc', 'release', 'router-product-service.exe'),
-  );
+  assert.match(binaryCopy.sourcePath, /^C:\\Temp\\sdkwork-target\\/i);
+  assert.match(binaryCopy.sourcePath, /x86_64-pc-windows-msvc[\\/]release[\\/]router-product-service\.exe$/i);
 });
 
 test('createInstallPlan treats normalized windows platform ids as Windows executable layouts', async () => {
@@ -717,10 +825,8 @@ test('createInstallPlan treats normalized windows platform ids as Windows execut
 
   const binaryCopy = plan.files.find((file) => file.targetPath.endsWith(path.join('bin', 'router-product-service.exe')));
   assert.ok(binaryCopy, 'expected router-product-service.exe copy entry for normalized windows platform ids');
-  assert.equal(
-    binaryCopy.sourcePath,
-    path.join(repoRoot, 'bin', '.sdkwork-target-vs2022', 'x86_64-pc-windows-msvc', 'release', 'router-product-service.exe'),
-  );
+  assert.match(binaryCopy.sourcePath, /^C:\\Temp\\sdkwork-target\\/i);
+  assert.match(binaryCopy.sourcePath, /x86_64-pc-windows-msvc[\\/]release[\\/]router-product-service\.exe$/i);
 });
 
 test('renderRuntimeEnvTemplate defaults release runtime to writable local data and product server-mode ports', async () => {

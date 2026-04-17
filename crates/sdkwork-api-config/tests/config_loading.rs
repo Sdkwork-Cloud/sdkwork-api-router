@@ -21,7 +21,7 @@ fn standalone_defaults_are_local_friendly() {
     let config = StandaloneConfig::default();
     assert_eq!(config.gateway_bind, "127.0.0.1:8080");
     assert_eq!(config.admin_bind, "127.0.0.1:8081");
-    assert_eq!(config.database_url, "sqlite://sdkwork-api-server.db");
+    assert_eq!(config.database_url, "sqlite://sdkwork-api-router.db");
     assert!(config.extension_paths.is_empty());
     assert!(config.enable_connector_extensions);
     assert!(!config.enable_native_dynamic_extensions);
@@ -236,12 +236,12 @@ fn non_reloadable_changed_fields_include_bootstrap_settings() {
 fn builds_secret_runtime_locations_from_pairs() {
     let config = StandaloneConfig::from_pairs([
         ("SDKWORK_SECRET_LOCAL_FILE", "D:/sdkwork/secrets.json"),
-        ("SDKWORK_SECRET_KEYRING_SERVICE", "sdkwork-api-server"),
+        ("SDKWORK_SECRET_KEYRING_SERVICE", "sdkwork-api-router"),
     ])
     .unwrap();
 
     assert_eq!(config.secret_local_file, "D:/sdkwork/secrets.json");
-    assert_eq!(config.secret_keyring_service, "sdkwork-api-server");
+    assert_eq!(config.secret_keyring_service, "sdkwork-api-router");
 }
 
 #[test]
@@ -384,7 +384,7 @@ fn uses_local_root_sqlite_defaults_when_no_config_file_exists() {
     assert_eq!(config.portal_bind, "127.0.0.1:8082");
     assert_eq!(
         config.database_url,
-        sqlite_url_for(root.join("sdkwork-api-server.db"))
+        sqlite_url_for(root.join("sdkwork-api-router.db"))
     );
     assert_eq!(
         config.secret_local_file,

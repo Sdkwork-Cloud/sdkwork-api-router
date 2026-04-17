@@ -6,7 +6,7 @@ impl Default for StandaloneConfig {
             gateway_bind: "127.0.0.1:8080".to_owned(),
             admin_bind: "127.0.0.1:8081".to_owned(),
             portal_bind: "127.0.0.1:8082".to_owned(),
-            database_url: "sqlite://sdkwork-api-server.db".to_owned(),
+            database_url: "sqlite://sdkwork-api-router.db".to_owned(),
             cache_backend: CacheBackendKind::Memory,
             cache_url: None,
             extension_paths: Vec::new(),
@@ -39,7 +39,7 @@ impl Default for StandaloneConfig {
             browser_allowed_origins: default_browser_allowed_origins(),
             credential_legacy_master_keys: Vec::new(),
             secret_local_file: "sdkwork-api-secrets.json".to_owned(),
-            secret_keyring_service: "sdkwork-api-server".to_owned(),
+            secret_keyring_service: "sdkwork-api-router".to_owned(),
         }
     }
 }
@@ -505,7 +505,7 @@ impl StandaloneConfig {
             browser_allowed_origins: default_browser_allowed_origins(),
             credential_legacy_master_keys: Vec::new(),
             secret_local_file: paths.secret_local_file.to_string_lossy().into_owned(),
-            secret_keyring_service: "sdkwork-api-server".to_owned(),
+            secret_keyring_service: "sdkwork-api-router".to_owned(),
         }
     }
 

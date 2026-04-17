@@ -72,8 +72,8 @@ Recommended environment:
 Clone the repository:
 
 ```bash
-git clone https://github.com/Sdkwork-Cloud/sdkwork-api-server.git
-cd sdkwork-api-server
+git clone https://github.com/Sdkwork-Cloud/sdkwork-api-router.git
+cd sdkwork-api-router
 ```
 
 If pnpm is not already available, enable Corepack first:

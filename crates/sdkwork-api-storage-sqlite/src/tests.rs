@@ -12,12 +12,12 @@ use super::{run_migrations, sqlite_path_from_url, SqliteAdminStore};
 #[cfg(windows)]
 #[test]
 fn parses_windows_drive_file_sqlite_urls_without_a_leading_separator() {
-    let path = sqlite_path_from_url("sqlite:///D:/sdkwork/router/sdkwork-api-server.db")
+    let path = sqlite_path_from_url("sqlite:///D:/sdkwork/router/sdkwork-api-router.db")
         .expect("expected sqlite file path");
 
     assert_eq!(
         path,
-        PathBuf::from("D:/sdkwork/router/sdkwork-api-server.db")
+        PathBuf::from("D:/sdkwork/router/sdkwork-api-router.db")
     );
 }
 

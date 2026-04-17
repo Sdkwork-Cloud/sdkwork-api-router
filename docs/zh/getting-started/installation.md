@@ -72,8 +72,8 @@ cargo install tauri-cli
 克隆仓库：
 
 ```bash
-git clone https://github.com/Sdkwork-Cloud/sdkwork-api-server.git
-cd sdkwork-api-server
+git clone https://github.com/Sdkwork-Cloud/sdkwork-api-router.git
+cd sdkwork-api-router
 ```
 
 如果系统尚未提供 pnpm，先启用 Corepack：

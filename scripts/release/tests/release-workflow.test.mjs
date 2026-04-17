@@ -1861,6 +1861,9 @@ test('portal package exposes unified product launchers and all desktop scripts u
   assert.match(packageJson.scripts['tauri:dev'], /node \.\.\/\.\.\/scripts\/run-tauri-cli\.mjs dev/);
   assert.match(packageJson.scripts['tauri:dev:service'], /node \.\.\/\.\.\/scripts\/run-tauri-cli\.mjs dev -- --service/);
   assert.match(packageJson.scripts['tauri:build'], /node \.\.\/\.\.\/scripts\/run-tauri-cli\.mjs build/);
+  assert.match(consolePackage.scripts.dev, /node \.\.\/scripts\/dev\/run-vite-cli\.mjs --host 0\.0\.0\.0/);
+  assert.match(consolePackage.scripts.build, /node \.\.\/scripts\/dev\/run-vite-cli\.mjs build/);
+  assert.match(consolePackage.scripts.preview, /node \.\.\/scripts\/dev\/run-vite-cli\.mjs preview --host 0\.0\.0\.0/);
   assert.match(consolePackage.scripts['tauri:dev'], /node \.\.\/scripts\/run-tauri-cli\.mjs dev/);
   assert.match(consolePackage.scripts['tauri:build'], /node \.\.\/scripts\/run-tauri-cli\.mjs build/);
   assert.doesNotMatch(packageJson.scripts['tauri:dev'], /powershell/i);
@@ -1969,4 +1972,46 @@ test('shared tauri runner prepends the local cargo bin directory on Windows', as
     String(plan.env.CARGO_TARGET_DIR ?? ''),
     /sdkwork-tauri-target/i,
   );
+});
+
+test('shared tauri runner replaces inherited workspace-managed Windows target dirs with app-specific tauri target dirs', async () => {
+  if (process.platform !== 'win32') {
+    return;
+  }
+
+  const runner = await import(
+    pathToFileURL(
+      path.join(repoRoot, 'scripts', 'run-tauri-cli.mjs'),
+    ).href,
+  );
+  const workspaceTargetDir = await import(
+    pathToFileURL(
+      path.join(repoRoot, 'scripts', 'workspace-target-dir.mjs'),
+    ).href,
+  );
+
+  const inheritedWorkspaceTargetDir = workspaceTargetDir.resolveWorkspaceTargetDir({
+    workspaceRoot: repoRoot,
+    env: {
+      USERPROFILE: process.env.USERPROFILE ?? '',
+      TEMP: process.env.TEMP ?? '',
+    },
+    platform: 'win32',
+  });
+
+  const plan = runner.createTauriCliPlan({
+    commandName: 'build',
+    cwd: path.join(repoRoot, 'apps', 'sdkwork-router-admin'),
+    platform: 'win32',
+    env: {
+      USERPROFILE: process.env.USERPROFILE ?? '',
+      TEMP: process.env.TEMP ?? '',
+      PATH: '',
+      CARGO_TARGET_DIR: inheritedWorkspaceTargetDir,
+    },
+  });
+
+  assert.notEqual(plan.env.CARGO_TARGET_DIR, inheritedWorkspaceTargetDir);
+  assert.match(String(plan.env.CARGO_TARGET_DIR ?? ''), /sdkwork-tauri-target/i);
+  assert.match(String(plan.env.CARGO_TARGET_DIR ?? ''), /sdkwork-router-admin/i);
 });

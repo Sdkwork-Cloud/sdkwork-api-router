@@ -41,7 +41,7 @@ impl KeyringBackend for MemoryKeyringBackend {
 #[test]
 fn stores_and_loads_encrypted_envelope_in_keyring_backend() {
     let store = KeyringSecretStore::with_backend(
-        "sdkwork-api-server-test",
+        "sdkwork-api-router-test",
         Arc::new(MemoryKeyringBackend::default()),
     );
     let secret_ref =

@@ -199,8 +199,8 @@ Windows PowerShell wrappers are also available:
 
 For raw helper scripts, when you do not pass `--database-url`, the services follow the local config-root behavior:
 
-- Linux and macOS: `~/.sdkwork/router/sdkwork-api-server.db`
-- Windows: `%USERPROFILE%\\.sdkwork\\router\\sdkwork-api-server.db`
+- Linux and macOS: `~/.sdkwork/router/sdkwork-api-router.db`
+- Windows: `%USERPROFILE%\\.sdkwork\\router\\sdkwork-api-router.db`
 
 For `bin/start-dev.*`, the managed dev runtime uses its own writable database path under:
 
@@ -212,20 +212,20 @@ Use a shared PostgreSQL connection string across admin, gateway, and portal:
 
 ```bash
 node scripts/dev/start-workspace.mjs \
-  --database-url "postgres://postgres:postgres@127.0.0.1:5432/sdkwork_api_server"
+  --database-url "postgres://postgres:postgres@127.0.0.1:5432/sdkwork_api_router"
 ```
 
 Windows:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev\start-workspace.ps1 `
-  -DatabaseUrl "postgres://postgres:postgres@127.0.0.1:5432/sdkwork_api_server"
+  -DatabaseUrl "postgres://postgres:postgres@127.0.0.1:5432/sdkwork_api_router"
 ```
 
 Managed source startup also accepts database overrides:
 
 ```bash
-./bin/start-dev.sh --database-url "postgres://postgres:postgres@127.0.0.1:5432/sdkwork_api_server"
+./bin/start-dev.sh --database-url "postgres://postgres:postgres@127.0.0.1:5432/sdkwork_api_router"
 ```
 
 ## Raw Source Commands
@@ -249,7 +249,7 @@ cargo run -p portal-api-service
 If you want to override the local default explicitly:
 
 ```bash
-export SDKWORK_DATABASE_URL="sqlite://sdkwork-api-server.db"
+export SDKWORK_DATABASE_URL="sqlite://sdkwork-api-router.db"
 ```
 
 Run the admin app:

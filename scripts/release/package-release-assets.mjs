@@ -21,6 +21,7 @@ import {
   normalizeDesktopArch,
   resolveDesktopReleaseTarget,
 } from './desktop-targets.mjs';
+import { resolveManagedWindowsTauriTargetDir } from '../run-tauri-cli.mjs';
 import { resolveWorkspaceTargetDir } from '../workspace-target-dir.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -161,6 +162,20 @@ export function resolveNativeBuildRootCandidates({
     roots.push(path.join(repositoryTargetRoot, normalizedTargetTriple, 'release', 'bundle'));
   }
   roots.push(path.join(repositoryTargetRoot, 'release', 'bundle'));
+
+  if (normalizePlatformId(platform) === 'windows') {
+    const managedWindowsTauriTargetDir = resolveManagedWindowsTauriTargetDir({
+      cwd: appDir,
+      env,
+      platform: 'win32',
+    });
+    if (managedWindowsTauriTargetDir) {
+      if (normalizedTargetTriple.length > 0) {
+        roots.push(path.join(managedWindowsTauriTargetDir, normalizedTargetTriple, 'release', 'bundle'));
+      }
+      roots.push(path.join(managedWindowsTauriTargetDir, 'release', 'bundle'));
+    }
+  }
 
   const workspaceTargetRoot = path.join(rootDir, 'target', workspaceTargetDirName);
   if (normalizedTargetTriple.length > 0) {
@@ -635,14 +650,43 @@ function packageNativeAssets({ platform, arch, target, outputDir }) {
   });
 }
 
+export function detectTarFlavor({
+  platform = process.platform,
+  spawn = spawnSync,
+} = {}) {
+  if (platform !== 'win32') {
+    return 'default';
+  }
+
+  const result = spawn('tar', ['--version'], {
+    cwd: rootDir,
+    shell: false,
+    encoding: 'utf8',
+  });
+  if (result.error || result.status !== 0) {
+    return 'unknown';
+  }
+
+  const versionOutput = `${result.stdout ?? ''}\n${result.stderr ?? ''}`.toLowerCase();
+  if (versionOutput.includes('gnu tar')) {
+    return 'gnu';
+  }
+  if (versionOutput.includes('bsdtar') || versionOutput.includes('libarchive')) {
+    return 'bsd';
+  }
+
+  return 'unknown';
+}
+
 export function createTarCommandPlan({
   archivePath,
   workingDirectory,
   entryName,
   platform = process.platform,
+  tarFlavor = platform === 'win32' ? 'unknown' : 'default',
 } = {}) {
   const args = [];
-  if (platform === 'win32') {
+  if (platform === 'win32' && tarFlavor === 'gnu') {
     args.push('--force-local');
   }
   args.push('-czf', archivePath, '-C', workingDirectory, entryName);
@@ -655,10 +699,12 @@ export function createTarCommandPlan({
 }
 
 function runTarCommand(archivePath, workingDirectory, entryName) {
+  const tarFlavor = detectTarFlavor();
   const plan = createTarCommandPlan({
     archivePath,
     workingDirectory,
     entryName,
+    tarFlavor,
   });
   const result = spawnSync(plan.command, plan.args, {
     cwd: rootDir,

@@ -11,6 +11,20 @@ function read(relativePath) {
   return readFileSync(path.join(rootDir, relativePath), 'utf8');
 }
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function assertImporterLockEntry(lockfile, packageName, specifier, versionPattern) {
+  const packageNamePattern = `(?:'${escapeRegExp(packageName)}'|${escapeRegExp(packageName)})`;
+  assert.match(
+    lockfile,
+    new RegExp(
+      `${packageNamePattern}:\\r?\\n\\s+specifier: ${escapeRegExp(specifier)}\\r?\\n\\s+version: ${versionPattern}`,
+    ),
+  );
+}
+
 test('repository exposes a native platform and architecture release workflow', () => {
   const workflowPath = path.join(rootDir, '.github', 'workflows', 'release.yml');
   assert.equal(existsSync(workflowPath), true, 'missing .github/workflows/release.yml');
@@ -62,6 +76,7 @@ test('tauri package scripts stay portable across admin, portal, and console apps
 test('web workspace scripts stay portable across Windows, native Unix, and WSL-mounted worktrees', () => {
   const adminPackage = JSON.parse(read('apps/sdkwork-router-admin/package.json'));
   const portalPackage = JSON.parse(read('apps/sdkwork-router-portal/package.json'));
+  const consolePackage = JSON.parse(read('console/package.json'));
   const pnpmLaunchLib = read('scripts/dev/pnpm-launch-lib.mjs');
   const runTscCli = read('scripts/dev/run-tsc-cli.mjs');
 
@@ -73,6 +88,9 @@ test('web workspace scripts stay portable across Windows, native Unix, and WSL-m
   assert.match(portalPackage.scripts.build, /^node \.\.\/\.\.\/scripts\/dev\/run-vite-cli\.mjs(?:\s|$)/);
   assert.match(portalPackage.scripts.typecheck, /^tsc(?:\s|$)/);
   assert.match(portalPackage.scripts.preview, /^node \.\.\/\.\.\/scripts\/dev\/run-vite-cli\.mjs(?:\s|$)/);
+  assert.match(consolePackage.scripts.dev, /^node \.\.\/scripts\/dev\/run-vite-cli\.mjs(?:\s|$)/);
+  assert.match(consolePackage.scripts.build, /^node \.\.\/scripts\/dev\/run-vite-cli\.mjs(?:\s|$)/);
+  assert.match(consolePackage.scripts.preview, /^node \.\.\/scripts\/dev\/run-vite-cli\.mjs(?:\s|$)/);
   assert.doesNotMatch(adminPackage.scripts.dev, /run-frontend-tool/);
   assert.doesNotMatch(adminPackage.scripts.build, /run-frontend-tool/);
   assert.doesNotMatch(adminPackage.scripts.typecheck, /run-frontend-tool/);
@@ -81,6 +99,9 @@ test('web workspace scripts stay portable across Windows, native Unix, and WSL-m
   assert.doesNotMatch(portalPackage.scripts.build, /run-frontend-tool/);
   assert.doesNotMatch(portalPackage.scripts.typecheck, /run-frontend-tool/);
   assert.doesNotMatch(portalPackage.scripts.preview, /run-frontend-tool/);
+  assert.doesNotMatch(consolePackage.scripts.dev, /run-frontend-tool/);
+  assert.doesNotMatch(consolePackage.scripts.build, /run-frontend-tool/);
+  assert.doesNotMatch(consolePackage.scripts.preview, /run-frontend-tool/);
 
   assert.match(pnpmLaunchLib, /requiredBinCommands/);
   assert.match(pnpmLaunchLib, /node_modules', '\.bin'/);
@@ -89,6 +110,47 @@ test('web workspace scripts stay portable across Windows, native Unix, and WSL-m
   assert.match(runTscCli, /resolveReadablePackageEntry/);
   assert.match(runTscCli, /typescript/);
   assert.match(runTscCli, /lib', 'tsc\.js'/);
+});
+
+test('console lockfile stays aligned with the committed frontend toolchain versions', () => {
+  const consolePackage = JSON.parse(read('console/package.json'));
+  const consoleLockfile = read('console/pnpm-lock.yaml');
+  const reactVersion = consolePackage.dependencies.react;
+  const reactDomVersion = consolePackage.dependencies['react-dom'];
+  const viteVersion = consolePackage.devDependencies.vite;
+  const pluginReactVersion = consolePackage.devDependencies['@vitejs/plugin-react'];
+  const typescriptVersion = consolePackage.devDependencies.typescript;
+
+  assertImporterLockEntry(
+    consoleLockfile,
+    'react',
+    reactVersion,
+    escapeRegExp(reactVersion),
+  );
+  assertImporterLockEntry(
+    consoleLockfile,
+    'react-dom',
+    reactDomVersion,
+    `${escapeRegExp(reactDomVersion)}\\(react@${escapeRegExp(reactVersion)}\\)`,
+  );
+  assertImporterLockEntry(
+    consoleLockfile,
+    '@vitejs/plugin-react',
+    pluginReactVersion,
+    `${escapeRegExp(pluginReactVersion)}\\(vite@${escapeRegExp(viteVersion)}\\(lightningcss@`,
+  );
+  assertImporterLockEntry(
+    consoleLockfile,
+    'typescript',
+    typescriptVersion,
+    escapeRegExp(typescriptVersion),
+  );
+  assertImporterLockEntry(
+    consoleLockfile,
+    'vite',
+    viteVersion,
+    `${escapeRegExp(viteVersion)}\\(lightningcss@`,
+  );
 });
 
 test('desktop tauri configs enable bundling for native release packaging', () => {
@@ -137,6 +199,7 @@ test('release target helpers and desktop release runner resolve explicit target 
   const helperPath = path.join(rootDir, 'scripts', 'release', 'desktop-targets.mjs');
   const runnerPath = path.join(rootDir, 'scripts', 'release', 'run-desktop-release-build.mjs');
   const packagerPath = path.join(rootDir, 'scripts', 'release', 'package-release-assets.mjs');
+  const tauriRunnerPath = path.join(rootDir, 'scripts', 'run-tauri-cli.mjs');
   const workspaceTargetDirPath = path.join(rootDir, 'scripts', 'workspace-target-dir.mjs');
 
   assert.equal(existsSync(helperPath), true, 'missing scripts/release/desktop-targets.mjs');
@@ -146,13 +209,23 @@ test('release target helpers and desktop release runner resolve explicit target 
   const helper = await import(pathToFileURL(helperPath).href);
   const runner = await import(pathToFileURL(runnerPath).href);
   const packager = await import(pathToFileURL(packagerPath).href);
+  const tauriRunner = await import(pathToFileURL(tauriRunnerPath).href);
   const workspaceTargetDir = await import(pathToFileURL(workspaceTargetDirPath).href);
+  const expectedManagedWindowsTauriTargetDir = tauriRunner.resolveManagedWindowsTauriTargetDir({
+    cwd: path.join(rootDir, 'apps', 'sdkwork-router-admin'),
+    env: {
+      USERPROFILE: 'C:/Users/admin',
+      TEMP: 'C:/Temp',
+    },
+    platform: 'win32',
+  });
 
   assert.equal(typeof helper.parseDesktopTargetTriple, 'function');
   assert.equal(typeof helper.resolveDesktopReleaseTarget, 'function');
   assert.equal(typeof runner.createDesktopReleaseBuildPlan, 'function');
   assert.equal(typeof runner.buildDesktopReleaseFailureAnnotation, 'function');
   assert.equal(typeof runner.resolveDesktopReleaseBundles, 'function');
+  assert.equal(typeof tauriRunner.resolveManagedWindowsTauriTargetDir, 'function');
   assert.equal(typeof runner.shouldPassExplicitDesktopReleaseTarget, 'function');
   assert.equal(typeof packager.resolveNativeBuildRoot, 'function');
   assert.equal(typeof packager.resolveNativeBuildRootCandidates, 'function');
@@ -165,8 +238,11 @@ test('release target helpers and desktop release runner resolve explicit target 
 
   const expectedWorkspaceTargetDir = workspaceTargetDir.resolveWorkspaceTargetDir({
     workspaceRoot: rootDir,
-    env: process.env,
-    platform: process.platform,
+    env: {
+      USERPROFILE: 'C:/Users/admin',
+      TEMP: 'C:/Temp',
+    },
+    platform: 'win32',
   });
 
   assert.deepEqual(
@@ -262,6 +338,11 @@ test('release target helpers and desktop release runner resolve explicit target 
     packager.resolveNativeBuildRootCandidates({
       appId: 'admin',
       targetTriple: 'x86_64-pc-windows-msvc',
+      env: {
+        USERPROFILE: 'C:/Users/admin',
+        TEMP: 'C:/Temp',
+      },
+      platform: 'win32',
     }).map((entry) => entry.replaceAll('\\', '/')),
     [
       path.join(
@@ -289,6 +370,17 @@ test('release target helpers and desktop release runner resolve explicit target 
       ).replaceAll('\\', '/'),
       path.join(
         expectedWorkspaceTargetDir,
+        'release',
+        'bundle',
+      ).replaceAll('\\', '/'),
+      path.join(
+        expectedManagedWindowsTauriTargetDir,
+        'x86_64-pc-windows-msvc',
+        'release',
+        'bundle',
+      ).replaceAll('\\', '/'),
+      path.join(
+        expectedManagedWindowsTauriTargetDir,
         'release',
         'bundle',
       ).replaceAll('\\', '/'),
@@ -352,6 +444,21 @@ test('release target helpers and desktop release runner resolve explicit target 
       workingDirectory: 'C:\\release',
       entryName: 'bundle',
       platform: 'win32',
+      tarFlavor: 'bsd',
+    }),
+    {
+      command: 'tar',
+      args: ['-czf', 'C:\\release\\bundle.tar.gz', '-C', 'C:\\release', 'bundle'],
+      shell: true,
+    },
+  );
+  assert.deepEqual(
+    packager.createTarCommandPlan({
+      archivePath: 'C:\\release\\bundle.tar.gz',
+      workingDirectory: 'C:\\release',
+      entryName: 'bundle',
+      platform: 'win32',
+      tarFlavor: 'gnu',
     }),
     {
       command: 'tar',
@@ -400,6 +507,35 @@ test('native desktop packager skips empty bundle roots and selects the first roo
     );
   } finally {
     rmSync(stagingRoot, { recursive: true, force: true });
+  }
+});
+
+test('workspace target dir ignores missing configured Windows temp roots and falls back to the next existing root', async () => {
+  const workspaceTargetDirPath = path.join(rootDir, 'scripts', 'workspace-target-dir.mjs');
+  const workspaceTargetDir = await import(pathToFileURL(workspaceTargetDirPath).href);
+  const existingTempRoot = mkdtempSync(path.join(os.tmpdir(), 'sdkwork-router-target-root-'));
+  const missingConfiguredRoot = path.join(existingTempRoot, 'missing-configured-root');
+
+  try {
+    const resolvedTargetDir = workspaceTargetDir.resolveWorkspaceTargetDir({
+      workspaceRoot: rootDir,
+      env: {
+        SDKWORK_WINDOWS_TARGET_ROOT: missingConfiguredRoot,
+        TEMP: existingTempRoot,
+      },
+      platform: 'win32',
+    });
+
+    assert.match(
+      resolvedTargetDir.replaceAll('\\', '/'),
+      new RegExp(`^${escapeRegExp(existingTempRoot.replaceAll('\\', '/'))}/sdkwork-target/`),
+    );
+    assert.doesNotMatch(
+      resolvedTargetDir.replaceAll('\\', '/'),
+      new RegExp(`^${escapeRegExp(missingConfiguredRoot.replaceAll('\\', '/'))}(?:/|$)`),
+    );
+  } finally {
+    rmSync(existingTempRoot, { recursive: true, force: true });
   }
 });
 

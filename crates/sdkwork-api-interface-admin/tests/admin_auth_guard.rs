@@ -475,7 +475,7 @@ async fn admin_routes_apply_replaced_live_secret_manager_to_new_requests() {
             "initial-master-key",
             Vec::new(),
             &initial_path,
-            "sdkwork-api-server",
+            "sdkwork-api-router",
         ));
     let live_jwt = Reloadable::new("initial-admin-jwt-secret".to_owned());
     let app = sdkwork_api_interface_admin::admin_router_with_state(
@@ -508,7 +508,7 @@ async fn admin_routes_apply_replaced_live_secret_manager_to_new_requests() {
         "rotated-master-key",
         vec!["initial-master-key".to_owned()],
         &rotated_path,
-        "sdkwork-api-server",
+        "sdkwork-api-router",
     ));
 
     let create = app

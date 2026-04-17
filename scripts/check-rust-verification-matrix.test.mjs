@@ -95,6 +95,7 @@ test('check-rust-verification-matrix exposes grouped cross-platform cargo plans 
     group: 'gateway-service',
     platform: 'win32',
     env: {
+      TEMP: 'C:/Temp',
       USERPROFILE: process.env.USERPROFILE ?? '',
       PATH: process.env.PATH ?? '',
     },
@@ -104,13 +105,10 @@ test('check-rust-verification-matrix exposes grouped cross-platform cargo plans 
   assert.deepEqual(windowsPlan[0].args.slice(-5), ['check', '-j', '1', '-p', 'gateway-service']);
   assert.equal(windowsPlan[0].env.CMAKE_GENERATOR, 'Visual Studio 17 2022');
   assert.equal(windowsPlan[0].env.HOST_CMAKE_GENERATOR, 'Visual Studio 17 2022');
-  assert.equal(
-    windowsPlan[0].env.CARGO_TARGET_DIR,
-    path.join(workspaceRoot, 'bin', '.sdkwork-target-vs2022'),
-  );
+  assert.match(String(windowsPlan[0].env.CARGO_TARGET_DIR ?? ''), /^C:\\Temp\\sdkwork-target\\/i);
   assert.doesNotMatch(
     String(windowsPlan[0].env.CARGO_TARGET_DIR ?? ''),
-    /[\\/]Users[\\/][^\\/]+[\\/]\.sdkwork-target/i,
+    /[\\/]bin[\\/]\.sdkwork-target-vs2022/i,
   );
   assert.equal(windowsPlan[0].env.RUSTFLAGS, undefined);
 
@@ -119,16 +117,14 @@ test('check-rust-verification-matrix exposes grouped cross-platform cargo plans 
     group: 'workspace',
     platform: 'win32',
     env: {
+      TEMP: 'C:/Temp',
       USERPROFILE: process.env.USERPROFILE ?? '',
       PATH: process.env.PATH ?? '',
     },
   });
   assert.equal(workspacePlan.length, 1);
   assert.deepEqual(workspacePlan[0].args.slice(-3), ['--workspace', '-j', '1']);
-  assert.equal(
-    workspacePlan[0].env.CARGO_TARGET_DIR,
-    path.join(workspaceRoot, 'bin', '.sdkwork-target-vs2022'),
-  );
+  assert.match(String(workspacePlan[0].env.CARGO_TARGET_DIR ?? ''), /^C:\\Temp\\sdkwork-target\\/i);
 
   const fallbackWindowsPlan = module.createRustVerificationPlan({
     workspaceRoot,

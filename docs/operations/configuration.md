@@ -1,18 +1,16 @@
 # Configuration
 
-This page defines the runtime configuration contract for the standalone SDKWork API Server services.
+This page defines the runtime configuration contract for the standalone SDKWork API Router services.
 
 ## Resolution Order
 
-The runtime config merge order is:
+The effective field precedence from lowest to highest is:
 
-1. built-in local defaults
-2. local config file
-3. `SDKWORK_*` environment variables
+- built-in defaults -> environment fallback -> config file -> CLI
 
-This means environment variables always win over values from `config.yaml`, `config.yml`, or `config.json`.
+`SDKWORK_CONFIG_DIR` and `SDKWORK_CONFIG_FILE` are discovery inputs. They are read first so the runtime can find the active config file set, but for normal business fields the config file wins whenever it defines a value. Environment variables only fill fields that the config file leaves unset. System installs default to PostgreSQL, while portable and local-development flows may still use SQLite.
 
-Runtime config file reload keeps using the original process-start environment override snapshot. Editing `config.yaml` while the service is running is supported for the reloadable fields listed below, but changing parent-shell environment variables after the process has already started is not observed.
+Runtime config reload keeps using the original process-start environment fallback snapshot. Editing `router.yaml` or `conf.d/*.yaml` while the service is running is supported for the reloadable fields listed below, but changing parent-shell environment variables after the process has already started is not observed.
 
 All three standalone services now use a durable node identity for shared runtime coordination. `gateway-service` and `admin-api-service` participate in extension-runtime rollout, while `gateway-service`, `admin-api-service`, and `portal-api-service` all participate in standalone config rollout. Set `SDKWORK_SERVICE_INSTANCE_ID` when you want that identity to be stable across restarts and easy to correlate in rollout status.
 
@@ -25,10 +23,13 @@ The default local config root is:
 
 The services resolve the following built-in default paths under that root:
 
-- primary YAML config: `config.yaml`
-- fallback YAML config: `config.yml`
-- fallback JSON config: `config.json`
-- default SQLite database: `sdkwork-api-server.db`
+- primary YAML config: `router.yaml`
+- secondary YAML config: `router.yml`
+- secondary JSON config: `router.json`
+- legacy YAML config: `config.yaml`
+- legacy YAML fallback: `config.yml`
+- legacy JSON fallback: `config.json`
+- default SQLite database: `sdkwork-api-router.db`
 - local encrypted secrets file: `secrets.json`
 - extension directory: `extensions/`
 
@@ -36,9 +37,12 @@ The services resolve the following built-in default paths under that root:
 
 When `SDKWORK_CONFIG_FILE` is not set, the runtime searches in this order:
 
-1. `config.yaml`
-2. `config.yml`
-3. `config.json`
+1. `router.yaml`
+2. `router.yml`
+3. `router.json`
+4. `config.yaml`
+5. `config.yml`
+6. `config.json`
 
 The first existing file wins.
 
@@ -59,7 +63,7 @@ If no config file exists, the services still start with these values:
 - `gateway_bind`: `127.0.0.1:8080`
 - `admin_bind`: `127.0.0.1:8081`
 - `portal_bind`: `127.0.0.1:8082`
-- `database_url`: `sqlite://<config-root>/sdkwork-api-server.db`
+- `database_url`: `sqlite://<config-root>/sdkwork-api-router.db`
 - `cache_backend`: `memory`
 - `cache_url`: unset
 - `extension_paths`: `["<config-root>/extensions"]`
@@ -71,7 +75,7 @@ If no config file exists, the services still start with these values:
 - `require_signed_native_dynamic_extensions`: `true`
 - `runtime_snapshot_interval_secs`: `0`
 - `secret_backend`: `database_encrypted`
-- `secret_keyring_service`: `sdkwork-api-server`
+- `secret_keyring_service`: `sdkwork-api-router`
 
 ## File Schema
 
@@ -164,7 +168,7 @@ Standalone config rollout reports these restart-required-only or mixed restart-r
 gateway_bind: "127.0.0.1:8080"
 admin_bind: "127.0.0.1:8081"
 portal_bind: "127.0.0.1:8082"
-database_url: "sqlite://sdkwork-api-server.db"
+database_url: "sqlite://sdkwork-api-router.db"
 cache_backend: "memory"
 extension_paths:
   - "extensions"
@@ -183,7 +187,7 @@ runtime_snapshot_interval_secs: 30
 secret_backend: "local_encrypted_file"
 credential_master_key: "change-me-master-key"
 secret_local_file: "secrets.json"
-secret_keyring_service: "sdkwork-api-server"
+secret_keyring_service: "sdkwork-api-router"
 ```
 
 ## JSON Example
@@ -193,7 +197,7 @@ secret_keyring_service: "sdkwork-api-server"
   "gateway_bind": "127.0.0.1:8080",
   "admin_bind": "127.0.0.1:8081",
   "portal_bind": "127.0.0.1:8082",
-  "database_url": "postgres://postgres:postgres@127.0.0.1:5432/sdkwork_api_server",
+  "database_url": "postgres://postgres:postgres@127.0.0.1:5432/sdkwork_api_router",
   "cache_backend": "memory",
   "extension_paths": [
     "extensions"
@@ -215,11 +219,11 @@ When values come from a config file:
 
 Example:
 
-- config file: `~/.sdkwork/router/config.yaml`
+- config file: `~/.sdkwork/router/router.yaml`
 - `database_url: "sqlite://router.db"`
 - resolved runtime value: `sqlite://~/.sdkwork/router/router.db`
 
-Environment variables are applied after file loading and are used as-is.
+Environment variables supply fallback values before file overlays are applied. Once a field is defined in the active config file set, that file value wins unless a launcher passes an explicit CLI override.
 
 ## Environment Variables
 
@@ -302,8 +306,8 @@ Linux or macOS:
 
 ```bash
 mkdir -p "$HOME/.sdkwork/router"
-cat > "$HOME/.sdkwork/router/config.yaml" <<'EOF'
-database_url: "sqlite://sdkwork-api-server.db"
+cat > "$HOME/.sdkwork/router/router.yaml" <<'EOF'
+database_url: "sqlite://sdkwork-api-router.db"
 secret_backend: "local_encrypted_file"
 EOF
 
@@ -315,9 +319,9 @@ Windows PowerShell:
 ```powershell
 New-Item -ItemType Directory -Force "$HOME\\.sdkwork\\router" | Out-Null
 @"
-database_url: "sqlite://sdkwork-api-server.db"
+database_url: "sqlite://sdkwork-api-router.db"
 secret_backend: "local_encrypted_file"
-"@ | Set-Content -Encoding UTF8 "$HOME\\.sdkwork\\router\\config.yaml"
+"@ | Set-Content -Encoding UTF8 "$HOME\\.sdkwork\\router\\router.yaml"
 
 .\target\release\gateway-service.exe
 ```

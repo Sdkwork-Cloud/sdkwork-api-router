@@ -65,7 +65,7 @@ pub(super) fn write_gateway_runtime_config_with_cache(
     write_gateway_store_runtime_config_with_cache(
         root,
         gateway_bind,
-        "sqlite://sdkwork-api-server.db",
+        "sqlite://sdkwork-api-router.db",
         cache_backend,
         cache_url,
     );
@@ -123,7 +123,7 @@ pub(super) fn write_gateway_security_posture_runtime_config(
         format!(
             r#"
 gateway_bind: "{gateway_bind}"
-database_url: "sqlite://sdkwork-api-server.db"
+database_url: "sqlite://sdkwork-api-router.db"
 admin_jwt_signing_secret: "{admin_jwt_signing_secret}"
 portal_jwt_signing_secret: "{portal_jwt_signing_secret}"
 credential_master_key: "{credential_master_key}"

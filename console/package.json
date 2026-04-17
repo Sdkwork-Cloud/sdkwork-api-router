@@ -5,10 +5,10 @@
   "packageManager": "pnpm@10.30.2",
   "scripts": {
     "app:update-create": "node ../../scripts/app-update-create.mjs",
-    "dev": "vite --host 0.0.0.0",
-    "dev:browser": "vite --host 0.0.0.0",
-    "build": "vite build",
-    "preview": "vite preview --host 0.0.0.0",
+    "dev": "node ../scripts/dev/run-vite-cli.mjs --host 0.0.0.0",
+    "dev:browser": "node ../scripts/dev/run-vite-cli.mjs --host 0.0.0.0",
+    "build": "node ../scripts/dev/run-vite-cli.mjs build",
+    "preview": "node ../scripts/dev/run-vite-cli.mjs preview --host 0.0.0.0",
     "tauri:dev": "node ../scripts/run-tauri-cli.mjs dev",
     "tauri:build": "node ../scripts/run-tauri-cli.mjs build",
     "typecheck": "tsc --noEmit"

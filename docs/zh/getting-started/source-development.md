@@ -199,8 +199,8 @@ Windows 也提供 PowerShell 包装：
 
 对于原生辅助脚本，如果你不传 `--database-url`，服务会遵循本地配置根目录行为：
 
-- Linux / macOS：`~/.sdkwork/router/sdkwork-api-server.db`
-- Windows：`%USERPROFILE%\\.sdkwork\\router\\sdkwork-api-server.db`
+- Linux / macOS：`~/.sdkwork/router/sdkwork-api-router.db`
+- Windows：`%USERPROFILE%\\.sdkwork\\router\\sdkwork-api-router.db`
 
 对于 `bin/start-dev.*`，托管开发态使用自己独立的可写数据库路径：
 
@@ -212,20 +212,20 @@ Windows 也提供 PowerShell 包装：
 
 ```bash
 node scripts/dev/start-workspace.mjs \
-  --database-url "postgres://postgres:postgres@127.0.0.1:5432/sdkwork_api_server"
+  --database-url "postgres://postgres:postgres@127.0.0.1:5432/sdkwork_api_router"
 ```
 
 Windows：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev\start-workspace.ps1 `
-  -DatabaseUrl "postgres://postgres:postgres@127.0.0.1:5432/sdkwork_api_server"
+  -DatabaseUrl "postgres://postgres:postgres@127.0.0.1:5432/sdkwork_api_router"
 ```
 
 托管源码启动也支持数据库覆盖：
 
 ```bash
-./bin/start-dev.sh --database-url "postgres://postgres:postgres@127.0.0.1:5432/sdkwork_api_server"
+./bin/start-dev.sh --database-url "postgres://postgres:postgres@127.0.0.1:5432/sdkwork_api_router"
 ```
 
 ## 原生源码命令
@@ -249,7 +249,7 @@ cargo run -p portal-api-service
 如果你要显式覆盖本地默认数据库：
 
 ```bash
-export SDKWORK_DATABASE_URL="sqlite://sdkwork-api-server.db"
+export SDKWORK_DATABASE_URL="sqlite://sdkwork-api-router.db"
 ```
 
 运行 admin 浏览器应用：

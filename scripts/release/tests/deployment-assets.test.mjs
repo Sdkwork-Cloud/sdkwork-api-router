@@ -150,3 +150,67 @@ test('native product server release packager exports deployment assets into comm
   assert.match(packagerSource, /deploymentAssetRoots/);
   assert.match(packagerSource, /listNativeProductServerDeploymentAssetRoots/);
 });
+
+test('release packager detects Windows tar flavor before deciding whether --force-local is safe', async () => {
+  const packager = await import(
+    pathToFileURL(path.join(repoRoot, 'scripts', 'release', 'package-release-assets.mjs')).href,
+  );
+
+  assert.equal(
+    packager.detectTarFlavor({
+      platform: 'win32',
+      spawn: () => ({
+        status: 0,
+        stdout: 'bsdtar 3.7.7 - libarchive 3.7.7',
+        stderr: '',
+      }),
+    }),
+    'bsd',
+  );
+  assert.equal(
+    packager.detectTarFlavor({
+      platform: 'win32',
+      spawn: () => ({
+        status: 0,
+        stdout: 'tar (GNU tar) 1.35',
+        stderr: '',
+      }),
+    }),
+    'gnu',
+  );
+});
+
+test('release packager only uses --force-local for GNU tar on Windows', async () => {
+  const packager = await import(
+    pathToFileURL(path.join(repoRoot, 'scripts', 'release', 'package-release-assets.mjs')).href,
+  );
+
+  assert.deepEqual(
+    packager.createTarCommandPlan({
+      archivePath: 'C:\\release\\bundle.tar.gz',
+      workingDirectory: 'C:\\release',
+      entryName: 'bundle',
+      platform: 'win32',
+      tarFlavor: 'bsd',
+    }),
+    {
+      command: 'tar',
+      args: ['-czf', 'C:\\release\\bundle.tar.gz', '-C', 'C:\\release', 'bundle'],
+      shell: true,
+    },
+  );
+  assert.deepEqual(
+    packager.createTarCommandPlan({
+      archivePath: 'C:\\release\\bundle.tar.gz',
+      workingDirectory: 'C:\\release',
+      entryName: 'bundle',
+      platform: 'win32',
+      tarFlavor: 'gnu',
+    }),
+    {
+      command: 'tar',
+      args: ['--force-local', '-czf', 'C:\\release\\bundle.tar.gz', '-C', 'C:\\release', 'bundle'],
+      shell: true,
+    },
+  );
+});

@@ -139,6 +139,26 @@ test('vendored pingora-core no longer declares the retired daemonize dependency'
   );
 });
 
+test('workspace pins vendored cc with the Windows BREPRO compatibility escape hatch', () => {
+  const workspaceManifest = readFileSync(path.join(workspaceRoot, 'Cargo.toml'), 'utf8');
+  const vendoredCcManifest = readFileSync(
+    path.join(workspaceRoot, 'vendor', 'cc-1.2.60', 'Cargo.toml'),
+    'utf8',
+  );
+  const vendoredCcSource = readFileSync(
+    path.join(workspaceRoot, 'vendor', 'cc-1.2.60', 'src', 'lib.rs'),
+    'utf8',
+  );
+
+  assert.match(
+    workspaceManifest,
+    /\[patch\.crates-io\][\s\S]*\bcc\s*=\s*\{\s*path\s*=\s*"vendor\/cc-1\.2\.60"\s*\}/,
+  );
+  assert.match(vendoredCcManifest, /\bname\s*=\s*"cc"/);
+  assert.match(vendoredCcManifest, /\bversion\s*=\s*"1\.2\.60"/);
+  assert.match(vendoredCcSource, /SDKWORK_CC_DISABLE_BREPRO/);
+});
+
 test('workspace and interface crates no longer depend on utoipa-axum for OpenAPI path registration', () => {
   const workspaceManifest = readFileSync(path.join(workspaceRoot, 'Cargo.toml'), 'utf8');
   const adminManifest = readFileSync(
@@ -168,6 +188,48 @@ test('workspace and interface crates no longer depend on utoipa-axum for OpenAPI
   assert.doesNotMatch(portalManifest, /utoipa-axum\.workspace\s*=\s*true/);
   assert.doesNotMatch(adminOpenapi, /utoipa_axum/);
   assert.doesNotMatch(httpOpenapi, /utoipa_axum/);
+});
+
+test('desktop tauri lockfiles no longer retain retired coupon or utoipa-axum dependencies', () => {
+  const tauriLockfiles = [
+    [
+      'admin',
+      readFileSync(
+        path.join(workspaceRoot, 'apps', 'sdkwork-router-admin', 'src-tauri', 'Cargo.lock'),
+        'utf8',
+      ),
+    ],
+    [
+      'portal',
+      readFileSync(
+        path.join(workspaceRoot, 'apps', 'sdkwork-router-portal', 'src-tauri', 'Cargo.lock'),
+        'utf8',
+      ),
+    ],
+  ];
+
+  for (const [appId, lockfile] of tauriLockfiles) {
+    assert.doesNotMatch(
+      lockfile,
+      /name = "sdkwork-api-app-coupon"/,
+      `${appId} tauri lockfile still pins the retired coupon app crate`,
+    );
+    assert.doesNotMatch(
+      lockfile,
+      /name = "sdkwork-api-domain-coupon"/,
+      `${appId} tauri lockfile still pins the retired coupon domain crate`,
+    );
+    assert.doesNotMatch(
+      lockfile,
+      /name = "utoipa-axum"/,
+      `${appId} tauri lockfile still pins retired utoipa-axum support`,
+    );
+    assert.doesNotMatch(
+      lockfile,
+      /name = "paste"\r?\nversion = "1\.0\.15"/,
+      `${appId} tauri lockfile still retains the retired paste advisory path`,
+    );
+  }
 });
 
 test('check-rust-dependency-audit plan json omits inherited environment secrets', () => {

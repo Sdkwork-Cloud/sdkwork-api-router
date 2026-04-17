@@ -13,7 +13,12 @@ import {
 import path from 'node:path';
 import process from 'node:process';
 
-import { pnpmCommand, resolveRustRunner } from '../../scripts/check-router-product.mjs';
+import { resolveRustRunner } from '../../scripts/check-router-product.mjs';
+import {
+  frontendInstallRequired,
+  pnpmProcessSpec,
+  pnpmSpawnOptions,
+} from '../../scripts/dev/pnpm-launch-lib.mjs';
 import { resolveDesktopReleaseTarget } from '../../scripts/release/desktop-targets.mjs';
 import { withSupportedWindowsCmakeGenerator } from '../../scripts/run-tauri-cli.mjs';
 import { resolveWorkspaceTargetDir, withManagedWorkspaceTargetDir } from '../../scripts/workspace-target-dir.mjs';
@@ -32,6 +37,8 @@ export const PROD_DEFAULTS = {
   adminBind: '127.0.0.1:8081',
   portalBind: '127.0.0.1:8082',
 };
+
+const WINDOWS_CC_DISABLE_BREPRO_ENV = 'SDKWORK_CC_DISABLE_BREPRO';
 
 function normalizeRuntimePlatform(platform = process.platform) {
   if (platform === 'windows') {
@@ -248,6 +255,42 @@ function resolveReleaseCargoJobs({
   return runtimePlatform === 'win32' ? '1' : '';
 }
 
+function withWindowsReleaseBuildWorkarounds(env = process.env, platform = process.platform) {
+  const runtimePlatform = normalizeRuntimePlatform(platform);
+  const nextEnv = { ...env };
+  if (runtimePlatform === 'win32') {
+    nextEnv[WINDOWS_CC_DISABLE_BREPRO_ENV] = '1';
+  }
+
+  return nextEnv;
+}
+
+function releaseFrontendInstallRequirements(appKey) {
+  switch (appKey) {
+    case 'docs':
+      return {
+        requiredPackages: ['vitepress', 'typescript'],
+        requiredBinCommands: ['vitepress', 'tsc'],
+      };
+    case 'admin':
+    case 'portal':
+      return {
+        requiredPackages: ['vite', 'typescript', '@tailwindcss/vite', '@vitejs/plugin-react'],
+        requiredBinCommands: ['vite', 'tsc'],
+      };
+    case 'console':
+      return {
+        requiredPackages: ['vite', 'typescript', '@vitejs/plugin-react'],
+        requiredBinCommands: ['vite', 'tsc'],
+      };
+    default:
+      return {
+        requiredPackages: [],
+        requiredBinCommands: [],
+      };
+  }
+}
+
 export function createReleaseBuildPlan({
   repoRoot,
   platform = process.platform,
@@ -260,12 +303,15 @@ export function createReleaseBuildPlan({
   exists = existsSync,
 } = {}) {
   const runtimePlatform = normalizeRuntimePlatform(platform);
-  const buildEnv = withSupportedWindowsCmakeGenerator(
-    withManagedWorkspaceTargetDir({
-      workspaceRoot: repoRoot,
-      env,
-      platform: runtimePlatform,
-    }),
+  const buildEnv = withWindowsReleaseBuildWorkarounds(
+    withSupportedWindowsCmakeGenerator(
+      withManagedWorkspaceTargetDir({
+        workspaceRoot: repoRoot,
+        env,
+        platform: runtimePlatform,
+      }),
+      runtimePlatform,
+    ),
     runtimePlatform,
   );
   const releaseCargoJobs = resolveReleaseCargoJobs({
@@ -306,8 +352,11 @@ export function createReleaseBuildPlan({
       windowsHide: runtimePlatform === 'win32',
     },
   ];
-
-  const pnpm = pnpmCommand(platform);
+  const pnpmStepOptions = pnpmSpawnOptions({
+    platform: runtimePlatform,
+    env: buildEnv,
+    cwd: repoRoot,
+  });
   const appDirs = [
     {
       key: 'admin',
@@ -337,29 +386,44 @@ export function createReleaseBuildPlan({
     });
   }
 
+  function createPnpmStep(label, stepArgs) {
+    const processSpec = pnpmProcessSpec(stepArgs, {
+      platform: runtimePlatform,
+      execPath: process.execPath,
+    });
+
+    return {
+      label,
+      command: processSpec.command,
+      args: processSpec.args,
+      cwd: repoRoot,
+      env: pnpmStepOptions.env,
+      shell: pnpmStepOptions.shell,
+      windowsHide: pnpmStepOptions.windowsHide,
+    };
+  }
+
   for (const app of appDirs) {
-    const nodeModulesDir = path.join(app.dir, 'node_modules');
-    if (installDependencies || !exists(nodeModulesDir)) {
-      steps.push({
-        label: `${app.label} install`,
-        command: pnpm,
-        args: ['--dir', toPortablePath(path.relative(repoRoot, app.dir)), 'install'],
-        cwd: repoRoot,
-        env: buildEnv,
-        shell: runtimePlatform === 'win32',
-        windowsHide: runtimePlatform === 'win32',
-      });
+    const installRequirements = releaseFrontendInstallRequirements(app.key);
+    if (
+      installDependencies
+      || frontendInstallRequired({
+        appRoot: app.dir,
+        requiredPackages: installRequirements.requiredPackages,
+        requiredBinCommands: installRequirements.requiredBinCommands,
+        platform: runtimePlatform,
+      })
+    ) {
+      steps.push(createPnpmStep(
+        `${app.label} install`,
+        ['--dir', toPortablePath(path.relative(repoRoot, app.dir)), 'install'],
+      ));
     }
 
-    steps.push({
-      label: `${app.label} build`,
-      command: pnpm,
-      args: ['--dir', toPortablePath(path.relative(repoRoot, app.dir)), 'build'],
-      cwd: repoRoot,
-      env: buildEnv,
-      shell: runtimePlatform === 'win32',
-      windowsHide: runtimePlatform === 'win32',
-    });
+    steps.push(createPnpmStep(
+      `${app.label} build`,
+      ['--dir', toPortablePath(path.relative(repoRoot, app.dir)), 'build'],
+    ));
   }
 
   const nodeCommand = process.execPath;

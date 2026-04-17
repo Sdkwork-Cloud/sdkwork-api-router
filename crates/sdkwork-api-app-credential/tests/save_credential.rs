@@ -129,7 +129,7 @@ async fn keyring_backend_persists_binding_and_resolves_plaintext_secret() {
     let store = SqliteAdminStore::new(pool);
     let manager = CredentialSecretManager::os_keyring_with_backend(
         "local-dev-master-key",
-        "sdkwork-api-server-test",
+        "sdkwork-api-router-test",
         Arc::new(MemoryKeyringBackend::default()),
     );
 
@@ -202,7 +202,7 @@ async fn resolves_historical_credentials_after_secret_manager_reconfiguration() 
         "rotated-master-key",
         vec!["initial-master-key".to_owned()],
         &rotated_path,
-        "sdkwork-api-server",
+        "sdkwork-api-router",
     );
 
     let secret = resolve_provider_secret_with_manager(

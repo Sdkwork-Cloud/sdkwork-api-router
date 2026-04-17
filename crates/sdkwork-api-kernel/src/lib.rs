@@ -1,7 +1,7 @@
 use std::sync::OnceLock;
 
 pub fn workspace_name() -> &'static str {
-    "sdkwork-api-server"
+    "sdkwork-api-router"
 }
 
 pub fn ensure_reqwest_rustls_provider() {

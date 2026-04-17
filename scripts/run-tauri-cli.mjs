@@ -10,8 +10,11 @@ import {
   buildDesktopReleaseEnv,
   DESKTOP_TARGET_ENV_VAR,
 } from './release/desktop-targets.mjs';
+import { resolveWorkspaceTargetDir } from './workspace-target-dir.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const rootDir = path.resolve(__dirname, '..');
 const BACKGROUND_LAUNCH_ENV = 'SDKWORK_ROUTER_BACKGROUND';
 
 function normalizeCliArgs(args = []) {
@@ -78,12 +81,16 @@ function withCargoToolchainOnPath(baseEnv = process.env, platform = process.plat
   return env;
 }
 
-function resolveWindowsCargoTargetDir(baseEnv = process.env, cwd = process.cwd()) {
-  const existingTargetDir = String(baseEnv.CARGO_TARGET_DIR ?? '').trim();
-  if (existingTargetDir) {
+export function resolveManagedWindowsTauriTargetDir({
+  env = process.env,
+  cwd = process.cwd(),
+  platform = process.platform,
+} = {}) {
+  if (platform !== 'win32') {
     return null;
   }
 
+  const baseEnv = env;
   const tempRoot = String(baseEnv.TEMP ?? baseEnv.TMP ?? '').trim()
     || (baseEnv.USERPROFILE ? path.join(baseEnv.USERPROFILE, 'AppData', 'Local', 'Temp') : '');
   if (!tempRoot || !fs.existsSync(tempRoot)) {
@@ -92,6 +99,35 @@ function resolveWindowsCargoTargetDir(baseEnv = process.env, cwd = process.cwd()
 
   const appName = path.basename(cwd).trim().toLowerCase();
   return path.join(tempRoot, 'sdkwork-tauri-target', appName || 'app');
+}
+
+function normalizeComparablePath(candidate = '') {
+  return path.normalize(String(candidate ?? '').trim()).replace(/[\\/]+$/u, '').toLowerCase();
+}
+
+function shouldOverrideWindowsCargoTargetDir({
+  env = process.env,
+  platform = process.platform,
+} = {}) {
+  if (platform !== 'win32') {
+    return false;
+  }
+
+  const existingTargetDir = String(env.CARGO_TARGET_DIR ?? '').trim();
+  if (!existingTargetDir) {
+    return true;
+  }
+
+  const managedWorkspaceTargetDir = resolveWorkspaceTargetDir({
+    workspaceRoot: rootDir,
+    env: {
+      ...env,
+      CARGO_TARGET_DIR: '',
+    },
+    platform,
+  });
+
+  return normalizeComparablePath(existingTargetDir) === normalizeComparablePath(managedWorkspaceTargetDir);
 }
 
 function extractTargetTriple(args, env = process.env) {
@@ -123,8 +159,15 @@ export function createTauriCliPlan({
         targetTriple: requestedTargetTriple,
       })
     : { ...env };
-  if (platform === 'win32') {
-    const shortTargetDir = resolveWindowsCargoTargetDir(resolvedEnv, cwd);
+  if (shouldOverrideWindowsCargoTargetDir({
+    env: resolvedEnv,
+    platform,
+  })) {
+    const shortTargetDir = resolveManagedWindowsTauriTargetDir({
+      env: resolvedEnv,
+      cwd,
+      platform,
+    });
     if (shortTargetDir) {
       resolvedEnv.CARGO_TARGET_DIR = shortTargetDir;
     }
