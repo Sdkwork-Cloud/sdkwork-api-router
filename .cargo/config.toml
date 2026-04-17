@@ -1,8 +1,6 @@
-[env]
-# Pingora pulls libz-ng-sys via flate2(zlib-ng). On Windows, recent toolchains
-# can cause cmake's generator probe to guess an unsupported future Visual Studio
-# version, while Ninja is not guaranteed to be installed on developer machines.
-# Default to the supported MSVC generator and still allow scripts / CI to
-# override these values explicitly when needed.
-CMAKE_GENERATOR = { value = "Visual Studio 17 2022", force = false }
-HOST_CMAKE_GENERATOR = { value = "Visual Studio 17 2022", force = false }
+# Keep this file available for future Cargo workspace tuning, but do not pin
+# Windows-only CMake generator defaults here.
+#
+# Cargo loads .cargo/config.toml on every host platform, so global CMAKE_GENERATOR
+# settings leak into Linux and macOS release lanes. Windows-safe generator
+# normalization belongs in the Windows entrypoints and CI wiring instead.

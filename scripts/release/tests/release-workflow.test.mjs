@@ -1913,7 +1913,19 @@ test('shared tauri runner only injects the Visual Studio generator on Windows an
     commandName: 'build',
     args: ['--target', 'x86_64-unknown-linux-gnu'],
     platform: 'linux',
-    env: {},
+    env: {
+      CMAKE_GENERATOR: 'Visual Studio 17 2022',
+      HOST_CMAKE_GENERATOR: 'Visual Studio 17 2022',
+    },
+  });
+  const linuxNinjaPlan = runner.createTauriCliPlan({
+    commandName: 'build',
+    args: ['--target', 'x86_64-unknown-linux-gnu'],
+    platform: 'linux',
+    env: {
+      CMAKE_GENERATOR: 'Ninja',
+      HOST_CMAKE_GENERATOR: 'Ninja',
+    },
   });
   const backgroundDevPlan = runner.createTauriCliPlan({
     commandName: 'dev',
@@ -1937,6 +1949,9 @@ test('shared tauri runner only injects the Visual Studio generator on Windows an
   assert.equal(linuxPlan.env.SDKWORK_DESKTOP_TARGET_PLATFORM, 'linux');
   assert.equal(linuxPlan.env.SDKWORK_DESKTOP_TARGET_ARCH, 'x64');
   assert.equal(Object.hasOwn(linuxPlan.env, 'CMAKE_GENERATOR'), false);
+  assert.equal(Object.hasOwn(linuxPlan.env, 'HOST_CMAKE_GENERATOR'), false);
+  assert.equal(linuxNinjaPlan.env.CMAKE_GENERATOR, 'Ninja');
+  assert.equal(Object.hasOwn(linuxNinjaPlan.env, 'HOST_CMAKE_GENERATOR'), false);
   assert.equal(backgroundDevPlan.detached, true);
   assert.equal(backgroundDevPlan.windowsHide, false);
 });

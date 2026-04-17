@@ -586,6 +586,27 @@ test('createReleaseBuildPlan normalizes broken Windows CMake generator defaults 
   assert.doesNotMatch(plan.steps[0].env.CARGO_TARGET_DIR, /[\\/]bin[\\/]\.sdkwork-target-vs2022/i);
 });
 
+test('createReleaseBuildPlan strips inherited Windows-only CMake generators on non-Windows release cargo builds', async () => {
+  const module = await loadModule();
+
+  const plan = module.createReleaseBuildPlan({
+    repoRoot,
+    platform: 'linux',
+    arch: 'x64',
+    env: {
+      HOME: '/tmp/sdkwork',
+      CMAKE_GENERATOR: 'Visual Studio 17 2022',
+      HOST_CMAKE_GENERATOR: 'Visual Studio 17 2022',
+    },
+    includeDocs: false,
+    includeConsole: false,
+  });
+
+  assert.equal(Object.hasOwn(plan.steps[0].env, 'CMAKE_GENERATOR'), false);
+  assert.equal(Object.hasOwn(plan.steps[0].env, 'HOST_CMAKE_GENERATOR'), false);
+  assert.equal(plan.target.targetTriple, 'x86_64-unknown-linux-gnu');
+});
+
 test('createReleaseBuildPlan defaults Windows release cargo builds to a single job and propagates that to downstream steps', async () => {
   const module = await loadModule();
 

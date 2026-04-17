@@ -33,11 +33,32 @@ function shouldLaunchInBackground(commandName, args = [], env = process.env) {
   return normalizeCliArgs(args).some((arg) => arg === '--service' || arg === '--start-hidden');
 }
 
+function isVisualStudioCmakeGenerator(value = '') {
+  return /visual studio/i.test(String(value ?? '').trim());
+}
+
+function sanitizeNonWindowsCmakeEnv(baseEnv = process.env, platform = process.platform) {
+  const env = { ...baseEnv };
+  if (platform === 'win32') {
+    return env;
+  }
+
+  delete env.HOST_CMAKE_GENERATOR;
+  delete env.CMAKE_GENERATOR_PLATFORM;
+  delete env.CMAKE_GENERATOR_TOOLSET;
+
+  if (isVisualStudioCmakeGenerator(env.CMAKE_GENERATOR)) {
+    delete env.CMAKE_GENERATOR;
+  }
+
+  return env;
+}
+
 export function withSupportedWindowsCmakeGenerator(
   baseEnv = process.env,
   platform = process.platform,
 ) {
-  const env = { ...baseEnv };
+  const env = sanitizeNonWindowsCmakeEnv(baseEnv, platform);
   if (platform !== 'win32') {
     return env;
   }

@@ -76,6 +76,17 @@ test('check-rust-verification-matrix exposes grouped cross-platform cargo plans 
     '-p',
     'router-product-service',
   ]);
+  const sanitizedLinuxPlan = module.createRustVerificationPlan({
+    workspaceRoot,
+    group: 'gateway-service',
+    platform: 'linux',
+    env: {
+      CMAKE_GENERATOR: 'Visual Studio 17 2022',
+      HOST_CMAKE_GENERATOR: 'Visual Studio 17 2022',
+    },
+  });
+  assert.equal(Object.hasOwn(sanitizedLinuxPlan[0].env, 'CMAKE_GENERATOR'), false);
+  assert.equal(Object.hasOwn(sanitizedLinuxPlan[0].env, 'HOST_CMAKE_GENERATOR'), false);
 
   const auditPlan = module.createRustVerificationPlan({
     workspaceRoot,

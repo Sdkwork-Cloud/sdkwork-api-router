@@ -45,6 +45,17 @@ test('check-router-product exposes Windows-safe pnpm and rust runner plans witho
   assert.match(plan[6].args.join(' '), /check-router-docs-safety\.mjs/);
   assert.equal(plan[7].label, 'workspace dependency audit');
   assert.match(plan[7].args.join(' '), /check-rust-dependency-audit\.mjs/);
+
+  const linuxPlan = module.createProductCheckPlan({
+    workspaceRoot,
+    platform: 'linux',
+    env: {
+      CMAKE_GENERATOR: 'Visual Studio 17 2022',
+      HOST_CMAKE_GENERATOR: 'Visual Studio 17 2022',
+    },
+  });
+  assert.equal(Object.hasOwn(linuxPlan[0].env, 'CMAKE_GENERATOR'), false);
+  assert.equal(Object.hasOwn(linuxPlan[0].env, 'HOST_CMAKE_GENERATOR'), false);
 });
 
 test('workspace TypeScript app configs keep ignoreDeprecations compatible with the pinned compiler major', () => {
@@ -73,6 +84,13 @@ test('workspace TypeScript app configs keep ignoreDeprecations compatible with t
       `${appRoot} must keep ignoreDeprecations aligned with the pinned TypeScript 5.x compiler`,
     );
   }
+});
+
+test('workspace cargo config does not pin Windows-only CMake generators globally', () => {
+  const cargoConfig = readText('.cargo/config.toml');
+
+  assert.doesNotMatch(cargoConfig, /^\s*CMAKE_GENERATOR\s*=/m);
+  assert.doesNotMatch(cargoConfig, /^\s*HOST_CMAKE_GENERATOR\s*=/m);
 });
 
 test('vendored pingora-core patch avoids the known Windows cargo-check dead-code warning patterns', () => {

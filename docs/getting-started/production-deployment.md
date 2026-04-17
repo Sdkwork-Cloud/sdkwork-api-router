@@ -50,6 +50,13 @@ Windows:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\build.ps1
 ```
 
+Cross-platform release hygiene:
+
+- keep Windows-only `CMAKE_GENERATOR` and `HOST_CMAKE_GENERATOR` settings scoped to Windows entrypoints and CI jobs
+- do not persist Visual Studio CMake generator defaults in global Cargo config or Unix shell profiles
+- when you run Unix installed-runtime smoke inside Docker, keep the same `CARGO_TARGET_DIR` for the `cargo build` and `run-unix-installed-runtime-smoke.mjs` steps
+- ensure the Linux container image includes `ss`, `netstat`, or `lsof` so the runtime port preflight can verify bind availability
+
 ## Generate A Native Production Install
 
 Linux or macOS:
