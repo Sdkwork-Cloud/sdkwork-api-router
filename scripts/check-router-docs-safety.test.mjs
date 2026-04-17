@@ -83,3 +83,48 @@ test('README and getting-started docs align to config-file-first production guid
   assert.match(deployReadme, /Docker and Helm asset-specific/i);
   assert.doesNotMatch(deployReadme, /system install/i);
 });
+
+test('gateway api reference publishes capability-first navigation in both locales', () => {
+  const requiredFiles = [
+    'docs/api-reference/gateway-capabilities.md',
+    'docs/api-reference/gateway-capabilities/code.md',
+    'docs/api-reference/gateway-capabilities/images.md',
+    'docs/api-reference/gateway-capabilities/video.md',
+    'docs/api-reference/gateway-capabilities/music.md',
+    'docs/api-reference/gateway-capabilities/images/nanobanana.md',
+    'docs/api-reference/gateway-capabilities/images/midjourney.md',
+    'docs/api-reference/gateway-capabilities/video/sora2.md',
+    'docs/zh/api-reference/gateway-capabilities.md',
+    'docs/zh/api-reference/gateway-capabilities/code.md',
+    'docs/zh/api-reference/gateway-capabilities/images.md',
+    'docs/zh/api-reference/gateway-capabilities/video.md',
+    'docs/zh/api-reference/gateway-capabilities/music.md',
+    'docs/zh/api-reference/gateway-capabilities/images/nanobanana.md',
+    'docs/zh/api-reference/gateway-capabilities/images/midjourney.md',
+    'docs/zh/api-reference/gateway-capabilities/video/sora2.md',
+  ];
+
+  for (const relativePath of requiredFiles) {
+    assert.equal(existsSync(path.join(workspaceRoot, relativePath)), true, `missing ${relativePath}`);
+  }
+
+  const vitepressConfig = readWorkspaceFile('docs/.vitepress/config.mjs');
+  const overview = readWorkspaceFile('docs/api-reference/overview.md');
+  const overviewZh = readWorkspaceFile('docs/zh/api-reference/overview.md');
+  const gatewayApi = readWorkspaceFile('docs/api-reference/gateway-api.md');
+  const gatewayApiZh = readWorkspaceFile('docs/zh/api-reference/gateway-api.md');
+  const imagesCapability = readWorkspaceFile('docs/api-reference/gateway-capabilities/images.md');
+  const videoCapability = readWorkspaceFile('docs/api-reference/gateway-capabilities/video.md');
+
+  assert.match(vitepressConfig, /\/api-reference\/gateway-capabilities/);
+  assert.match(vitepressConfig, /\/zh\/api-reference\/gateway-capabilities/);
+  assert.match(overview, /Gateway Capability Index/);
+  assert.match(overviewZh, /Gateway Capability Index|能力目录|能力索引/);
+  assert.match(gatewayApi, /Gateway Capability Index/);
+  assert.match(gatewayApiZh, /Gateway Capability Index|能力目录|能力索引/);
+  assert.match(imagesCapability, /`\/v1\/images\/\*`/);
+  assert.match(imagesCapability, /nanobanana/i);
+  assert.match(imagesCapability, /midjourney/i);
+  assert.match(videoCapability, /`\/v1\/videos\*`/);
+  assert.match(videoCapability, /sora2/i);
+});

@@ -48,6 +48,11 @@ const englishSidebar = [
     items: [
       { text: 'Overview', link: '/api-reference/overview' },
       { text: 'Gateway API', link: '/api-reference/gateway-api' },
+      { text: 'Gateway Capability Index', link: '/api-reference/gateway-capabilities' },
+      { text: 'Code Families', link: '/api-reference/gateway-capabilities/code' },
+      { text: 'Image Families', link: '/api-reference/gateway-capabilities/images' },
+      { text: 'Video Families', link: '/api-reference/gateway-capabilities/video' },
+      { text: 'Music Families', link: '/api-reference/gateway-capabilities/music' },
       { text: 'Admin API', link: '/api-reference/admin-api' },
       { text: 'Portal API', link: '/api-reference/portal-api' },
     ],
@@ -100,6 +105,11 @@ const chineseSidebar = [
     items: [
       { text: '总览', link: '/zh/api-reference/overview' },
       { text: '网关 API', link: '/zh/api-reference/gateway-api' },
+      { text: '网关能力索引', link: '/zh/api-reference/gateway-capabilities' },
+      { text: 'Code 家族', link: '/zh/api-reference/gateway-capabilities/code' },
+      { text: 'Images 家族', link: '/zh/api-reference/gateway-capabilities/images' },
+      { text: 'Video 家族', link: '/zh/api-reference/gateway-capabilities/video' },
+      { text: 'Music 家族', link: '/zh/api-reference/gateway-capabilities/music' },
       { text: '管理端 API', link: '/zh/api-reference/admin-api' },
       { text: '门户 API', link: '/zh/api-reference/portal-api' },
     ],

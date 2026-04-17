@@ -102,6 +102,7 @@ The browser surface is intentionally split into two independent applications:
 
 ## Service-Specific Reference Pages
 
+- [Gateway Capability Index](/api-reference/gateway-capabilities)
 - [Gateway API](/api-reference/gateway-api)
 - [Admin API](/api-reference/admin-api)
 - [Portal API](/api-reference/portal-api)

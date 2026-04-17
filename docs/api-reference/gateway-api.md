@@ -22,6 +22,8 @@ In standalone service mode, expect stateful gateway behavior backed by the admin
 
 OpenAPI is generated from the current `axum` route implementation, so the JSON document and the browser page stay aligned with the live router surface.
 
+If you want a capability-first browsing view instead of the raw OpenAPI inventory, start with the [Gateway Capability Index](/api-reference/gateway-capabilities). That layer is documentation-only and does not change the live mirror paths or tag truth.
+
 ## Mirror Protocol Families
 
 - `code.openai`: OpenAI and Codex mirror routes on the official `/v1/*` surface
@@ -118,6 +120,7 @@ The gateway now publishes four active music mirror families: the shared `music.o
 
 ## Related Docs
 
+- [Gateway Capability Index](/api-reference/gateway-capabilities)
 - public contract and execution truth:
   - [API Compatibility](/reference/api-compatibility)
   - [Full Compatibility Matrix](/api/compatibility-matrix)
