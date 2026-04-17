@@ -27,7 +27,21 @@ test('admin browser runtime smoke exposes a parseable preview build plan', async
     'input[type="password"]',
     'button[type="submit"]',
   ]);
-  assert.match(plan.buildStep.args.join(' '), /['"]build['"]$/);
+  assert.ok(Array.isArray(plan.routeChecks));
+  assert.deepEqual(
+    plan.routeChecks.map((check) => check.id),
+    ['login', 'commercial-unsafe-id'],
+  );
+  assert.equal(plan.routeChecks[1].url, 'http://127.0.0.1:4173/admin/commercial');
+  assert.deepEqual(plan.routeChecks[1].expectedRequestIncludes, [
+    '/api/admin/billing/accounts/646979632893840957/ledger',
+    '/api/admin/billing/accounts/1950809575122113173/ledger',
+  ]);
+  assert.deepEqual(plan.routeChecks[1].forbiddenTexts, [
+    '646979632893840900',
+    '1950809575122113300',
+  ]);
+  assert.match(plan.buildStep.args.join(' '), /run-vite-cli\.mjs build/);
   assert.match(plan.previewStep.args.join(' '), /run-vite-cli\.mjs preview/);
   assert.match(plan.previewStep.args.join(' '), /--port 4173/);
 });

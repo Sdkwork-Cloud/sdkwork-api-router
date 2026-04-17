@@ -16,6 +16,7 @@ import type {
   CommercialAccountId,
   CommercialAccountLedgerHistoryEntry,
   CommercialAccountHoldRecord,
+  CommercialNumericId,
   CommercialPricingLifecycleSynchronizationReport,
   CommercialPricingPlanCreateInput,
   CommercialAccountSummary,
@@ -1001,7 +1002,7 @@ export function createCommercialPricingPlan(
 }
 
 export function updateCommercialPricingPlan(
-  pricingPlanId: number,
+  pricingPlanId: CommercialNumericId,
   input: CommercialPricingPlanCreateInput,
 ): Promise<CommercialPricingPlanRecord> {
   return putJson<CommercialPricingPlanCreateInput, CommercialPricingPlanRecord>(
@@ -1012,7 +1013,7 @@ export function updateCommercialPricingPlan(
 }
 
 export function cloneCommercialPricingPlan(
-  pricingPlanId: number,
+  pricingPlanId: CommercialNumericId,
   input?: {
     plan_version?: number;
     display_name?: string | null;
@@ -1030,7 +1031,7 @@ export function cloneCommercialPricingPlan(
 }
 
 export function publishCommercialPricingPlan(
-  pricingPlanId: number,
+  pricingPlanId: CommercialNumericId,
 ): Promise<CommercialPricingPlanRecord> {
   return postJson<Record<string, never>, CommercialPricingPlanRecord>(
     `/billing/pricing-plans/${encodeURIComponent(String(pricingPlanId))}/publish`,
@@ -1040,7 +1041,7 @@ export function publishCommercialPricingPlan(
 }
 
 export function scheduleCommercialPricingPlan(
-  pricingPlanId: number,
+  pricingPlanId: CommercialNumericId,
 ): Promise<CommercialPricingPlanRecord> {
   return postJson<Record<string, never>, CommercialPricingPlanRecord>(
     `/billing/pricing-plans/${encodeURIComponent(String(pricingPlanId))}/schedule`,
@@ -1050,7 +1051,7 @@ export function scheduleCommercialPricingPlan(
 }
 
 export function retireCommercialPricingPlan(
-  pricingPlanId: number,
+  pricingPlanId: CommercialNumericId,
 ): Promise<CommercialPricingPlanRecord> {
   return postJson<Record<string, never>, CommercialPricingPlanRecord>(
     `/billing/pricing-plans/${encodeURIComponent(String(pricingPlanId))}/retire`,
@@ -1084,7 +1085,7 @@ export function createCommercialPricingRate(
 }
 
 export function updateCommercialPricingRate(
-  pricingRateId: number,
+  pricingRateId: CommercialNumericId,
   input: CommercialPricingRateCreateInput,
 ): Promise<CommercialPricingRateRecord> {
   return putJson<CommercialPricingRateCreateInput, CommercialPricingRateRecord>(

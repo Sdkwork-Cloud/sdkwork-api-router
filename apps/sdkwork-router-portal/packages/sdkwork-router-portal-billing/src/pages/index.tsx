@@ -7,6 +7,10 @@ import {
   formatUnits,
   usePortalI18n,
 } from 'sdkwork-router-portal-commons';
+import {
+  compareCommercialNumericIdsDesc,
+  commercialNumericIdsEqual,
+} from 'sdkwork-router-portal-types';
 import { Button } from 'sdkwork-router-portal-commons/framework/actions';
 import {
   Badge,
@@ -809,7 +813,7 @@ function selectPrimaryCommercialPricingPlan(
       || right.plan_version - left.plan_version
       || right.updated_at_ms - left.updated_at_ms
       || right.created_at_ms - left.created_at_ms
-      || right.pricing_plan_id - left.pricing_plan_id;
+      || compareCommercialNumericIdsDesc(left.pricing_plan_id, right.pricing_plan_id);
   };
 
   return [...pricingPlans].sort(comparePlans)[0] ?? null;
@@ -826,7 +830,7 @@ function compareCommercialPricingRates(
     || right.priority - left.priority
     || right.updated_at_ms - left.updated_at_ms
     || right.created_at_ms - left.created_at_ms
-    || right.pricing_rate_id - left.pricing_rate_id;
+    || compareCommercialNumericIdsDesc(left.pricing_rate_id, right.pricing_rate_id);
 }
 
 function isTokenPricingRate(rate: CommercialPricingRateRecord): boolean {
@@ -1854,7 +1858,11 @@ export function PortalBillingPage({ onNavigate }: PortalBillingPageProps) {
     .sort(compareCommercialPricingRates);
   const primaryCommercialRate = activeCommercialPlan
     ? prioritizedCommercialRates.find(
-      (rate) => rate.pricing_plan_id === activeCommercialPlan.pricing_plan_id,
+      (rate) =>
+        commercialNumericIdsEqual(
+          rate.pricing_plan_id,
+          activeCommercialPlan.pricing_plan_id,
+        ),
     ) ?? prioritizedCommercialRates[0] ?? null
     : prioritizedCommercialRates[0] ?? null;
   const tokenPricingRates = prioritizedCommercialRates.filter(isTokenPricingRate).slice(0, 3);

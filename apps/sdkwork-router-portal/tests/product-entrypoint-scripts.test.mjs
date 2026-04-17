@@ -40,9 +40,13 @@ test('product check script plans portal and admin regression tests before build 
 
   assert.equal(plan.length, 11);
   assert.equal(plan[0].label, 'portal typecheck');
+  assert.equal(plan[0].command, process.execPath);
+  assert.match(plan[0].args.join(' '), /run-tsc-cli\.mjs --noEmit/);
   assert.equal(plan[1].label, 'portal regression tests');
   assert.equal(plan[2].label, 'portal browser runtime smoke');
   assert.equal(plan[3].label, 'admin typecheck');
+  assert.equal(plan[3].command, process.execPath);
+  assert.match(plan[3].args.join(' '), /run-tsc-cli\.mjs --noEmit/);
   assert.equal(plan[4].label, 'admin regression tests');
   assert.equal(plan[5].label, 'admin browser runtime smoke');
   assert.equal(plan[6].label, 'docs bootstrap safety');

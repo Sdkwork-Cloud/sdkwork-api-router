@@ -1,3 +1,7 @@
+import {
+  compareCommercialNumericIdsDesc,
+  commercialNumericIdsEqual,
+} from 'sdkwork-router-portal-types';
 import type {
   CommercialAccountBenefitLotRecord,
   CommercialAccountHoldRecord,
@@ -31,7 +35,7 @@ function compareSettlements(
 ): number {
   return right.settled_at_ms - left.settled_at_ms
     || right.updated_at_ms - left.updated_at_ms
-    || right.request_settlement_id - left.request_settlement_id;
+    || compareCommercialNumericIdsDesc(left.request_settlement_id, right.request_settlement_id);
 }
 
 function compareHolds(
@@ -40,7 +44,7 @@ function compareHolds(
 ): number {
   return right.created_at_ms - left.created_at_ms
     || right.updated_at_ms - left.updated_at_ms
-    || right.hold_id - left.hold_id;
+    || compareCommercialNumericIdsDesc(left.hold_id, right.hold_id);
 }
 
 function compareBenefitLots(
@@ -49,7 +53,7 @@ function compareBenefitLots(
 ): number {
   return right.remaining_quantity - left.remaining_quantity
     || right.priority - left.priority
-    || right.lot_id - left.lot_id;
+    || compareCommercialNumericIdsDesc(left.lot_id, right.lot_id);
 }
 
 function isPricingPlanEffectiveAt(
@@ -79,7 +83,7 @@ function selectPrimaryPricingPlan(
       || right.plan_version - left.plan_version
       || right.updated_at_ms - left.updated_at_ms
       || right.created_at_ms - left.created_at_ms
-      || right.pricing_plan_id - left.pricing_plan_id;
+      || compareCommercialNumericIdsDesc(left.pricing_plan_id, right.pricing_plan_id);
   };
 
   return [...pricingPlans].sort(comparePlans)[0] ?? null;
@@ -100,12 +104,13 @@ function selectPrimaryPricingRate(
       || right.priority - left.priority
       || right.updated_at_ms - left.updated_at_ms
       || right.created_at_ms - left.created_at_ms
-      || right.pricing_rate_id - left.pricing_rate_id;
+      || compareCommercialNumericIdsDesc(left.pricing_rate_id, right.pricing_rate_id);
   };
 
   if (primaryPlan) {
     const planRate = pricingRates
-      .filter((rate) => rate.pricing_plan_id === primaryPlan.pricing_plan_id)
+      .filter((rate) =>
+        commercialNumericIdsEqual(rate.pricing_plan_id, primaryPlan.pricing_plan_id))
       .sort(compareRates)[0];
     if (planRate) {
       return planRate;

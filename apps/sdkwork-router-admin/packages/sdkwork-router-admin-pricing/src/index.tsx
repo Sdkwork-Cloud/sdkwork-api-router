@@ -20,8 +20,10 @@ import {
   useAdminI18n,
   useAdminWorkbench,
 } from 'sdkwork-router-admin-core';
+import { commercialNumericIdsEqual } from 'sdkwork-router-admin-types';
 import type {
   AdminPageProps,
+  CommercialNumericId,
   CommercialPricingChargeUnit,
   CommercialPricingLifecycleSynchronizationReport,
   CommercialPricingMethod,
@@ -359,8 +361,8 @@ export function PricingPage({ snapshot }: AdminPageProps) {
   const { formatCurrency, formatDateTime, formatNumber, t } = useAdminI18n();
   const [planDraft, setPlanDraft] = useState(() => buildPlanDraft(snapshot));
   const [rateDraft, setRateDraft] = useState(() => buildRateDraft(snapshot));
-  const [editingPlanId, setEditingPlanId] = useState<number | null>(null);
-  const [editingRateId, setEditingRateId] = useState<number | null>(null);
+  const [editingPlanId, setEditingPlanId] = useState<CommercialNumericId | null>(null);
+  const [editingRateId, setEditingRateId] = useState<CommercialNumericId | null>(null);
   const [savingPlan, setSavingPlan] = useState(false);
   const [savingRate, setSavingRate] = useState(false);
   const [synchronizingLifecycle, setSynchronizingLifecycle] = useState(false);
@@ -449,7 +451,7 @@ export function PricingPage({ snapshot }: AdminPageProps) {
     setSavingPlan(true);
     try {
       const publishedPlan = await handlePublishCommercialPricingPlan(plan.pricing_plan_id);
-      if (editingPlanId === publishedPlan.pricing_plan_id) {
+      if (commercialNumericIdsEqual(editingPlanId, publishedPlan.pricing_plan_id)) {
         setPlanDraft(buildPlanDraftFromRecord(publishedPlan));
       }
     } finally {
@@ -461,7 +463,7 @@ export function PricingPage({ snapshot }: AdminPageProps) {
     setSavingPlan(true);
     try {
       const scheduledPlan = await handleScheduleCommercialPricingPlan(plan.pricing_plan_id);
-      if (editingPlanId === scheduledPlan.pricing_plan_id) {
+      if (commercialNumericIdsEqual(editingPlanId, scheduledPlan.pricing_plan_id)) {
         setPlanDraft(buildPlanDraftFromRecord(scheduledPlan));
       }
     } finally {
@@ -473,7 +475,7 @@ export function PricingPage({ snapshot }: AdminPageProps) {
     setSavingPlan(true);
     try {
       const retiredPlan = await handleRetireCommercialPricingPlan(plan.pricing_plan_id);
-      if (editingPlanId === retiredPlan.pricing_plan_id) {
+      if (commercialNumericIdsEqual(editingPlanId, retiredPlan.pricing_plan_id)) {
         setPlanDraft(buildPlanDraftFromRecord(retiredPlan));
       }
     } finally {
@@ -825,10 +827,7 @@ export function PricingPage({ snapshot }: AdminPageProps) {
                         onChange={(event) =>
                           setRateDraft((current) => ({
                             ...current,
-                            pricing_plan_id: parseNumber(
-                              event.target.value,
-                              current.pricing_plan_id,
-                            ),
+                            pricing_plan_id: event.target.value || current.pricing_plan_id,
                           }))}
                       >
                         {snapshot.commercialPricingPlans.length === 0 ? (

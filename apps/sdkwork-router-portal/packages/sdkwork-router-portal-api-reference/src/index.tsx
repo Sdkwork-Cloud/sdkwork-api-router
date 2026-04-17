@@ -8,6 +8,8 @@ import {
   PortalSitePanel,
 } from 'sdkwork-router-portal-commons/framework/site';
 
+import { readOpenApiDocument } from './openapiTransport';
+
 type OpenApiDocument = {
   openapi?: string;
   tags?: Array<{ name?: string }>;
@@ -274,7 +276,7 @@ export function PortalApiReferencePage() {
               throw new Error(`HTTP ${response.status}`);
             }
 
-            const document = (await response.json()) as OpenApiDocument;
+            const document = await readOpenApiDocument<OpenApiDocument>(response);
 
             return [
               surface.id,

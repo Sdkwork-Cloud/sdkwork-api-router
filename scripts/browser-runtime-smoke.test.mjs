@@ -94,3 +94,66 @@ test('browser runtime smoke can resolve a Chromium executable from a provided ca
     'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
   );
 });
+
+test('browser runtime smoke preserves unsafe integers when polling JSON endpoints', async () => {
+  const module = await import(
+    pathToFileURL(path.join(repoRoot, 'scripts', 'browser-runtime-smoke.mjs')).href,
+  );
+
+  const payload = await module.readJsonResponse(
+    new Response(
+      '{"webSocketDebuggerUrl":"ws://127.0.0.1/devtools/page/1","unsafe_marker":9007199254740993}',
+      {
+        status: 200,
+        headers: {
+          'content-type': 'application/json',
+        },
+      },
+    ),
+  );
+
+  assert.equal(payload.unsafe_marker, '9007199254740993');
+});
+
+test('browser runtime smoke plan preserves setup scripts, forbidden texts, and expected request fragments', async () => {
+  const module = await import(
+    pathToFileURL(path.join(repoRoot, 'scripts', 'browser-runtime-smoke.mjs')).href,
+  );
+
+  assert.equal(typeof module.createMockFetchSetupScript, 'function');
+
+  const setupScript = module.createMockFetchSetupScript({
+    localStorageEntries: {
+      'sdkwork.router.portal.session-token': 'portal-token',
+    },
+    exactResponses: {
+      '/api/portal/workspace': {
+        tenant: { id: 'tenant-1', name: 'Tenant 1' },
+      },
+    },
+    patternResponses: [{
+      pattern: '^/api/admin/billing/accounts/646979632893840957/ledger$',
+      body: [],
+    }],
+  });
+
+  const plan = module.createBrowserRuntimeSmokePlan({
+    url: 'http://127.0.0.1:4174/portal/console/account',
+    expectedTexts: ['1950809575122113173'],
+    expectedSelectors: ['[data-slot="portal-account-page"]'],
+    forbiddenTexts: ['1950809575122113300'],
+    expectedRequestIncludes: ['/api/admin/billing/accounts/646979632893840957/ledger'],
+    setupScript,
+    browserPath: 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
+    platform: 'win32',
+  });
+
+  assert.deepEqual(plan.forbiddenTexts, ['1950809575122113300']);
+  assert.deepEqual(plan.expectedRequestIncludes, [
+    '/api/admin/billing/accounts/646979632893840957/ledger',
+  ]);
+  assert.equal(plan.setupScript, setupScript);
+  assert.match(setupScript, /sdkwork\.router\.portal\.session-token/);
+  assert.match(setupScript, /\/api\/portal\/workspace/);
+  assert.match(setupScript, /646979632893840957/);
+});

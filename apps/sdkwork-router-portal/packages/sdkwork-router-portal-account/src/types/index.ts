@@ -2,8 +2,10 @@ import type {
   BillingEventAccountingModeSummary,
   BillingEventCapabilitySummary,
   BillingEventSummary,
+  CommercialAccountId,
   CommercialAccountBalanceSnapshot,
   CommercialAccountBenefitLotRecord,
+  CommercialNumericId,
   CommercialAccountLedgerEntryType,
   CommercialAccountLedgerHistoryEntry,
   CommercialAccountHoldRecord,
@@ -56,7 +58,7 @@ export interface PortalAccountFinancialBreakdown {
 }
 
 export interface PortalAccountCommercialPosture {
-  account_id: number | null;
+  account_id: CommercialAccountId | null;
   account_status: string | null;
   account_type: string | null;
   currency_code: string | null;
@@ -94,8 +96,8 @@ export interface PortalAccountHistoryRow extends LedgerEntry {
   share_of_booked_amount: number;
   ledger_entry_type?: CommercialAccountLedgerEntryType | null;
   order_id?: string | null;
-  request_id?: number | null;
-  hold_id?: number | null;
+  request_id?: CommercialNumericId | null;
+  hold_id?: CommercialNumericId | null;
   model?: string | null;
   provider?: string | null;
   channel_id?: string | null;

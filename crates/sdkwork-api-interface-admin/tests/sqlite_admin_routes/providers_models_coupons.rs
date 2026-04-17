@@ -251,6 +251,10 @@ async fn create_provider_accepts_explicit_protocol_kind() {
     );
     assert_eq!(created_json["integration"]["mode"], "custom_plugin");
     assert!(created_json["integration"]["default_plugin_family"].is_null());
+    assert_eq!(
+        created_json["integration"]["mirror_protocol_identity"],
+        "anthropic"
+    );
 
     let list_providers = app
         .oneshot(
@@ -269,6 +273,10 @@ async fn create_provider_accepts_explicit_protocol_kind() {
     assert_eq!(providers_json[0]["id"], "provider-claude-relay");
     assert_eq!(providers_json[0]["adapter_kind"], "native-dynamic");
     assert_eq!(providers_json[0]["protocol_kind"], "anthropic");
+    assert_eq!(
+        providers_json[0]["integration"]["mirror_protocol_identity"],
+        "anthropic"
+    );
 }
 
 #[tokio::test]
@@ -320,6 +328,10 @@ async fn create_provider_derives_protocol_kind_for_standard_passthrough_provider
         "standard_passthrough"
     );
     assert!(anthropic_json["integration"]["default_plugin_family"].is_null());
+    assert_eq!(
+        anthropic_json["integration"]["mirror_protocol_identity"],
+        "anthropic"
+    );
 
     let create_gemini = app
         .clone()
@@ -342,6 +354,10 @@ async fn create_provider_derives_protocol_kind_for_standard_passthrough_provider
     assert_eq!(gemini_json["extension_id"], "sdkwork.provider.gemini");
     assert_eq!(gemini_json["integration"]["mode"], "standard_passthrough");
     assert!(gemini_json["integration"]["default_plugin_family"].is_null());
+    assert_eq!(
+        gemini_json["integration"]["mirror_protocol_identity"],
+        "gemini"
+    );
 }
 
 #[tokio::test]
@@ -393,6 +409,10 @@ async fn create_provider_accepts_default_plugin_family_for_openrouter() {
         created_json["integration"]["default_plugin_family"],
         "openrouter"
     );
+    assert_eq!(
+        created_json["integration"]["mirror_protocol_identity"],
+        "openai"
+    );
 
     let list_providers = app
         .oneshot(
@@ -413,6 +433,10 @@ async fn create_provider_accepts_default_plugin_family_for_openrouter() {
     assert_eq!(
         provider["integration"]["default_plugin_family"],
         "openrouter"
+    );
+    assert_eq!(
+        provider["integration"]["mirror_protocol_identity"],
+        "openai"
     );
 }
 
@@ -463,6 +487,10 @@ async fn create_provider_accepts_default_plugin_family_for_ollama() {
         created_json["integration"]["default_plugin_family"],
         "ollama"
     );
+    assert_eq!(
+        created_json["integration"]["mirror_protocol_identity"],
+        "ollama"
+    );
 
     let list_providers = app
         .oneshot(
@@ -481,6 +509,10 @@ async fn create_provider_accepts_default_plugin_family_for_ollama() {
     let provider = provider_json_by_id(&providers_json, "provider-ollama-local");
     assert_eq!(provider["integration"]["mode"], "default_plugin");
     assert_eq!(provider["integration"]["default_plugin_family"], "ollama");
+    assert_eq!(
+        provider["integration"]["mirror_protocol_identity"],
+        "ollama"
+    );
 }
 
 #[tokio::test]
@@ -554,6 +586,10 @@ async fn list_providers_exposes_implicit_standard_passthrough_execution_view() {
     let provider = provider_json_by_id(&providers_json, "provider-openai-official");
     assert_eq!(provider["integration"]["mode"], "standard_passthrough");
     assert!(provider["integration"]["default_plugin_family"].is_null());
+    assert_eq!(
+        provider["integration"]["mirror_protocol_identity"],
+        "openai"
+    );
     assert_eq!(provider["execution"]["binding_kind"], "implicit_default");
     assert_eq!(provider["execution"]["runtime"], "builtin");
     assert_eq!(
@@ -783,6 +819,10 @@ async fn list_tenant_provider_readiness_exposes_focused_tenant_overlay_inventory
         openai_provider["integration"]["mode"],
         "standard_passthrough"
     );
+    assert_eq!(
+        openai_provider["integration"]["mirror_protocol_identity"],
+        "openai"
+    );
     assert_eq!(openai_provider["credential_readiness"]["ready"], false);
     assert_eq!(openai_provider["credential_readiness"]["state"], "missing");
     assert!(openai_provider["execution"].is_null());
@@ -794,6 +834,10 @@ async fn list_tenant_provider_readiness_exposes_focused_tenant_overlay_inventory
     assert_eq!(
         openrouter_provider["integration"]["default_plugin_family"],
         "openrouter"
+    );
+    assert_eq!(
+        openrouter_provider["integration"]["mirror_protocol_identity"],
+        "openai"
     );
     assert_eq!(openrouter_provider["credential_readiness"]["ready"], true);
     assert_eq!(
@@ -875,6 +919,10 @@ async fn list_providers_exposes_native_dynamic_raw_plugin_execution_view() {
     let provider = provider_json_by_id(&providers_json, "provider-claude-plugin");
     assert_eq!(provider["integration"]["mode"], "custom_plugin");
     assert!(provider["integration"]["default_plugin_family"].is_null());
+    assert_eq!(
+        provider["integration"]["mirror_protocol_identity"],
+        "anthropic"
+    );
     assert_eq!(provider["execution"]["binding_kind"], "explicit_instance");
     assert_eq!(provider["execution"]["runtime"], "native_dynamic");
     assert_eq!(provider["execution"]["runtime_key"], FIXTURE_EXTENSION_ID);

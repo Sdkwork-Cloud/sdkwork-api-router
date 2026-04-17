@@ -37,7 +37,7 @@ function writeFixtureApp({ root, relativeAppDir, entryJs, entryCss, extraAssets 
   }
 }
 
-test('desktop asset build plan uses the shared hidden Windows pnpm launcher', async () => {
+test('desktop asset build plan uses the repo-owned readable vite launcher on Windows', async () => {
   const module = await import(
     pathToFileURL(path.join(workspaceRoot, 'scripts', 'build-router-desktop-assets.mjs')).href
   );
@@ -48,13 +48,11 @@ test('desktop asset build plan uses the shared hidden Windows pnpm launcher', as
   });
 
   assert.equal(plans.length, 2);
-  assert.equal(plans[0].command, 'powershell.exe');
-  assert.match(plans[0].args.join(' '), /pnpm\.cjs/);
-  assert.match(plans[0].args.join(' '), /build/);
+  assert.equal(plans[0].command, process.execPath);
+  assert.match(plans[0].args.join(' '), /run-vite-cli\.mjs build/);
   assert.equal(plans[0].shell, false);
-  assert.equal(plans[1].command, 'powershell.exe');
-  assert.match(plans[1].args.join(' '), /pnpm\.cjs/);
-  assert.match(plans[1].args.join(' '), /build/);
+  assert.equal(plans[1].command, process.execPath);
+  assert.match(plans[1].args.join(' '), /run-vite-cli\.mjs build/);
   assert.equal(plans[1].shell, false);
 });
 

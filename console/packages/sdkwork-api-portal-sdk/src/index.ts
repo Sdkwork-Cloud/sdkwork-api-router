@@ -7,6 +7,7 @@ import type {
 } from 'sdkwork-api-types';
 
 const portalSessionTokenKey = 'sdkwork.portal.session-token';
+const MAX_SAFE_INTEGER_TEXT = String(Number.MAX_SAFE_INTEGER);
 
 export class PortalApiError extends Error {
   constructor(message: string, readonly status: number) {
@@ -31,12 +32,16 @@ export function clearPortalSessionToken(): void {
 }
 
 async function readJson<T>(response: Response): Promise<T> {
+  const payload = await readResponsePayload(response);
+
   if (!response.ok) {
     let message = `Portal request failed with status ${response.status}`;
 
     try {
-      const payload = (await response.json()) as { error?: { message?: string } };
-      message = payload.error?.message ?? message;
+      const errorPayload = payload as { error?: { message?: string } } | null;
+      if (errorPayload) {
+        message = errorPayload.error?.message?.trim() || message;
+      }
     } catch {
       // Ignore non-JSON error bodies and fall back to the status-based message.
     }
@@ -44,7 +49,124 @@ async function readJson<T>(response: Response): Promise<T> {
     throw new PortalApiError(message, response.status);
   }
 
-  return (await response.json()) as T;
+  return payload as T;
+}
+
+async function readResponsePayload(response: Response): Promise<unknown> {
+  if (typeof response.text === 'function') {
+    const body = await response.text();
+    return body ? parseJsonBody(body) : null;
+  }
+
+  if (typeof response.json === 'function') {
+    return response.json();
+  }
+
+  return null;
+}
+
+function parseJsonBody(body: string): unknown {
+  return JSON.parse(quoteUnsafeIntegerTokens(body));
+}
+
+function quoteUnsafeIntegerTokens(body: string): string {
+  let result = '';
+  let index = 0;
+  let inString = false;
+  let escaped = false;
+
+  while (index < body.length) {
+    const character = body[index];
+
+    if (inString) {
+      result += character;
+      if (escaped) {
+        escaped = false;
+      } else if (character === '\\') {
+        escaped = true;
+      } else if (character === '"') {
+        inString = false;
+      }
+      index += 1;
+      continue;
+    }
+
+    if (character === '"') {
+      inString = true;
+      result += character;
+      index += 1;
+      continue;
+    }
+
+    if (character === '-' || isDigit(character)) {
+      const tokenEnd = findNumericTokenEnd(body, index);
+      const token = body.slice(index, tokenEnd);
+
+      if (shouldQuoteIntegerToken(token)) {
+        result += `"${token}"`;
+      } else {
+        result += token;
+      }
+
+      index = tokenEnd;
+      continue;
+    }
+
+    result += character;
+    index += 1;
+  }
+
+  return result;
+}
+
+function findNumericTokenEnd(body: string, start: number): number {
+  let index = start;
+
+  if (body[index] === '-') {
+    index += 1;
+  }
+
+  while (index < body.length && isDigit(body[index])) {
+    index += 1;
+  }
+
+  if (body[index] === '.') {
+    index += 1;
+    while (index < body.length && isDigit(body[index])) {
+      index += 1;
+    }
+  }
+
+  if (body[index] === 'e' || body[index] === 'E') {
+    index += 1;
+    if (body[index] === '+' || body[index] === '-') {
+      index += 1;
+    }
+    while (index < body.length && isDigit(body[index])) {
+      index += 1;
+    }
+  }
+
+  return index;
+}
+
+function shouldQuoteIntegerToken(token: string): boolean {
+  if (!/^-?\d+$/.test(token)) {
+    return false;
+  }
+
+  const normalized = token.startsWith('-') ? token.slice(1) : token;
+  if (normalized.length < MAX_SAFE_INTEGER_TEXT.length) {
+    return false;
+  }
+  if (normalized.length > MAX_SAFE_INTEGER_TEXT.length) {
+    return true;
+  }
+  return normalized > MAX_SAFE_INTEGER_TEXT;
+}
+
+function isDigit(character: string | undefined): boolean {
+  return character != null && character >= '0' && character <= '9';
 }
 
 async function getJson<T>(path: string, token?: string): Promise<T> {

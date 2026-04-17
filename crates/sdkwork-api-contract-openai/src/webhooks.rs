@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateWebhookRequest {
     pub url: String,
     pub events: Vec<String>,
@@ -19,7 +20,7 @@ impl CreateWebhookRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct UpdateWebhookRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
@@ -33,7 +34,7 @@ impl UpdateWebhookRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct WebhookObject {
     pub id: String,
     pub object: &'static str,
@@ -52,7 +53,7 @@ impl WebhookObject {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ListWebhooksResponse {
     pub object: &'static str,
     pub data: Vec<WebhookObject>,
@@ -67,7 +68,7 @@ impl ListWebhooksResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct DeleteWebhookResponse {
     pub id: String,
     pub object: &'static str,

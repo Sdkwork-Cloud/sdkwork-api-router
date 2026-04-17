@@ -11,7 +11,6 @@ import {
   ensureFrontendDependenciesReady,
   frontendViteConfigHealthy,
   pnpmExecutable,
-  pnpmProcessSpec,
 } from './dev/pnpm-launch-lib.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -62,11 +61,13 @@ export function createProductCheckPlan({
   }
 
   cargoArgs.push('-p', 'router-product-service');
+  const tscCliScript = path.join(workspaceRoot, 'scripts', 'dev', 'run-tsc-cli.mjs');
 
   return [
     {
-      ...pnpmProcessSpec(['typecheck'], { platform }),
       label: 'portal typecheck',
+      command: nodeCommand,
+      args: [tscCliScript, '--noEmit'],
       cwd: portalAppDir,
       env: baseEnv,
       shell: false,
@@ -91,8 +92,9 @@ export function createProductCheckPlan({
       windowsHide: platform === 'win32',
     },
     {
-      ...pnpmProcessSpec(['typecheck'], { platform }),
       label: 'admin typecheck',
+      command: nodeCommand,
+      args: [tscCliScript, '--noEmit'],
       cwd: adminAppDir,
       env: baseEnv,
       shell: false,

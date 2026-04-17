@@ -1,4 +1,5 @@
 import type {
+  CommercialAccountId,
   CommercialAccountBalanceSnapshot,
   CommercialAccountBenefitLotRecord,
   CommercialAccountHoldRecord,
@@ -26,7 +27,7 @@ export interface PortalSettlementsWorkspaceData {
 export interface BuildPortalSettlementsViewModelInput extends PortalSettlementsWorkspaceData {}
 
 export interface PortalSettlementsViewModel {
-  account_id: number | null;
+  account_id: CommercialAccountId | null;
   account_status: string | null;
   available_balance: number;
   held_balance: number;

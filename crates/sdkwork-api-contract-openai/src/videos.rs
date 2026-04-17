@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateVideoRequest {
     pub model: String,
     pub prompt: String,
@@ -15,7 +16,7 @@ impl CreateVideoRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct RemixVideoRequest {
     pub prompt: String,
 }
@@ -28,7 +29,7 @@ impl RemixVideoRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ExtendVideoRequest {
     pub prompt: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -44,7 +45,7 @@ impl ExtendVideoRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateVideoCharacterRequest {
     pub name: String,
     pub video_id: String,
@@ -59,7 +60,7 @@ impl CreateVideoCharacterRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct EditVideoRequest {
     pub prompt: String,
     pub video_id: String,
@@ -74,7 +75,7 @@ impl EditVideoRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct UpdateVideoCharacterRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -91,7 +92,7 @@ impl UpdateVideoCharacterRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct VideoObject {
     pub id: String,
     pub object: &'static str,
@@ -124,7 +125,7 @@ impl VideoObject {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct VideosResponse {
     pub object: &'static str,
     pub data: Vec<VideoObject>,
@@ -139,7 +140,7 @@ impl VideosResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct VideoCharacterObject {
     pub id: String,
     pub object: &'static str,
@@ -156,7 +157,7 @@ impl VideoCharacterObject {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct VideoCharactersResponse {
     pub object: &'static str,
     pub data: Vec<VideoCharacterObject>,
@@ -171,7 +172,7 @@ impl VideoCharactersResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct DeleteVideoResponse {
     pub id: String,
     pub object: &'static str,

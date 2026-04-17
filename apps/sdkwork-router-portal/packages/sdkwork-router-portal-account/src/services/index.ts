@@ -1,3 +1,8 @@
+import {
+  compareCommercialNumericIdsDesc,
+  commercialNumericIdKey,
+  commercialNumericIdsEqual,
+} from 'sdkwork-router-portal-types';
 import type {
   BillingEventAccountingModeSummary,
   BillingEventCapabilitySummary,
@@ -191,7 +196,7 @@ function selectPrimaryPricingPlan(
       || right.plan_version - left.plan_version
       || right.updated_at_ms - left.updated_at_ms
       || right.created_at_ms - left.created_at_ms
-      || right.pricing_plan_id - left.pricing_plan_id;
+      || compareCommercialNumericIdsDesc(left.pricing_plan_id, right.pricing_plan_id);
   };
 
   return [...pricingPlans].sort(comparePlans)[0] ?? null;
@@ -212,12 +217,13 @@ function selectPrimaryPricingRate(
       || right.priority - left.priority
       || right.updated_at_ms - left.updated_at_ms
       || right.created_at_ms - left.created_at_ms
-      || right.pricing_rate_id - left.pricing_rate_id;
+      || compareCommercialNumericIdsDesc(left.pricing_rate_id, right.pricing_rate_id);
   };
 
   if (primaryPlan) {
     const primaryPlanRate = pricingRates
-      .filter((rate) => rate.pricing_plan_id === primaryPlan.pricing_plan_id)
+      .filter((rate) =>
+        commercialNumericIdsEqual(rate.pricing_plan_id, primaryPlan.pricing_plan_id))
       .sort(compareRates)[0];
     if (primaryPlanRate) {
       return primaryPlanRate;
@@ -241,7 +247,8 @@ function buildCommercialPosture(input: BuildPortalAccountViewModelInput): Portal
   );
   const primaryPlan = selectPrimaryPricingPlan(pricingPlans, nowMs);
   const posturePricingRates = primaryPlan
-    ? pricingRates.filter((rate) => rate.pricing_plan_id === primaryPlan.pricing_plan_id)
+    ? pricingRates.filter((rate) =>
+      commercialNumericIdsEqual(rate.pricing_plan_id, primaryPlan.pricing_plan_id))
     : pricingRates;
   const primaryRate = selectPrimaryPricingRate(pricingRates, primaryPlan);
 
@@ -397,11 +404,16 @@ function buildAccountLedgerHistoryRows(
   const denominator = bookedAmount > 0
     ? bookedAmount
     : ledgerHistory.reduce((sum, row) => sum + Math.abs(row.entry.amount), 0);
-  const lotById = new Map(benefitLots.map((lot) => [lot.lot_id, lot]));
+  const lotById = new Map(
+    benefitLots.map((lot) => [commercialNumericIdKey(lot.lot_id), lot]),
+  );
 
   return ledgerHistory.map((history) => {
     const orderId = history.allocations
-      .map((allocation) => parseCommerceOrderId(lotById.get(allocation.lot_id)?.scope_json))
+      .map((allocation) =>
+        parseCommerceOrderId(
+          lotById.get(commercialNumericIdKey(allocation.lot_id))?.scope_json,
+        ))
       .find((value) => Boolean(value)) ?? null;
 
     return {

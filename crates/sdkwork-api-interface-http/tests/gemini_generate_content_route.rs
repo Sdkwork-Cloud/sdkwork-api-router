@@ -414,6 +414,97 @@ async fn stateful_gemini_generate_content_route_passthroughs_native_gemini_proto
 
 #[serial]
 #[tokio::test]
+async fn stateful_gemini_generate_content_route_supports_image_capable_gemini_models_and_records_usage(
+) {
+    let tenant_id = "tenant-gemini-image";
+    let project_id = "project-gemini-image";
+    let image_model = "gemini-2.5-flash-image";
+    let upstream_state = UpstreamCaptureState::default();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let upstream = Router::new()
+        .route("/health", get(upstream_health_handler))
+        .route(
+            &format!("/v1beta/models/{image_model}:generateContent"),
+            post(upstream_gemini_generate_content_handler),
+        )
+        .with_state(upstream_state.clone());
+
+    tokio::spawn(async move {
+        axum::serve(listener, upstream).await.unwrap();
+    });
+    support::wait_for_http_health(&format!("http://{address}")).await;
+
+    let pool = memory_pool().await;
+    let api_key = issue_funded_gateway_api_key(&pool, tenant_id, project_id).await;
+    let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
+    let admin_token = support::issue_admin_token(&pool, admin_app.clone()).await;
+    let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
+
+    create_gemini_provider_for_tenant_with_model(
+        &admin_app,
+        &admin_token,
+        &address.to_string(),
+        tenant_id,
+        image_model,
+    )
+    .await;
+
+    let payload = serde_json::json!({
+        "contents": [
+            {
+                "role": "user",
+                "parts": [
+                    { "text": "draw a lighthouse in stained glass" }
+                ]
+            }
+        ],
+        "generationConfig": {
+            "responseModalities": ["TEXT", "IMAGE"]
+        }
+    });
+
+    let response = gateway_app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/v1beta/models/{image_model}:generateContent?key={api_key}"
+                ))
+                .header("content-type", "application/json")
+                .body(Body::from(payload.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let json = read_json(response).await;
+    assert_eq!(
+        json["candidates"][0]["content"]["parts"][0]["text"],
+        "Hello from gemini upstream"
+    );
+    assert_eq!(
+        upstream_state.x_goog_api_key.lock().unwrap().as_deref(),
+        Some("sk-upstream-gemini")
+    );
+    assert_eq!(
+        upstream_state.body.lock().unwrap().clone().unwrap(),
+        payload
+    );
+
+    support::assert_single_usage_record_and_decision_log(
+        admin_app,
+        &admin_token,
+        image_model,
+        "provider-gemini-official",
+        image_model,
+    )
+    .await;
+}
+
+#[serial]
+#[tokio::test]
 async fn stateful_gemini_generate_content_route_derives_protocol_kind_for_legacy_blank_protocol_provider(
 ) {
     let tenant_id = "tenant-gemini-legacy-blank-protocol";
@@ -622,12 +713,9 @@ async fn stateful_gemini_stream_generate_content_route_fails_closed_for_missing_
 async fn stateful_gemini_generate_content_route_returns_invalid_request_for_missing_model_without_usage(
 ) {
     let pool = memory_pool().await;
-    let api_key = issue_funded_gateway_api_key(
-        &pool,
-        "tenant-gemini-invalid",
-        "project-gemini-invalid",
-    )
-    .await;
+    let api_key =
+        issue_funded_gateway_api_key(&pool, "tenant-gemini-invalid", "project-gemini-invalid")
+            .await;
     let admin_app = sdkwork_api_interface_admin::admin_router_with_pool(pool.clone());
     let admin_token = support::issue_admin_token(&pool, admin_app.clone()).await;
     let gateway_app = sdkwork_api_interface_http::gateway_router_with_pool(pool);
@@ -1217,7 +1305,11 @@ async fn memory_pool() -> SqlitePool {
         .unwrap()
 }
 
-async fn issue_funded_gateway_api_key(pool: &SqlitePool, tenant_id: &str, project_id: &str) -> String {
+async fn issue_funded_gateway_api_key(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    project_id: &str,
+) -> String {
     let api_key = support::issue_gateway_api_key(pool, tenant_id, project_id).await;
     support::seed_primary_commercial_credit_account(pool, tenant_id, project_id, &api_key).await;
     api_key
@@ -1292,6 +1384,32 @@ async fn create_openai_provider(admin_app: &Router, admin_token: &str, address: 
 }
 
 async fn create_gemini_provider(admin_app: &Router, admin_token: &str, address: &str) {
+    create_gemini_provider_with_model(admin_app, admin_token, address, "gemini-2.5-pro").await;
+}
+
+async fn create_gemini_provider_with_model(
+    admin_app: &Router,
+    admin_token: &str,
+    address: &str,
+    model_name: &str,
+) {
+    create_gemini_provider_for_tenant_with_model(
+        admin_app,
+        admin_token,
+        address,
+        "tenant-1",
+        model_name,
+    )
+    .await;
+}
+
+async fn create_gemini_provider_for_tenant_with_model(
+    admin_app: &Router,
+    admin_token: &str,
+    address: &str,
+    tenant_id: &str,
+    model_name: &str,
+) {
     let channel = admin_app
         .clone()
         .oneshot(
@@ -1333,7 +1451,13 @@ async fn create_gemini_provider(admin_app: &Router, admin_token: &str, address: 
                 .header("authorization", format!("Bearer {admin_token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    "{\"tenant_id\":\"tenant-1\",\"provider_id\":\"provider-gemini-official\",\"key_reference\":\"cred-gemini\",\"secret_value\":\"sk-upstream-gemini\"}",
+                    serde_json::json!({
+                        "tenant_id": tenant_id,
+                        "provider_id": "provider-gemini-official",
+                        "key_reference": "cred-gemini",
+                        "secret_value": "sk-upstream-gemini"
+                    })
+                    .to_string(),
                 ))
                 .unwrap(),
         )
@@ -1350,7 +1474,13 @@ async fn create_gemini_provider(admin_app: &Router, admin_token: &str, address: 
                 .header("authorization", format!("Bearer {admin_token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    "{\"external_name\":\"gemini-2.5-pro\",\"provider_id\":\"provider-gemini-official\",\"capabilities\":[\"chat_completions\"],\"streaming\":true}",
+                    serde_json::json!({
+                        "external_name": model_name,
+                        "provider_id": "provider-gemini-official",
+                        "capabilities": ["chat_completions"],
+                        "streaming": true
+                    })
+                    .to_string(),
                 ))
                 .unwrap(),
         )

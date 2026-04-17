@@ -48,6 +48,20 @@ function loadBillingServices() {
   );
 }
 
+function jsonTextResponse(body, init) {
+  return new Response(body, {
+    status: 200,
+    headers: {
+      'content-type': 'application/json',
+    },
+    ...init,
+  });
+}
+
+function injectUnsafeInteger(body) {
+  return body.replaceAll('"__U64__"', '9007199254740993');
+}
+
 function installPortalApiTestEnvironment(responseMap = {}) {
   const requests = [];
   const previousFetch = globalThis.fetch;
@@ -196,6 +210,238 @@ test('portal commercial api client exposes formal commerce order detail and paym
     );
   } finally {
     env.restore();
+  }
+});
+
+test('portal commercial api client preserves unsafe commercial ids across account history and pricing responses', async () => {
+  const portalApi = loadPortalApi();
+  const previousFetch = globalThis.fetch;
+  const previousLocalStorage = globalThis.localStorage;
+  const previousWindow = globalThis.window;
+
+  const responses = [
+    jsonTextResponse(
+      injectUnsafeInteger(JSON.stringify({
+        account: {
+          account_id: '__U64__',
+          tenant_id: 1001,
+          organization_id: 2002,
+          user_id: 9001,
+          account_type: 'primary',
+          currency_code: 'USD',
+          credit_unit_code: 'credit',
+          status: 'active',
+          allow_overdraft: false,
+          overdraft_limit: 0,
+          created_at_ms: 1,
+          updated_at_ms: 2,
+        },
+        balance: {
+          account_id: '__U64__',
+          available_balance: 150,
+          held_balance: 10,
+          consumed_balance: 40,
+          grant_balance: 240,
+          active_lot_count: 1,
+          lots: [],
+        },
+        benefit_lots: [
+          {
+            lot_id: '__U64__',
+            tenant_id: 1001,
+            organization_id: 2002,
+            account_id: '__U64__',
+            user_id: 9001,
+            benefit_type: 'cash_credit',
+            source_type: 'recharge',
+            source_id: null,
+            scope_json: null,
+            original_quantity: 200,
+            remaining_quantity: 160,
+            held_quantity: 10,
+            priority: 10,
+            acquired_unit_cost: 0.25,
+            issued_at_ms: 1,
+            expires_at_ms: null,
+            status: 'active',
+            created_at_ms: 1,
+            updated_at_ms: 2,
+          },
+        ],
+        holds: [
+          {
+            hold_id: '__U64__',
+            tenant_id: 1001,
+            organization_id: 2002,
+            account_id: '__U64__',
+            user_id: 9001,
+            request_id: '__U64__',
+            status: 'captured',
+            estimated_quantity: 10,
+            captured_quantity: 10,
+            released_quantity: 0,
+            expires_at_ms: 3,
+            created_at_ms: 1,
+            updated_at_ms: 2,
+          },
+        ],
+        request_settlements: [
+          {
+            request_settlement_id: '__U64__',
+            tenant_id: 1001,
+            organization_id: 2002,
+            request_id: '__U64__',
+            account_id: '__U64__',
+            user_id: 9001,
+            hold_id: '__U64__',
+            status: 'captured',
+            estimated_credit_hold: 10,
+            released_credit_amount: 0,
+            captured_credit_amount: 10,
+            provider_cost_amount: 5,
+            retail_charge_amount: 10,
+            shortfall_amount: 0,
+            refunded_amount: 0,
+            settled_at_ms: 3,
+            created_at_ms: 1,
+            updated_at_ms: 2,
+          },
+        ],
+        ledger: [
+          {
+            entry: {
+              ledger_entry_id: '__U64__',
+              tenant_id: 1001,
+              organization_id: 2002,
+              account_id: '__U64__',
+              user_id: 9001,
+              request_id: '__U64__',
+              hold_id: '__U64__',
+              entry_type: 'settlement_capture',
+              benefit_type: null,
+              quantity: 10,
+              amount: 10,
+              created_at_ms: 2,
+            },
+            allocations: [
+              {
+                ledger_allocation_id: '__U64__',
+                tenant_id: 1001,
+                organization_id: 2002,
+                ledger_entry_id: '__U64__',
+                lot_id: '__U64__',
+                quantity_delta: -10,
+                created_at_ms: 2,
+              },
+            ],
+          },
+        ],
+      })),
+    ),
+    jsonTextResponse(
+      injectUnsafeInteger(JSON.stringify([
+        {
+          pricing_plan_id: '__U64__',
+          tenant_id: 1001,
+          organization_id: 2002,
+          plan_code: 'workspace-retail',
+          plan_version: 1,
+          display_name: 'Workspace Retail',
+          currency_code: 'USD',
+          credit_unit_code: 'credit',
+          status: 'active',
+          effective_from_ms: 1,
+          effective_to_ms: null,
+          created_at_ms: 1,
+          updated_at_ms: 2,
+        },
+      ])),
+    ),
+    jsonTextResponse(
+      injectUnsafeInteger(JSON.stringify([
+        {
+          pricing_rate_id: '__U64__',
+          tenant_id: 1001,
+          organization_id: 2002,
+          pricing_plan_id: '__U64__',
+          metric_code: 'token.input',
+          capability_code: 'responses',
+          model_code: 'gpt-5.4',
+          provider_code: 'provider-openai',
+          charge_unit: 'input_token',
+          pricing_method: 'per_unit',
+          quantity_step: 1000000,
+          unit_price: 0.25,
+          display_price_unit: 'USD / 1M input tokens',
+          minimum_billable_quantity: 0,
+          minimum_charge: 0,
+          rounding_increment: 1,
+          rounding_mode: 'ceil',
+          included_quantity: 0,
+          priority: 100,
+          notes: null,
+          status: 'active',
+          created_at_ms: 1,
+          updated_at_ms: 2,
+        },
+      ])),
+    ),
+    jsonTextResponse(
+      injectUnsafeInteger(JSON.stringify({
+        project_id: 'project-demo',
+        payment_simulation_enabled: true,
+        membership: null,
+        reconciliation: {
+          account_id: '__U64__',
+          last_reconciled_order_id: 'order-1',
+          last_reconciled_order_updated_at_ms: 1,
+          last_reconciled_order_created_at_ms: 1,
+          last_reconciled_at_ms: 2,
+          backlog_order_count: 1,
+          checkpoint_lag_ms: 3,
+          healthy: true,
+        },
+        orders: [],
+      })),
+    ),
+  ];
+
+  globalThis.localStorage = {
+    getItem(key) {
+      return key === 'sdkwork.router.portal.session-token' ? 'portal-session-token' : null;
+    },
+    setItem() {},
+    removeItem() {},
+  };
+  globalThis.window = {
+    location: {
+      origin: 'http://127.0.0.1:3001',
+      port: '3001',
+    },
+  };
+  globalThis.fetch = async () => responses.shift();
+
+  try {
+    const history = await portalApi.getPortalCommercialAccountHistory();
+    const pricingPlans = await portalApi.listPortalCommercialPricingPlans();
+    const pricingRates = await portalApi.listPortalCommercialPricingRates();
+    const orderCenter = await portalApi.getPortalCommerceOrderCenter();
+
+    assert.equal(history.account.account_id, '9007199254740993');
+    assert.equal(history.balance.account_id, '9007199254740993');
+    assert.equal(history.benefit_lots[0].lot_id, '9007199254740993');
+    assert.equal(history.holds[0].hold_id, '9007199254740993');
+    assert.equal(history.request_settlements[0].request_settlement_id, '9007199254740993');
+    assert.equal(history.ledger[0].entry.ledger_entry_id, '9007199254740993');
+    assert.equal(history.ledger[0].allocations[0].ledger_allocation_id, '9007199254740993');
+    assert.equal(pricingPlans[0].pricing_plan_id, '9007199254740993');
+    assert.equal(pricingRates[0].pricing_rate_id, '9007199254740993');
+    assert.equal(pricingRates[0].pricing_plan_id, '9007199254740993');
+    assert.equal(orderCenter.reconciliation?.account_id, '9007199254740993');
+  } finally {
+    globalThis.fetch = previousFetch;
+    globalThis.localStorage = previousLocalStorage;
+    globalThis.window = previousWindow;
   }
 });
 

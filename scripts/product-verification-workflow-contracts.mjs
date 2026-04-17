@@ -26,6 +26,7 @@ export async function assertProductVerificationWorkflowContracts({
   assert.match(workflow, /\.github\/workflows\/product-verification\.yml/);
   assert.match(workflow, /apps\/sdkwork-router-admin\/\*\*/);
   assert.match(workflow, /apps\/sdkwork-router-portal\/\*\*/);
+  assert.match(workflow, /console\/\*\*/);
   assert.match(workflow, /docs\/\*\*/);
   assert.match(workflow, /README\.md/);
   assert.match(workflow, /README\.zh-CN\.md/);
@@ -44,6 +45,11 @@ export async function assertProductVerificationWorkflowContracts({
     workflow,
     /scripts\/check-portal-browser-runtime\.mjs/,
     'product verification workflow must watch the portal browser runtime smoke entrypoint',
+  );
+  assert.match(
+    workflow,
+    /scripts\/check-portal-browser-runtime\.test\.mjs/,
+    'product verification workflow must watch the portal browser runtime smoke test',
   );
   assert.match(
     workflow,
@@ -73,13 +79,13 @@ export async function assertProductVerificationWorkflowContracts({
   assert.match(workflow, /scripts\/product-verification-workflow\.test\.mjs/);
   assert.match(
     workflow,
-    /Run product governance node tests[\s\S]*?node --test scripts\/product-verification-workflow\.test\.mjs scripts\/check-router-product\.test\.mjs scripts\/browser-runtime-smoke\.test\.mjs scripts\/check-admin-browser-runtime\.test\.mjs scripts\/build-router-desktop-assets\.test\.mjs scripts\/check-router-docs-safety\.test\.mjs scripts\/check-router-frontend-budgets\.test\.mjs scripts\/dev\/tests\/pnpm-launch-lib\.test\.mjs apps\/sdkwork-router-portal\/tests\/product-entrypoint-scripts\.test\.mjs/,
-    'product verification workflow must run workflow, product, and shared pnpm helper tests before the main product gate',
+    /Run product governance node tests[\s\S]*?node --test scripts\/product-verification-workflow\.test\.mjs scripts\/check-router-product\.test\.mjs scripts\/browser-runtime-smoke\.test\.mjs scripts\/check-admin-browser-runtime\.test\.mjs scripts\/check-portal-browser-runtime\.test\.mjs scripts\/build-router-desktop-assets\.test\.mjs scripts\/check-router-docs-safety\.test\.mjs scripts\/check-router-frontend-budgets\.test\.mjs scripts\/dev\/tests\/pnpm-launch-lib\.test\.mjs console\/tests\/sdk-transport-unsafe-integer\.test\.mjs apps\/sdkwork-router-portal\/tests\/product-entrypoint-scripts\.test\.mjs/,
+    'product verification workflow must run workflow, product, shared pnpm helper tests, and console transport regression tests before the main product gate',
   );
   assert.match(
     workflow,
-    /Install product verification workspace dependencies[\s\S]*?pnpm --dir apps\/sdkwork-router-admin install --frozen-lockfile[\s\S]*?pnpm --dir apps\/sdkwork-router-portal install --frozen-lockfile/,
-    'product verification workflow must use explicit frozen installs for admin and portal workspaces',
+    /Install product verification workspace dependencies[\s\S]*?pnpm --dir apps\/sdkwork-router-admin install --frozen-lockfile[\s\S]*?pnpm --dir apps\/sdkwork-router-portal install --frozen-lockfile[\s\S]*?pnpm --dir console install --frozen-lockfile/,
+    'product verification workflow must use explicit frozen installs for admin, portal, and console workspaces',
   );
   assert.match(
     workflow,

@@ -3,7 +3,8 @@ use super::*;
 #[utoipa::path(
         post,
         path = "/v1/images/generations",
-        tag = "images",
+        operation_id = "images_openai_generations_create",
+        tag = "images.openai",
         request_body = CreateImageRequest,
         security(("bearerAuth" = [])),
         responses(
@@ -18,7 +19,8 @@ pub(crate) async fn image_generations() {}
 #[utoipa::path(
         post,
         path = "/v1/images/edits",
-        tag = "images",
+        operation_id = "images_openai_edits_create",
+        tag = "images.openai",
         request_body(
             content = CreateImageEditRequest,
             content_type = "multipart/form-data",
@@ -37,7 +39,8 @@ pub(crate) async fn image_edits() {}
 #[utoipa::path(
         post,
         path = "/v1/images/variations",
-        tag = "images",
+        operation_id = "images_openai_variations_create",
+        tag = "images.openai",
         request_body(
             content = CreateImageVariationRequest,
             content_type = "multipart/form-data",
@@ -56,7 +59,8 @@ pub(crate) async fn image_variations() {}
 #[utoipa::path(
         post,
         path = "/v1/audio/transcriptions",
-        tag = "audio",
+        operation_id = "audio_openai_transcriptions_create",
+        tag = "audio.openai",
         request_body = CreateTranscriptionRequest,
         security(("bearerAuth" = [])),
         responses(
@@ -71,7 +75,8 @@ pub(crate) async fn transcriptions() {}
 #[utoipa::path(
         post,
         path = "/v1/audio/translations",
-        tag = "audio",
+        operation_id = "audio_openai_translations_create",
+        tag = "audio.openai",
         request_body = CreateTranslationRequest,
         security(("bearerAuth" = [])),
         responses(
@@ -86,7 +91,8 @@ pub(crate) async fn translations() {}
 #[utoipa::path(
         post,
         path = "/v1/audio/speech",
-        tag = "audio",
+        operation_id = "audio_openai_speech_create",
+        tag = "audio.openai",
         request_body = CreateSpeechRequest,
         security(("bearerAuth" = [])),
         responses(
@@ -101,7 +107,8 @@ pub(crate) async fn audio_speech() {}
 #[utoipa::path(
         get,
         path = "/v1/audio/voices",
-        tag = "audio",
+        operation_id = "audio_openai_voices_list",
+        tag = "audio.openai",
         security(("bearerAuth" = [])),
         responses(
             (status = 200, description = "Available audio voices.", body = ListVoicesResponse),
@@ -114,7 +121,8 @@ pub(crate) async fn audio_voices() {}
 #[utoipa::path(
         post,
         path = "/v1/audio/voice_consents",
-        tag = "audio",
+        operation_id = "audio_openai_voice_consents_create",
+        tag = "audio.openai",
         request_body = CreateVoiceConsentRequest,
         security(("bearerAuth" = [])),
         responses(

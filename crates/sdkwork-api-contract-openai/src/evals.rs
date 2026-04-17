@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateEvalRequest {
     pub name: String,
     pub data_source_config: EvalDataSourceConfig,
@@ -15,7 +16,7 @@ impl CreateEvalRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct EvalDataSourceConfig {
     pub r#type: String,
     pub file_id: String,
@@ -30,7 +31,7 @@ impl EvalDataSourceConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct EvalObject {
     pub id: String,
     pub object: &'static str,
@@ -49,7 +50,7 @@ impl EvalObject {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ListEvalsResponse {
     pub object: &'static str,
     pub data: Vec<EvalObject>,
@@ -64,7 +65,7 @@ impl ListEvalsResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct UpdateEvalRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -78,7 +79,7 @@ impl UpdateEvalRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct DeleteEvalResponse {
     pub id: String,
     pub object: &'static str,
@@ -95,7 +96,7 @@ impl DeleteEvalResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateEvalRunRequest {
     pub name: String,
 }
@@ -106,7 +107,7 @@ impl CreateEvalRunRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct EvalRunObject {
     pub id: String,
     pub object: &'static str,
@@ -131,7 +132,7 @@ impl EvalRunObject {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ListEvalRunsResponse {
     pub object: &'static str,
     pub data: Vec<EvalRunObject>,
@@ -146,7 +147,7 @@ impl ListEvalRunsResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct DeleteEvalRunResponse {
     pub id: String,
     pub object: &'static str,
@@ -163,7 +164,7 @@ impl DeleteEvalRunResponse {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct EvalRunOutputItemObject {
     pub id: String,
     pub object: &'static str,
@@ -180,7 +181,7 @@ impl EvalRunOutputItemObject {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ListEvalRunOutputItemsResponse {
     pub object: &'static str,
     pub data: Vec<EvalRunOutputItemObject>,

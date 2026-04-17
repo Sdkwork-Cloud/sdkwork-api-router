@@ -48,6 +48,7 @@ import {
 } from 'sdkwork-router-admin-admin-api';
 import type {
   CommercialPricingLifecycleSynchronizationReport,
+  CommercialNumericId,
   CampaignBudgetStatus,
   CommercialPricingPlanCreateInput,
   CommercialPricingPlanRecord,
@@ -209,11 +210,11 @@ export interface WorkbenchActions {
     input: CommercialPricingRateCreateInput,
   ) => Promise<void>;
   handleUpdateCommercialPricingPlan: (
-    pricingPlanId: number,
+    pricingPlanId: CommercialNumericId,
     input: CommercialPricingPlanCreateInput,
   ) => Promise<void>;
   handleCloneCommercialPricingPlan: (
-    pricingPlanId: number,
+    pricingPlanId: CommercialNumericId,
     input?: {
       plan_version?: number;
       display_name?: string | null;
@@ -221,17 +222,17 @@ export interface WorkbenchActions {
     },
   ) => Promise<CommercialPricingPlanRecord>;
   handlePublishCommercialPricingPlan: (
-    pricingPlanId: number,
+    pricingPlanId: CommercialNumericId,
   ) => Promise<CommercialPricingPlanRecord>;
   handleScheduleCommercialPricingPlan: (
-    pricingPlanId: number,
+    pricingPlanId: CommercialNumericId,
   ) => Promise<CommercialPricingPlanRecord>;
   handleRetireCommercialPricingPlan: (
-    pricingPlanId: number,
+    pricingPlanId: CommercialNumericId,
   ) => Promise<CommercialPricingPlanRecord>;
   handleSynchronizeCommercialPricingLifecycle: () => Promise<CommercialPricingLifecycleSynchronizationReport>;
   handleUpdateCommercialPricingRate: (
-    pricingRateId: number,
+    pricingRateId: CommercialNumericId,
     input: CommercialPricingRateCreateInput,
   ) => Promise<void>;
   handleUpdateApiKey: (input: {

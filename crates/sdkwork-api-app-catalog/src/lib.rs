@@ -511,6 +511,7 @@ pub fn create_provider_with_bindings_and_extension_id(
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub struct ProviderIntegrationView {
     pub mode: ProviderIntegrationMode,
+    pub mirror_protocol_identity: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_plugin_family: Option<String>,
 }
@@ -525,9 +526,11 @@ pub enum ProviderIntegrationMode {
 
 pub fn provider_integration_view(provider: &ProxyProvider) -> ProviderIntegrationView {
     let derived_extension_id = derive_provider_extension_id(&provider.adapter_kind);
+    let mirror_protocol_identity = provider.mirror_protocol_identity();
     if provider.extension_id != derived_extension_id {
         return ProviderIntegrationView {
             mode: ProviderIntegrationMode::CustomPlugin,
+            mirror_protocol_identity,
             default_plugin_family: None,
         };
     }
@@ -537,6 +540,7 @@ pub fn provider_integration_view(provider: &ProxyProvider) -> ProviderIntegratio
     {
         return ProviderIntegrationView {
             mode: ProviderIntegrationMode::DefaultPlugin,
+            mirror_protocol_identity,
             default_plugin_family: Some(default_plugin_family.to_owned()),
         };
     }
@@ -544,12 +548,14 @@ pub fn provider_integration_view(provider: &ProxyProvider) -> ProviderIntegratio
     if matches!(provider.protocol_kind(), "openai" | "anthropic" | "gemini") {
         return ProviderIntegrationView {
             mode: ProviderIntegrationMode::StandardPassthrough,
+            mirror_protocol_identity,
             default_plugin_family: None,
         };
     }
 
     ProviderIntegrationView {
         mode: ProviderIntegrationMode::CustomPlugin,
+        mirror_protocol_identity,
         default_plugin_family: None,
     }
 }

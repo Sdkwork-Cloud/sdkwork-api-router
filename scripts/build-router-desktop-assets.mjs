@@ -8,7 +8,6 @@ import { assertFrontendBudgets } from './check-router-frontend-budgets.mjs';
 import {
   ensureFrontendDependenciesReady,
   frontendViteConfigHealthy,
-  pnpmProcessSpec,
 } from './dev/pnpm-launch-lib.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -18,6 +17,7 @@ export function createDesktopAssetBuildPlan({
   workspaceRoot = path.resolve(__dirname, '..'),
   platform = process.platform,
 } = {}) {
+  const nodeCommand = process.execPath;
   const appRoots = [
     path.join(workspaceRoot, 'apps', 'sdkwork-router-admin'),
     path.join(workspaceRoot, 'apps', 'sdkwork-router-portal'),
@@ -25,8 +25,13 @@ export function createDesktopAssetBuildPlan({
 
   return appRoots.map((cwd) => ({
     cwd,
-    ...pnpmProcessSpec(['build'], { platform }),
+    command: nodeCommand,
+    args: [
+      path.join(workspaceRoot, 'scripts', 'dev', 'run-vite-cli.mjs'),
+      'build',
+    ],
     shell: false,
+    windowsHide: platform === 'win32',
   }));
 }
 
@@ -36,6 +41,7 @@ async function runBuild(step) {
       cwd: step.cwd,
       stdio: 'inherit',
       shell: step.shell,
+      windowsHide: step.windowsHide ?? process.platform === 'win32',
     });
 
     child.on('error', reject);

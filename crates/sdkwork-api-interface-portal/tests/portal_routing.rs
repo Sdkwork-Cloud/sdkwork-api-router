@@ -312,6 +312,10 @@ async fn portal_routing_preferences_preview_and_logs_are_project_scoped() {
         openrouter_option["integration"]["default_plugin_family"],
         "openrouter"
     );
+    assert_eq!(
+        openrouter_option["integration"]["mirror_protocol_identity"],
+        "openai"
+    );
     assert_eq!(openrouter_option["credential_readiness"]["ready"], true);
     assert_eq!(
         openrouter_option["credential_readiness"]["state"],
@@ -321,6 +325,10 @@ async fn portal_routing_preferences_preview_and_logs_are_project_scoped() {
     assert_eq!(openai_option["protocol_kind"], "openai");
     assert_eq!(openai_option["integration"]["mode"], "standard_passthrough");
     assert!(openai_option["integration"]["default_plugin_family"].is_null());
+    assert_eq!(
+        openai_option["integration"]["mirror_protocol_identity"],
+        "openai"
+    );
     assert_eq!(openai_option["credential_readiness"]["ready"], false);
     assert_eq!(openai_option["credential_readiness"]["state"], "missing");
 

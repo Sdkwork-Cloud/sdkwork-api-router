@@ -1,3 +1,7 @@
+import {
+  compareCommercialNumericIdsDesc,
+  commercialNumericIdsEqual,
+} from 'sdkwork-router-admin-types';
 import type {
   CommercialPricingChargeUnit,
   CommercialPricingMethod,
@@ -139,7 +143,7 @@ function compareCommercialPricingPlans(
     || right.plan_version - left.plan_version
     || right.updated_at_ms - left.updated_at_ms
     || right.created_at_ms - left.created_at_ms
-    || right.pricing_plan_id - left.pricing_plan_id;
+    || compareCommercialNumericIdsDesc(left.pricing_plan_id, right.pricing_plan_id);
 }
 
 export function compareCommercialPricingRates(
@@ -153,7 +157,7 @@ export function compareCommercialPricingRates(
     || right.priority - left.priority
     || right.updated_at_ms - left.updated_at_ms
     || right.created_at_ms - left.created_at_ms
-    || right.pricing_rate_id - left.pricing_rate_id;
+    || compareCommercialNumericIdsDesc(left.pricing_rate_id, right.pricing_rate_id);
 }
 
 export function selectPrimaryCommercialPricingPlan(
@@ -180,7 +184,8 @@ export function selectPrimaryCommercialPricingRate(
 ): CommercialPricingRateRecord | null {
   if (primaryPlan) {
     const primaryPlanRate = pricingRates
-      .filter((rate) => rate.pricing_plan_id === primaryPlan.pricing_plan_id)
+      .filter((rate) =>
+        commercialNumericIdsEqual(rate.pricing_plan_id, primaryPlan.pricing_plan_id))
       .sort(compareCommercialPricingRates)[0];
 
     if (primaryPlanRate) {

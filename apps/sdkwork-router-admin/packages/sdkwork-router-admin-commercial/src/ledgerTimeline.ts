@@ -1,17 +1,19 @@
+import { compareCommercialNumericIdsDesc } from 'sdkwork-router-admin-types';
 import type {
   CommercialAccountId,
   CommercialAccountLedgerHistoryEntry,
   CommercialAccountLedgerEntryType,
+  CommercialNumericId,
   CommercialRequestSettlementRecord,
   CommercialRequestSettlementStatus,
 } from 'sdkwork-router-admin-types';
 
 export interface CommercialLedgerTimelineRow {
   id: string;
-  ledger_entry_id: number;
+  ledger_entry_id: CommercialNumericId;
   account_id: CommercialAccountId;
-  request_id?: number | null;
-  hold_id?: number | null;
+  request_id?: CommercialNumericId | null;
+  hold_id?: CommercialNumericId | null;
   entry_type: CommercialAccountLedgerEntryType;
   benefit_type?: string | null;
   quantity: number;
@@ -19,7 +21,7 @@ export interface CommercialLedgerTimelineRow {
   allocation_quantity_delta: number;
   allocation_lot_count: number;
   created_at_ms: number;
-  request_settlement_id?: number | null;
+  request_settlement_id?: CommercialNumericId | null;
   settlement_status?: CommercialRequestSettlementStatus | null;
   captured_credit_amount: number;
   released_credit_amount: number;
@@ -30,8 +32,8 @@ export interface CommercialLedgerTimelineRow {
 
 function settlementLookupKey(input: {
   account_id: CommercialAccountId;
-  request_id?: number | null;
-  hold_id?: number | null;
+  request_id?: CommercialNumericId | null;
+  hold_id?: CommercialNumericId | null;
 }): string {
   return `${input.account_id}:${input.request_id ?? 'na'}:${input.hold_id ?? 'na'}`;
 }
@@ -47,7 +49,10 @@ function buildSettlementLookup(
 
   const orderedSettlements = [...settlements].sort((left, right) =>
     right.updated_at_ms - left.updated_at_ms
-    || right.request_settlement_id - left.request_settlement_id,
+    || compareCommercialNumericIdsDesc(
+      left.request_settlement_id,
+      right.request_settlement_id,
+    ),
   );
 
   for (const settlement of orderedSettlements) {
@@ -96,7 +101,7 @@ function compareTimelineRows(
   right: CommercialLedgerTimelineRow,
 ): number {
   return right.created_at_ms - left.created_at_ms
-    || right.ledger_entry_id - left.ledger_entry_id;
+    || compareCommercialNumericIdsDesc(left.ledger_entry_id, right.ledger_entry_id);
 }
 
 export function buildCommercialLedgerTimelineRows(

@@ -257,10 +257,10 @@ export type CommercialRequestSettlementStatus =
   | 'failed';
 
 export interface CommercialAccountRecord {
-  account_id: number;
-  tenant_id: number;
-  organization_id: number;
-  user_id: number;
+  account_id: CommercialAccountId;
+  tenant_id: CommercialNumericId;
+  organization_id: CommercialNumericId;
+  user_id: CommercialNumericId;
   account_type: CommercialAccountType;
   currency_code: string;
   credit_unit_code: string;
@@ -272,7 +272,7 @@ export interface CommercialAccountRecord {
 }
 
 export interface CommercialAccountLotBalanceSnapshot {
-  lot_id: number;
+  lot_id: CommercialNumericId;
   benefit_type: CommercialAccountBenefitType;
   scope_json?: string | null;
   expires_at_ms?: number | null;
@@ -283,7 +283,7 @@ export interface CommercialAccountLotBalanceSnapshot {
 }
 
 export interface CommercialAccountBalanceSnapshot {
-  account_id: number;
+  account_id: CommercialAccountId;
   available_balance: number;
   held_balance: number;
   consumed_balance: number;
@@ -309,14 +309,44 @@ export type CommercialAccountLedgerEntryType =
   | 'manual_adjustment'
   | 'refund';
 
+export type CommercialNumericId = string | number;
+export type CommercialAccountId = CommercialNumericId;
+
+export function commercialNumericIdKey(
+  value: CommercialNumericId | null | undefined,
+): string {
+  return value == null ? '' : String(value);
+}
+
+export function commercialNumericIdsEqual(
+  left: CommercialNumericId | null | undefined,
+  right: CommercialNumericId | null | undefined,
+): boolean {
+  return commercialNumericIdKey(left) === commercialNumericIdKey(right);
+}
+
+export function compareCommercialNumericIdsDesc(
+  left: CommercialNumericId | null | undefined,
+  right: CommercialNumericId | null | undefined,
+): number {
+  const leftKey = commercialNumericIdKey(left);
+  const rightKey = commercialNumericIdKey(right);
+
+  if (leftKey === rightKey) {
+    return 0;
+  }
+
+  return rightKey.length - leftKey.length || rightKey.localeCompare(leftKey);
+}
+
 export interface CommercialAccountLedgerEntryRecord {
-  ledger_entry_id: number;
-  tenant_id: number;
-  organization_id: number;
-  account_id: number;
-  user_id: number;
-  request_id?: number | null;
-  hold_id?: number | null;
+  ledger_entry_id: CommercialNumericId;
+  tenant_id: CommercialNumericId;
+  organization_id: CommercialNumericId;
+  account_id: CommercialAccountId;
+  user_id: CommercialNumericId;
+  request_id?: CommercialNumericId | null;
+  hold_id?: CommercialNumericId | null;
   entry_type: CommercialAccountLedgerEntryType;
   benefit_type?: string | null;
   quantity: number;
@@ -325,11 +355,11 @@ export interface CommercialAccountLedgerEntryRecord {
 }
 
 export interface CommercialAccountLedgerAllocationRecord {
-  ledger_allocation_id: number;
-  tenant_id: number;
-  organization_id: number;
-  ledger_entry_id: number;
-  lot_id: number;
+  ledger_allocation_id: CommercialNumericId;
+  tenant_id: CommercialNumericId;
+  organization_id: CommercialNumericId;
+  ledger_entry_id: CommercialNumericId;
+  lot_id: CommercialNumericId;
   quantity_delta: number;
   created_at_ms: number;
 }
@@ -349,14 +379,14 @@ export interface CommercialAccountHistorySnapshot {
 }
 
 export interface CommercialAccountBenefitLotRecord {
-  lot_id: number;
-  tenant_id: number;
-  organization_id: number;
-  account_id: number;
-  user_id: number;
+  lot_id: CommercialNumericId;
+  tenant_id: CommercialNumericId;
+  organization_id: CommercialNumericId;
+  account_id: CommercialAccountId;
+  user_id: CommercialNumericId;
   benefit_type: CommercialAccountBenefitType;
   source_type: CommercialAccountBenefitSourceType;
-  source_id?: number | null;
+  source_id?: CommercialNumericId | null;
   scope_json?: string | null;
   original_quantity: number;
   remaining_quantity: number;
@@ -371,12 +401,12 @@ export interface CommercialAccountBenefitLotRecord {
 }
 
 export interface CommercialAccountHoldRecord {
-  hold_id: number;
-  tenant_id: number;
-  organization_id: number;
-  account_id: number;
-  user_id: number;
-  request_id: number;
+  hold_id: CommercialNumericId;
+  tenant_id: CommercialNumericId;
+  organization_id: CommercialNumericId;
+  account_id: CommercialAccountId;
+  user_id: CommercialNumericId;
+  request_id: CommercialNumericId;
   status: CommercialAccountHoldStatus;
   estimated_quantity: number;
   captured_quantity: number;
@@ -387,13 +417,13 @@ export interface CommercialAccountHoldRecord {
 }
 
 export interface CommercialRequestSettlementRecord {
-  request_settlement_id: number;
-  tenant_id: number;
-  organization_id: number;
-  request_id: number;
-  account_id: number;
-  user_id: number;
-  hold_id?: number | null;
+  request_settlement_id: CommercialNumericId;
+  tenant_id: CommercialNumericId;
+  organization_id: CommercialNumericId;
+  request_id: CommercialNumericId;
+  account_id: CommercialAccountId;
+  user_id: CommercialNumericId;
+  hold_id?: CommercialNumericId | null;
   status: CommercialRequestSettlementStatus;
   estimated_credit_hold: number;
   released_credit_amount: number;
@@ -408,9 +438,9 @@ export interface CommercialRequestSettlementRecord {
 }
 
 export interface CommercialPricingPlanRecord {
-  pricing_plan_id: number;
-  tenant_id: number;
-  organization_id: number;
+  pricing_plan_id: CommercialNumericId;
+  tenant_id: CommercialNumericId;
+  organization_id: CommercialNumericId;
   plan_code: string;
   plan_version: number;
   display_name: string;
@@ -447,10 +477,10 @@ export type CommercialPricingMethod =
   | 'included_then_per_unit';
 
 export interface CommercialPricingRateRecord {
-  pricing_rate_id: number;
-  tenant_id: number;
-  organization_id: number;
-  pricing_plan_id: number;
+  pricing_rate_id: CommercialNumericId;
+  tenant_id: CommercialNumericId;
+  organization_id: CommercialNumericId;
+  pricing_plan_id: CommercialNumericId;
   metric_code: string;
   capability_code?: string | null;
   model_code?: string | null;
@@ -1110,10 +1140,10 @@ export interface PortalCouponOwnershipSummary {
 }
 
 export interface PortalCouponAccountArrivalLotItem {
-  lot_id: number;
+  lot_id: CommercialNumericId;
   benefit_type: CommercialAccountBenefitType;
   source_type: CommercialAccountBenefitSourceType;
-  source_id?: number | null;
+  source_id?: CommercialNumericId | null;
   status: CommercialAccountBenefitLotStatus;
   original_quantity: number;
   remaining_quantity: number;
@@ -1124,7 +1154,7 @@ export interface PortalCouponAccountArrivalLotItem {
 
 export interface PortalCouponAccountArrivalSummary {
   order_id?: string | null;
-  account_id?: number | null;
+  account_id?: CommercialAccountId | null;
   benefit_lot_count: number;
   credited_quantity: number;
   benefit_lots: PortalCouponAccountArrivalLotItem[];
@@ -1468,7 +1498,7 @@ export interface PortalCommerceOrderCenterEntry {
 }
 
 export interface PortalCommerceReconciliationSummary {
-  account_id: number;
+  account_id: CommercialAccountId;
   last_reconciled_order_id: string;
   last_reconciled_order_updated_at_ms: number;
   last_reconciled_order_created_at_ms: number;

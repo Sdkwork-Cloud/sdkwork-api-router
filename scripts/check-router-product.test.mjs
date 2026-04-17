@@ -32,13 +32,13 @@ test('check-router-product exposes Windows-safe pnpm and rust runner plans witho
   });
 
   assert.equal(plan[0].label, 'portal typecheck');
-  assert.equal(plan[0].command, 'powershell.exe');
-  assert.match(plan[0].args.join(' '), /typecheck/);
+  assert.equal(plan[0].command, process.execPath);
+  assert.match(plan[0].args.join(' '), /run-tsc-cli\.mjs --noEmit/);
   assert.equal(plan[2].label, 'portal browser runtime smoke');
   assert.match(plan[2].args.join(' '), /check-portal-browser-runtime\.mjs/);
   assert.equal(plan[3].label, 'admin typecheck');
-  assert.equal(plan[3].command, 'powershell.exe');
-  assert.match(plan[3].args.join(' '), /typecheck/);
+  assert.equal(plan[3].command, process.execPath);
+  assert.match(plan[3].args.join(' '), /run-tsc-cli\.mjs --noEmit/);
   assert.equal(plan[5].label, 'admin browser runtime smoke');
   assert.match(plan[5].args.join(' '), /check-admin-browser-runtime\.mjs/);
   assert.equal(plan[6].label, 'docs bootstrap safety');

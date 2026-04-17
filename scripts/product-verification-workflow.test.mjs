@@ -29,6 +29,7 @@ test('repository exposes a pull-request product verification workflow with gover
   assert.match(workflow, /\.github\/workflows\/product-verification\.yml/);
   assert.match(workflow, /apps\/sdkwork-router-admin\/\*\*/);
   assert.match(workflow, /apps\/sdkwork-router-portal\/\*\*/);
+  assert.match(workflow, /console\/\*\*/);
   assert.match(workflow, /docs\/\*\*/);
   assert.match(workflow, /README\.md/);
   assert.match(workflow, /README\.zh-CN\.md/);
@@ -36,6 +37,7 @@ test('repository exposes a pull-request product verification workflow with gover
   assert.match(workflow, /scripts\/browser-runtime-smoke\.mjs/);
   assert.match(workflow, /scripts\/browser-runtime-smoke\.test\.mjs/);
   assert.match(workflow, /scripts\/check-portal-browser-runtime\.mjs/);
+  assert.match(workflow, /scripts\/check-portal-browser-runtime\.test\.mjs/);
   assert.match(workflow, /scripts\/check-admin-browser-runtime\.mjs/);
   assert.match(workflow, /scripts\/check-admin-browser-runtime\.test\.mjs/);
   assert.match(workflow, /scripts\/run-tauri-cli\.mjs/);
@@ -44,11 +46,15 @@ test('repository exposes a pull-request product verification workflow with gover
   assert.match(workflow, /scripts\/product-verification-workflow\.test\.mjs/);
   assert.match(
     workflow,
-    /Run product governance node tests[\s\S]*?node --test scripts\/product-verification-workflow\.test\.mjs scripts\/check-router-product\.test\.mjs scripts\/browser-runtime-smoke\.test\.mjs scripts\/check-admin-browser-runtime\.test\.mjs scripts\/build-router-desktop-assets\.test\.mjs scripts\/check-router-docs-safety\.test\.mjs scripts\/check-router-frontend-budgets\.test\.mjs scripts\/dev\/tests\/pnpm-launch-lib\.test\.mjs apps\/sdkwork-router-portal\/tests\/product-entrypoint-scripts\.test\.mjs/,
+    /Run product governance node tests[\s\S]*?node --test scripts\/product-verification-workflow\.test\.mjs scripts\/check-router-product\.test\.mjs scripts\/browser-runtime-smoke\.test\.mjs scripts\/check-admin-browser-runtime\.test\.mjs scripts\/check-portal-browser-runtime\.test\.mjs scripts\/build-router-desktop-assets\.test\.mjs scripts\/check-router-docs-safety\.test\.mjs scripts\/check-router-frontend-budgets\.test\.mjs scripts\/dev\/tests\/pnpm-launch-lib\.test\.mjs console\/tests\/sdk-transport-unsafe-integer\.test\.mjs apps\/sdkwork-router-portal\/tests\/product-entrypoint-scripts\.test\.mjs/,
   );
   assert.match(
     workflow,
-    /Install product verification workspace dependencies[\s\S]*?pnpm --dir apps\/sdkwork-router-admin install --frozen-lockfile[\s\S]*?pnpm --dir apps\/sdkwork-router-portal install --frozen-lockfile/,
+    /Install product verification workspace dependencies[\s\S]*?pnpm --dir apps\/sdkwork-router-admin install --frozen-lockfile[\s\S]*?pnpm --dir apps\/sdkwork-router-portal install --frozen-lockfile[\s\S]*?pnpm --dir console install --frozen-lockfile/,
+  );
+  assert.match(
+    workflow,
+    /Run product governance node tests[\s\S]*?console\/tests\/sdk-transport-unsafe-integer\.test\.mjs/,
   );
   assert.match(
     workflow,
@@ -77,6 +83,7 @@ on:
       - '.github/workflows/product-verification.yml'
       - 'apps/sdkwork-router-admin/**'
       - 'apps/sdkwork-router-portal/**'
+      - 'console/**'
       - 'docs/**'
       - 'README.md'
       - 'README.zh-CN.md'
@@ -84,6 +91,7 @@ on:
       - 'scripts/browser-runtime-smoke.mjs'
       - 'scripts/browser-runtime-smoke.test.mjs'
       - 'scripts/check-portal-browser-runtime.mjs'
+      - 'scripts/check-portal-browser-runtime.test.mjs'
       - 'scripts/check-admin-browser-runtime.mjs'
       - 'scripts/check-admin-browser-runtime.test.mjs'
       - 'scripts/run-tauri-cli.mjs'
@@ -122,9 +130,10 @@ jobs:
         run: |
           pnpm --dir apps/sdkwork-router-admin install --frozen-lockfile
           pnpm --dir apps/sdkwork-router-portal install --frozen-lockfile
+          pnpm --dir console install --frozen-lockfile
 
       - name: Run product governance node tests
-        run: node --test scripts/product-verification-workflow.test.mjs scripts/check-router-product.test.mjs scripts/browser-runtime-smoke.test.mjs scripts/check-admin-browser-runtime.test.mjs scripts/build-router-desktop-assets.test.mjs scripts/check-router-docs-safety.test.mjs scripts/check-router-frontend-budgets.test.mjs scripts/dev/tests/pnpm-launch-lib.test.mjs apps/sdkwork-router-portal/tests/product-entrypoint-scripts.test.mjs
+        run: node --test scripts/product-verification-workflow.test.mjs scripts/check-router-product.test.mjs scripts/browser-runtime-smoke.test.mjs scripts/check-admin-browser-runtime.test.mjs scripts/check-portal-browser-runtime.test.mjs scripts/build-router-desktop-assets.test.mjs scripts/check-router-docs-safety.test.mjs scripts/check-router-frontend-budgets.test.mjs scripts/dev/tests/pnpm-launch-lib.test.mjs console/tests/sdk-transport-unsafe-integer.test.mjs apps/sdkwork-router-portal/tests/product-entrypoint-scripts.test.mjs
 
       - name: Run product verification gate
         run: node scripts/check-router-product.mjs
@@ -161,6 +170,7 @@ on:
       - '.github/workflows/product-verification.yml'
       - 'apps/sdkwork-router-admin/**'
       - 'apps/sdkwork-router-portal/**'
+      - 'console/**'
       - 'docs/**'
       - 'README.md'
       - 'README.zh-CN.md'
@@ -168,6 +178,7 @@ on:
       - 'scripts/browser-runtime-smoke.mjs'
       - 'scripts/browser-runtime-smoke.test.mjs'
       - 'scripts/check-portal-browser-runtime.mjs'
+      - 'scripts/check-portal-browser-runtime.test.mjs'
       - 'scripts/check-admin-browser-runtime.mjs'
       - 'scripts/check-admin-browser-runtime.test.mjs'
       - 'scripts/run-tauri-cli.mjs'
@@ -205,9 +216,10 @@ jobs:
         run: |
           pnpm --dir apps/sdkwork-router-admin install --frozen-lockfile
           pnpm --dir apps/sdkwork-router-portal install --frozen-lockfile
+          pnpm --dir console install --frozen-lockfile
 
       - name: Run product governance node tests
-        run: node --test scripts/product-verification-workflow.test.mjs scripts/check-router-product.test.mjs scripts/browser-runtime-smoke.test.mjs scripts/check-admin-browser-runtime.test.mjs scripts/build-router-desktop-assets.test.mjs scripts/check-router-docs-safety.test.mjs scripts/check-router-frontend-budgets.test.mjs scripts/dev/tests/pnpm-launch-lib.test.mjs apps/sdkwork-router-portal/tests/product-entrypoint-scripts.test.mjs
+        run: node --test scripts/product-verification-workflow.test.mjs scripts/check-router-product.test.mjs scripts/browser-runtime-smoke.test.mjs scripts/check-admin-browser-runtime.test.mjs scripts/check-portal-browser-runtime.test.mjs scripts/build-router-desktop-assets.test.mjs scripts/check-router-docs-safety.test.mjs scripts/check-router-frontend-budgets.test.mjs scripts/dev/tests/pnpm-launch-lib.test.mjs console/tests/sdk-transport-unsafe-integer.test.mjs apps/sdkwork-router-portal/tests/product-entrypoint-scripts.test.mjs
 
       - name: Run product verification gate
         env:
@@ -246,6 +258,7 @@ on:
       - '.github/workflows/product-verification.yml'
       - 'apps/sdkwork-router-admin/**'
       - 'apps/sdkwork-router-portal/**'
+      - 'console/**'
       - 'docs/**'
       - 'README.md'
       - 'README.zh-CN.md'
@@ -253,6 +266,7 @@ on:
       - 'scripts/browser-runtime-smoke.mjs'
       - 'scripts/browser-runtime-smoke.test.mjs'
       - 'scripts/check-portal-browser-runtime.mjs'
+      - 'scripts/check-portal-browser-runtime.test.mjs'
       - 'scripts/check-admin-browser-runtime.mjs'
       - 'scripts/check-admin-browser-runtime.test.mjs'
       - 'scripts/product-verification-workflow-contracts.mjs'
@@ -289,9 +303,10 @@ jobs:
         run: |
           pnpm --dir apps/sdkwork-router-admin install --frozen-lockfile
           pnpm --dir apps/sdkwork-router-portal install --frozen-lockfile
+          pnpm --dir console install --frozen-lockfile
 
       - name: Run product governance node tests
-        run: node --test scripts/product-verification-workflow.test.mjs scripts/check-router-product.test.mjs scripts/browser-runtime-smoke.test.mjs scripts/check-admin-browser-runtime.test.mjs scripts/build-router-desktop-assets.test.mjs scripts/check-router-docs-safety.test.mjs scripts/check-router-frontend-budgets.test.mjs scripts/dev/tests/pnpm-launch-lib.test.mjs apps/sdkwork-router-portal/tests/product-entrypoint-scripts.test.mjs
+        run: node --test scripts/product-verification-workflow.test.mjs scripts/check-router-product.test.mjs scripts/browser-runtime-smoke.test.mjs scripts/check-admin-browser-runtime.test.mjs scripts/check-portal-browser-runtime.test.mjs scripts/build-router-desktop-assets.test.mjs scripts/check-router-docs-safety.test.mjs scripts/check-router-frontend-budgets.test.mjs scripts/dev/tests/pnpm-launch-lib.test.mjs console/tests/sdk-transport-unsafe-integer.test.mjs apps/sdkwork-router-portal/tests/product-entrypoint-scripts.test.mjs
 
       - name: Run product verification gate
         env:
@@ -330,6 +345,7 @@ on:
       - '.github/workflows/product-verification.yml'
       - 'apps/sdkwork-router-admin/**'
       - 'apps/sdkwork-router-portal/**'
+      - 'console/**'
       - 'docs/**'
       - 'README.md'
       - 'README.zh-CN.md'
@@ -337,6 +353,7 @@ on:
       - 'scripts/browser-runtime-smoke.mjs'
       - 'scripts/browser-runtime-smoke.test.mjs'
       - 'scripts/check-portal-browser-runtime.mjs'
+      - 'scripts/check-portal-browser-runtime.test.mjs'
       - 'scripts/check-admin-browser-runtime.mjs'
       - 'scripts/check-admin-browser-runtime.test.mjs'
       - 'scripts/run-tauri-cli.mjs'
@@ -377,9 +394,10 @@ jobs:
         run: |
           pnpm --dir apps/sdkwork-router-admin install --frozen-lockfile
           pnpm --dir apps/sdkwork-router-portal install --frozen-lockfile
+          pnpm --dir console install --frozen-lockfile
 
       - name: Run product governance node tests
-        run: node --test scripts/product-verification-workflow.test.mjs scripts/check-router-product.test.mjs scripts/browser-runtime-smoke.test.mjs scripts/check-admin-browser-runtime.test.mjs scripts/build-router-desktop-assets.test.mjs scripts/check-router-docs-safety.test.mjs scripts/check-router-frontend-budgets.test.mjs apps/sdkwork-router-portal/tests/product-entrypoint-scripts.test.mjs
+        run: node --test scripts/product-verification-workflow.test.mjs scripts/check-router-product.test.mjs scripts/browser-runtime-smoke.test.mjs scripts/check-admin-browser-runtime.test.mjs scripts/check-portal-browser-runtime.test.mjs scripts/build-router-desktop-assets.test.mjs scripts/check-router-docs-safety.test.mjs scripts/check-router-frontend-budgets.test.mjs console/tests/sdk-transport-unsafe-integer.test.mjs apps/sdkwork-router-portal/tests/product-entrypoint-scripts.test.mjs
 
       - name: Run product verification gate
         env:
@@ -393,6 +411,6 @@ jobs:
     contracts.assertProductVerificationWorkflowContracts({
       repoRoot: fixtureRoot,
     }),
-    /shared pnpm helper tests/i,
+    /shared pnpm helper/i,
   );
 });

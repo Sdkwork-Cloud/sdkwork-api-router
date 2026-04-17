@@ -88,7 +88,11 @@ async fn memory_pool() -> SqlitePool {
         .unwrap()
 }
 
-async fn issue_funded_gateway_api_key(pool: &SqlitePool, tenant_id: &str, project_id: &str) -> String {
+async fn issue_funded_gateway_api_key(
+    pool: &SqlitePool,
+    tenant_id: &str,
+    project_id: &str,
+) -> String {
     let api_key = support::issue_gateway_api_key(pool, tenant_id, project_id).await;
     support::seed_primary_commercial_credit_account(pool, tenant_id, project_id, &api_key).await;
     api_key

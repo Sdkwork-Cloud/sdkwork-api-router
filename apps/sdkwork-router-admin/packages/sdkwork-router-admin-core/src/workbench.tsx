@@ -8,6 +8,10 @@ import {
 } from 'react';
 
 import {
+  compareCommercialNumericIdsDesc,
+  commercialNumericIdKey,
+} from 'sdkwork-router-admin-types';
+import {
   clearAdminSessionToken,
   getBillingEventSummary,
   getAdminMe,
@@ -85,19 +89,22 @@ function selectCommercialLedgerAccountIds(
   commercialRequestSettlements: CommercialRequestSettlementRecord[],
   maxAccounts = 8,
 ): CommercialAccountId[] {
-  const selected = new Set<CommercialAccountId>();
+  const selected = new Map<string, CommercialAccountId>();
 
   const recentSettlementAccountIds = [...commercialRequestSettlements]
     .sort((left, right) =>
       right.updated_at_ms - left.updated_at_ms
-      || right.request_settlement_id - left.request_settlement_id,
+      || compareCommercialNumericIdsDesc(
+        left.request_settlement_id,
+        right.request_settlement_id,
+      ),
     )
     .map((settlement) => settlement.account_id);
 
   for (const accountId of recentSettlementAccountIds) {
-    selected.add(accountId);
+    selected.set(commercialNumericIdKey(accountId), accountId);
     if (selected.size >= maxAccounts) {
-      return [...selected];
+      return [...selected.values()];
     }
   }
 
@@ -109,20 +116,23 @@ function selectCommercialLedgerAccountIds(
     .map((account) => account.account.account_id);
 
   for (const accountId of priorityAccountIds) {
-    selected.add(accountId);
+    selected.set(commercialNumericIdKey(accountId), accountId);
     if (selected.size >= maxAccounts) {
-      return [...selected];
+      return [...selected.values()];
     }
   }
 
   for (const account of commercialAccounts) {
-    selected.add(account.account.account_id);
+    selected.set(
+      commercialNumericIdKey(account.account.account_id),
+      account.account.account_id,
+    );
     if (selected.size >= maxAccounts) {
       break;
     }
   }
 
-  return [...selected];
+  return [...selected.values()];
 }
 
 function selectCommercePaymentAuditOrderIds(

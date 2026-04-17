@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
+import jiti from '../node_modules/.pnpm/jiti@2.6.1/node_modules/jiti/lib/jiti.mjs';
+
 const appRoot = path.resolve(import.meta.dirname, '..');
 const workspaceRoot = path.resolve(appRoot, '..', '..');
 
@@ -12,6 +14,19 @@ function read(relativePath) {
 
 function readWorkspace(relativePath) {
   return readFileSync(path.join(workspaceRoot, relativePath), 'utf8');
+}
+
+function loadApiReferenceTransport() {
+  const load = jiti(import.meta.url, { moduleCache: false });
+  return load(
+    path.join(
+      appRoot,
+      'packages',
+      'sdkwork-router-portal-api-reference',
+      'src',
+      'openapiTransport.ts',
+    ),
+  );
 }
 
 test('public site exposes a dedicated API reference center after models and before docs', () => {
@@ -83,4 +98,22 @@ test('gateway API reference documents coupon-first market and commercial public 
   assert.match(gatewayApiDoc, /after_lot_id/);
   assert.match(gatewayApiDoc, /next_after_lot_id/);
   assert.match(gatewayApiDoc, /scope_order_id/);
+});
+
+test('API reference center preserves unsafe integers when reading live OpenAPI documents', async () => {
+  const { readOpenApiDocument } = loadApiReferenceTransport();
+
+  const document = await readOpenApiDocument(
+    new Response(
+      '{"openapi":"3.1.0","paths":{},"unsafe_marker":9007199254740993}',
+      {
+        status: 200,
+        headers: {
+          'content-type': 'application/json',
+        },
+      },
+    ),
+  );
+
+  assert.equal(document.unsafe_marker, '9007199254740993');
 });

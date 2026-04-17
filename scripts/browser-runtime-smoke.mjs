@@ -15,6 +15,7 @@ const __dirname = path.dirname(__filename);
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_DEVTOOLS_TIMEOUT_MS = 10_000;
 const DEFAULT_POLL_INTERVAL_MS = 200;
+const MAX_SAFE_INTEGER_TEXT = String(Number.MAX_SAFE_INTEGER);
 
 function readOptionValue(token, next) {
   if (!next || next.startsWith('--')) {
@@ -221,8 +222,11 @@ export function createBrowserRuntimeSmokePlan({
   url,
   expectedTexts = [],
   expectedSelectors = [],
+  forbiddenTexts = [],
+  expectedRequestIncludes = [],
   timeoutMs = DEFAULT_TIMEOUT_MS,
   browserPath = '',
+  setupScript = '',
   platform = process.platform,
   env = process.env,
   remoteDebuggingPort = 9222,
@@ -248,8 +252,11 @@ export function createBrowserRuntimeSmokePlan({
     url,
     expectedTexts: uniqueStrings(expectedTexts),
     expectedSelectors: uniqueStrings(expectedSelectors),
+    forbiddenTexts: uniqueStrings(forbiddenTexts),
+    expectedRequestIncludes: uniqueStrings(expectedRequestIncludes),
     timeoutMs,
     browserCommand,
+    setupScript: String(setupScript || ''),
     remoteDebuggingPort,
     userDataDir,
     browserArgs: [
@@ -282,7 +289,7 @@ async function waitForJson(url, timeoutMs) {
         throw new Error(`${url} returned HTTP ${response.status}`);
       }
 
-      return await response.json();
+      return await readJsonResponse(response);
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
       await delay(DEFAULT_POLL_INTERVAL_MS);
@@ -292,6 +299,123 @@ async function waitForJson(url, timeoutMs) {
   throw new Error(
     `${url} did not become reachable within ${timeoutMs}ms: ${lastError?.message ?? 'unknown error'}`,
   );
+}
+
+export async function readJsonResponse(response) {
+  if (typeof response.text === 'function') {
+    const body = await response.text();
+    return body ? parseJsonBody(body) : null;
+  }
+
+  if (typeof response.json === 'function') {
+    return response.json();
+  }
+
+  return null;
+}
+
+function parseJsonBody(body) {
+  return JSON.parse(quoteUnsafeIntegerTokens(body));
+}
+
+function quoteUnsafeIntegerTokens(body) {
+  let result = '';
+  let index = 0;
+  let inString = false;
+  let escaped = false;
+
+  while (index < body.length) {
+    const character = body[index];
+
+    if (inString) {
+      result += character;
+      if (escaped) {
+        escaped = false;
+      } else if (character === '\\') {
+        escaped = true;
+      } else if (character === '"') {
+        inString = false;
+      }
+      index += 1;
+      continue;
+    }
+
+    if (character === '"') {
+      inString = true;
+      result += character;
+      index += 1;
+      continue;
+    }
+
+    if (character === '-' || isDigit(character)) {
+      const tokenEnd = findNumericTokenEnd(body, index);
+      const token = body.slice(index, tokenEnd);
+
+      if (shouldQuoteIntegerToken(token)) {
+        result += `"${token}"`;
+      } else {
+        result += token;
+      }
+
+      index = tokenEnd;
+      continue;
+    }
+
+    result += character;
+    index += 1;
+  }
+
+  return result;
+}
+
+function findNumericTokenEnd(body, start) {
+  let index = start;
+
+  if (body[index] === '-') {
+    index += 1;
+  }
+
+  while (index < body.length && isDigit(body[index])) {
+    index += 1;
+  }
+
+  if (body[index] === '.') {
+    index += 1;
+    while (index < body.length && isDigit(body[index])) {
+      index += 1;
+    }
+  }
+
+  if (body[index] === 'e' || body[index] === 'E') {
+    index += 1;
+    if (body[index] === '+' || body[index] === '-') {
+      index += 1;
+    }
+    while (index < body.length && isDigit(body[index])) {
+      index += 1;
+    }
+  }
+
+  return index;
+}
+
+function shouldQuoteIntegerToken(token) {
+  if (!/^-?\d+$/.test(token)) {
+    return false;
+  }
+
+  const normalized = token.startsWith('-') ? token.slice(1) : token;
+  if (normalized.length < MAX_SAFE_INTEGER_TEXT.length) {
+    return false;
+  }
+  if (normalized.length > MAX_SAFE_INTEGER_TEXT.length) {
+    return true;
+  }
+  return normalized > MAX_SAFE_INTEGER_TEXT;
+}
+
+function isDigit(character) {
+  return character != null && character >= '0' && character <= '9';
 }
 
 async function connectWebSocket(url) {
@@ -397,6 +521,49 @@ async function waitForPageWebSocketDebuggerUrl(port, timeoutMs) {
   );
 }
 
+function matchedRequestIncludes(requestLog, expectedRequestIncludes) {
+  return expectedRequestIncludes.filter((entry) =>
+    requestLog.some((requestUrl) => String(requestUrl).includes(entry)));
+}
+
+async function readBrowserFetchRequestLog(client) {
+  const evaluation = await client.send('Runtime.evaluate', {
+    expression: 'globalThis.__SDKWORK_BROWSER_RUNTIME_FETCH_REQUESTS__ ?? []',
+    returnByValue: true,
+  });
+
+  return Array.isArray(evaluation.result?.value) ? evaluation.result.value : [];
+}
+
+async function waitForExpectedRequestIncludes(
+  client,
+  requestLog,
+  expectedRequestIncludes,
+  timeoutMs,
+) {
+  const deadline = Date.now() + timeoutMs;
+  let lastMatched = [];
+  let lastObserved = requestLog;
+
+  while (Date.now() < deadline) {
+    const browserFetchLog = await readBrowserFetchRequestLog(client).catch(() => []);
+    lastObserved = uniqueStrings([...requestLog, ...browserFetchLog]);
+    lastMatched = matchedRequestIncludes(lastObserved, expectedRequestIncludes);
+    if (lastMatched.length === expectedRequestIncludes.length) {
+      return {
+        matchedRequestUrls: lastMatched,
+        observedRequests: lastObserved,
+      };
+    }
+
+    await delay(DEFAULT_POLL_INTERVAL_MS);
+  }
+
+  throw new Error(
+    `browser runtime smoke did not observe the expected request urls before timeout; expected: ${truncateText(JSON.stringify(expectedRequestIncludes), 400)}; observed: ${truncateText(JSON.stringify(lastObserved), 600)}`,
+  );
+}
+
 async function waitForExpectedTargets(client, expectedTexts, expectedSelectors, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   let lastSnapshot = null;
@@ -429,12 +596,98 @@ async function waitForExpectedTargets(client, expectedTexts, expectedSelectors, 
   );
 }
 
+function matchedForbiddenTexts(snapshot, forbiddenTexts) {
+  const title = String(snapshot?.title ?? '');
+  const bodyText = String(snapshot?.bodyText ?? '');
+
+  return forbiddenTexts.filter((entry) =>
+    title.includes(entry) || bodyText.includes(entry));
+}
+
+export function createMockFetchSetupScript({
+  localStorageEntries = {},
+  exactResponses = {},
+  patternResponses = [],
+} = {}) {
+  return `(() => {
+    const localStorageEntries = ${JSON.stringify(localStorageEntries)};
+    const exactResponses = ${JSON.stringify(exactResponses)};
+    const patternResponses = ${JSON.stringify(patternResponses)};
+    const originalFetch = globalThis.fetch ? globalThis.fetch.bind(globalThis) : null;
+    const fetchRequests = [];
+
+    globalThis.__SDKWORK_BROWSER_RUNTIME_FETCH_REQUESTS__ = fetchRequests;
+
+    for (const [key, value] of Object.entries(localStorageEntries)) {
+      try {
+        globalThis.localStorage?.setItem(key, String(value));
+      } catch {}
+    }
+
+    function jsonResponse(status, body) {
+      return new Response(JSON.stringify(body), {
+        status,
+        headers: {
+          'content-type': 'application/json',
+        },
+      });
+    }
+
+    function resolveMockResponse(pathname) {
+      if (Object.prototype.hasOwnProperty.call(exactResponses, pathname)) {
+        return {
+          status: 200,
+          body: exactResponses[pathname],
+        };
+      }
+
+      for (const entry of patternResponses) {
+        const pattern = new RegExp(entry.pattern);
+        if (pattern.test(pathname)) {
+          return {
+            status: entry.status ?? 200,
+            body: entry.body,
+          };
+        }
+      }
+
+      return null;
+    }
+
+    globalThis.fetch = async (input, init) => {
+      const rawUrl = typeof input === 'string'
+        ? input
+        : (input && typeof input === 'object' && 'url' in input ? input.url : String(input));
+      const requestUrl = new URL(rawUrl, globalThis.location?.origin ?? 'http://127.0.0.1');
+      fetchRequests.push(requestUrl.pathname + requestUrl.search);
+      const mock = resolveMockResponse(requestUrl.pathname);
+
+      if (mock) {
+        return jsonResponse(mock.status, mock.body);
+      }
+
+      if (!originalFetch) {
+        return jsonResponse(404, {
+          error: {
+            message: 'Unhandled mocked fetch request: ' + requestUrl.pathname,
+          },
+        });
+      }
+
+      return originalFetch(input, init);
+    };
+  })();`;
+}
+
 export async function runBrowserRuntimeSmoke({
   url,
   expectedTexts = [],
   expectedSelectors = [],
+  forbiddenTexts = [],
+  expectedRequestIncludes = [],
   timeoutMs = DEFAULT_TIMEOUT_MS,
   browserPath = '',
+  setupScript = '',
   platform = process.platform,
   env = process.env,
 } = {}) {
@@ -444,8 +697,11 @@ export async function runBrowserRuntimeSmoke({
     url,
     expectedTexts,
     expectedSelectors,
+    forbiddenTexts,
+    expectedRequestIncludes,
     timeoutMs,
     browserPath,
+    setupScript,
     platform,
     env,
     remoteDebuggingPort,
@@ -469,6 +725,7 @@ export async function runBrowserRuntimeSmoke({
   });
 
   let client = null;
+  const requestLog = [];
 
   try {
     await waitForJson(
@@ -486,10 +743,23 @@ export async function runBrowserRuntimeSmoke({
     client.on('Runtime.exceptionThrown', (params) => {
       exceptions.push(params.exceptionDetails?.text ?? 'unhandled browser exception');
     });
+    client.on('Network.requestWillBeSent', (params) => {
+      const requestUrl = params.request?.url?.trim();
+      if (requestUrl) {
+        requestLog.push(requestUrl);
+      }
+    });
 
     await client.send('Page.enable');
     await client.send('Runtime.enable');
     await client.send('Log.enable');
+    await client.send('Network.enable');
+
+    if (plan.setupScript) {
+      await client.send('Page.addScriptToEvaluateOnNewDocument', {
+        source: plan.setupScript,
+      });
+    }
 
     await client.send('Page.navigate', { url: plan.url });
     await new Promise((resolve, reject) => {
@@ -509,7 +779,26 @@ export async function runBrowserRuntimeSmoke({
       plan.expectedSelectors,
       plan.timeoutMs,
     );
+
+    const requestCheck = plan.expectedRequestIncludes.length > 0
+      ? await waitForExpectedRequestIncludes(
+        client,
+        requestLog,
+        plan.expectedRequestIncludes,
+        plan.timeoutMs,
+      )
+      : {
+        matchedRequestUrls: [],
+        observedRequests: requestLog,
+      };
     await delay(500);
+
+    const forbiddenMatches = matchedForbiddenTexts(snapshot, plan.forbiddenTexts);
+    if (forbiddenMatches.length > 0) {
+      throw new Error(
+        `browser runtime smoke observed forbidden runtime text on ${plan.url}: ${truncateText(JSON.stringify(forbiddenMatches), 400)}`,
+      );
+    }
 
     if (exceptions.length > 0) {
       throw new Error(
@@ -524,6 +813,10 @@ export async function runBrowserRuntimeSmoke({
       title: snapshot.title ?? '',
       matchedTexts: snapshot.matchedTexts ?? [],
       matchedSelectors: snapshot.matchedSelectors ?? [],
+      forbiddenTexts: plan.forbiddenTexts,
+      expectedRequestIncludes: plan.expectedRequestIncludes,
+      matchedRequestUrls: requestCheck.matchedRequestUrls,
+      observedRequests: requestCheck.observedRequests,
     };
   } finally {
     if (client) {
