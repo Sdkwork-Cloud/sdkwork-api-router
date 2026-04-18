@@ -56,6 +56,10 @@ test('repository exposes a pull-request product verification workflow with gover
   );
   assert.match(
     workflow,
+    /Materialize external release dependencies[\s\S]*?node scripts\/release\/materialize-external-deps\.mjs[\s\S]*?Install product verification workspace dependencies[\s\S]*?pnpm --dir apps\/sdkwork-router-admin install --frozen-lockfile[\s\S]*?pnpm --dir apps\/sdkwork-router-portal install --frozen-lockfile/,
+  );
+  assert.match(
+    workflow,
     /Install product verification workspace dependencies[\s\S]*?pnpm --dir apps\/sdkwork-router-admin install --frozen-lockfile[\s\S]*?pnpm --dir apps\/sdkwork-router-portal install --frozen-lockfile[\s\S]*?pnpm --dir docs install --frozen-lockfile/,
   );
   assert.match(
@@ -137,6 +141,9 @@ jobs:
 
       - name: Install cargo-audit
         uses: taiki-e/install-action@cargo-audit
+
+      - name: Materialize external release dependencies
+        run: node scripts/release/materialize-external-deps.mjs
 
       - name: Install product verification workspace dependencies
         run: |
@@ -227,6 +234,9 @@ jobs:
       - name: Install cargo-audit
         uses: taiki-e/install-action@cargo-audit
 
+      - name: Materialize external release dependencies
+        run: node scripts/release/materialize-external-deps.mjs
+
       - name: Install product verification workspace dependencies
         run: |
           pnpm --dir apps/sdkwork-router-admin install --frozen-lockfile
@@ -314,6 +324,9 @@ jobs:
 
       - name: Install cargo-audit
         uses: taiki-e/install-action@cargo-audit
+
+      - name: Materialize external release dependencies
+        run: node scripts/release/materialize-external-deps.mjs
 
       - name: Install product verification workspace dependencies
         run: |
@@ -507,6 +520,9 @@ jobs:
 
       - name: Install cargo-audit
         uses: taiki-e/install-action@cargo-audit
+
+      - name: Materialize external release dependencies
+        run: node scripts/release/materialize-external-deps.mjs
 
       - name: Install product verification workspace dependencies
         run: |

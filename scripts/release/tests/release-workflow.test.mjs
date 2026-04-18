@@ -144,6 +144,10 @@ test('release workflow publishes only official server and portal desktop product
   assert.match(workflow, /docs\/pnpm-lock\.yaml/);
   assert.match(
     workflow,
+    /product-verification:[\s\S]*?Materialize external release dependencies[\s\S]*?node scripts\/release\/materialize-external-deps\.mjs[\s\S]*?Install product verification workspace dependencies[\s\S]*?pnpm --dir apps\/sdkwork-router-admin install --frozen-lockfile[\s\S]*?pnpm --dir apps\/sdkwork-router-portal install --frozen-lockfile[\s\S]*?pnpm --dir docs install --frozen-lockfile/,
+  );
+  assert.match(
+    workflow,
     /Install product verification workspace dependencies[\s\S]*?pnpm --dir apps\/sdkwork-router-admin install --frozen-lockfile[\s\S]*?pnpm --dir apps\/sdkwork-router-portal install --frozen-lockfile[\s\S]*?pnpm --dir docs install --frozen-lockfile/,
   );
   assert.match(
@@ -220,16 +224,28 @@ jobs:
         with:
           ref: \${{ needs.prepare.outputs.git_ref }}
       - uses: pnpm/action-setup@v4
+        with:
+          version: 10
       - uses: actions/setup-node@v5
         with:
           node-version: 22
+          cache: pnpm
+          cache-dependency-path: |
+            apps/sdkwork-router-admin/pnpm-lock.yaml
+            apps/sdkwork-router-portal/pnpm-lock.yaml
+            docs/pnpm-lock.yaml
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@cargo-audit
+      - name: Materialize external release dependencies
+        run: node scripts/release/materialize-external-deps.mjs
       - name: Install product verification workspace dependencies
         run: |
           pnpm --dir apps/sdkwork-router-admin install --frozen-lockfile
           pnpm --dir apps/sdkwork-router-portal install --frozen-lockfile
+          pnpm --dir docs install --frozen-lockfile
+      - name: Build docs site
+        run: pnpm --dir docs build
       - name: Run release product verification
         env:
           SDKWORK_STRICT_FRONTEND_INSTALLS: '1'
@@ -302,16 +318,28 @@ jobs:
         with:
           ref: \${{ needs.prepare.outputs.git_ref }}
       - uses: pnpm/action-setup@v4
+        with:
+          version: 10
       - uses: actions/setup-node@v5
         with:
           node-version: 22
+          cache: pnpm
+          cache-dependency-path: |
+            apps/sdkwork-router-admin/pnpm-lock.yaml
+            apps/sdkwork-router-portal/pnpm-lock.yaml
+            docs/pnpm-lock.yaml
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@cargo-audit
+      - name: Materialize external release dependencies
+        run: node scripts/release/materialize-external-deps.mjs
       - name: Install product verification workspace dependencies
         run: |
           pnpm --dir apps/sdkwork-router-admin install --frozen-lockfile
           pnpm --dir apps/sdkwork-router-portal install --frozen-lockfile
+          pnpm --dir docs install --frozen-lockfile
+      - name: Build docs site
+        run: pnpm --dir docs build
       - name: Run release product verification
         env:
           SDKWORK_STRICT_FRONTEND_INSTALLS: '1'
@@ -418,16 +446,28 @@ jobs:
         with:
           ref: \${{ needs.prepare.outputs.git_ref }}
       - uses: pnpm/action-setup@v4
+        with:
+          version: 10
       - uses: actions/setup-node@v5
         with:
           node-version: 22
+          cache: pnpm
+          cache-dependency-path: |
+            apps/sdkwork-router-admin/pnpm-lock.yaml
+            apps/sdkwork-router-portal/pnpm-lock.yaml
+            docs/pnpm-lock.yaml
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@cargo-audit
+      - name: Materialize external release dependencies
+        run: node scripts/release/materialize-external-deps.mjs
       - name: Install product verification workspace dependencies
         run: |
           pnpm --dir apps/sdkwork-router-admin install --frozen-lockfile
           pnpm --dir apps/sdkwork-router-portal install --frozen-lockfile
+          pnpm --dir docs install --frozen-lockfile
+      - name: Build docs site
+        run: pnpm --dir docs build
       - name: Run release product verification
         env:
           SDKWORK_STRICT_FRONTEND_INSTALLS: '1'
@@ -564,6 +604,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@cargo-audit
+      - name: Materialize external release dependencies
+        run: node scripts/release/materialize-external-deps.mjs
       - name: Install product verification workspace dependencies
         run: |
           pnpm --dir apps/sdkwork-router-admin install --frozen-lockfile

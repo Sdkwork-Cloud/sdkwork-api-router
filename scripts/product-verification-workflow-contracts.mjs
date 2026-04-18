@@ -113,6 +113,11 @@ export async function assertProductVerificationWorkflowContracts({
   );
   assert.match(
     workflow,
+    /Materialize external release dependencies[\s\S]*?node scripts\/release\/materialize-external-deps\.mjs[\s\S]*?Install product verification workspace dependencies[\s\S]*?pnpm --dir apps\/sdkwork-router-admin install --frozen-lockfile[\s\S]*?pnpm --dir apps\/sdkwork-router-portal install --frozen-lockfile/,
+    'product verification workflow must materialize external release dependencies before frozen frontend installs so workspace-linked packages resolve on GitHub runners',
+  );
+  assert.match(
+    workflow,
     /Install product verification workspace dependencies[\s\S]*?pnpm --dir apps\/sdkwork-router-admin install --frozen-lockfile[\s\S]*?pnpm --dir apps\/sdkwork-router-portal install --frozen-lockfile/,
     'product verification workflow must use explicit frozen installs for the official admin and portal workspaces',
   );
