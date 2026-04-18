@@ -101,6 +101,26 @@ test('workspace TypeScript app configs keep ignoreDeprecations compatible with t
   }
 });
 
+test('product frontend package manifests explicitly allow esbuild build scripts under pnpm strict installs', () => {
+  for (const appRoot of [
+    'apps/sdkwork-router-portal',
+    'apps/sdkwork-router-admin',
+    'docs',
+  ]) {
+    const packageJson = readJson(path.join(appRoot, 'package.json'));
+    const onlyBuiltDependencies = packageJson.pnpm?.onlyBuiltDependencies;
+
+    assert.ok(
+      Array.isArray(onlyBuiltDependencies),
+      `${appRoot} must declare pnpm.onlyBuiltDependencies for deterministic CI installs`,
+    );
+    assert.ok(
+      onlyBuiltDependencies.includes('esbuild'),
+      `${appRoot} must explicitly allow esbuild build scripts for strict CI installs`,
+    );
+  }
+});
+
 test('workspace cargo config does not pin Windows-only CMake generators globally', () => {
   const cargoConfig = readText('.cargo/config.toml');
 
