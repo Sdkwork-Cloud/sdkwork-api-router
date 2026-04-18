@@ -10,7 +10,10 @@ import {
   buildDesktopReleaseEnv,
   DESKTOP_TARGET_ENV_VAR,
 } from './release/desktop-targets.mjs';
-import { resolveWorkspaceTargetDir } from './workspace-target-dir.mjs';
+import {
+  resolveWorkspaceTargetDir,
+  withManagedWorkspaceTempDir,
+} from './workspace-target-dir.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -111,15 +114,11 @@ export function resolveManagedWindowsTauriTargetDir({
     return null;
   }
 
-  const baseEnv = env;
-  const tempRoot = String(baseEnv.TEMP ?? baseEnv.TMP ?? '').trim()
-    || (baseEnv.USERPROFILE ? path.join(baseEnv.USERPROFILE, 'AppData', 'Local', 'Temp') : '');
-  if (!tempRoot || !fs.existsSync(tempRoot)) {
-    return null;
-  }
-
-  const appName = path.basename(cwd).trim().toLowerCase();
-  return path.join(tempRoot, 'sdkwork-tauri-target', appName || 'app');
+  return resolveWorkspaceTargetDir({
+    workspaceRoot: rootDir,
+    env,
+    platform,
+  });
 }
 
 function normalizeComparablePath(candidate = '') {
@@ -180,17 +179,22 @@ export function createTauriCliPlan({
         targetTriple: requestedTargetTriple,
       })
     : { ...env };
-  if (shouldOverrideWindowsCargoTargetDir({
+  const managedEnv = withManagedWorkspaceTempDir({
+    workspaceRoot: rootDir,
     env: resolvedEnv,
+    platform,
+  });
+  if (shouldOverrideWindowsCargoTargetDir({
+    env: managedEnv,
     platform,
   })) {
     const shortTargetDir = resolveManagedWindowsTauriTargetDir({
-      env: resolvedEnv,
+      env: managedEnv,
       cwd,
       platform,
     });
     if (shortTargetDir) {
-      resolvedEnv.CARGO_TARGET_DIR = shortTargetDir;
+      managedEnv.CARGO_TARGET_DIR = shortTargetDir;
     }
   }
 
@@ -199,7 +203,7 @@ export function createTauriCliPlan({
     args: [commandName, ...args],
     cwd,
     env: withSupportedWindowsCmakeGenerator(
-      withCargoToolchainOnPath(resolvedEnv, platform),
+      withCargoToolchainOnPath(managedEnv, platform),
       platform,
     ),
     shell: platform === 'win32',

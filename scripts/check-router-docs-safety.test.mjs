@@ -64,6 +64,18 @@ test('router production docs publish a single deployment entrypoint with operati
   assert.match(vitepressConfig, /\/zh\/operations\/service-management/);
 });
 
+test('vitepress docs config explicitly handles promql code fences without build warnings', () => {
+  const vitepressConfig = readWorkspaceFile('docs/.vitepress/config.mjs');
+  const alertsAndSlos = readWorkspaceFile('docs/operations/alerts-and-slos.md');
+
+  assert.match(alertsAndSlos, /```promql/);
+  assert.match(vitepressConfig, /languageAlias/);
+  assert.match(vitepressConfig, /promql/);
+  assert.match(vitepressConfig, /txt/);
+  assert.match(vitepressConfig, /normalize-promql-fences/);
+  assert.match(vitepressConfig, /token\.info/);
+});
+
 test('README and getting-started docs align to config-file-first production guidance', () => {
   const readme = readWorkspaceFile('README.md');
   const quickstart = readWorkspaceFile('docs/getting-started/quickstart.md');

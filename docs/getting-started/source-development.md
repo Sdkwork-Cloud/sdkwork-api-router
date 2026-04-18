@@ -141,7 +141,7 @@ Mode behavior:
   - unified web host on `http://127.0.0.1:9983/admin/` and `http://127.0.0.1:9983/portal/`
 - tauri mode:
   - backend on `9980`, `9981`, `9982`
-  - admin desktop shell plus unified Pingora browser access on `9983`
+  - portal desktop shell plus unified Pingora browser access on `9983`
 
 The raw workspace launcher now also prints a startup summary showing:
 
@@ -164,7 +164,13 @@ Admin app only:
 node scripts/dev/start-admin.mjs
 ```
 
-Desktop admin only:
+Portal desktop only:
+
+```bash
+node scripts/dev/start-portal.mjs --tauri
+```
+
+Admin desktop only, for explicit admin-shell development:
 
 ```bash
 node scripts/dev/start-admin.mjs --tauri
@@ -258,7 +264,13 @@ Run the admin app:
 pnpm --dir apps/sdkwork-router-admin dev
 ```
 
-Run Tauri from source:
+Run the portal desktop shell from source:
+
+```bash
+pnpm --dir apps/sdkwork-router-portal tauri:dev
+```
+
+Run the admin desktop shell from source when you are explicitly developing the admin-owned Tauri host:
 
 ```bash
 pnpm --dir apps/sdkwork-router-admin tauri:dev

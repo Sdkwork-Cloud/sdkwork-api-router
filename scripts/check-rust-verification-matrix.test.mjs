@@ -10,6 +10,24 @@ test('check-rust-verification-matrix exposes grouped cross-platform cargo plans 
   const module = await import(
     pathToFileURL(path.join(workspaceRoot, 'scripts', 'check-rust-verification-matrix.mjs')).href,
   );
+  const workspaceTargetDir = await import(
+    pathToFileURL(path.join(workspaceRoot, 'scripts', 'workspace-target-dir.mjs')).href,
+  );
+  const managedWindowsEnv = {
+    TEMP: 'C:/Temp',
+    USERPROFILE: process.env.USERPROFILE ?? '',
+    PATH: process.env.PATH ?? '',
+  };
+  const defaultWindowsTargetDir = workspaceTargetDir.resolveWorkspaceTargetDir({
+    workspaceRoot,
+    env: managedWindowsEnv,
+    platform: 'win32',
+  });
+  const defaultWindowsTempDir = workspaceTargetDir.resolveWorkspaceTempDir({
+    workspaceRoot,
+    env: managedWindowsEnv,
+    platform: 'win32',
+  });
 
   assert.deepEqual(module.VERIFICATION_GROUPS, [
     'interface-openapi',
@@ -105,21 +123,24 @@ test('check-rust-verification-matrix exposes grouped cross-platform cargo plans 
     workspaceRoot,
     group: 'gateway-service',
     platform: 'win32',
-    env: {
-      TEMP: 'C:/Temp',
-      USERPROFILE: process.env.USERPROFILE ?? '',
-      PATH: process.env.PATH ?? '',
-    },
+    env: managedWindowsEnv,
   });
   assert.equal(windowsPlan.length, 1);
   assert.equal(typeof windowsPlan[0].command, 'string');
   assert.deepEqual(windowsPlan[0].args.slice(-5), ['check', '-j', '1', '-p', 'gateway-service']);
   assert.equal(windowsPlan[0].env.CMAKE_GENERATOR, 'Visual Studio 17 2022');
   assert.equal(windowsPlan[0].env.HOST_CMAKE_GENERATOR, 'Visual Studio 17 2022');
-  assert.match(String(windowsPlan[0].env.CARGO_TARGET_DIR ?? ''), /^C:\\Temp\\sdkwork-target\\/i);
-  assert.doesNotMatch(
-    String(windowsPlan[0].env.CARGO_TARGET_DIR ?? ''),
-    /[\\/]bin[\\/]\.sdkwork-target-vs2022/i,
+  assert.equal(
+    String(windowsPlan[0].env.CARGO_TARGET_DIR ?? '').replaceAll('\\', '/'),
+    defaultWindowsTargetDir.replaceAll('\\', '/'),
+  );
+  assert.equal(
+    String(windowsPlan[0].env.TEMP ?? '').replaceAll('\\', '/'),
+    defaultWindowsTempDir.replaceAll('\\', '/'),
+  );
+  assert.equal(
+    String(windowsPlan[0].env.TMP ?? '').replaceAll('\\', '/'),
+    defaultWindowsTempDir.replaceAll('\\', '/'),
   );
   assert.equal(windowsPlan[0].env.RUSTFLAGS, undefined);
 
@@ -127,15 +148,14 @@ test('check-rust-verification-matrix exposes grouped cross-platform cargo plans 
     workspaceRoot,
     group: 'workspace',
     platform: 'win32',
-    env: {
-      TEMP: 'C:/Temp',
-      USERPROFILE: process.env.USERPROFILE ?? '',
-      PATH: process.env.PATH ?? '',
-    },
+    env: managedWindowsEnv,
   });
   assert.equal(workspacePlan.length, 1);
   assert.deepEqual(workspacePlan[0].args.slice(-3), ['--workspace', '-j', '1']);
-  assert.match(String(workspacePlan[0].env.CARGO_TARGET_DIR ?? ''), /^C:\\Temp\\sdkwork-target\\/i);
+  assert.equal(
+    String(workspacePlan[0].env.CARGO_TARGET_DIR ?? '').replaceAll('\\', '/'),
+    defaultWindowsTargetDir.replaceAll('\\', '/'),
+  );
 
   const fallbackWindowsPlan = module.createRustVerificationPlan({
     workspaceRoot,

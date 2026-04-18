@@ -104,6 +104,7 @@ export function buildWorkspaceCommandPlan(settings) {
 
   const adminArgs = ['scripts/dev/start-admin.mjs'];
   const portalArgs = ['scripts/dev/start-portal.mjs'];
+  const desktopArgs = ['scripts/dev/start-portal.mjs'];
   const webArgs = ['scripts/dev/start-web.mjs'];
   webArgs.push(
     '--bind',
@@ -119,6 +120,7 @@ export function buildWorkspaceCommandPlan(settings) {
   if (settings.install) {
     adminArgs.push('--install');
     portalArgs.push('--install');
+    desktopArgs.push('--install');
     webArgs.push('--install');
   }
 
@@ -137,13 +139,14 @@ export function buildWorkspaceCommandPlan(settings) {
   }
 
   if (settings.tauri) {
-    adminArgs.push('--tauri');
+    desktopArgs.push('--tauri');
     webArgs.push('--tauri');
   }
 
   if (settings.dryRun) {
     adminArgs.push('--dry-run');
     portalArgs.push('--dry-run');
+    desktopArgs.push('--dry-run');
     webArgs.push('--dry-run');
   }
 
@@ -155,7 +158,7 @@ export function buildWorkspaceCommandPlan(settings) {
       args: backendArgs,
     },
     admin: {
-      name: settings.tauri ? 'admin-tauri' : 'admin-browser',
+      name: 'admin-browser',
       scriptPath: 'scripts/dev/start-admin.mjs',
       args: adminArgs,
     },
@@ -163,6 +166,11 @@ export function buildWorkspaceCommandPlan(settings) {
       name: settings.preview ? 'portal-preview' : 'portal-browser',
       scriptPath: 'scripts/dev/start-portal.mjs',
       args: portalArgs,
+    },
+    desktop: {
+      name: 'portal-tauri',
+      scriptPath: 'scripts/dev/start-portal.mjs',
+      args: desktopArgs,
     },
     web: {
       name: settings.preview
@@ -215,7 +223,7 @@ export function workspaceAccessLines(settings) {
 export function workspaceHelpText() {
   return `Usage: node scripts/dev/start-workspace.mjs [options]
 
-Starts the backend services plus the standalone admin and portal surfaces in one command.
+Starts the backend services plus the admin, portal, and desktop-facing surfaces in one command.
 
 Options:
   --database-url <url>   Optional shared SDKWORK_DATABASE_URL override for admin, gateway, and portal
@@ -227,8 +235,8 @@ Options:
   --install              Run pnpm install before starting the frontend apps
   --preview              Build admin and portal, then serve them through the Pingora web host
   --proxy-dev            Start admin and portal Vite dev servers, then proxy them through the Pingora web host
-  --tauri                Start the admin Tauri shell and the Pingora web host for external access
-  --dry-run              Print the backend, admin, portal, and web-host commands without running them
+  --tauri                Start the portal desktop shell and the Pingora web host for external access
+  --dry-run              Print the backend and surface launcher commands without running them
   -h, --help             Show this help
 `;
 }

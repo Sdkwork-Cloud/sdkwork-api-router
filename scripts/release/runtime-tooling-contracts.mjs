@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import test from 'node:test';
@@ -11,6 +12,53 @@ function toPortablePath(value) {
 
 function read(repoRoot, relativePath) {
   return readFileSync(path.join(repoRoot, relativePath), 'utf8');
+}
+
+function createReleaseCatalogFixture({
+  platform = 'linux',
+  arch = 'x64',
+} = {}) {
+  const releaseOutputDir = mkdtempSync(path.join(os.tmpdir(), 'sdkwork-runtime-tooling-'));
+  mkdirSync(releaseOutputDir, { recursive: true });
+  writeFileSync(
+    path.join(releaseOutputDir, 'release-catalog.json'),
+    `${JSON.stringify({
+      version: 1,
+      type: 'sdkwork-release-catalog',
+      releaseTag: 'runtime-tooling-fixture',
+      generatedAt: '2026-04-18T00:00:00.000Z',
+      productCount: 1,
+      variantCount: 1,
+      products: [
+        {
+          productId: 'sdkwork-api-router-product-server',
+          variants: [
+            {
+              platform,
+              arch,
+              outputDirectory: `native/${platform}/${arch}/bundles`,
+              variantKind: 'server-archive',
+              primaryFile: `sdkwork-api-router-product-server-${platform}-${arch}.tar.gz`,
+              primaryFileSizeBytes: 0,
+              checksumFile: `sdkwork-api-router-product-server-${platform}-${arch}.tar.gz.sha256.txt`,
+              checksumAlgorithm: 'sha256',
+              manifestFile: `sdkwork-api-router-product-server-${platform}-${arch}.manifest.json`,
+              sha256: 'fixture',
+              manifest: {
+                type: 'product-server-archive',
+                productId: 'sdkwork-api-router-product-server',
+                platform,
+                arch,
+              },
+            },
+          ],
+        },
+      ],
+    }, null, 2)}\n`,
+    'utf8',
+  );
+
+  return releaseOutputDir;
 }
 
 export async function assertRuntimeToolingContracts({
@@ -34,25 +82,34 @@ export async function assertRuntimeToolingContracts({
   assert.equal(typeof module.renderWindowsTaskXml, 'function');
   assert.equal(typeof module.renderRuntimeEnvTemplate, 'function');
 
-  const systemPlan = module.createInstallPlan({
-    repoRoot,
-    mode: 'system',
+  const releaseOutputDir = createReleaseCatalogFixture({
     platform: 'linux',
+    arch: 'x64',
   });
-  assert.equal(systemPlan.mode, 'system');
-  assert.equal(
-    systemPlan.files.some((file) => toPortablePath(file.targetPath) === '/etc/sdkwork-api-router/router.yaml'),
-    true,
-    'expected system install plan to publish /etc/sdkwork-api-router/router.yaml',
-  );
-  assert.equal(
-    systemPlan.files.some((file) => toPortablePath(file.targetPath) === '/etc/sdkwork-api-router/router.env'),
-    true,
-    'expected system install plan to publish /etc/sdkwork-api-router/router.env',
-  );
+  try {
+    const systemPlan = module.createInstallPlan({
+      repoRoot,
+      mode: 'system',
+      platform: 'linux',
+      releaseOutputDir,
+    });
+    assert.equal(systemPlan.mode, 'system');
+    assert.equal(
+      systemPlan.files.some((file) => toPortablePath(file.targetPath) === '/etc/sdkwork-api-router/router.yaml'),
+      true,
+      'expected system install plan to publish /etc/sdkwork-api-router/router.yaml',
+    );
+    assert.equal(
+      systemPlan.files.some((file) => toPortablePath(file.targetPath) === '/etc/sdkwork-api-router/router.env'),
+      true,
+      'expected system install plan to publish /etc/sdkwork-api-router/router.env',
+    );
+  } finally {
+    rmSync(releaseOutputDir, { recursive: true, force: true });
+  }
 
   const systemEnvTemplate = module.renderRuntimeEnvTemplate({
-    installRoot: '/opt/sdkwork-api-router/current',
+    installRoot: '/opt/sdkwork-api-router',
     mode: 'system',
     platform: 'linux',
   });

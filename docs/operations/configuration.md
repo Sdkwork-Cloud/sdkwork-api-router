@@ -1,6 +1,10 @@
 # Configuration
 
-This page defines the runtime configuration contract for the standalone SDKWork API Router services.
+This page defines the runtime configuration contract for both:
+
+- the installed server product, `sdkwork-api-router-product-server`
+- the installed desktop product, `sdkwork-router-portal-desktop`
+- raw standalone binaries such as `gateway-service` and `router-product-service`
 
 ## Resolution Order
 
@@ -8,15 +12,72 @@ The effective field precedence from lowest to highest is:
 
 - built-in defaults -> environment fallback -> config file -> CLI
 
-`SDKWORK_CONFIG_DIR` and `SDKWORK_CONFIG_FILE` are discovery inputs. They are read first so the runtime can find the active config file set, but for normal business fields the config file wins whenever it defines a value. Environment variables only fill fields that the config file leaves unset. System installs default to PostgreSQL, while portable and local-development flows may still use SQLite.
+Two inputs are special:
+
+- `SDKWORK_CONFIG_DIR`
+- `SDKWORK_CONFIG_FILE`
+
+They are discovery inputs. The runtime reads them first so it can locate the active config file set. After discovery completes, config-file values win whenever they define a field. Environment variables only fill fields the config file leaves unset.
+
+System installs default to PostgreSQL. Portable server installs and local-development flows may still use SQLite.
 
 Runtime config reload keeps using the original process-start environment fallback snapshot. Editing `router.yaml` or `conf.d/*.yaml` while the service is running is supported for the reloadable fields listed below, but changing parent-shell environment variables after the process has already started is not observed.
 
-All three standalone services now use a durable node identity for shared runtime coordination. `gateway-service` and `admin-api-service` participate in extension-runtime rollout, while `gateway-service`, `admin-api-service`, and `portal-api-service` all participate in standalone config rollout. Set `SDKWORK_SERVICE_INSTANCE_ID` when you want that identity to be stable across restarts and easy to correlate in rollout status.
+All three standalone services use a durable node identity for shared runtime coordination. `gateway-service` and `admin-api-service` participate in extension-runtime rollout, while `gateway-service`, `admin-api-service`, and `portal-api-service` all participate in standalone config rollout. Set `SDKWORK_SERVICE_INSTANCE_ID` when you want that identity to be stable across restarts and easy to correlate in rollout status.
 
-## Default Local Config Root
+## Installed Server Product Defaults
 
-The default local config root is:
+The installed server product resolves mutable configuration outside the versioned release payload.
+
+Portable product installs:
+
+- config root: `<product-root>/config/`
+- env file: `<product-root>/config/router.env`
+- primary config file: `<product-root>/config/router.yaml`
+- data root: `<product-root>/data/`
+- log root: `<product-root>/log/`
+- run root: `<product-root>/run/`
+
+System product installs:
+
+- Linux config root: `/etc/sdkwork-api-router/`
+- Linux data root: `/var/lib/sdkwork-api-router/`
+- Linux log root: `/var/log/sdkwork-api-router/`
+- Linux run root: `/run/sdkwork-api-router/`
+- macOS config root: `/Library/Application Support/sdkwork-api-router/`
+- Windows config root: `C:\ProgramData\sdkwork-api-router\`
+
+Installed `router.env` is only an environment fallback layer. It should carry discovery and fallback values such as:
+
+- config root and config file
+- database URL fallback
+- bind defaults
+
+Release-payload paths such as the active router binary and active admin or portal site directories are resolved from `current/release-manifest.json`, not from `router.env`.
+
+## Installed Desktop Product Defaults
+
+The desktop product keeps mutable runtime state in OS-standard per-user application directories provided by Tauri:
+
+- config root:
+  - app config dir + `router-product/`
+- data root:
+  - app data dir + `router-product/`
+- log root:
+  - app log dir + `router-product/`
+
+Desktop-specific files:
+
+- `desktop-runtime.json`
+  - persisted access mode for the shell
+- `router.yaml`
+  - canonical sidecar runtime config for `router-product-service`
+
+The desktop shell launches the sidecar with `--config-dir <config-root>` and clears inherited `SDKWORK_*` environment variables before spawn so config-file values remain authoritative after discovery.
+
+## Raw Standalone Default Local Config Root
+
+When you run raw standalone binaries outside the installed server product, the default local config root is:
 
 - Linux and macOS: `~/.sdkwork/router/`
 - Windows: `%USERPROFILE%\\.sdkwork\\router\\`
@@ -63,6 +124,7 @@ If no config file exists, the services still start with these values:
 - `gateway_bind`: `127.0.0.1:8080`
 - `admin_bind`: `127.0.0.1:8081`
 - `portal_bind`: `127.0.0.1:8082`
+- `web_bind`: `0.0.0.0:3001`
 - `database_url`: `sqlite://<config-root>/sdkwork-api-router.db`
 - `cache_backend`: `memory`
 - `cache_url`: unset
@@ -83,6 +145,7 @@ The local config file uses a flat top-level schema matching `StandaloneConfig`.
 
 Supported fields:
 
+- `web_bind`
 - `gateway_bind`
 - `admin_bind`
 - `portal_bind`
@@ -232,6 +295,7 @@ The most important runtime environment variables are:
 - `SDKWORK_CONFIG_DIR`
 - `SDKWORK_CONFIG_FILE`
 - `SDKWORK_DATABASE_URL`
+- `SDKWORK_WEB_BIND`
 - `SDKWORK_CACHE_BACKEND`
 - `SDKWORK_CACHE_URL`
 - `SDKWORK_GATEWAY_BIND`

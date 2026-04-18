@@ -1,59 +1,75 @@
 # 构建与工具链
 
-本页汇总整个仓库使用的工具链、常用命令和辅助脚本。
+本页汇总仓库中使用的工具链、常用命令和辅助脚本。
 
-如果你要查看完整的启停生命周期，请阅读 [脚本生命周期](/zh/getting-started/script-lifecycle)。
+完整的启动与停止生命周期，请参阅 [脚本生命周期](/zh/getting-started/script-lifecycle)。
 
 ## 必需工具链
 
 | 工具 | 用途 |
 |---|---|
-| Rust + Cargo | 所有后端 crate 和独立服务 |
-| Node.js 20+ | 文档运行时、前端运行时、开发脚本 |
-| pnpm 10+ | admin 应用、portal 应用和 docs 依赖管理 |
-| Tauri CLI | 可选桌面开发与打包 |
+| Rust + Cargo | 所有后端 crate 与独立服务 |
+| Node.js 20+ | 文档运行时、前端运行时、开发辅助脚本 |
+| pnpm 10+ | admin 应用、portal 应用与 docs 的依赖管理 |
+| Tauri CLI | 可选的桌面开发与打包 |
 
 ## 主要命令
 
 | 命令 | 范围 | 用途 |
 |---|---|---|
 | `cargo build -p gateway-service` | 后端 | 编译单个服务 |
-| `cargo build --release -p admin-api-service -p gateway-service -p portal-api-service` | 后端 | 编译 release 二进制 |
+| `cargo build --release -p admin-api-service -p gateway-service -p portal-api-service -p router-web-service` | 后端 | 编译独立服务 release 二进制 |
+| `cargo build --release -p router-product-service` | 后端 | 编译集成产品宿主运行时 |
 | `cargo test --workspace -q -j 1` | 后端 | 工作区回归测试 |
 | `cargo fmt --all --check` | 后端 | 格式校验 |
 | `pnpm --dir apps/sdkwork-router-admin build` | 前端 | admin 生产构建 |
 | `pnpm --dir apps/sdkwork-router-admin typecheck` | 前端 | admin TypeScript 校验 |
 | `pnpm --dir apps/sdkwork-router-portal build` | 前端 | portal 生产构建 |
 | `pnpm --dir apps/sdkwork-router-portal typecheck` | 前端 | portal TypeScript 校验 |
-| `pnpm --dir apps/sdkwork-router-admin tauri:build` | 桌面 | 打包 admin Tauri 应用 |
+| `node scripts/check-router-product.mjs` | product verification | 运行受治理的 product gate，覆盖 portal/admin 校验、浏览器 smoke、桌面 release-like 载荷预制，以及仅回环地址的 server dry-run 计划 |
+| `./bin/build.sh --verify-release` / `.\bin\build.ps1 -VerifyRelease` | 正式本地 release 验证 | 执行受治理的本地正式发布路径，包含 docs 构建、打包运行时 smoke，以及 release governance preflight |
+| `node scripts/prepare-router-portal-desktop-runtime.mjs` | 桌面 | 预制 portal desktop 的 sidecar 载荷到 `bin/portal-rt/router-product/` |
+| `pnpm --dir apps/sdkwork-router-portal tauri:build` | 桌面 | 打包正式 portal desktop 安装器 |
 | `pnpm --dir docs build` | 文档 | 构建 docs 站点 |
 | `pnpm --dir docs typecheck` | 文档 | 校验 VitePress 配置类型 |
+
+## 正式本地 Release 验证
+
+`./bin/build.sh --verify-release` 和 `.\bin\build.ps1 -VerifyRelease` 是仓库内执行本地正式 release 校验的标准入口。
+
+这个受治理的路径会始终包含：
+
+- docs 站点构建，因为 docs surface 属于公开 release 契约的一部分
+- 基于正式 release 资产树执行的打包 installed-runtime 与平台 smoke 校验
+- 本地 `release governance preflight`，也就是 `node scripts/release/run-release-governance-checks.mjs --profile preflight`
+
+不要把 `--skip-docs` 和 `--verify-release` 组合使用。如果你只是需要一次可以跳过 docs 治理的临时工程构建，请使用普通 build 模式，而不是正式的本地 release 验证模式。
 
 ## 启动脚本矩阵
 
 | 脚本 | 层级 | 生命周期角色 | 说明 |
 |---|---|---|---|
-| `./bin/start-dev.sh` / `.\bin\start-dev.ps1` | 托管开发态 | 启动托管开发运行时 | 默认进入 preview 模式，统一浏览器入口是 `9983` |
+| `./bin/start-dev.sh` / `.\bin\start-dev.ps1` | 托管开发态 | 启动托管开发运行时 | 默认进入 preview 模式，并使用统一浏览器入口 `9983` |
 | `./bin/stop-dev.sh` / `.\bin\stop-dev.ps1` | 托管开发态 | 停止托管开发运行时 | 使用 `artifacts/runtime/dev/` 下的 PID 文件 |
-| `./bin/build.sh` / `.\bin\build.ps1` | 托管发布态 | 构建可发布产物 | 写入 release 输出和 Rust 构建产物 |
-| `./bin/install.sh` / `.\bin\install.ps1` | 托管发布态 | 创建安装目录 | 布置 `bin/`、`config/`、`sites/`、`service/` 和 `var/` |
-| `./bin/start.sh` / `.\bin\start.ps1` | 托管发布态 | 启动安装后的发布运行时 | 启动 `router-product-service` 并打印统一与独立 URL |
-| `./bin/stop.sh` / `.\bin\stop.ps1` | 托管发布态 | 停止安装后的发布运行时 | 使用安装目录中的 PID 文件 |
-| `node scripts/dev/start-workspace.mjs` | 原生源码开发态 | 启动后端服务和浏览器前端 | 默认是 browser 模式，前端直接跑独立 dev server |
-| `node scripts/dev/start-workspace.mjs --preview` | 原生源码开发态 | 启动后端服务和统一 Pingora Host | 统一 Host 为 `9983` |
-| `node scripts/dev/start-workspace.mjs --tauri` | 原生源码开发态 | 启动后端服务和 admin 桌面壳 | 同时继续通过统一 Host 暴露浏览器入口 |
-| `node scripts/dev/start-stack.mjs` | 原生源码开发态 | 仅启动后端服务 | 后端默认端口为 `9980`、`9981`、`9982` |
-| `node scripts/dev/start-admin.mjs` | 原生源码开发态 | 仅启动 admin 应用 | 可跑浏览器或 Tauri |
-| `node scripts/dev/start-portal.mjs` | 原生源码开发态 | 仅启动 portal 应用 | 仅浏览器 |
-| `node scripts/dev/start-web.mjs --bind 0.0.0.0:9983` | 原生源码开发态 | 构建 admin / portal 静态资源并通过 Pingora 暴露 | 适合 preview 风格浏览器验证 |
-| `scripts/dev/start-workspace.ps1` | 原生源码开发态 | Windows PowerShell 工作区启动包装 | 透传相同的 bind 和模式参数 |
-| `scripts/dev/start-servers.ps1` | 原生源码开发态 | Windows PowerShell 后端启动包装 | 只启动后端 |
+| `./bin/build.sh` / `.\bin\build.ps1` | 托管发布态 | 构建可发布产物 | 写入 release 输出与 Rust 构建产物 |
+| `./bin/install.sh` / `.\bin\install.ps1` | 托管发布态 | 创建产品根目录 | 布置 `current/`、`releases/<version>/`、`config/`、`data/`、`log/`、`run/` |
+| `./bin/start.sh` / `.\bin\start.ps1` | 托管发布态 | 启动安装后的发布运行时 | 从 `current/release-manifest.json` 指向的激活载荷启动 `router-product-service` |
+| `./bin/stop.sh` / `.\bin\stop.ps1` | 托管发布态 | 停止安装后的发布运行时 | 使用产品根目录 `run/` 下的 PID 文件 |
+| `node scripts/dev/start-workspace.mjs` | 原始源码开发态 | 启动后端服务和浏览器前端 | 默认是 browser 模式，直接跑前端 dev server |
+| `node scripts/dev/start-workspace.mjs --preview` | 原始源码开发态 | 启动后端服务和统一 Pingora Host | 使用统一 `9983` Host |
+| `node scripts/dev/start-workspace.mjs --tauri` | 原始源码开发态 | 启动后端服务和 portal desktop 壳 | 同时继续暴露统一浏览器入口 |
+| `node scripts/dev/start-stack.mjs` | 原始源码开发态 | 只启动后端服务 | 后端端口默认为 `9980`、`9981`、`9982` |
+| `node scripts/dev/start-admin.mjs` | 原始源码开发态 | 只启动 admin 应用 | 浏览器或 Tauri |
+| `node scripts/dev/start-portal.mjs` | 原始源码开发态 | 只启动 portal 应用 | 浏览器或 Tauri |
+| `node scripts/dev/start-web.mjs --bind 0.0.0.0:9983` | 原始源码开发态 | 构建 admin / portal 静态资源并通过 Pingora 暴露 | 适合 preview 风格验证 |
+| `scripts/dev/start-workspace.ps1` | 原始源码开发态 | Windows PowerShell 工作区包装器 | 透传相同的模式与 bind 参数 |
+| `scripts/dev/start-servers.ps1` | 原始源码开发态 | Windows PowerShell 后端包装器 | 只启动后端 |
 
 ## 默认端口说明
 
-- 托管脚本和辅助脚本默认使用 `998x`
-- 原始服务二进制在未覆盖时仍保留内建 `808x`
-- browser 模式下 admin 和 portal Vite dev server 仍分别使用 `5173`、`5174`
+- 托管和辅助脚本默认使用 `998x` 端口段
+- 原始服务二进制在没有覆盖时仍保留内建 `808x` 默认值
+- 浏览器模式下 admin / portal 的 Vite dev server 仍在 `5173` 和 `5174`
 
 ## 产物位置
 
@@ -63,11 +79,12 @@
 | release Rust 二进制 | `target/release/` |
 | admin 浏览器资源 | `apps/sdkwork-router-admin/dist/` |
 | portal 浏览器资源 | `apps/sdkwork-router-portal/dist/` |
+| portal desktop sidecar 载荷 | `bin/portal-rt/router-product/` |
 | docs 站点构建产物 | `docs/.vitepress/dist/` |
 | 托管开发运行目录 | `artifacts/runtime/dev/` |
-| 托管安装目录 | `artifacts/install/sdkwork-api-router/current/` |
+| 托管安装根目录 | `artifacts/install/sdkwork-api-router/` |
 
-## 推荐校验组合
+## 推荐验证组合
 
 ### 仅文档改动
 
@@ -85,6 +102,12 @@ pnpm --dir apps/sdkwork-router-portal typecheck
 pnpm --dir apps/sdkwork-router-portal build
 pnpm --dir docs typecheck
 pnpm --dir docs build
+```
+
+### 正式本地 Release 验证
+
+```bash
+./bin/build.sh --verify-release
 ```
 
 ### 全仓库高置信度校验

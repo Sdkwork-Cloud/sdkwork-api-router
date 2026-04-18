@@ -148,26 +148,46 @@ The Vite dev server proxies `/api/portal/*` to `http://127.0.0.1:8082/portal/*`.
 
 ## Product Runtime Modes
 
-`sdkwork-router-portal` is now the product entrypoint for both desktop mode and server mode.
+`sdkwork-router-portal` participates in two user-facing products:
 
-- desktop mode uses the Tauri shell in `src-tauri/`
-- service mode uses the same Tauri shell but starts hidden in tray-managed background mode
-- server mode starts `router-product-service`
-- `pnpm product:start` is the unified launcher for desktop, server, plan, and check workflows
-- `pnpm product:service` starts the desktop shell in hidden service mode for background operation
-- both modes use the shared `sdkwork-api-product-runtime`
-- both modes serve the public web host plus router APIs together
-- the in-product `Gateway` route makes compatibility, topology, and launch posture visible without leaving the portal shell
-- the desktop shell now exposes a live runtime snapshot over Tauri IPC so the `Gateway` route can show the exact local bind topology
+- `sdkwork-router-portal-desktop`
+  - Tauri shell plus a supervised `router-product-service` sidecar
+- `sdkwork-api-router-product-server`
+  - installed `router-product-service` runtime for server deployment
+
+Both products expose the same public surface:
+
+- `/portal/*`
+- `/admin/*`
+- `/api/portal/*`
+- `/api/admin/*`
+- `/api/v1/*`
+
+The in-product `Gateway` route remains the runtime posture screen for compatibility, topology, and launch readiness.
 
 ### Desktop Mode
 
-Desktop mode starts the full router product locally:
+Desktop mode no longer boots the router product in-process. The shell supervises a bundled release-like `router-product/` payload:
 
-- embedded web host binds to `127.0.0.1:0`
-- gateway, admin, and portal services bind to loopback ephemeral ports
-- both `sdkwork-router-portal` and `sdkwork-router-admin` static bundles are packaged into the app
-- the desktop shell resolves the runtime base URL dynamically through Tauri IPC
+- `router-product/bin/router-product-service`
+- `router-product/sites/admin/dist/`
+- `router-product/sites/portal/dist/`
+
+Desktop runtime contract:
+
+- fixed local shell base URL: `http://127.0.0.1:3001`
+- access modes:
+  - local-only access: `127.0.0.1:3001`
+  - shared network access: `0.0.0.0:3001`
+- direct internal binds stay on loopback defaults:
+  - gateway: `127.0.0.1:8080`
+  - admin: `127.0.0.1:8081`
+  - portal: `127.0.0.1:8082`
+- the shell exposes runtime controls over Tauri IPC:
+  - `runtime_base_url`
+  - `runtime_desktop_snapshot`
+  - `restart_product_runtime`
+  - `update_desktop_runtime_access_mode`
 
 Useful commands:
 
@@ -175,11 +195,29 @@ Useful commands:
 pnpm product:start
 pnpm product:start -- desktop
 pnpm product:service
-pnpm desktop:build-assets
 pnpm tauri:dev
 pnpm tauri:dev:service
 pnpm tauri:build
+node ../../scripts/prepare-router-portal-desktop-runtime.mjs
 ```
+
+Desktop mutable state lives outside the immutable bundle in OS-standard per-user directories:
+
+- config root:
+  - Tauri app config dir + `router-product/`
+- data root:
+  - Tauri app data dir + `router-product/`
+- log root:
+  - Tauri app log dir + `router-product/`
+
+Desktop runtime files:
+
+- `desktop-runtime.json`
+  - persisted shell access mode
+- `router.yaml`
+  - canonical sidecar runtime config
+
+The shell launches the sidecar with `--config-dir <config-dir>` and strips inherited `SDKWORK_*` environment variables so config-file values remain authoritative after discovery.
 
 ### Server Mode
 
@@ -329,8 +367,10 @@ pnpm server:start -- \
 
 ### Runtime Environment
 
-The shared product runtime recognizes these environment variables:
+The runtime recognizes these environment variables:
 
+- `SDKWORK_CONFIG_DIR`
+- `SDKWORK_CONFIG_FILE`
 - `SDKWORK_WEB_BIND`
 - `SDKWORK_DATABASE_URL`
 - `SDKWORK_ROUTER_ROLES`
@@ -341,4 +381,4 @@ The shared product runtime recognizes these environment variables:
 - `SDKWORK_ADMIN_SITE_DIR`
 - `SDKWORK_PORTAL_SITE_DIR`
 
-The rest of the standalone router configuration still comes from `sdkwork-api-config`.
+Config-file values are the source of truth once discovery completes. Environment variables remain discovery inputs and fallback values only for fields left unset in the active config file.

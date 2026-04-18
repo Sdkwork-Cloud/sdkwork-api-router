@@ -23,6 +23,8 @@ pub(crate) struct StandaloneConfigWatchEntry {
 
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct StandaloneConfigFile {
+    #[serde(alias = "public_web_bind")]
+    pub(crate) web_bind: Option<String>,
     pub(crate) gateway_bind: Option<String>,
     pub(crate) admin_bind: Option<String>,
     pub(crate) portal_bind: Option<String>,

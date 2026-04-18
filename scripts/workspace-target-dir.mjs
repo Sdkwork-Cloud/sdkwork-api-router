@@ -1,32 +1,32 @@
 #!/usr/bin/env node
 
 import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 
-function resolveExistingManagedWindowsTargetRoot(workspaceRoot, env = process.env) {
-  const candidateRoots = [
-    env.SDKWORK_WINDOWS_TARGET_ROOT,
-    env.TEMP,
-    env.TMP,
-  ];
-
-  for (const candidateRoot of candidateRoots) {
-    const configuredRoot = String(candidateRoot ?? '').trim();
-    if (configuredRoot.length === 0) {
-      continue;
-    }
-
-    const resolvedRoot = path.isAbsolute(configuredRoot)
-      ? configuredRoot
-      : path.resolve(workspaceRoot, configuredRoot);
-    if (existsSync(resolvedRoot)) {
-      return resolvedRoot;
-    }
+function resolveConfiguredManagedWindowsRoot(workspaceRoot, configuredRootValue = '') {
+  const configuredRoot = String(configuredRootValue ?? '').trim();
+  if (configuredRoot.length === 0) {
+    return '';
   }
 
-  return '';
+  const resolvedRoot = path.isAbsolute(configuredRoot)
+    ? configuredRoot
+    : path.resolve(workspaceRoot, configuredRoot);
+  return existsSync(resolvedRoot) ? resolvedRoot : '';
+}
+
+function resolveConfiguredManagedWindowsTargetRoot(workspaceRoot, env = process.env) {
+  return resolveConfiguredManagedWindowsRoot(workspaceRoot, env.SDKWORK_WINDOWS_TARGET_ROOT);
+}
+
+function resolveConfiguredManagedWindowsTempRoot(workspaceRoot, env = process.env) {
+  return resolveConfiguredManagedWindowsRoot(
+    workspaceRoot,
+    String(env.SDKWORK_WINDOWS_TEMP_ROOT ?? '').trim()
+      || String(env.SDKWORK_WINDOWS_TARGET_ROOT ?? '').trim(),
+  );
 }
 
 function managedWindowsWorkspaceTargetLeaf(workspaceRoot) {
@@ -42,6 +42,16 @@ function managedWindowsWorkspaceTargetLeaf(workspaceRoot) {
     .slice(0, 10);
 
   return `${workspaceName}-${workspaceHash}`;
+}
+
+function defaultManagedWindowsWorkspaceRoot(workspaceRoot, directoryName) {
+  const resolvedWorkspaceRoot = path.resolve(workspaceRoot);
+  const workspaceDriveRoot = path.parse(resolvedWorkspaceRoot).root;
+  if (workspaceDriveRoot) {
+    return path.join(workspaceDriveRoot, directoryName);
+  }
+
+  return '';
 }
 
 export function resolveWorkspaceTargetDir({
@@ -64,7 +74,7 @@ export function resolveWorkspaceTargetDir({
     return path.join(workspaceRoot, 'target');
   }
 
-  const managedWindowsTargetRoot = resolveExistingManagedWindowsTargetRoot(workspaceRoot, env);
+  const managedWindowsTargetRoot = resolveConfiguredManagedWindowsTargetRoot(workspaceRoot, env);
   if (managedWindowsTargetRoot.length > 0) {
     return path.join(
       managedWindowsTargetRoot,
@@ -73,7 +83,54 @@ export function resolveWorkspaceTargetDir({
     );
   }
 
+  const defaultManagedWindowsTargetRoot = defaultManagedWindowsWorkspaceRoot(
+    workspaceRoot,
+    'sdkwork-target',
+  );
+  if (defaultManagedWindowsTargetRoot.length > 0) {
+    return path.join(
+      defaultManagedWindowsTargetRoot,
+      managedWindowsWorkspaceTargetLeaf(workspaceRoot),
+    );
+  }
+
   return path.join(workspaceRoot, 'bin', '.sdkwork-target-vs2022');
+}
+
+export function resolveWorkspaceTempDir({
+  workspaceRoot,
+  env = process.env,
+  platform = process.platform,
+} = {}) {
+  if (typeof workspaceRoot !== 'string' || workspaceRoot.trim().length === 0) {
+    throw new Error('workspaceRoot is required.');
+  }
+
+  if (platform !== 'win32') {
+    return path.join(workspaceRoot, 'tmp');
+  }
+
+  const managedWindowsTempRoot = resolveConfiguredManagedWindowsTempRoot(workspaceRoot, env);
+  if (managedWindowsTempRoot.length > 0) {
+    return path.join(
+      managedWindowsTempRoot,
+      'sdkwork-temp',
+      managedWindowsWorkspaceTargetLeaf(workspaceRoot),
+    );
+  }
+
+  const defaultManagedWindowsTempRoot = defaultManagedWindowsWorkspaceRoot(
+    workspaceRoot,
+    'sdkwork-temp',
+  );
+  if (defaultManagedWindowsTempRoot.length > 0) {
+    return path.join(
+      defaultManagedWindowsTempRoot,
+      managedWindowsWorkspaceTargetLeaf(workspaceRoot),
+    );
+  }
+
+  return path.join(workspaceRoot, 'bin', '.sdkwork-temp-vs2022');
 }
 
 export function withManagedWorkspaceTargetDir({
@@ -88,6 +145,26 @@ export function withManagedWorkspaceTargetDir({
       env: nextEnv,
       platform,
     });
+  }
+
+  return nextEnv;
+}
+
+export function withManagedWorkspaceTempDir({
+  workspaceRoot,
+  env = process.env,
+  platform = process.platform,
+} = {}) {
+  const nextEnv = { ...env };
+  if (platform === 'win32') {
+    const tempDir = resolveWorkspaceTempDir({
+      workspaceRoot,
+      env: nextEnv,
+      platform,
+    });
+    mkdirSync(tempDir, { recursive: true });
+    nextEnv.TEMP = tempDir;
+    nextEnv.TMP = tempDir;
   }
 
   return nextEnv;

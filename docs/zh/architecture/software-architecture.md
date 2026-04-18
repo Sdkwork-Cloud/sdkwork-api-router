@@ -6,13 +6,13 @@
 
 | 运行面 | 主要职责 | 关键路径 |
 |---|---|---|
-| gateway | OpenAI 兼容数据平面与 provider 分发 | `services/gateway-service`、`crates/sdkwork-api-interface-http` |
+| gateway | OpenAI 兼容数据面与 provider 分发 | `services/gateway-service`、`crates/sdkwork-api-interface-http` |
 | admin | 运维控制平面 | `services/admin-api-service`、`crates/sdkwork-api-interface-admin` |
 | portal | 终端用户自助边界 | `services/portal-api-service`、`crates/sdkwork-api-interface-portal` |
-| web host | 面向公网的 Web 分发与 API 代理 | `services/router-web-service`、`crates/sdkwork-api-runtime-host` |
-| product host | 桌面模式与服务端模式共用的一体化产品宿主 | `services/router-product-service`、`crates/sdkwork-api-product-runtime` |
-| admin app | 浏览器与 Tauri 管理端体验 | `apps/sdkwork-router-admin/` |
-| portal app | 浏览器与 Tauri 自助门户体验 | `apps/sdkwork-router-portal/` |
+| web host | Pingora 公网交付与 API 代理 | `services/router-web-service`、`crates/sdkwork-api-runtime-host` |
+| product host | 服务端模式与桌面 sidecar 共用的一体化产品宿主 | `services/router-product-service`、`crates/sdkwork-api-product-runtime` |
+| admin app | 独立浏览器应用与显式开发用 Tauri 宿主 | `apps/sdkwork-router-admin/` |
+| portal app | 独立浏览器应用与正式 desktop 宿主 | `apps/sdkwork-router-portal/` |
 | docs | 文档产品 | `docs/` |
 
 ## 请求流
@@ -33,37 +33,36 @@ admin 与 portal 服务整体分层相同，但它们终止在原生控制平面
 | 分层 | 职责 | 示例 |
 |---|---|---|
 | interface | HTTP 路由、鉴权边界、响应整形 | `sdkwork-api-interface-http`、`sdkwork-api-interface-admin`、`sdkwork-api-interface-portal` |
-| app | 用例编排与服务工作流 | `sdkwork-api-app-gateway`、`sdkwork-api-app-routing`、`sdkwork-api-app-billing`、`sdkwork-api-app-extension` |
-| domain | 策略规则与核心领域概念 | `sdkwork-api-domain-routing`、`sdkwork-api-domain-billing`、`sdkwork-api-domain-usage` |
+| app | 用例编排与服务工作流 | `sdkwork-api-app-gateway`、`sdkwork-api-app-routing`、`sdkwork-api-app-billing` |
+| domain | 领域规则与核心概念 | `sdkwork-api-domain-routing`、`sdkwork-api-domain-billing`、`sdkwork-api-domain-usage` |
 | storage | 持久化契约与具体后端 | `sdkwork-api-storage-core`、`sdkwork-api-storage-sqlite`、`sdkwork-api-storage-postgres` |
 | provider | 上游适配器实现 | `sdkwork-api-provider-openai`、`sdkwork-api-provider-openrouter`、`sdkwork-api-provider-ollama` |
-| runtime | 扩展加载、嵌入宿主、监督运行 | `sdkwork-api-runtime-host`、`sdkwork-api-extension-host`、`sdkwork-api-app-runtime` |
-| contracts | OpenAI 与网关 API 协议形状 | `sdkwork-api-contract-openai`、`sdkwork-api-contract-gateway` |
+| runtime | 扩展加载、宿主监督、嵌入运行时 | `sdkwork-api-runtime-host`、`sdkwork-api-extension-host`、`sdkwork-api-app-runtime` |
+| contracts | OpenAI 与网关 API 结构 | `sdkwork-api-contract-openai`、`sdkwork-api-contract-gateway` |
 
 ## 运行时架构
 
-SDKWork 同时支持独立服务与嵌入式两类运行形态。
+SDKWork 同时支持独立服务和产品宿主两类运行形态。
 
-- 独立服务模式下，gateway、admin、portal 分别以独立二进制监听 HTTP 接口
-- `router-web-service` 负责暴露 admin 与 portal 静态站点，并代理 `/api/admin/*`、`/api/portal/*` 与 `/api/v1/*`
-- `sdkwork-api-product-runtime` 负责把独立监听器与共享 Web 宿主组合成产品级运行时
-- `router-product-service` 是服务端模式的一体化入口，用一个进程对外提供 `/admin/*`、`/portal/*` 与 `/api/*`
-- admin 与 portal 的 Tauri 宿主都嵌入同一套共享产品运行时，因此桌面模式也能暴露统一的浏览器访问 URL
-- 产品运行时支持基于 `web`、`gateway`、`admin`、`portal` 的角色切片，可部署到不同节点组成集群拓扑
+- 独立服务模式下，gateway、admin、portal 以各自二进制对外监听
+- `router-web-service` 负责暴露 admin / portal 静态站点，并代理 `/api/admin/*`、`/api/portal/*` 与 `/api/v1/*`
+- `sdkwork-api-product-runtime` 负责把独立监听器和共享 Web 宿主组装为产品级运行时
+- `router-product-service` 是正式 server 产品的核心入口
+- 正式 portal Tauri 宿主负责监督共享产品运行时，因此桌面模式仍能在 localhost 上暴露同一套 admin / portal 浏览器入口
+- admin Tauri 宿主仅保留为显式开发壳，不属于正式发布产品
+- 产品运行时支持基于 `web`、`gateway`、`admin`、`portal` 的角色切片，可分布到不同节点
 - 扩展运行时支持 builtin、connector、native-dynamic 三种形态
-- 运行时配置、监听器重绑定、存储切换与 secret-manager 轮换优先走热重载，而不是整进程重启
-
-更深入的运行时说明见 [运行模式详解](/zh/architecture/runtime-modes)。
+- 配置重载、监听重绑、存储切换和 secret rotation 优先通过热重载完成，而不是强制全进程重启
 
 ## 配置与密钥边界
 
-配置通过 `sdkwork-api-config` 加载，再注入进进程与运行时句柄。
+配置通过 `sdkwork-api-config` 加载，再注入进程与运行时句柄。
 
 关键边界包括：
 
 - 服务绑定地址
 - 数据库后端与连接串
-- admin 与 portal 的 JWT 签名密钥
+- admin 与 portal JWT 签名密钥
 - provider 凭据主密钥
 - 扩展发现路径与信任策略
 
@@ -71,7 +70,7 @@ SDKWork 同时支持独立服务与嵌入式两类运行形态。
 
 - 服务从配置中解析 secret-manager 策略
 - 凭据通过加密后端持久化
-- 通过 locator 与 key lineage 元数据，历史凭据在密钥轮换后依然可读
+- 历史凭据可读性通过 locator 与 key lineage 元数据保留
 
 ## 持久化模型
 
@@ -80,25 +79,25 @@ SDKWork 同时支持独立服务与嵌入式两类运行形态。
 - tenants 与 projects
 - gateway API keys
 - channels、providers、credentials 与 models
-- routing policy 与 decision logs
-- usage records、billing ledger 与 quota policy
-- extension installation 与 rollout 状态
+- routing policies 与 decision logs
+- usage records、billing ledger 与 quota policies
+- extension 安装与 rollout 状态
 
-仓库中当前文档化的后端包括：
+当前文档化的后端包括：
 
 - SQLite
 - PostgreSQL
 
 ## 前端架构
 
-前端控制平面产品被刻意拆成两个独立应用：
+前端产品刻意拆分为两个独立应用：
 
-- `apps/sdkwork-router-admin/` 负责超级管理后台、admin API 客户端与 admin 自有 Tauri 宿主
-- `apps/sdkwork-router-portal/` 负责用户自助工作台、portal API 客户端与服务端模式产品入口
-- `crates/sdkwork-api-runtime-host` 负责服务端模式和桌面模式共用的 Pingora Web 分发边界
-- `crates/sdkwork-api-product-runtime` 负责启动本地 API 监听器并对外发布统一的产品级 Web 表面
+- `apps/sdkwork-router-admin/` 负责超级管理后台、admin API 客户端与显式开发用 Tauri 宿主
+- `apps/sdkwork-router-portal/` 负责用户自助工作台、portal API 客户端与正式 desktop 宿主
+- `crates/sdkwork-api-runtime-host` 负责 server 与 desktop 共用的 Pingora 交付边界
+- `crates/sdkwork-api-product-runtime` 负责启动本地 API 监听器并发布统一产品 Web 表面
 
-这样既能隔离管理端与自助门户的职责，又能维持统一的公网访问契约。
+这样既隔离了运维控制平面与用户自助门户，也保留了统一的对外交付契约。
 
 ## 运维架构
 
@@ -111,10 +110,10 @@ SDKWork 同时支持独立服务与嵌入式两类运行形态。
 一体化产品宿主额外负责：
 
 - 统一的 `/admin/*`、`/portal/*` 与 `/api/*` 公网绑定
-- 基于环境变量的角色切片，用于集群拓扑
-- 当 `web` 角色未与 API 角色同机部署时的显式上游转发
+- 基于环境变量的角色切片
+- 当 `web` 节点独立部署时的显式上游转发
 
-其中 admin 控制平面额外负责：
+admin 控制平面还负责：
 
 - extension runtime reload 与 rollout
 - standalone config rollout
@@ -126,8 +125,8 @@ SDKWork 同时支持独立服务与嵌入式两类运行形态。
 
 - 模块职责映射：
   - [功能模块](/zh/architecture/functional-modules)
-- 接口清单：
+- 接口总览：
   - [API 参考总览](/zh/api-reference/overview)
-- 配置与可观测性：
+- 配置与观测：
   - [配置说明](/zh/operations/configuration)
   - [健康检查与 Metrics](/zh/operations/health-and-metrics)

@@ -15,12 +15,12 @@ for ($index = 0; $index -lt $args.Count; $index += 1) {
             $translatedArgs += '--skip-docs'
             continue
         }
-        '^(?i)-SkipConsole$' {
-            $translatedArgs += '--skip-console'
-            continue
-        }
         '^(?i)-DryRun$' {
             $translatedArgs += '--dry-run'
+            continue
+        }
+        '^(?i)-VerifyRelease$' {
+            $translatedArgs += '--verify-release'
             continue
         }
         default {

@@ -10,7 +10,7 @@ For the complete startup and shutdown lifecycle, see [Script Lifecycle](/getting
 |---|---|
 | Rust + Cargo | all backend crates and standalone services |
 | Node.js 20+ | docs runtime, frontend runtimes, developer scripts |
-| pnpm 10+ | admin console, portal app, and docs dependency management |
+| pnpm 10+ | admin app, portal app, and docs dependency management |
 | Tauri CLI | optional desktop development and packaging |
 
 ## Primary Commands
@@ -18,16 +18,32 @@ For the complete startup and shutdown lifecycle, see [Script Lifecycle](/getting
 | Command | Scope | Purpose |
 |---|---|---|
 | `cargo build -p gateway-service` | backend | compile one service |
-| `cargo build --release -p admin-api-service -p gateway-service -p portal-api-service` | backend | compile release binaries |
+| `cargo build --release -p admin-api-service -p gateway-service -p portal-api-service -p router-web-service` | backend | compile standalone release binaries |
+| `cargo build --release -p router-product-service` | backend | compile the integrated product host runtime |
 | `cargo test --workspace -q -j 1` | backend | workspace regression suite |
 | `cargo fmt --all --check` | backend | formatting verification |
 | `pnpm --dir apps/sdkwork-router-admin build` | frontend | admin production build |
 | `pnpm --dir apps/sdkwork-router-admin typecheck` | frontend | admin TypeScript verification |
 | `pnpm --dir apps/sdkwork-router-portal build` | frontend | standalone portal production build |
 | `pnpm --dir apps/sdkwork-router-portal typecheck` | frontend | standalone portal TypeScript verification |
-| `pnpm --dir apps/sdkwork-router-admin tauri:build` | desktop | package the admin Tauri app |
+| `node scripts/check-router-product.mjs` | product verification | run the governed product gate, including portal/admin checks, browser smoke, desktop release-like payload staging, and a loopback-safe server dry-run plan |
+| `./bin/build.sh --verify-release` / `.\bin\build.ps1 -VerifyRelease` | official local release verification | run the governed local release path: docs build, packaged runtime smoke, and release governance preflight |
+| `node scripts/prepare-router-portal-desktop-runtime.mjs` | desktop | stage the portal desktop sidecar payload under `bin/portal-rt/router-product/` |
+| `pnpm --dir apps/sdkwork-router-portal tauri:build` | desktop | package the official portal desktop installer |
 | `pnpm --dir docs build` | docs | build docs site |
 | `pnpm --dir docs typecheck` | docs | VitePress config typecheck |
+
+## Official Local Release Verification
+
+`./bin/build.sh --verify-release` and `.\bin\build.ps1 -VerifyRelease` are the canonical repository entrypoints for local official release validation.
+
+That governed path always includes:
+
+- the docs site build because the docs surface is part of the public release contract
+- the packaged installed-runtime and platform smoke lanes driven from the release asset tree
+- the local `release governance preflight` step via `node scripts/release/run-release-governance-checks.mjs --profile preflight`
+
+Do not combine `--skip-docs` with `--verify-release`. If you need an ad hoc engineering build without docs governance, use the normal build mode instead of the official local release-verification mode.
 
 ## Startup Script Matrix
 
@@ -36,15 +52,15 @@ For the complete startup and shutdown lifecycle, see [Script Lifecycle](/getting
 | `./bin/start-dev.sh` / `.\bin\start-dev.ps1` | managed dev | start a managed development runtime | defaults to preview mode and the unified `9983` browser entrypoint |
 | `./bin/stop-dev.sh` / `.\bin\stop-dev.ps1` | managed dev | stop the managed development runtime | uses the managed PID file under `artifacts/runtime/dev/` |
 | `./bin/build.sh` / `.\bin\build.ps1` | managed release | build releasable artifacts | writes release output and Rust build artifacts |
-| `./bin/install.sh` / `.\bin\install.ps1` | managed release | create the install home | stages `bin/`, `config/`, `sites/`, `service/`, and `var/` |
-| `./bin/start.sh` / `.\bin\start.ps1` | managed release | start the installed release runtime | starts `router-product-service` and prints unified plus direct URLs |
-| `./bin/stop.sh` / `.\bin\stop.ps1` | managed release | stop the installed release runtime | uses the install-home PID file |
+| `./bin/install.sh` / `.\bin\install.ps1` | managed release | create the product root | stages `current/`, `releases/<version>/`, `config/`, `data/`, `log/`, and `run/` |
+| `./bin/start.sh` / `.\bin\start.ps1` | managed release | start the installed release runtime | starts `router-product-service` from the active `current/release-manifest.json` payload and prints unified plus direct URLs |
+| `./bin/stop.sh` / `.\bin\stop.ps1` | managed release | stop the installed release runtime | uses the product-root `run/` PID file |
 | `node scripts/dev/start-workspace.mjs` | raw source dev | start backend services plus browser surfaces | defaults to browser mode with direct frontend dev servers |
 | `node scripts/dev/start-workspace.mjs --preview` | raw source dev | start backend services plus unified Pingora host | uses the `9983` unified host |
-| `node scripts/dev/start-workspace.mjs --tauri` | raw source dev | start backend services plus admin desktop shell | still exposes browser access through the unified host |
+| `node scripts/dev/start-workspace.mjs --tauri` | raw source dev | start backend services plus the portal desktop shell | still exposes browser access through the unified host |
 | `node scripts/dev/start-stack.mjs` | raw source dev | start backend services only | backend ports default to `9980`, `9981`, and `9982` |
 | `node scripts/dev/start-admin.mjs` | raw source dev | start the admin app only | browser or Tauri |
-| `node scripts/dev/start-portal.mjs` | raw source dev | start the portal app only | browser-only |
+| `node scripts/dev/start-portal.mjs` | raw source dev | start the portal app only | browser or Tauri |
 | `node scripts/dev/start-web.mjs --bind 0.0.0.0:9983` | raw source dev | build admin and portal static assets, then expose them through Pingora | useful for preview-style browser validation |
 | `scripts/dev/start-workspace.ps1` | raw source dev | Windows PowerShell wrapper for workspace startup | forwards the same bind and mode options |
 | `scripts/dev/start-servers.ps1` | raw source dev | Windows PowerShell wrapper for backend-only startup | backend only |
@@ -63,9 +79,10 @@ For the complete startup and shutdown lifecycle, see [Script Lifecycle](/getting
 | release Rust binaries | `target/release/` |
 | admin browser assets | `apps/sdkwork-router-admin/dist/` |
 | portal web assets | `apps/sdkwork-router-portal/dist/` |
+| staged portal desktop sidecar payload | `bin/portal-rt/router-product/` |
 | docs site build | `docs/.vitepress/dist/` |
 | managed dev runtime | `artifacts/runtime/dev/` |
-| managed install home | `artifacts/install/sdkwork-api-router/current/` |
+| managed install root | `artifacts/install/sdkwork-api-router/` |
 
 ## Recommended Verification Sets
 
@@ -85,6 +102,12 @@ pnpm --dir apps/sdkwork-router-portal typecheck
 pnpm --dir apps/sdkwork-router-portal build
 pnpm --dir docs typecheck
 pnpm --dir docs build
+```
+
+### Official local release verification
+
+```bash
+./bin/build.sh --verify-release
 ```
 
 ### Full repository confidence pass

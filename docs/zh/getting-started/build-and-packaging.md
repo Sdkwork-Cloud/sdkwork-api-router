@@ -1,123 +1,144 @@
 # 编译与打包
 
-本页是仓库的编译说明，适用于需要生成产物而不是仅从源码运行的场景。
+本页说明如何从仓库检出构建工程产物、准备正式发布输入，并打包 SDKWork 的两个正式产品。
+
+如果你要查看 GitHub Releases 对外发布的正式资产，请使用 [发布构建](/zh/getting-started/release-builds)。如果你要做生产安装和部署，请使用 [生产部署](/zh/getting-started/production-deployment)。
+
+## 正式产品
+
+SDKWork API Router 只发布两个正式用户可见产品：
+
+- `sdkwork-api-router-product-server`
+- `sdkwork-router-portal-desktop`
+
+仓库中的其余产物都属于构建输入、开发输出或验证资产，不属于正式发布物。
 
 ## 构建目标
 
 | 目标 | 命令 | 输出 |
 |---|---|---|
-| gateway 服务 | `cargo build --release -p gateway-service` | `target/release/gateway-service` |
-| admin 服务 | `cargo build --release -p admin-api-service` | `target/release/admin-api-service` |
-| portal 服务 | `cargo build --release -p portal-api-service` | `target/release/portal-api-service` |
-| admin 控制台 | `pnpm --dir console build` | `console/dist/` |
-| portal Web 应用 | `pnpm --dir apps/sdkwork-router-portal build` | `apps/sdkwork-router-portal/dist/` |
-| 文档站点 | `pnpm --dir docs build` | `docs/.vitepress/dist/` |
-| Tauri 桌面应用 | `pnpm --dir console tauri:build` | 平台相关的 Tauri 打包输出 |
+| 产品宿主运行时 | `cargo build --release -p router-product-service` | `target/release/router-product-service` |
+| 独立服务二进制 | `cargo build --release -p gateway-service -p admin-api-service -p portal-api-service -p router-web-service` | `target/release/` |
+| admin 浏览器应用 | `pnpm --dir apps/sdkwork-router-admin build` | `apps/sdkwork-router-admin/dist/` |
+| portal 浏览器应用 | `pnpm --dir apps/sdkwork-router-portal build` | `apps/sdkwork-router-portal/dist/` |
+| portal desktop sidecar 载荷 | `node scripts/prepare-router-portal-desktop-runtime.mjs` | `bin/portal-rt/router-product/` |
+| 正式 portal desktop 安装包 | `pnpm --dir apps/sdkwork-router-portal tauri:build` | Tauri 平台打包输出 |
+| docs 站点 | `pnpm --dir docs build` | `docs/.vitepress/dist/` |
 
-## 编译独立服务
+## 构建 Server 产品输入
 
-一次构建三个生产二进制：
+先编译 server 侧 Rust 二进制：
 
 ```bash
-cargo build --release -p admin-api-service -p gateway-service -p portal-api-service
+cargo build --release -p router-product-service -p gateway-service -p admin-api-service -p portal-api-service -p router-web-service
 ```
 
-日常开发通常只需要非 release 构建：
+再构建会被 server 产品归档打入的前端静态资源：
 
 ```bash
-cargo build -p admin-api-service -p gateway-service -p portal-api-service
-```
-
-## 构建 admin 控制台
-
-如有需要先安装依赖：
-
-```bash
-pnpm --dir console install
-```
-
-执行构建：
-
-```bash
-pnpm --dir console build
-```
-
-本地预览：
-
-```bash
-pnpm --dir console preview
-```
-
-## 构建独立 portal 应用
-
-如有需要先安装依赖：
-
-```bash
+pnpm --dir apps/sdkwork-router-admin install
+pnpm --dir apps/sdkwork-router-admin build
 pnpm --dir apps/sdkwork-router-portal install
-```
-
-执行构建：
-
-```bash
 pnpm --dir apps/sdkwork-router-portal build
 ```
 
-本地预览：
+如果你希望使用与正式发布流程一致的仓库托管打包链路，直接运行：
 
 ```bash
+./bin/build.sh
+```
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\build.ps1
+```
+
+如果要走受治理的本地正式发布路径，请使用 `./bin/build.sh --verify-release` 或 `powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\build.ps1 -VerifyRelease`。这个模式会始终包含 docs 站点构建，因为官方 release 验证会把 docs site 视为公开产品面的一部分。同时它还会执行本地的 release governance preflight，也就是 `node scripts/release/run-release-governance-checks.mjs --profile preflight`，从而在打包 smoke 之外继续验证 release 治理契约。`--skip-docs cannot be combined with --verify-release`。
+
+该托管构建会准备 `sdkwork-api-router-product-server` 所需输入，并把原生发布资产写入 `artifacts/release/`。
+
+托管构建对正式 server 产品输出的标准文件是：
+
+- `artifacts/release/native/<platform>/<arch>/bundles/sdkwork-api-router-product-server-<platform>-<arch>.tar.gz`
+- `artifacts/release/native/<platform>/<arch>/bundles/sdkwork-api-router-product-server-<platform>-<arch>.tar.gz.sha256.txt`
+- `artifacts/release/native/<platform>/<arch>/bundles/sdkwork-api-router-product-server-<platform>-<arch>.manifest.json`
+
+外部 server manifest 会描述归档文件、校验文件以及内嵌 bundle 契约。解压 server 归档后，会得到一个已经包含 `bin/`、`sites/`、`data/`、`deploy/`、`README.txt` 以及内嵌 `release-manifest.json` 的产品根目录。
+
+## 构建正式 Portal Desktop 产品
+
+正式 desktop 产品采用 portal-first 标准。它以 `apps/sdkwork-router-portal` 作为原生外壳，并内置一份 release 风格的 `router-product-service` sidecar 载荷。
+
+先预制运行时载荷：
+
+```bash
+node scripts/prepare-router-portal-desktop-runtime.mjs
+```
+
+开发态运行桌面壳：
+
+```bash
+pnpm --dir apps/sdkwork-router-portal tauri:dev
+```
+
+构建正式 desktop 安装包：
+
+```bash
+pnpm --dir apps/sdkwork-router-portal tauri:build
+```
+
+托管构建会把正式 desktop 产品标准化为以下文件：
+
+- `artifacts/release/native/<platform>/<arch>/desktop/portal/sdkwork-router-portal-desktop-<platform>-<arch>.<ext>`
+- `artifacts/release/native/<platform>/<arch>/desktop/portal/sdkwork-router-portal-desktop-<platform>-<arch>.<ext>.sha256.txt`
+- `artifacts/release/native/<platform>/<arch>/desktop/portal/sdkwork-router-portal-desktop-<platform>-<arch>.manifest.json`
+
+原始 Tauri bundle 目录仍然只是平台构建过程中的中间产物，不属于对外的正式打包、文档或发布契约。
+
+admin Tauri 仍然可以作为显式开发路径使用，但它不属于正式发布产品集合。
+
+## 构建独立浏览器应用
+
+admin 浏览器应用：
+
+```bash
+pnpm --dir apps/sdkwork-router-admin build
+pnpm --dir apps/sdkwork-router-admin preview
+```
+
+portal 浏览器应用：
+
+```bash
+pnpm --dir apps/sdkwork-router-portal build
 pnpm --dir apps/sdkwork-router-portal preview
 ```
 
-## 构建文档站点
+这些路径适合源码开发和本地验证，但不会作为独立 GitHub 发布物对外发布。
 
-如有需要先安装依赖：
+## 构建文档站
 
 ```bash
 pnpm --dir docs install
-```
-
-执行构建：
-
-```bash
 pnpm --dir docs build
-```
-
-本地预览：
-
-```bash
 pnpm --dir docs preview
 ```
 
-## 构建 Tauri 桌面应用
+docs 站点对临时工程构建可以按需处理，但一旦进入 `--verify-release` 的托管本地正式发布验证流程，就必须重新纳入构建与治理；同一流程还会执行 release governance preflight，确保本地正式验证和发布治理标准保持一致。
 
-开发态桌面壳：
-
-```bash
-pnpm --dir console tauri:dev
-```
-
-生产打包：
-
-```bash
-pnpm --dir console tauri:build
-```
-
-当你需要一个内嵌服务运行时的桌面运维端，而不是分别部署浏览器端与独立服务时，应优先走这一条路径。
-
-## 打包前推荐校验
+## 打包前推荐验证
 
 ```bash
 cargo fmt --all --check
 cargo test --workspace -q -j 1
-pnpm --dir console build
+pnpm --dir apps/sdkwork-router-admin build
 pnpm --dir apps/sdkwork-router-portal build
+node scripts/prepare-router-portal-desktop-runtime.mjs
 pnpm --dir docs build
 ```
 
 如果同时修改了 TypeScript 或 docs 配置：
 
 ```bash
-pnpm --dir console -r typecheck
+pnpm --dir apps/sdkwork-router-admin typecheck
 pnpm --dir apps/sdkwork-router-portal typecheck
 pnpm --dir docs typecheck
 ```
@@ -126,7 +147,9 @@ pnpm --dir docs typecheck
 
 - 源码开发流程：
   - [源码运行](/zh/getting-started/source-development)
-- 可部署发布产物：
+- 正式发布资产：
   - [发布构建](/zh/getting-started/release-builds)
-- 工作区结构：
+- 生产安装和部署：
+  - [生产部署](/zh/getting-started/production-deployment)
+- 仓库结构：
   - [仓库结构](/zh/reference/repository-layout)

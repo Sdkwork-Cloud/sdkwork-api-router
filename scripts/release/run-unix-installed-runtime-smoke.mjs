@@ -14,6 +14,11 @@ import {
   createInstallPlan,
   renderRuntimeEnvTemplate,
 } from '../../bin/lib/router-runtime-tooling.mjs';
+import {
+  assertInstalledPackagedBootstrapData,
+  createInstalledRuntimeSmokeLayout,
+  resolveInstalledBootstrapDataRoot,
+} from './installed-runtime-smoke-lib.mjs';
 import { resolveDesktopReleaseTarget } from './desktop-targets.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -55,6 +60,16 @@ function resolveEvidencePath(repoRoot, evidencePath, { platform, arch }) {
     'release-governance',
     `unix-installed-runtime-smoke-${platform}-${arch}.json`,
   );
+}
+
+function resolveReleaseOutputDir(repoRoot, releaseOutputDir) {
+  if (releaseOutputDir) {
+    return path.isAbsolute(releaseOutputDir)
+      ? releaseOutputDir
+      : path.resolve(repoRoot, releaseOutputDir);
+  }
+
+  return path.resolve(repoRoot, 'artifacts', 'release');
 }
 
 function assertUnixRuntimeSmokePorts(ports) {
@@ -130,19 +145,7 @@ function buildFailureContext(plan) {
   return contexts.length > 0 ? `\n${contexts.join('\n\n')}` : '';
 }
 
-function assertPackagedBootstrapData(runtimeHome) {
-  const requiredFiles = [
-    path.join(runtimeHome, 'data', 'channels', 'default.json'),
-    path.join(runtimeHome, 'data', 'providers', 'default.json'),
-    path.join(runtimeHome, 'data', 'routing', 'default.json'),
-  ];
-
-  for (const filePath of requiredFiles) {
-    if (!existsSync(filePath)) {
-      throw new Error(`installed runtime is missing packaged bootstrap data: ${filePath}`);
-    }
-  }
-}
+export { resolveInstalledBootstrapDataRoot };
 
 function buildCommandFailure(label, result, plan) {
   const fragments = [];
@@ -264,6 +267,7 @@ export function createUnixInstalledRuntimeSmokeOptions({
   platform = process.platform,
   arch = process.arch,
   target = '',
+  releaseOutputDir = '',
   runtimeHome = '',
   evidencePath = '',
 } = {}) {
@@ -281,6 +285,7 @@ export function createUnixInstalledRuntimeSmokeOptions({
     platform: resolvedTarget.platform,
     arch: resolvedTarget.arch,
     target: resolvedTarget.targetTriple,
+    releaseOutputDir: resolveReleaseOutputDir(repoRoot, releaseOutputDir),
     runtimeHome: resolveRuntimeHome(repoRoot, runtimeHome, resolvedTarget),
     evidencePath: resolveEvidencePath(repoRoot, evidencePath, resolvedTarget),
   };
@@ -291,6 +296,7 @@ export function parseArgs(argv = process.argv.slice(2)) {
     platform: '',
     arch: '',
     target: '',
+    releaseOutputDir: '',
     runtimeHome: '',
     evidencePath: '',
   };
@@ -319,6 +325,12 @@ export function parseArgs(argv = process.argv.slice(2)) {
 
     if (token === '--runtime-home') {
       options.runtimeHome = readOptionValue(token, next);
+      index += 1;
+      continue;
+    }
+
+    if (token === '--release-output-dir') {
+      options.releaseOutputDir = readOptionValue(token, next);
       index += 1;
       continue;
     }
@@ -353,6 +365,7 @@ export function createUnixInstalledRuntimeSmokePlan({
   platform,
   arch,
   target,
+  releaseOutputDir,
   runtimeHome,
   evidencePath,
   env = process.env,
@@ -368,6 +381,7 @@ export function createUnixInstalledRuntimeSmokePlan({
     platform,
     arch,
     target,
+    releaseOutputDir,
     runtimeHome,
     evidencePath,
   });
@@ -379,33 +393,39 @@ export function createUnixInstalledRuntimeSmokePlan({
     installRoot: options.runtimeHome,
     platform: options.platform,
     arch: options.arch,
+    releaseOutputDir: options.releaseOutputDir,
     env: {
       ...env,
       SDKWORK_DESKTOP_TARGET: options.target,
     },
+  });
+  const runtimeLayout = createInstalledRuntimeSmokeLayout({
+    installPlan,
+    runtimeHome: options.runtimeHome,
   });
 
   return {
     ...options,
     installPlan,
     evidencePath: options.evidencePath,
-    routerEnvPath: path.join(options.runtimeHome, 'config', 'router.env'),
+    controlHome: runtimeLayout.controlHome,
+    routerEnvPath: path.join(runtimeLayout.configDir, 'router.env'),
     routerEnvContents: renderUnixInstalledRuntimeSmokeEnvContents({
       runtimeHome: options.runtimeHome,
       platform: options.platform,
       ports,
     }),
     startCommand: {
-      command: path.join(options.runtimeHome, 'bin', 'start.sh'),
-      args: ['--home', options.runtimeHome, '--wait-seconds', String(DEFAULT_WAIT_SECONDS)],
+      command: path.join(runtimeLayout.controlHome, 'bin', 'start.sh'),
+      args: ['--home', runtimeLayout.controlHome, '--wait-seconds', String(DEFAULT_WAIT_SECONDS)],
     },
     stopCommand: {
-      command: path.join(options.runtimeHome, 'bin', 'stop.sh'),
-      args: ['--home', options.runtimeHome, '--wait-seconds', String(DEFAULT_WAIT_SECONDS)],
+      command: path.join(runtimeLayout.controlHome, 'bin', 'stop.sh'),
+      args: ['--home', runtimeLayout.controlHome, '--wait-seconds', String(DEFAULT_WAIT_SECONDS)],
     },
-    pidFilePath: path.join(options.runtimeHome, 'var', 'run', 'router-product-service.pid'),
-    stdoutLogPath: path.join(options.runtimeHome, 'var', 'log', 'router-product-service.stdout.log'),
-    stderrLogPath: path.join(options.runtimeHome, 'var', 'log', 'router-product-service.stderr.log'),
+    pidFilePath: path.join(runtimeLayout.runDir, 'router-product-service.pid'),
+    stdoutLogPath: path.join(runtimeLayout.logDir, 'router-product-service.stdout.log'),
+    stderrLogPath: path.join(runtimeLayout.logDir, 'router-product-service.stderr.log'),
     healthUrls: [
       `http://127.0.0.1:${ports.web}/api/v1/health`,
       `http://127.0.0.1:${ports.web}/api/admin/health`,
@@ -466,6 +486,7 @@ export async function runUnixInstalledRuntimeSmoke({
   platform,
   arch,
   target,
+  releaseOutputDir,
   runtimeHome,
   evidencePath,
   env = process.env,
@@ -476,6 +497,7 @@ export async function runUnixInstalledRuntimeSmoke({
     platform,
     arch,
     target,
+    releaseOutputDir,
     runtimeHome,
     evidencePath,
     env,
@@ -489,7 +511,7 @@ export async function runUnixInstalledRuntimeSmoke({
     applyInstallPlan(plan.installPlan, {
       force: true,
     });
-    assertPackagedBootstrapData(plan.runtimeHome);
+    assertInstalledPackagedBootstrapData(plan.runtimeHome);
     writeFileSync(plan.routerEnvPath, plan.routerEnvContents, 'utf8');
 
     runScriptCommand(plan.startCommand.command, plan.startCommand.args, {

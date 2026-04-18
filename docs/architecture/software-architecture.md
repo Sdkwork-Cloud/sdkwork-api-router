@@ -48,7 +48,8 @@ SDKWork supports both standalone and embedded runtime shapes.
 - `router-web-service` fronts the admin and portal static sites and proxies `/api/admin/*`, `/api/portal/*`, and `/api/v1/*`
 - `sdkwork-api-product-runtime` composes the standalone listeners plus the shared runtime host into one product-level runtime
 - `router-product-service` is the deployable server entrypoint for the integrated product runtime
-- the admin and portal Tauri hosts both embed the shared product runtime so desktop mode still exposes browser-facing admin and portal URLs
+- the official portal Tauri host supervises the shared product runtime so desktop mode still exposes browser-facing admin and portal URLs on localhost
+- the admin Tauri host remains available as an explicit development shell, but it is not an official release product
 - product runtime role slicing supports cluster deployment where `web`, `gateway`, `admin`, and `portal` can live on different nodes
 - extension runtimes can be builtin, connector-based, or native-dynamic
 - runtime configuration, listener rebinding, store swaps, and secret-manager rotation are designed for hot reload instead of full process restarts

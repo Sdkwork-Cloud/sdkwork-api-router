@@ -4,7 +4,7 @@ layout: home
 hero:
   name: SDKWork API Server
   text: OpenAI 兼容网关、管理控制平面、公共门户和扩展运行时
-  tagline: 一个面向跨平台部署的 Rust 工作区，用于承载 OpenAI 风格 API、在多上游之间做流量路由、运行控制平面，并交付浏览器或桌面运营端体验。
+  tagline: 一个面向跨平台部署的 Rust 工作区，用于承载 OpenAI 风格 API、在多上游之间做流量路由、运行控制平面，并交付浏览器或桌面产品体验。
   actions:
     - theme: brand
       text: 快速开始
@@ -31,11 +31,11 @@ features:
 
 SDKWork 现在采用更接近成熟 API 平台的文档结构：
 
-- [开始使用](/zh/getting-started/installation)：安装依赖、从源码启动、编译二进制，以及打包浏览器或 Tauri 产物
-- [脚本生命周期](/zh/getting-started/script-lifecycle)：集中理解每个启动脚本的职责，以及 build、install、start、verify、stop 和 service registration 的完整关系
-- [架构](/zh/architecture/software-architecture)：理解独立服务、工作区分层、扩展运行时和模块边界
-- [API 参考](/zh/api-reference/overview)：按网关、管理端、门户三条接口面查看基路径、鉴权和调用方式
-- [运维](/zh/operations/configuration)：配置、观测和排障独立部署
+- [开始使用](/zh/getting-started/installation)：安装依赖、初始化仓库，并完成第一轮构建验证
+- [源码运行](/zh/getting-started/source-development)：理解 browser、preview、portal desktop 等开发态入口
+- [脚本生命周期](/zh/getting-started/script-lifecycle)：理解 build、install、start、verify、stop 与 service registration 的完整关系
+- [发布构建](/zh/getting-started/release-builds)：查看正式发布物。正式产品只有 `sdkwork-api-router-product-server` 和 `sdkwork-router-portal-desktop`
+- [运维](/zh/operations/configuration)：配置、观测与独立部署排障
 - [参考](/zh/reference/api-compatibility)：查看兼容标签、仓库结构和构建工具链
 
 ## 从这里开始
@@ -48,12 +48,12 @@ SDKWork 现在采用更接近成熟 API 平台的文档结构：
   - [安装准备](/zh/getting-started/installation)
 - 日常本地开发：
   - [源码运行](/zh/getting-started/source-development)
-- 理解脚本职责与启动顺序：
-  - [脚本生命周期](/zh/getting-started/script-lifecycle)
 - 编译与打包：
   - [编译与打包](/zh/getting-started/build-and-packaging)
-- 生成可部署产物：
+- 生成正式发布物：
   - [发布构建](/zh/getting-started/release-builds)
+- 线上部署：
+  - [生产部署](/zh/getting-started/production-deployment)
 - 理解系统设计：
   - [软件架构](/zh/architecture/software-architecture)
 - 查看接口目录：
@@ -68,7 +68,7 @@ SDKWork 现在采用更接近成熟 API 平台的文档结构：
 | portal-api-service | `/portal/*` | 自助认证、工作区与 API key 生命周期 |
 | router-web-service | `/admin/*`、`/portal/*`、`/api/*` | Pingora 公共站点交付与 API 代理入口 |
 | apps/sdkwork-router-admin | 浏览器或 Tauri | 独立超管体验 |
-| apps/sdkwork-router-portal | 浏览器 | 独立开发者自助门户 |
+| apps/sdkwork-router-portal | 浏览器或 Tauri | 独立开发者自助门户与正式桌面壳 |
 | docs | `/` | VitePress 文档站 |
 
 ## 常用本地端口
@@ -100,34 +100,29 @@ SDKWork 现在采用更接近成熟 API 平台的文档结构：
 node scripts/dev/start-workspace.mjs
 ```
 
-以统一单端口 preview 方式启动源码工作区：
-
-```bash
-node scripts/dev/start-workspace.mjs --preview
-```
-
-以桌面壳和统一 Web Host 方式启动：
+以 portal desktop 和统一 Web Host 方式启动：
 
 ```bash
 node scripts/dev/start-workspace.mjs --tauri
 ```
 
-编译独立 release 二进制：
+编译独立 release 服务二进制：
 
 ```bash
-cargo build --release -p admin-api-service -p gateway-service -p portal-api-service
+cargo build --release -p admin-api-service -p gateway-service -p portal-api-service -p router-web-service
 ```
 
-构建 admin 应用：
+构建正式 server 产品输入：
 
 ```bash
-pnpm --dir apps/sdkwork-router-admin build
+./bin/build.sh
 ```
 
-构建独立 portal 应用：
+构建 portal desktop 安装包：
 
 ```bash
-pnpm --dir apps/sdkwork-router-portal build
+node scripts/prepare-router-portal-desktop-runtime.mjs
+pnpm --dir apps/sdkwork-router-portal tauri:build
 ```
 
 构建文档站：

@@ -20,17 +20,19 @@ test('repository exposes a pull-request product verification workflow with gover
 
   assert.match(workflow, /pull_request:/);
   assert.match(workflow, /workflow_dispatch:/);
+  assert.match(workflow, /\.github\/workflows\/release\.yml/);
   assert.match(workflow, /actions\/checkout@v5/);
   assert.match(workflow, /pnpm\/action-setup@v4/);
   assert.match(workflow, /actions\/setup-node@v5/);
   assert.match(workflow, /dtolnay\/rust-toolchain@stable/);
   assert.match(workflow, /Swatinem\/rust-cache@v2/);
   assert.match(workflow, /taiki-e\/install-action@cargo-audit/);
+  assert.match(workflow, /docs\/pnpm-lock\.yaml/);
   assert.match(workflow, /\.github\/workflows\/product-verification\.yml/);
   assert.match(workflow, /apps\/sdkwork-router-admin\/\*\*/);
   assert.match(workflow, /apps\/sdkwork-router-portal\/\*\*/);
-  assert.match(workflow, /console\/\*\*/);
   assert.match(workflow, /docs\/\*\*/);
+  assert.doesNotMatch(workflow, /console\/\*\*/);
   assert.match(workflow, /README\.md/);
   assert.match(workflow, /README\.zh-CN\.md/);
   assert.match(workflow, /scripts\/check-router-product\.mjs/);
@@ -41,21 +43,27 @@ test('repository exposes a pull-request product verification workflow with gover
   assert.match(workflow, /scripts\/check-admin-browser-runtime\.mjs/);
   assert.match(workflow, /scripts\/check-admin-browser-runtime\.test\.mjs/);
   assert.match(workflow, /scripts\/run-tauri-cli\.mjs/);
+  assert.match(workflow, /scripts\/prepare-router-portal-desktop-runtime\.mjs/);
+  assert.match(workflow, /scripts\/prepare-router-portal-desktop-runtime\.test\.mjs/);
+  assert.match(workflow, /scripts\/release\/\*\*/);
+  assert.match(workflow, /scripts\/release-flow-contract\.test\.mjs/);
   assert.match(workflow, /scripts\/release\/desktop-targets\.mjs/);
   assert.match(workflow, /scripts\/product-verification-workflow-contracts\.mjs/);
   assert.match(workflow, /scripts\/product-verification-workflow\.test\.mjs/);
   assert.match(
     workflow,
-    /Run product governance node tests[\s\S]*?node --test scripts\/product-verification-workflow\.test\.mjs scripts\/check-router-product\.test\.mjs scripts\/browser-runtime-smoke\.test\.mjs scripts\/check-admin-browser-runtime\.test\.mjs scripts\/check-portal-browser-runtime\.test\.mjs scripts\/build-router-desktop-assets\.test\.mjs scripts\/check-router-docs-safety\.test\.mjs scripts\/check-router-frontend-budgets\.test\.mjs scripts\/dev\/tests\/pnpm-launch-lib\.test\.mjs console\/tests\/sdk-transport-unsafe-integer\.test\.mjs apps\/sdkwork-router-portal\/tests\/product-entrypoint-scripts\.test\.mjs/,
+    /Run product governance node tests[\s\S]*?node --test scripts\/product-verification-workflow\.test\.mjs scripts\/check-router-product\.test\.mjs scripts\/browser-runtime-smoke\.test\.mjs scripts\/check-admin-browser-runtime\.test\.mjs scripts\/check-portal-browser-runtime\.test\.mjs scripts\/build-router-desktop-assets\.test\.mjs scripts\/check-router-docs-safety\.test\.mjs scripts\/check-router-frontend-budgets\.test\.mjs scripts\/dev\/tests\/pnpm-launch-lib\.test\.mjs scripts\/prepare-router-portal-desktop-runtime\.test\.mjs scripts\/release-flow-contract\.test\.mjs scripts\/release\/tests\/materialize-release-catalog\.test\.mjs scripts\/release\/tests\/release-workflow\.test\.mjs scripts\/release\/tests\/release-attestation-verify\.test\.mjs scripts\/release\/tests\/docs-product-contract\.test\.mjs apps\/sdkwork-router-portal\/tests\/product-entrypoint-scripts\.test\.mjs/,
   );
   assert.match(
     workflow,
-    /Install product verification workspace dependencies[\s\S]*?pnpm --dir apps\/sdkwork-router-admin install --frozen-lockfile[\s\S]*?pnpm --dir apps\/sdkwork-router-portal install --frozen-lockfile[\s\S]*?pnpm --dir console install --frozen-lockfile/,
+    /Install product verification workspace dependencies[\s\S]*?pnpm --dir apps\/sdkwork-router-admin install --frozen-lockfile[\s\S]*?pnpm --dir apps\/sdkwork-router-portal install --frozen-lockfile[\s\S]*?pnpm --dir docs install --frozen-lockfile/,
   );
   assert.match(
     workflow,
-    /Run product governance node tests[\s\S]*?console\/tests\/sdk-transport-unsafe-integer\.test\.mjs/,
+    /Build docs site[\s\S]*?pnpm --dir docs build/,
   );
+  assert.doesNotMatch(workflow, /console\/tests\/sdk-transport-unsafe-integer\.test\.mjs/);
+  assert.doesNotMatch(workflow, /console\/pnpm-lock\.yaml/);
   assert.match(
     workflow,
     /Run product verification gate[\s\S]*?env:[\s\S]*?SDKWORK_STRICT_FRONTEND_INSTALLS:\s*'1'[\s\S]*?run:\s*node scripts\/check-router-product\.mjs/,
@@ -81,9 +89,9 @@ on:
   pull_request:
     paths:
       - '.github/workflows/product-verification.yml'
+      - '.github/workflows/release.yml'
       - 'apps/sdkwork-router-admin/**'
       - 'apps/sdkwork-router-portal/**'
-      - 'console/**'
       - 'docs/**'
       - 'README.md'
       - 'README.zh-CN.md'
@@ -94,6 +102,10 @@ on:
       - 'scripts/check-portal-browser-runtime.test.mjs'
       - 'scripts/check-admin-browser-runtime.mjs'
       - 'scripts/check-admin-browser-runtime.test.mjs'
+      - 'scripts/prepare-router-portal-desktop-runtime.mjs'
+      - 'scripts/prepare-router-portal-desktop-runtime.test.mjs'
+      - 'scripts/release/**'
+      - 'scripts/release-flow-contract.test.mjs'
       - 'scripts/run-tauri-cli.mjs'
       - 'scripts/release/desktop-targets.mjs'
       - 'scripts/product-verification-workflow-contracts.mjs'
@@ -130,10 +142,9 @@ jobs:
         run: |
           pnpm --dir apps/sdkwork-router-admin install --frozen-lockfile
           pnpm --dir apps/sdkwork-router-portal install --frozen-lockfile
-          pnpm --dir console install --frozen-lockfile
 
       - name: Run product governance node tests
-        run: node --test scripts/product-verification-workflow.test.mjs scripts/check-router-product.test.mjs scripts/browser-runtime-smoke.test.mjs scripts/check-admin-browser-runtime.test.mjs scripts/check-portal-browser-runtime.test.mjs scripts/build-router-desktop-assets.test.mjs scripts/check-router-docs-safety.test.mjs scripts/check-router-frontend-budgets.test.mjs scripts/dev/tests/pnpm-launch-lib.test.mjs console/tests/sdk-transport-unsafe-integer.test.mjs apps/sdkwork-router-portal/tests/product-entrypoint-scripts.test.mjs
+        run: node --test scripts/product-verification-workflow.test.mjs scripts/check-router-product.test.mjs scripts/browser-runtime-smoke.test.mjs scripts/check-admin-browser-runtime.test.mjs scripts/check-portal-browser-runtime.test.mjs scripts/build-router-desktop-assets.test.mjs scripts/check-router-docs-safety.test.mjs scripts/check-router-frontend-budgets.test.mjs scripts/dev/tests/pnpm-launch-lib.test.mjs scripts/prepare-router-portal-desktop-runtime.test.mjs scripts/release-flow-contract.test.mjs scripts/release/tests/materialize-release-catalog.test.mjs scripts/release/tests/release-workflow.test.mjs scripts/release/tests/release-attestation-verify.test.mjs scripts/release/tests/docs-product-contract.test.mjs apps/sdkwork-router-portal/tests/product-entrypoint-scripts.test.mjs
 
       - name: Run product verification gate
         run: node scripts/check-router-product.mjs
@@ -168,9 +179,9 @@ on:
   pull_request:
     paths:
       - '.github/workflows/product-verification.yml'
+      - '.github/workflows/release.yml'
       - 'apps/sdkwork-router-admin/**'
       - 'apps/sdkwork-router-portal/**'
-      - 'console/**'
       - 'docs/**'
       - 'README.md'
       - 'README.zh-CN.md'
@@ -181,6 +192,10 @@ on:
       - 'scripts/check-portal-browser-runtime.test.mjs'
       - 'scripts/check-admin-browser-runtime.mjs'
       - 'scripts/check-admin-browser-runtime.test.mjs'
+      - 'scripts/prepare-router-portal-desktop-runtime.mjs'
+      - 'scripts/prepare-router-portal-desktop-runtime.test.mjs'
+      - 'scripts/release/**'
+      - 'scripts/release-flow-contract.test.mjs'
       - 'scripts/run-tauri-cli.mjs'
       - 'scripts/release/desktop-targets.mjs'
       - 'scripts/product-verification-workflow.test.mjs'
@@ -216,10 +231,9 @@ jobs:
         run: |
           pnpm --dir apps/sdkwork-router-admin install --frozen-lockfile
           pnpm --dir apps/sdkwork-router-portal install --frozen-lockfile
-          pnpm --dir console install --frozen-lockfile
 
       - name: Run product governance node tests
-        run: node --test scripts/product-verification-workflow.test.mjs scripts/check-router-product.test.mjs scripts/browser-runtime-smoke.test.mjs scripts/check-admin-browser-runtime.test.mjs scripts/check-portal-browser-runtime.test.mjs scripts/build-router-desktop-assets.test.mjs scripts/check-router-docs-safety.test.mjs scripts/check-router-frontend-budgets.test.mjs scripts/dev/tests/pnpm-launch-lib.test.mjs console/tests/sdk-transport-unsafe-integer.test.mjs apps/sdkwork-router-portal/tests/product-entrypoint-scripts.test.mjs
+        run: node --test scripts/product-verification-workflow.test.mjs scripts/check-router-product.test.mjs scripts/browser-runtime-smoke.test.mjs scripts/check-admin-browser-runtime.test.mjs scripts/check-portal-browser-runtime.test.mjs scripts/build-router-desktop-assets.test.mjs scripts/check-router-docs-safety.test.mjs scripts/check-router-frontend-budgets.test.mjs scripts/dev/tests/pnpm-launch-lib.test.mjs scripts/prepare-router-portal-desktop-runtime.test.mjs scripts/release-flow-contract.test.mjs scripts/release/tests/materialize-release-catalog.test.mjs scripts/release/tests/release-workflow.test.mjs scripts/release/tests/release-attestation-verify.test.mjs scripts/release/tests/docs-product-contract.test.mjs apps/sdkwork-router-portal/tests/product-entrypoint-scripts.test.mjs
 
       - name: Run product verification gate
         env:
@@ -256,9 +270,9 @@ on:
   pull_request:
     paths:
       - '.github/workflows/product-verification.yml'
+      - '.github/workflows/release.yml'
       - 'apps/sdkwork-router-admin/**'
       - 'apps/sdkwork-router-portal/**'
-      - 'console/**'
       - 'docs/**'
       - 'README.md'
       - 'README.zh-CN.md'
@@ -269,6 +283,8 @@ on:
       - 'scripts/check-portal-browser-runtime.test.mjs'
       - 'scripts/check-admin-browser-runtime.mjs'
       - 'scripts/check-admin-browser-runtime.test.mjs'
+      - 'scripts/release/**'
+      - 'scripts/release-flow-contract.test.mjs'
       - 'scripts/product-verification-workflow-contracts.mjs'
       - 'scripts/product-verification-workflow.test.mjs'
   workflow_dispatch:
@@ -303,10 +319,9 @@ jobs:
         run: |
           pnpm --dir apps/sdkwork-router-admin install --frozen-lockfile
           pnpm --dir apps/sdkwork-router-portal install --frozen-lockfile
-          pnpm --dir console install --frozen-lockfile
 
       - name: Run product governance node tests
-        run: node --test scripts/product-verification-workflow.test.mjs scripts/check-router-product.test.mjs scripts/browser-runtime-smoke.test.mjs scripts/check-admin-browser-runtime.test.mjs scripts/check-portal-browser-runtime.test.mjs scripts/build-router-desktop-assets.test.mjs scripts/check-router-docs-safety.test.mjs scripts/check-router-frontend-budgets.test.mjs scripts/dev/tests/pnpm-launch-lib.test.mjs console/tests/sdk-transport-unsafe-integer.test.mjs apps/sdkwork-router-portal/tests/product-entrypoint-scripts.test.mjs
+        run: node --test scripts/product-verification-workflow.test.mjs scripts/check-router-product.test.mjs scripts/browser-runtime-smoke.test.mjs scripts/check-admin-browser-runtime.test.mjs scripts/check-portal-browser-runtime.test.mjs scripts/build-router-desktop-assets.test.mjs scripts/check-router-docs-safety.test.mjs scripts/check-router-frontend-budgets.test.mjs scripts/dev/tests/pnpm-launch-lib.test.mjs scripts/release-flow-contract.test.mjs scripts/release/tests/materialize-release-catalog.test.mjs scripts/release/tests/release-workflow.test.mjs scripts/release/tests/release-attestation-verify.test.mjs scripts/release/tests/docs-product-contract.test.mjs apps/sdkwork-router-portal/tests/product-entrypoint-scripts.test.mjs
 
       - name: Run product verification gate
         env:
@@ -343,9 +358,9 @@ on:
   pull_request:
     paths:
       - '.github/workflows/product-verification.yml'
+      - '.github/workflows/release.yml'
       - 'apps/sdkwork-router-admin/**'
       - 'apps/sdkwork-router-portal/**'
-      - 'console/**'
       - 'docs/**'
       - 'README.md'
       - 'README.zh-CN.md'
@@ -356,6 +371,10 @@ on:
       - 'scripts/check-portal-browser-runtime.test.mjs'
       - 'scripts/check-admin-browser-runtime.mjs'
       - 'scripts/check-admin-browser-runtime.test.mjs'
+      - 'scripts/prepare-router-portal-desktop-runtime.mjs'
+      - 'scripts/prepare-router-portal-desktop-runtime.test.mjs'
+      - 'scripts/release/**'
+      - 'scripts/release-flow-contract.test.mjs'
       - 'scripts/run-tauri-cli.mjs'
       - 'scripts/release/desktop-targets.mjs'
       - 'scripts/dev/pnpm-launch-lib.mjs'
@@ -394,10 +413,9 @@ jobs:
         run: |
           pnpm --dir apps/sdkwork-router-admin install --frozen-lockfile
           pnpm --dir apps/sdkwork-router-portal install --frozen-lockfile
-          pnpm --dir console install --frozen-lockfile
 
       - name: Run product governance node tests
-        run: node --test scripts/product-verification-workflow.test.mjs scripts/check-router-product.test.mjs scripts/browser-runtime-smoke.test.mjs scripts/check-admin-browser-runtime.test.mjs scripts/check-portal-browser-runtime.test.mjs scripts/build-router-desktop-assets.test.mjs scripts/check-router-docs-safety.test.mjs scripts/check-router-frontend-budgets.test.mjs console/tests/sdk-transport-unsafe-integer.test.mjs apps/sdkwork-router-portal/tests/product-entrypoint-scripts.test.mjs
+        run: node --test scripts/product-verification-workflow.test.mjs scripts/check-router-product.test.mjs scripts/browser-runtime-smoke.test.mjs scripts/check-admin-browser-runtime.test.mjs scripts/check-portal-browser-runtime.test.mjs scripts/build-router-desktop-assets.test.mjs scripts/check-router-docs-safety.test.mjs scripts/check-router-frontend-budgets.test.mjs scripts/prepare-router-portal-desktop-runtime.test.mjs scripts/release-flow-contract.test.mjs scripts/release/tests/materialize-release-catalog.test.mjs scripts/release/tests/release-workflow.test.mjs scripts/release/tests/release-attestation-verify.test.mjs scripts/release/tests/docs-product-contract.test.mjs apps/sdkwork-router-portal/tests/product-entrypoint-scripts.test.mjs
 
       - name: Run product verification gate
         env:
@@ -412,5 +430,105 @@ jobs:
       repoRoot: fixtureRoot,
     }),
     /shared pnpm helper/i,
+  );
+});
+
+test('product verification workflow contract helper rejects workflows that do not build the docs site', async () => {
+  const contracts = await import(
+    pathToFileURL(
+      path.join(repoRoot, 'scripts', 'product-verification-workflow-contracts.mjs'),
+    ).href,
+  );
+
+  const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), 'sdkwork-product-verification-workflow-'));
+  mkdirSync(path.join(fixtureRoot, '.github', 'workflows'), { recursive: true });
+
+  writeFileSync(
+    path.join(fixtureRoot, '.github', 'workflows', 'product-verification.yml'),
+    `
+name: product-verification
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/product-verification.yml'
+      - '.github/workflows/release.yml'
+      - 'apps/sdkwork-router-admin/**'
+      - 'apps/sdkwork-router-portal/**'
+      - 'docs/**'
+      - 'README.md'
+      - 'README.zh-CN.md'
+      - 'scripts/check-router-product.mjs'
+      - 'scripts/browser-runtime-smoke.mjs'
+      - 'scripts/browser-runtime-smoke.test.mjs'
+      - 'scripts/check-portal-browser-runtime.mjs'
+      - 'scripts/check-portal-browser-runtime.test.mjs'
+      - 'scripts/check-admin-browser-runtime.mjs'
+      - 'scripts/check-admin-browser-runtime.test.mjs'
+      - 'scripts/prepare-router-portal-desktop-runtime.mjs'
+      - 'scripts/prepare-router-portal-desktop-runtime.test.mjs'
+      - 'scripts/release/**'
+      - 'scripts/release-flow-contract.test.mjs'
+      - 'scripts/run-tauri-cli.mjs'
+      - 'scripts/release/desktop-targets.mjs'
+      - 'scripts/dev/pnpm-launch-lib.mjs'
+      - 'scripts/dev/tests/pnpm-launch-lib.test.mjs'
+      - 'scripts/product-verification-workflow-contracts.mjs'
+      - 'scripts/product-verification-workflow.test.mjs'
+  workflow_dispatch:
+
+jobs:
+  product-verification:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: |
+            apps/sdkwork-router-admin/pnpm-lock.yaml
+            apps/sdkwork-router-portal/pnpm-lock.yaml
+            docs/pnpm-lock.yaml
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@cargo-audit
+
+      - name: Install product verification workspace dependencies
+        run: |
+          pnpm --dir apps/sdkwork-router-admin install --frozen-lockfile
+          pnpm --dir apps/sdkwork-router-portal install --frozen-lockfile
+          pnpm --dir docs install --frozen-lockfile
+
+      - name: Run product governance node tests
+        run: node --test scripts/product-verification-workflow.test.mjs scripts/check-router-product.test.mjs scripts/browser-runtime-smoke.test.mjs scripts/check-admin-browser-runtime.test.mjs scripts/check-portal-browser-runtime.test.mjs scripts/build-router-desktop-assets.test.mjs scripts/check-router-docs-safety.test.mjs scripts/check-router-frontend-budgets.test.mjs scripts/dev/tests/pnpm-launch-lib.test.mjs scripts/prepare-router-portal-desktop-runtime.test.mjs scripts/release-flow-contract.test.mjs scripts/release/tests/materialize-release-catalog.test.mjs scripts/release/tests/release-workflow.test.mjs scripts/release/tests/release-attestation-verify.test.mjs scripts/release/tests/docs-product-contract.test.mjs apps/sdkwork-router-portal/tests/product-entrypoint-scripts.test.mjs
+
+      - name: Run product verification gate
+        env:
+          SDKWORK_STRICT_FRONTEND_INSTALLS: '1'
+        run: node scripts/check-router-product.mjs
+`,
+    'utf8',
+  );
+
+  await assert.rejects(
+    contracts.assertProductVerificationWorkflowContracts({
+      repoRoot: fixtureRoot,
+    }),
+    /docs site/i,
   );
 });

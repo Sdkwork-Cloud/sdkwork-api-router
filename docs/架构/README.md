@@ -18,7 +18,7 @@
 `sdkwork-api-router` 不是单厂商代理，也不是单一 OpenAI 兼容转发层，而是面向企业与开发者的多协议、多模态 AI API Router 平台。当前冻结口径如下：
 
 - 后端运行面：`gateway-service`、`admin-api-service`、`portal-api-service`、`router-web-service`、`router-product-service`
-- 前端运行面：`apps/sdkwork-router-admin`、`apps/sdkwork-router-portal`、`console/`
+- 前端运行面：`apps/sdkwork-router-admin`、`apps/sdkwork-router-portal`；正式 desktop 以 `sdkwork-router-portal` 为主线，admin Tauri 仅用于显式开发
 - 网关运行模式：`stateful standalone` 与 `stateless runtime`
 - 协议兼容面：`OpenAI Compatible`、`Anthropic Messages Compatible`、`Gemini Compatible`
 - 能力家族：文本、图像、音频、视频、文件、上传、向量、批处理、评测、实时会话、Agents 类 API；`music` 采用统一资源化能力口径，执行真值以兼容矩阵与参考文档为准

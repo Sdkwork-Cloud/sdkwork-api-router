@@ -23,6 +23,7 @@ function parseArgs(argv) {
     help: false,
     install: false,
     preview: false,
+    tauri: false,
   };
 
   for (const arg of argv) {
@@ -32,6 +33,8 @@ function parseArgs(argv) {
       result.install = true;
     } else if (arg === '--preview') {
       result.preview = true;
+    } else if (arg === '--tauri') {
+      result.tauri = true;
     } else if (arg === '--help' || arg === '-h') {
       result.help = true;
     }
@@ -48,6 +51,7 @@ Starts the standalone sdkwork-router-portal app.
 Options:
   --install   Run pnpm install before starting
   --preview   Build and preview the portal instead of dev mode
+  --tauri     Start the portal Tauri desktop shell
   --dry-run   Print the commands without running them
   -h, --help  Show this help
 `);
@@ -107,8 +111,12 @@ if (settings.help) {
 const portalRoot = 'apps/sdkwork-router-portal';
 const installStatus = frontendInstallStatus({
   appRoot: portalRoot,
-  requiredPackages: ['vite', 'typescript'],
-  requiredBinCommands: ['vite', 'tsc'],
+  requiredPackages: settings.tauri
+    ? ['vite', 'typescript', '@tauri-apps/cli']
+    : ['vite', 'typescript'],
+  requiredBinCommands: settings.tauri
+    ? ['vite', 'tsc', 'tauri']
+    : ['vite', 'tsc'],
   verifyInstalled: () => frontendViteConfigHealthy({
     appRoot: portalRoot,
     command: settings.preview ? 'build' : 'serve',
@@ -129,7 +137,9 @@ if (settings.preview) {
   process.exit(0);
 }
 
-const longRunningArgs = ['--dir', portalRoot, 'dev'];
+const longRunningArgs = settings.tauri
+  ? ['--dir', portalRoot, 'tauri:dev']
+  : ['--dir', portalRoot, 'dev'];
 const longRunningProcessSpec = pnpmProcessSpec(longRunningArgs);
 const command = pnpmDisplayCommand(longRunningArgs);
 console.log(`[start-portal] ${command}`);

@@ -150,7 +150,9 @@ if router_is_windows; then
 fi
 
 if [ -z "$RUNTIME_HOME" ]; then
-  if [ -f "$SCRIPT_DIR/$(router_binary_name router-product-service)" ]; then
+  if [ -f "$SCRIPT_DIR/../release-manifest.json" ]; then
+    RUNTIME_HOME=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+  elif [ -f "$SCRIPT_DIR/$(router_binary_name router-product-service)" ]; then
     RUNTIME_HOME=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
   else
     RUNTIME_HOME="$DEFAULT_HOME"
@@ -165,6 +167,11 @@ MANIFEST_CONFIG_FILE=$(router_release_manifest_string "$MANIFEST_FILE" 'configFi
 MANIFEST_DATA_DIR=$(router_release_manifest_string "$MANIFEST_FILE" 'mutableDataRoot' || true)
 MANIFEST_LOG_DIR=$(router_release_manifest_string "$MANIFEST_FILE" 'logRoot' || true)
 MANIFEST_RUN_DIR=$(router_release_manifest_string "$MANIFEST_FILE" 'runRoot' || true)
+MANIFEST_RELEASE_ROOT=$(router_release_manifest_string "$MANIFEST_FILE" 'releaseRoot' || true)
+MANIFEST_ROUTER_BINARY=$(router_release_manifest_string "$MANIFEST_FILE" 'routerBinary' || true)
+MANIFEST_ADMIN_SITE_DIR=$(router_release_manifest_string "$MANIFEST_FILE" 'adminSiteDistDir' || true)
+MANIFEST_PORTAL_SITE_DIR=$(router_release_manifest_string "$MANIFEST_FILE" 'portalSiteDistDir' || true)
+MANIFEST_BOOTSTRAP_DATA_DIR=$(router_release_manifest_string "$MANIFEST_FILE" 'bootstrapDataRoot' || true)
 
 INSTALL_MODE=$(router_normalize_install_mode "${SDKWORK_ROUTER_INSTALL_MODE:-$MANIFEST_INSTALL_MODE}")
 DEFAULT_CONFIG_DIR_RAW=$(router_default_config_root "$RUNTIME_HOME" "$INSTALL_MODE")
@@ -185,6 +192,12 @@ router_load_env_file "$ENV_FILE"
 INSTALL_MODE=$(router_normalize_install_mode "${SDKWORK_ROUTER_INSTALL_MODE:-$MANIFEST_INSTALL_MODE}")
 BIN_DIR="$RUNTIME_HOME/bin"
 BINARY_PATH="$BIN_DIR/$(router_binary_name router-product-service)"
+if [ -n "$MANIFEST_RELEASE_ROOT" ]; then
+  BINARY_PATH="$MANIFEST_RELEASE_ROOT/bin/$(router_binary_name router-product-service)"
+fi
+if [ -n "$MANIFEST_ROUTER_BINARY" ]; then
+  BINARY_PATH="$MANIFEST_ROUTER_BINARY"
+fi
 DEFAULT_CONFIG_DIR_RAW=$(router_default_config_root "$RUNTIME_HOME" "$INSTALL_MODE")
 DEFAULT_DATA_DIR_RAW=$(router_default_data_root "$RUNTIME_HOME" "$INSTALL_MODE")
 DEFAULT_LOG_DIR_RAW=$(router_default_log_root "$RUNTIME_HOME" "$INSTALL_MODE")
@@ -239,6 +252,20 @@ PLAN_FILE="$RUN_DIR/router-product-service.plan.json"
 DEFAULT_ADMIN_SITE_DIR="$RUNTIME_HOME/sites/admin/dist"
 DEFAULT_PORTAL_SITE_DIR="$RUNTIME_HOME/sites/portal/dist"
 DEFAULT_BOOTSTRAP_DATA_DIR="$RUNTIME_HOME/data"
+if [ -n "$MANIFEST_RELEASE_ROOT" ]; then
+  DEFAULT_ADMIN_SITE_DIR="$MANIFEST_RELEASE_ROOT/sites/admin/dist"
+  DEFAULT_PORTAL_SITE_DIR="$MANIFEST_RELEASE_ROOT/sites/portal/dist"
+  DEFAULT_BOOTSTRAP_DATA_DIR="$MANIFEST_RELEASE_ROOT/data"
+fi
+if [ -n "$MANIFEST_ADMIN_SITE_DIR" ]; then
+  DEFAULT_ADMIN_SITE_DIR="$MANIFEST_ADMIN_SITE_DIR"
+fi
+if [ -n "$MANIFEST_PORTAL_SITE_DIR" ]; then
+  DEFAULT_PORTAL_SITE_DIR="$MANIFEST_PORTAL_SITE_DIR"
+fi
+if [ -n "$MANIFEST_BOOTSTRAP_DATA_DIR" ]; then
+  DEFAULT_BOOTSTRAP_DATA_DIR="$MANIFEST_BOOTSTRAP_DATA_DIR"
+fi
 REPOSITORY_BOOTSTRAP_DATA_DIR="$REPO_ROOT/data"
 DEFAULT_CONFIG_DIR=$(router_portable_path "$CONFIG_DIR")
 DEFAULT_CONFIG_FILE=$(router_portable_path "$CONFIG_FILE_HOST")

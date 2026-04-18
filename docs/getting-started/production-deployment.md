@@ -2,15 +2,41 @@
 
 This is the canonical production deployment guide for SDKWork API Router.
 
-Use this page when you are publishing online, preparing a native server install, building a Docker Compose deployment, or rolling out a Helm release.
+Use this page when you are publishing an online server deployment, preparing a native server install, using Docker Compose, or rolling out a Helm release.
 
-## Production Contract
+## Product Contract
 
-- `system` install mode is the native production standard.
-- PostgreSQL is the default database contract for `system` installs.
-- Config files are the primary source of truth.
-- Environment variables are discovery inputs and fallback values.
-- Service supervision belongs to `systemd`, `launchd`, or Windows Service Control Manager.
+- the official server-side product is `sdkwork-api-router-product-server`
+- the official desktop product is `sdkwork-router-portal-desktop`
+- public GitHub releases publish only those two products
+- `release-catalog.json` is published alongside them as release metadata, not as a third product
+- `system` install mode is the native production standard
+- PostgreSQL is the default database contract for `system` installs
+- config files are the primary source of truth
+- environment variables are discovery inputs and fallback values
+- service supervision belongs to `systemd`, `launchd`, or Windows Service Control Manager
+
+The desktop product is not the online server deployment path. It is a per-user Tauri shell that supervises a bundled `router-product-service` sidecar with the same public web and API surface on a fixed desktop port `3001`.
+
+## Server Product Contents
+
+The server product archive is built around `router-product-service` and includes:
+
+- release service binaries
+- admin static assets
+- portal static assets
+- bootstrap data
+- deploy assets for Docker and Helm
+
+That bundle is the canonical deployment input for:
+
+- native server installs
+- Docker image builds
+- Docker Compose
+- Helm
+
+The release workflow also runs `installed-runtime smoke` against that same packaged server bundle before publish, so the native install path is verified from the exact packaged artifact operators deploy.
+Native install tooling selects the canonical server archive from `release-catalog.json`, then rejects any archive, checksum, or external manifest that does not match that published catalog entry before unpacking it.
 
 ## Choose A Deployment Path
 
@@ -34,9 +60,9 @@ Primary assets:
 
 ### Native System Install
 
-Use this when you need an OS-standard installation with service-manager startup.
+Use this when you need an OS-standard installation with service-managed startup.
 
-## Build Release Artifacts
+## Build Official Release Inputs
 
 Linux or macOS:
 
@@ -50,16 +76,30 @@ Windows:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\build.ps1
 ```
 
-Cross-platform release hygiene:
+This prepares the same server product inputs used by the release workflow:
 
-- keep Windows-only `CMAKE_GENERATOR` and `HOST_CMAKE_GENERATOR` settings scoped to Windows entrypoints and CI jobs
-- do not persist Visual Studio CMake generator defaults in global Cargo config or Unix shell profiles
-- when you run Unix installed-runtime smoke inside Docker, keep the same `CARGO_TARGET_DIR` for the `cargo build` and `run-unix-installed-runtime-smoke.mjs` steps
-- the runtime starts correctly even when `ss`, `netstat`, and `lsof` are unavailable; install one of them when you want richer bind-conflict diagnostics during preflight
+- Rust release service binaries
+- admin and portal browser assets
+- the staged portal desktop `router-product/` payload
+- the packaged server product archive
 
-## Local Release Governance Preparation
+If you want the local repository run to prove the same governed contract as the official release path, use `./bin/build.sh --verify-release` or `powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\build.ps1 -VerifyRelease`. That mode keeps the same build inputs, then also requires the docs site build, packaged runtime smoke, and the local `release governance preflight`.
 
-If you run release governance from a development host where sibling repositories are not clean standalone release checkouts, point the release tooling at a managed external dependency root first. This keeps `materialize-external-deps`, `verify-release-sync`, and `run-release-governance-checks` aligned to governed clones instead of unrelated local worktrees.
+For native installs, only the packaged server bundle is valid install input. The installer then materializes `bin/`, `sites/*/dist/`, `data/`, `deploy/`, `release-manifest.json`, and `README.txt` into `releases/<version>/`.
+`release-catalog.json` is the release-level source of truth for selecting and resolving that bundle from a complete official asset set.
+
+## Release Governance
+
+The release workflow separates governance evidence from user-facing products:
+
+- `governance-release` materializes release-window, sync-audit, telemetry, and SLO evidence
+- `native-release` builds the official server and portal desktop products
+- governance artifacts stay as workflow artifacts and attestations
+- installable public products stay limited to the server archive set and portal desktop installer set
+- `release-catalog.json` is generated at `artifacts/release/release-catalog.json`, attested, and published as the machine-readable release index for the official asset set
+- that catalog carries `generatedAt` plus per-variant `variantKind`, `primaryFileSizeBytes`, and `checksumAlgorithm` metadata for audit and deployment tooling
+
+For local governance validation from a repository checkout:
 
 Linux or macOS:
 
@@ -79,9 +119,7 @@ node scripts/release/verify-release-sync.mjs --format text --live
 node scripts/release/run-release-governance-checks.mjs
 ```
 
-Use this whenever direct sibling audits report reasons such as `not-standalone-root`, `dirty-working-tree`, `branch-not-synced`, or `head-mismatch`.
-
-## Generate A Native Production Install
+## Generate A Native Server Install
 
 Linux or macOS:
 
@@ -112,7 +150,7 @@ Edit the generated runtime config before first start:
 - `conf.d/*.yaml`
   - optional domain-specific overlays
 - `router.env`
-  - discovery values and minimal runtime fallback values
+  - discovery values and fallback values for fields the config file leaves unset
 
 Recommended first edits:
 
@@ -126,14 +164,14 @@ Recommended first edits:
 From the installed runtime home, run:
 
 ```bash
-./bin/validate-config.sh
+./current/bin/validate-config.sh --home ./current
 ```
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\validate-config.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\current\bin\validate-config.ps1 -Home .\current
 ```
 
-If you are validating a generated install from the build/release repository instead of from the installed runtime home, you can still run:
+From a repository checkout, the managed fallback remains:
 
 ```bash
 node bin/router-ops.mjs validate-config --mode system --home <install-root>
@@ -146,6 +184,7 @@ node .\bin\router-ops.mjs validate-config --mode system --home <install-root>
 Validation checks:
 
 - config discovery and merge order
+- config-file-over-environment precedence for business fields
 - production security posture
 - rejection of SQLite in `system` mode unless an explicit development override is enabled
 
@@ -153,9 +192,9 @@ Validation checks:
 
 Use foreground entrypoints under a service manager:
 
-- Linux: `./service/systemd/install-service.sh`
-- macOS: `./service/launchd/install-service.sh`
-- Windows: `powershell -NoProfile -ExecutionPolicy Bypass -File .\service\windows-service\install-service.ps1`
+- Linux: `./current/service/systemd/install-service.sh`
+- macOS: `./current/service/launchd/install-service.sh`
+- Windows: `powershell -NoProfile -ExecutionPolicy Bypass -File .\current\service\windows-service\install-service.ps1`
 
 Reference guides:
 
@@ -175,13 +214,13 @@ docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/.env
 ```bash
 helm upgrade --install sdkwork-api-router deploy/helm/sdkwork-api-router \
   --set image.repository=ghcr.io/your-org/sdkwork-api-router \
-  --set image.tag=2026.04.15 \
+  --set image.tag=2026.04.18 \
   --set secrets.databaseUrl='postgresql://sdkwork:change-me@postgresql:5432/sdkwork_api_router'
 ```
 
 ## Initialization Checklist
 
-- release bundle built for the target platform
+- target platform release inputs built successfully
 - PostgreSQL database created and reachable
 - `router.yaml` reviewed
 - `router.env` secrets replaced

@@ -1,5 +1,6 @@
 pub(crate) const SDKWORK_CONFIG_DIR: &str = "SDKWORK_CONFIG_DIR";
 pub(crate) const SDKWORK_CONFIG_FILE: &str = "SDKWORK_CONFIG_FILE";
+pub(crate) const SDKWORK_WEB_BIND: &str = "SDKWORK_WEB_BIND";
 pub(crate) const SDKWORK_GATEWAY_BIND: &str = "SDKWORK_GATEWAY_BIND";
 pub(crate) const SDKWORK_ADMIN_BIND: &str = "SDKWORK_ADMIN_BIND";
 pub(crate) const SDKWORK_PORTAL_BIND: &str = "SDKWORK_PORTAL_BIND";
@@ -65,7 +66,8 @@ pub(crate) const DEFAULT_BROWSER_ALLOWED_ORIGINS: [&str; 8] = [
     "http://127.0.0.1:5174",
 ];
 
-pub(crate) const MANAGED_ENV_KEYS: [&str; 31] = [
+pub(crate) const MANAGED_ENV_KEYS: [&str; 32] = [
+    SDKWORK_WEB_BIND,
     SDKWORK_GATEWAY_BIND,
     SDKWORK_ADMIN_BIND,
     SDKWORK_PORTAL_BIND,

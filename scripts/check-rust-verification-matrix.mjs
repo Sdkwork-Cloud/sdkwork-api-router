@@ -7,7 +7,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 import { withSupportedWindowsCmakeGenerator } from './run-tauri-cli.mjs';
-import { withManagedWorkspaceTargetDir } from './workspace-target-dir.mjs';
+import { withManagedWorkspaceTargetDir, withManagedWorkspaceTempDir } from './workspace-target-dir.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -53,7 +53,11 @@ function verificationBaseEnv({
 } = {}) {
   const baseEnv = withManagedWorkspaceTargetDir({
     workspaceRoot,
-    env: withSupportedWindowsCmakeGenerator(env, platform),
+    env: withManagedWorkspaceTempDir({
+      workspaceRoot,
+      env: withSupportedWindowsCmakeGenerator(env, platform),
+      platform,
+    }),
     platform,
   });
   return {

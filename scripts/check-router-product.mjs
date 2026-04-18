@@ -11,6 +11,7 @@ import {
   ensureFrontendDependenciesReady,
   frontendViteConfigHealthy,
   pnpmExecutable,
+  pnpmProcessSpec,
 } from './dev/pnpm-launch-lib.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -48,12 +49,17 @@ export function createProductCheckPlan({
   workspaceRoot = path.resolve(__dirname, '..'),
   portalAppDir = path.join(workspaceRoot, 'apps', 'sdkwork-router-portal'),
   adminAppDir = path.join(workspaceRoot, 'apps', 'sdkwork-router-admin'),
+  docsDir = path.join(workspaceRoot, 'docs'),
   platform = process.platform,
   env = process.env,
 } = {}) {
   const nodeCommand = process.execPath;
   const baseEnv = withSupportedWindowsCmakeGenerator(env, platform);
   const rustRunner = resolveRustRunner(platform, env);
+  const docsBuildProcess = pnpmProcessSpec(['--dir', 'docs', 'build'], {
+    platform,
+    execPath: nodeCommand,
+  });
   const cargoArgs = [...rustRunner.args, 'check'];
 
   if (env.SDKWORK_ROUTER_VERBOSE_CARGO !== '1') {
@@ -128,6 +134,15 @@ export function createProductCheckPlan({
       windowsHide: platform === 'win32',
     },
     {
+      label: 'docs site build',
+      command: docsBuildProcess.command,
+      args: docsBuildProcess.args,
+      cwd: workspaceRoot,
+      env: baseEnv,
+      shell: false,
+      windowsHide: platform === 'win32',
+    },
+    {
       label: 'workspace dependency audit',
       command: nodeCommand,
       args: [path.join(workspaceRoot, 'scripts', 'check-rust-dependency-audit.mjs')],
@@ -137,9 +152,9 @@ export function createProductCheckPlan({
       windowsHide: platform === 'win32',
     },
     {
-      label: 'desktop assets build',
+      label: 'portal desktop runtime payload',
       command: nodeCommand,
-      args: [path.join(workspaceRoot, 'scripts', 'build-router-desktop-assets.mjs')],
+      args: [path.join(workspaceRoot, 'scripts', 'prepare-router-portal-desktop-runtime.mjs')],
       cwd: workspaceRoot,
       env: baseEnv,
       shell: false,
@@ -162,6 +177,8 @@ export function createProductCheckPlan({
         '--dry-run',
         '--plan-format',
         'json',
+        '--bind',
+        '127.0.0.1:3001',
       ],
       cwd: portalAppDir,
       env: baseEnv,
@@ -212,6 +229,11 @@ async function main() {
       }),
     });
   }
+  ensureFrontendDependenciesReady({
+    appRoot: path.join(__dirname, '..', 'docs'),
+    requiredPackages: ['vitepress'],
+    requiredBinCommands: ['vitepress'],
+  });
 
   for (const step of plan) {
     console.error(`[check-router-product] ${step.label}`);

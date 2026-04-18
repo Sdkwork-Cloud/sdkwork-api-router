@@ -1,5 +1,7 @@
 # 仓库结构
 
+本页说明工作区如何组织，帮助贡献者在修改前快速找到正确的层级和模块边界。
+
 ## 顶层结构
 
 ```text
@@ -7,7 +9,6 @@
 |-- crates/
 |-- services/
 |-- apps/
-|-- console/
 |-- docs/
 |-- scripts/
 |-- Cargo.toml
@@ -24,9 +25,8 @@
 | `services/portal-api-service` | 独立 `/portal/*` 自助门户二进制 |
 | `services/router-web-service` | 面向公网的 Pingora Web 宿主，负责 admin 与 portal 静态站点分发 |
 | `services/router-product-service` | 服务端模式的一体化产品宿主，统一承载 `/admin/*`、`/portal/*` 与 `/api/*` |
-| `apps/sdkwork-router-admin/` | 独立 admin 浏览器应用与 admin 自有 Tauri 宿主 |
-| `apps/sdkwork-router-portal/` | 独立 portal 浏览器应用、portal 自有 Tauri 宿主与产品入口 |
-| `console/` | 兼容保留的浏览器与 Tauri 控制台外壳，继续参与发布打包 |
+| `apps/sdkwork-router-admin/` | 独立 admin 浏览器应用与显式开发用 Tauri 宿主 |
+| `apps/sdkwork-router-portal/` | 独立 portal 浏览器应用、正式 desktop 宿主与产品入口 |
 | `docs/` | VitePress 文档站 |
 
 ## 后端分层
@@ -40,7 +40,7 @@
 | contracts | `crates/sdkwork-api-contract-*` | API 结构、兼容契约、共享请求响应类型 |
 | provider | `crates/sdkwork-api-provider-*` | 上游适配器与 provider 特定执行 |
 | runtime | `crates/sdkwork-api-app-runtime`、`crates/sdkwork-api-runtime-host`、`crates/sdkwork-api-extension-*` | 运行时加载、监督、扩展 ABI、嵌入宿主 |
-| cross-cutting | `crates/sdkwork-api-config`、`crates/sdkwork-api-observability`、`crates/sdkwork-api-kernel` | 配置、可观测性和运行时胶水层 |
+| cross-cutting | `crates/sdkwork-api-config`、`crates/sdkwork-api-observability`、`crates/sdkwork-api-kernel` | 配置、可观测性与运行时胶水层 |
 
 ## 独立服务
 
@@ -56,11 +56,10 @@
 |---|---|
 | `apps/sdkwork-router-admin/src/` | 独立 admin 根外壳与主题 |
 | `apps/sdkwork-router-admin/packages/` | admin 基础包与业务模块 |
-| `apps/sdkwork-router-admin/src-tauri/` | admin 自有 Tauri 宿主与桌面打包集成 |
+| `apps/sdkwork-router-admin/src-tauri/` | 显式开发用 admin Tauri 宿主与桌面集成 |
 | `apps/sdkwork-router-portal/src/` | 独立 portal 根外壳与主题 |
 | `apps/sdkwork-router-portal/packages/` | portal 基础包与业务模块 |
-| `console/src/` | 兼容保留的控制台应用组合层 |
-| `console/src-tauri/` | console 的 Tauri 宿主与桌面打包集成 |
+| `apps/sdkwork-router-portal/src-tauri/` | 正式 portal desktop 宿主与 sidecar 打包集成 |
 
 ## 文档与运维资产
 
@@ -74,7 +73,7 @@
 ## 常见定位规则
 
 - HTTP 路由改动通常从 `crates/sdkwork-api-interface-*` 开始
-- 路由、计费、provider、执行编排通常继续落到 `crates/sdkwork-api-app-*`
+- 路由、计费、provider 与执行编排通常继续落到 `crates/sdkwork-api-app-*`
 - 策略规则应归入 `crates/sdkwork-api-domain-*`
 - 存储与迁移改动应归入 `crates/sdkwork-api-storage-*`
 - 文档和运维说明统一归入 `docs/`

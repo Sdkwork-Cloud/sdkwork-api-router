@@ -781,10 +781,12 @@ export interface PortalRoutingSummary {
 
 export type PortalProductRuntimeRole = 'web' | 'gateway' | 'admin' | 'portal';
 export type PortalProductRuntimeMode = 'desktop' | 'server';
+export type PortalDesktopRuntimeAccessMode = 'local' | 'shared';
 
 export interface PortalDesktopRuntimeSnapshot {
   mode: PortalProductRuntimeMode;
   roles: PortalProductRuntimeRole[];
+  accessMode: PortalDesktopRuntimeAccessMode;
   publicBaseUrl?: string | null;
   publicBindAddr?: string | null;
   gatewayBindAddr?: string | null;

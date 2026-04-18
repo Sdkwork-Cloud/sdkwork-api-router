@@ -9,7 +9,8 @@ This page maps user-facing capabilities to the workspace modules that implement 
 | gateway | exposes the OpenAI-compatible `/v1/*` surface | `services/gateway-service`, `crates/sdkwork-api-interface-http` |
 | admin control plane | manages tenants, projects, credentials, routing, billing, and runtime operations | `services/admin-api-service`, `crates/sdkwork-api-interface-admin` |
 | public portal | supports registration, login, workspace inspection, and self-service API key issuance | `services/portal-api-service`, `crates/sdkwork-api-interface-portal` |
-| console | browser and desktop UI shell | `console/` |
+| admin app | standalone super-admin browser app and development-owned Tauri shell | `apps/sdkwork-router-admin/` |
+| portal app | standalone self-service browser app and official desktop shell | `apps/sdkwork-router-portal/` |
 | docs | operator and contributor documentation | `docs/` |
 
 ## Core Backend Modules
@@ -51,9 +52,11 @@ This page maps user-facing capabilities to the workspace modules that implement 
 |---|---|
 | `scripts/dev/start-workspace.*` | one-command local startup |
 | `scripts/dev/start-stack.mjs` | backend-only startup |
-| `scripts/dev/start-console.*` | UI-only startup |
+| `scripts/dev/start-admin.mjs` | admin-only startup |
+| `scripts/dev/start-portal.mjs` | portal-only startup |
 | `docs/` | docs site and historical plans |
-| `console/src-tauri/` | desktop packaging and host integration |
+| `apps/sdkwork-router-portal/src-tauri/` | official desktop packaging and sidecar host integration |
+| `apps/sdkwork-router-admin/src-tauri/` | explicit development-only admin desktop host |
 
 ## How Modules Fit Together
 

@@ -94,7 +94,7 @@ Options:
   --install     Run pnpm install before starting
   --preview     Alias for static web-host mode
   --proxy-dev   Proxy admin and portal Vite dev servers instead of serving built static assets
-  --tauri       Build static assets for the admin Tauri host and external Pingora site
+  --tauri       Build static assets for the portal desktop shell and external Pingora site
   --dry-run     Print the commands without running them
   -h, --help    Show this help
 `;

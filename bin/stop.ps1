@@ -17,8 +17,11 @@ $defaultHome = Get-RouterDefaultInstallHome -RepoRoot $repoRoot
 $binaryName = Get-RouterBinaryName -BaseName 'router-product-service'
 
 if ([string]::IsNullOrWhiteSpace($RuntimeHome)) {
+    $manifestHome = Split-Path -Parent $scriptDir
     $siblingBinary = Join-Path $scriptDir $binaryName
-    if (Test-Path $siblingBinary) {
+    if (Test-Path (Join-Path $manifestHome 'release-manifest.json')) {
+        $RuntimeHome = $manifestHome
+    } elseif (Test-Path $siblingBinary) {
         $RuntimeHome = Split-Path -Parent $scriptDir
     } else {
         $RuntimeHome = $defaultHome

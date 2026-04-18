@@ -29,6 +29,7 @@ export async function assertReleaseAttestationVerificationContracts({
       'release-slo-governance',
       'unix-installed-runtime-smoke',
       'windows-installed-runtime-smoke',
+      'release-catalog',
       'release-assets',
     ],
   );

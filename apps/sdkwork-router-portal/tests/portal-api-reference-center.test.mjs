@@ -86,14 +86,14 @@ test('gateway API reference documents coupon-first market and commercial public 
     apiReferencePage,
     /market, coupon, and commercial account workflows/i,
   );
-  assert.match(gatewayApiDoc, /\| market \| `GET \/market\/products`, `GET \/market\/offers`, `POST \/market\/quotes` \|/);
+  assert.match(gatewayApiDoc, /\| `market` \| `GET \/market\/products`, `GET \/market\/offers`, `POST \/market\/quotes` \|/);
   assert.match(
     gatewayApiDoc,
-    /\| marketing \| `POST \/marketing\/coupons\/validate`, `POST \/marketing\/coupons\/reserve`, `POST \/marketing\/coupons\/confirm`, `POST \/marketing\/coupons\/rollback` \|/,
+    /\| `marketing` \| `POST \/marketing\/coupons\/validate`, `POST \/marketing\/coupons\/reserve`, `POST \/marketing\/coupons\/confirm`, `POST \/marketing\/coupons\/rollback` \|/,
   );
   assert.match(
     gatewayApiDoc,
-    /\| commercial \| `GET \/commercial\/account`, `GET \/commercial\/account\/benefit-lots` \|/,
+    /\| `commercial` \| `GET \/commercial\/account`, `GET \/commercial\/account\/benefit-lots` \|/,
   );
   assert.match(gatewayApiDoc, /after_lot_id/);
   assert.match(gatewayApiDoc, /next_after_lot_id/);

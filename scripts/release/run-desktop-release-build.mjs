@@ -24,7 +24,6 @@ const rootDir = path.resolve(__dirname, '..', '..');
 const DESKTOP_APP_DIRS = {
   admin: path.join(rootDir, 'apps', 'sdkwork-router-admin'),
   portal: path.join(rootDir, 'apps', 'sdkwork-router-portal'),
-  console: path.join(rootDir, 'console'),
 };
 
 export function resolveDesktopAppDir(appId) {

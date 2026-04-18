@@ -5,10 +5,11 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1"
-sdkwork-api-config = { path = "../../../crates/sdkwork-api-config" }
-sdkwork-api-product-runtime = { path = "../../../crates/sdkwork-api-product-runtime" }
+getrandom = "0.3.4"
+reqwest = { version = "0.13.2", default-features = false, features = ["blocking"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_yaml = "0.9.34"
 tauri = { version = "2.10.3", features = ["tray-icon"] }
 webbrowser = "1"
 

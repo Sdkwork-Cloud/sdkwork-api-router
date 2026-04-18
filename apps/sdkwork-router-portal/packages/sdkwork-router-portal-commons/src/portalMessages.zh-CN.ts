@@ -339,9 +339,26 @@
   'Launch readiness': '上线就绪度',
   Blocked: '阻塞',
   'Restarting desktop runtime...': '正在重启桌面运行时...',
+  'Applying desktop access mode and restarting the runtime...': '正在应用桌面访问模式并重启运行时...',
   'Minimize window': '最小化窗口',
   'Maximize window': '最大化窗口',
   'Close window': '关闭窗口',
+  'Desktop access': '桌面访问',
+  'Choose whether the bundled router-product-service stays local-only or accepts shared network access on the fixed public port 3001.':
+    '选择内置的 router-product-service 是保持仅本机访问，还是在固定公开端口 3001 上允许局域网共享访问。',
+  'Local-only access': '仅本机访问',
+  'Bind the public desktop router endpoint to 127.0.0.1:3001 so only the local machine can reach the web app and APIs.':
+    '将桌面公开路由入口绑定到 127.0.0.1:3001，使只有本机能够访问 Web 应用和 API。',
+  'Shared network access': '共享网络访问',
+  'Bind the public desktop router endpoint to 0.0.0.0:3001 so remote browsers and API clients on the local network can reach the same router product.':
+    '将桌面公开路由入口绑定到 0.0.0.0:3001，使局域网内的远程浏览器和 API 客户端都可以访问同一个 router 产品。',
+  'Current public bind': '当前公开绑定',
+  'The desktop product keeps the same public port 3001 while allowing remote web and API access.':
+    '桌面产品在保持同一个公开端口 3001 的同时，允许远程 Web 和 API 访问。',
+  'The desktop product keeps the same public port 3001 while restricting access to the local machine.':
+    '桌面产品在保持同一个公开端口 3001 的同时，将访问限制在本机范围内。',
+  'Desktop access controls appear when the portal is running inside the desktop shell.':
+    '仅当 portal 在桌面壳层内运行时，才会显示桌面访问控制项。',
   '{count} API keys': '{count} 个 API 密钥',
   '{count} coupon(s)': '{count} 张优惠券',
   '{count} flagged': '{count} 个已标记',

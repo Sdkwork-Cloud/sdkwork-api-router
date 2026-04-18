@@ -70,7 +70,7 @@ Choose the path that matches what you need right now:
 | portal-api-service | `/portal/*` | self-service auth, workspace, and API key lifecycle |
 | router-web-service | `/admin/*`, `/portal/*`, `/api/*` | Pingora public site delivery and API proxy entry |
 | apps/sdkwork-router-admin | browser or Tauri | standalone super-admin experience |
-| apps/sdkwork-router-portal | browser | standalone developer self-service portal |
+| apps/sdkwork-router-portal | browser or Tauri | standalone developer self-service portal |
 | docs | `/` | VitePress documentation site |
 
 ## Common Local Ports
@@ -102,7 +102,7 @@ Run the full stack from source with raw workspace control:
 node scripts/dev/start-workspace.mjs
 ```
 
-Run the full stack with the desktop shell and shared Pingora host:
+Run the full stack with the portal desktop shell and shared Pingora host:
 
 ```bash
 node scripts/dev/start-workspace.mjs --tauri
@@ -111,7 +111,7 @@ node scripts/dev/start-workspace.mjs --tauri
 Compile the standalone release binaries:
 
 ```bash
-cargo build --release -p admin-api-service -p gateway-service -p portal-api-service
+cargo build --release -p admin-api-service -p gateway-service -p portal-api-service -p router-web-service
 ```
 
 Build the admin app:

@@ -23,6 +23,182 @@ function createTempDir(prefix) {
   return mkdtempSync(path.join(testRuntimeRoot, prefix));
 }
 
+function detectTarFlavorForFixture() {
+  if (process.platform !== 'win32') {
+    return 'default';
+  }
+
+  const result = spawnSync('tar', ['--version'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    shell: false,
+  });
+  if (result.error || result.status !== 0) {
+    return 'unknown';
+  }
+
+  const versionOutput = `${result.stdout ?? ''}\n${result.stderr ?? ''}`.toLowerCase();
+  if (versionOutput.includes('gnu tar')) {
+    return 'gnu';
+  }
+  if (versionOutput.includes('bsdtar') || versionOutput.includes('libarchive')) {
+    return 'bsd';
+  }
+
+  return 'unknown';
+}
+
+function createTarGzArchive(sourceParentDir, entryName, archivePath) {
+  const args = [];
+  if (process.platform === 'win32' && detectTarFlavorForFixture() === 'gnu') {
+    args.push('--force-local');
+  }
+  args.push('-czf', archivePath, '-C', sourceParentDir, entryName);
+
+  const result = spawnSync('tar', args, {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    shell: process.platform === 'win32',
+  });
+
+  assert.equal(
+    result.status,
+    0,
+    result.error?.message || result.stderr || result.stdout || `failed to create tarball ${archivePath}`,
+  );
+}
+
+function createOfficialServerBundleFixture({
+  releaseOutputDir,
+  platform = 'linux',
+  arch = 'x64',
+} = {}) {
+  const bundleDir = path.join(releaseOutputDir, 'native', platform, arch, 'bundles');
+  const baseName = `sdkwork-api-router-product-server-${platform}-${arch}`;
+  const bundleSourceRoot = path.join(releaseOutputDir, 'bundle-source');
+  const bundleRoot = path.join(bundleSourceRoot, baseName);
+  const bundlePath = path.join(bundleDir, `${baseName}.tar.gz`);
+  const bundleManifestPath = path.join(bundleDir, `${baseName}.manifest.json`);
+  const bundleChecksumPath = path.join(bundleDir, `${baseName}.tar.gz.sha256.txt`);
+  const releaseCatalogPath = path.join(releaseOutputDir, 'release-catalog.json');
+
+  mkdirSync(path.join(bundleRoot, 'bin'), { recursive: true });
+  mkdirSync(path.join(bundleRoot, 'sites', 'admin', 'dist'), { recursive: true });
+  mkdirSync(path.join(bundleRoot, 'sites', 'portal', 'dist'), { recursive: true });
+  mkdirSync(path.join(bundleRoot, 'data'), { recursive: true });
+  mkdirSync(path.join(bundleRoot, 'deploy', 'docker'), { recursive: true });
+  mkdirSync(bundleDir, { recursive: true });
+
+  const bundleBinaryName = platform === 'win32'
+    ? 'router-product-service.exe'
+    : 'router-product-service';
+  writeFileSync(
+    path.join(bundleRoot, 'bin', bundleBinaryName),
+    platform === 'win32'
+      ? '@echo off\r\necho bundled router-product-service\r\n'
+      : '#!/usr/bin/env sh\nprintf \'%s\\n\' "bundled router-product-service"\n',
+    'utf8',
+  );
+  writeFileSync(path.join(bundleRoot, 'sites', 'admin', 'dist', 'index.html'), '<html>bundled admin</html>\n', 'utf8');
+  writeFileSync(path.join(bundleRoot, 'sites', 'portal', 'dist', 'index.html'), '<html>bundled portal</html>\n', 'utf8');
+  writeFileSync(path.join(bundleRoot, 'data', 'seed.json'), '{"seed":"bundled"}\n', 'utf8');
+  writeFileSync(path.join(bundleRoot, 'deploy', 'docker', 'docker-compose.yml'), 'services:\n  router:\n    image: sdkwork\n', 'utf8');
+  writeFileSync(
+    path.join(bundleRoot, 'release-manifest.json'),
+    `${JSON.stringify({
+      bundleOrigin: 'test-fixture',
+      bundleVersion: '0.1.0',
+    }, null, 2)}\n`,
+    'utf8',
+  );
+  writeFileSync(path.join(bundleRoot, 'README.txt'), 'Official bundled readme\n', 'utf8');
+
+  createTarGzArchive(bundleSourceRoot, baseName, bundlePath);
+  writeFileSync(
+    bundleManifestPath,
+    `${JSON.stringify({
+      type: 'product-server-archive',
+      productId: 'sdkwork-api-router-product-server',
+      archiveFile: path.basename(bundlePath),
+      checksumFile: path.basename(bundleChecksumPath),
+      sites: ['admin', 'portal'],
+      bootstrapDataRoots: ['data'],
+      deploymentAssetRoots: ['deploy'],
+    }, null, 2)}\n`,
+    'utf8',
+  );
+  writeFileSync(bundleChecksumPath, `sha256  ${path.basename(bundlePath)}\n`, 'utf8');
+  writeFileSync(
+    releaseCatalogPath,
+    `${JSON.stringify({
+      version: 1,
+      type: 'sdkwork-release-catalog',
+      releaseTag: 'fixture-release',
+      generatedAt: '2026-04-18T00:00:00.000Z',
+      productCount: 1,
+      variantCount: 1,
+      products: [
+        {
+          productId: 'sdkwork-api-router-product-server',
+          variants: [
+            {
+              platform,
+              arch,
+              outputDirectory: toPortablePath(path.relative(releaseOutputDir, bundleDir)),
+              variantKind: 'server-archive',
+              primaryFile: path.basename(bundlePath),
+              primaryFileSizeBytes: 0,
+              checksumFile: path.basename(bundleChecksumPath),
+              checksumAlgorithm: 'sha256',
+              manifestFile: path.basename(bundleManifestPath),
+              sha256: 'sha256',
+              manifest: {
+                type: 'product-server-archive',
+                productId: 'sdkwork-api-router-product-server',
+                platform,
+                arch,
+              },
+            },
+          ],
+        },
+      ],
+    }, null, 2)}\n`,
+    'utf8',
+  );
+
+  return {
+    bundlePath,
+    bundleManifestPath,
+    bundleChecksumPath,
+    releaseCatalogPath,
+  };
+}
+
+async function withOfficialServerBundleFixtureContext({
+  releasePlatform = 'linux',
+  arch = 'x64',
+} = {}, callback) {
+  const fixtureRoot = createTempDir(`install-bundle-${releasePlatform}-${arch}-`);
+  const installRoot = path.join(fixtureRoot, 'install');
+  const releaseOutputDir = path.join(fixtureRoot, 'release');
+
+  createOfficialServerBundleFixture({
+    releaseOutputDir,
+    platform: releasePlatform,
+    arch,
+  });
+
+  try {
+    await callback({
+      fixtureRoot,
+      installRoot,
+      releaseOutputDir,
+    });
+  } finally {
+    removeTempRuntimeHome(fixtureRoot);
+  }
+}
+
 function toPortablePath(value) {
   return value.replaceAll('\\', '/');
 }
@@ -457,7 +633,7 @@ function installUnixRuntimeSmokeFixture(runtimeHome) {
   };
 }
 
-test('createReleaseBuildPlan builds release binaries, web apps, and native package output', async () => {
+test('createReleaseBuildPlan builds the official server and portal desktop release products', async () => {
   const module = await loadModule();
 
   const plan = module.createReleaseBuildPlan({
@@ -466,7 +642,6 @@ test('createReleaseBuildPlan builds release binaries, web apps, and native packa
     arch: 'x64',
     installDependencies: false,
     includeDocs: true,
-    includeConsole: true,
   });
 
   assert.equal(plan.target.targetTriple, 'x86_64-unknown-linux-gnu');
@@ -489,8 +664,18 @@ test('createReleaseBuildPlan builds release binaries, web apps, and native packa
   ]);
   assert.equal(plan.steps.some((step) => step.label === 'admin app build'), true);
   assert.equal(plan.steps.some((step) => step.label === 'portal app build'), true);
-  assert.equal(plan.steps.some((step) => step.label === 'console build'), true);
+  assert.equal(plan.steps.some((step) => step.label === 'console build'), false);
   assert.equal(plan.steps.some((step) => step.label === 'docs build'), true);
+  assert.deepEqual(
+    plan.steps
+      .filter((step) => step.label.endsWith('desktop release build'))
+      .map((step) => step.label),
+    ['portal desktop release build'],
+  );
+  assert.equal(
+    plan.steps.some((step) => step.label === 'admin desktop release build'),
+    false,
+  );
   assert.equal(plan.steps.at(-1).label, 'native release package');
   assert.deepEqual(plan.steps.at(-1).args, [
     path.join(repoRoot, 'scripts', 'release', 'package-release-assets.mjs'),
@@ -506,13 +691,134 @@ test('createReleaseBuildPlan builds release binaries, web apps, and native packa
   ]);
 });
 
+test('createReleaseBuildPlan appends packaged release verification steps after native packaging', async () => {
+  const module = await loadModule();
+  const releaseOutputDir = path.join(repoRoot, 'artifacts', 'release-fixture');
+
+  const linuxPlan = module.createReleaseBuildPlan({
+    repoRoot,
+    platform: 'linux',
+    arch: 'x64',
+    installDependencies: false,
+    includeDocs: false,
+    verifyRelease: true,
+    releaseOutputDir,
+  });
+
+  assert.equal(
+    linuxPlan.steps.some((step) => step.label === 'docs build'),
+    true,
+    'verify-release plans must always build the governed docs site even when includeDocs is false',
+  );
+  assert.deepEqual(
+    linuxPlan.steps.slice(-5).map((step) => step.label),
+    [
+      'native release package',
+      'unix installed runtime smoke',
+      'linux docker compose smoke',
+      'linux helm render smoke',
+      'release governance preflight',
+    ],
+  );
+  assert.deepEqual(linuxPlan.steps.at(-4).args, [
+    path.join(repoRoot, 'scripts', 'release', 'run-unix-installed-runtime-smoke.mjs'),
+    '--platform',
+    'linux',
+    '--arch',
+    'x64',
+    '--target',
+    'x86_64-unknown-linux-gnu',
+    '--release-output-dir',
+    releaseOutputDir,
+    '--evidence-path',
+    path.join(repoRoot, 'artifacts', 'release-governance', 'unix-installed-runtime-smoke-linux-x64.json'),
+  ]);
+  assert.deepEqual(linuxPlan.steps.at(-3).args, [
+    path.join(repoRoot, 'scripts', 'release', 'run-linux-docker-compose-smoke.mjs'),
+    '--platform',
+    'linux',
+    '--arch',
+    'x64',
+    '--bundle-path',
+    path.join(
+      releaseOutputDir,
+      'native',
+      'linux',
+      'x64',
+      'bundles',
+      'sdkwork-api-router-product-server-linux-x64.tar.gz',
+    ),
+    '--evidence-path',
+    path.join(repoRoot, 'artifacts', 'release-governance', 'docker-compose-smoke-linux-x64.json'),
+  ]);
+  assert.deepEqual(linuxPlan.steps.at(-2).args, [
+    path.join(repoRoot, 'scripts', 'release', 'run-linux-helm-render-smoke.mjs'),
+    '--platform',
+    'linux',
+    '--arch',
+    'x64',
+    '--bundle-path',
+    path.join(
+      releaseOutputDir,
+      'native',
+      'linux',
+      'x64',
+      'bundles',
+      'sdkwork-api-router-product-server-linux-x64.tar.gz',
+    ),
+    '--evidence-path',
+    path.join(repoRoot, 'artifacts', 'release-governance', 'helm-render-smoke-linux-x64.json'),
+  ]);
+  assert.deepEqual(linuxPlan.steps.at(-1).args, [
+    path.join(repoRoot, 'scripts', 'release', 'run-release-governance-checks.mjs'),
+    '--profile',
+    'preflight',
+  ]);
+
+  const windowsPlan = module.createReleaseBuildPlan({
+    repoRoot,
+    platform: 'win32',
+    arch: 'x64',
+    installDependencies: false,
+    includeDocs: false,
+    verifyRelease: true,
+    releaseOutputDir,
+  });
+
+  assert.deepEqual(
+    windowsPlan.steps.slice(-3).map((step) => step.label),
+    [
+      'native release package',
+      'windows installed runtime smoke',
+      'release governance preflight',
+    ],
+  );
+  assert.deepEqual(windowsPlan.steps.at(-2).args, [
+    path.join(repoRoot, 'scripts', 'release', 'run-windows-installed-runtime-smoke.mjs'),
+    '--platform',
+    'windows',
+    '--arch',
+    'x64',
+    '--target',
+    'x86_64-pc-windows-msvc',
+    '--release-output-dir',
+    releaseOutputDir,
+    '--evidence-path',
+    path.join(repoRoot, 'artifacts', 'release-governance', 'windows-installed-runtime-smoke-windows-x64.json'),
+  ]);
+  assert.deepEqual(windowsPlan.steps.at(-1).args, [
+    path.join(repoRoot, 'scripts', 'release', 'run-release-governance-checks.mjs'),
+    '--profile',
+    'preflight',
+  ]);
+});
+
 test('createReleaseBuildPlan schedules pnpm install when frontend plugin packages are missing from an existing node_modules tree', async () => {
   const module = await loadModule();
   const fixtureRoot = createTempDir('release-build-plan-frontend-health-');
   const appRoots = {
     admin: path.join(fixtureRoot, 'apps', 'sdkwork-router-admin'),
     portal: path.join(fixtureRoot, 'apps', 'sdkwork-router-portal'),
-    console: path.join(fixtureRoot, 'console'),
     docs: path.join(fixtureRoot, 'docs'),
   };
 
@@ -521,7 +827,7 @@ test('createReleaseBuildPlan schedules pnpm install when frontend plugin package
       mkdirSync(appRoot, { recursive: true });
     }
 
-    for (const appKey of ['admin', 'portal', 'console']) {
+    for (const appKey of ['admin', 'portal']) {
       const nodeModulesRoot = path.join(appRoots[appKey], 'node_modules');
       const binRoot = path.join(nodeModulesRoot, '.bin');
       mkdirSync(binRoot, { recursive: true });
@@ -550,10 +856,9 @@ test('createReleaseBuildPlan schedules pnpm install when frontend plugin package
         TEMP: 'C:/Temp',
       },
       includeDocs: false,
-      includeConsole: true,
     });
 
-    for (const label of ['admin app install', 'portal app install', 'console install']) {
+    for (const label of ['admin app install', 'portal app install']) {
       const installStep = plan.steps.find((step) => step.label === label);
       assert.ok(installStep, `expected ${label} when required plugin packages are missing`);
       assert.match(installStep.args[4], /--dir/);
@@ -564,26 +869,61 @@ test('createReleaseBuildPlan schedules pnpm install when frontend plugin package
   }
 });
 
+test('createReleaseBuildPlan rejects the legacy console workspace toggle for programmatic callers', async () => {
+  const module = await loadModule();
+
+  assert.throws(
+    () => module.createReleaseBuildPlan({
+      repoRoot,
+      includeConsole: true,
+    }),
+    /includeConsole is no longer supported/,
+  );
+});
+
 test('createReleaseBuildPlan normalizes broken Windows CMake generator defaults for release cargo builds', async () => {
   const module = await loadModule();
+  const workspaceTargetDirModule = await import(
+    pathToFileURL(path.join(repoRoot, 'scripts', 'workspace-target-dir.mjs')).href,
+  );
+  const managedEnv = {
+    USERPROFILE: 'C:/Users/admin',
+    TEMP: 'C:/Temp',
+    CMAKE_GENERATOR: 'Visual Studio 18 2026',
+  };
+  const defaultTargetDir = workspaceTargetDirModule.resolveWorkspaceTargetDir({
+    workspaceRoot: repoRoot,
+    env: managedEnv,
+    platform: 'win32',
+  });
+  const defaultTempDir = workspaceTargetDirModule.resolveWorkspaceTempDir({
+    workspaceRoot: repoRoot,
+    env: managedEnv,
+    platform: 'win32',
+  });
 
   const plan = module.createReleaseBuildPlan({
     repoRoot,
     platform: 'win32',
     arch: 'x64',
-    env: {
-      USERPROFILE: 'C:/Users/admin',
-      TEMP: 'C:/Temp',
-      CMAKE_GENERATOR: 'Visual Studio 18 2026',
-    },
+    env: managedEnv,
     includeDocs: false,
-    includeConsole: false,
   });
 
   assert.equal(plan.steps[0].env.CMAKE_GENERATOR, 'Visual Studio 17 2022');
   assert.equal(plan.steps[0].env.HOST_CMAKE_GENERATOR, 'Visual Studio 17 2022');
-  assert.match(plan.steps[0].env.CARGO_TARGET_DIR, /^C:\\Temp\\sdkwork-target\\/i);
-  assert.doesNotMatch(plan.steps[0].env.CARGO_TARGET_DIR, /[\\/]bin[\\/]\.sdkwork-target-vs2022/i);
+  assert.equal(
+    String(plan.steps[0].env.CARGO_TARGET_DIR ?? '').replaceAll('\\', '/'),
+    defaultTargetDir.replaceAll('\\', '/'),
+  );
+  assert.equal(
+    String(plan.steps[0].env.TEMP ?? '').replaceAll('\\', '/'),
+    defaultTempDir.replaceAll('\\', '/'),
+  );
+  assert.equal(
+    String(plan.steps[0].env.TMP ?? '').replaceAll('\\', '/'),
+    defaultTempDir.replaceAll('\\', '/'),
+  );
 });
 
 test('createReleaseBuildPlan strips inherited Windows-only CMake generators on non-Windows release cargo builds', async () => {
@@ -599,7 +939,6 @@ test('createReleaseBuildPlan strips inherited Windows-only CMake generators on n
       HOST_CMAKE_GENERATOR: 'Visual Studio 17 2022',
     },
     includeDocs: false,
-    includeConsole: false,
   });
 
   assert.equal(Object.hasOwn(plan.steps[0].env, 'CMAKE_GENERATOR'), false);
@@ -619,7 +958,6 @@ test('createReleaseBuildPlan defaults Windows release cargo builds to a single j
       TEMP: 'C:/Temp',
     },
     includeDocs: false,
-    includeConsole: false,
   });
 
   const jobIndex = plan.steps[0].args.indexOf('-j');
@@ -627,7 +965,7 @@ test('createReleaseBuildPlan defaults Windows release cargo builds to a single j
   assert.equal(plan.steps[0].args[jobIndex + 1], '1');
   assert.equal(plan.steps[0].env.CARGO_BUILD_JOBS, '1');
   assert.equal(
-    plan.steps.find((step) => step.label === 'admin desktop release build')?.env.CARGO_BUILD_JOBS,
+    plan.steps.find((step) => step.label === 'portal desktop release build')?.env.CARGO_BUILD_JOBS,
     '1',
   );
 });
@@ -645,7 +983,6 @@ test('createReleaseBuildPlan respects an explicit Windows cargo job override', a
       CARGO_BUILD_JOBS: '4',
     },
     includeDocs: false,
-    includeConsole: false,
   });
 
   const jobIndex = plan.steps[0].args.indexOf('-j');
@@ -666,7 +1003,6 @@ test('createReleaseBuildPlan uses the shared Windows-safe pnpm launcher for fron
       TEMP: 'C:/Temp',
     },
     includeDocs: true,
-    includeConsole: true,
   });
 
   const adminBuildStep = plan.steps.find((step) => step.label === 'admin app build');
@@ -698,183 +1034,537 @@ test('createReleaseBuildPlan injects the Windows cc-rs reproducible-build workar
       TEMP: 'C:/Temp',
     },
     includeDocs: false,
-    includeConsole: false,
   });
 
   assert.equal(plan.steps[0].env.SDKWORK_CC_DISABLE_BREPRO, '1');
   assert.equal(
-    plan.steps.find((step) => step.label === 'admin desktop release build')?.env.SDKWORK_CC_DISABLE_BREPRO,
+    plan.steps.find((step) => step.label === 'portal desktop release build')?.env.SDKWORK_CC_DISABLE_BREPRO,
     '1',
   );
 });
 
-test('createInstallPlan copies product assets, runtime scripts, and service descriptors into install home', async () => {
+test('createInstallPlan separates stable current control assets from versioned release payloads', async () => {
   const module = await loadModule();
-  const installRoot = path.join(repoRoot, 'artifacts', 'install', 'sdkwork-api-router', 'current');
+  await withOfficialServerBundleFixtureContext({
+    releasePlatform: 'macos',
+    arch: 'x64',
+  }, async ({ installRoot, releaseOutputDir }) => {
+    const currentRoot = path.join(installRoot, 'current');
+    const releaseRoot = path.join(installRoot, 'releases', '0.1.0');
 
-  const plan = module.createInstallPlan({
-    repoRoot,
-    installRoot,
-    platform: 'darwin',
+    const plan = module.createInstallPlan({
+      repoRoot,
+      installRoot,
+      platform: 'darwin',
+      releaseOutputDir,
+    });
+
+    assert.equal(toPortablePath(plan.installRoot), toPortablePath(installRoot));
+    assert.equal(plan.directories.includes(currentRoot), true);
+    assert.equal(plan.directories.includes(path.join(currentRoot, 'bin')), true);
+    assert.equal(plan.directories.includes(path.join(currentRoot, 'bin', 'lib')), true);
+    assert.equal(plan.directories.includes(path.join(currentRoot, 'service', 'systemd')), true);
+    assert.equal(plan.directories.includes(path.join(currentRoot, 'service', 'launchd')), true);
+    assert.equal(plan.directories.includes(path.join(currentRoot, 'service', 'windows-task')), true);
+    assert.equal(plan.directories.includes(path.join(releaseRoot, 'bin')), true);
+    assert.equal(plan.directories.includes(path.join(releaseRoot, 'data')), true);
+    assert.equal(plan.directories.includes(path.join(releaseRoot, 'sites', 'admin')), true);
+    assert.equal(plan.directories.includes(path.join(releaseRoot, 'sites', 'portal')), true);
+    assert.equal(plan.directories.includes(path.join(installRoot, 'config')), true);
+    assert.equal(plan.directories.includes(path.join(installRoot, 'data')), true);
+    assert.equal(plan.directories.includes(path.join(installRoot, 'log')), true);
+    assert.equal(plan.directories.includes(path.join(installRoot, 'run')), true);
+    assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('current', 'bin', 'start.sh'))), true);
+    assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('current', 'bin', 'validate-config.sh'))), true);
+    assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('current', 'bin', 'stop.ps1'))), true);
+    assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('current', 'bin', 'validate-config.ps1'))), true);
+    assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('current', 'service', 'launchd', 'com.sdkwork.api-router.plist'))), true);
+    assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('current', 'service', 'systemd', 'sdkwork-api-router.service'))), true);
+    assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('current', 'service', 'windows-task', 'sdkwork-api-router.xml'))), true);
+    assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('current', 'service', 'systemd', 'install-service.sh'))), true);
+    assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('current', 'service', 'systemd', 'uninstall-service.sh'))), true);
+    assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('current', 'service', 'launchd', 'install-service.sh'))), true);
+    assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('current', 'service', 'launchd', 'uninstall-service.sh'))), true);
+    assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('current', 'service', 'windows-task', 'install-service.ps1'))), true);
+    assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('current', 'service', 'windows-task', 'uninstall-service.ps1'))), true);
+    assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('current', 'release-manifest.json'))), true);
+    assert.equal(
+      plan.files.some((file) =>
+        file.type === 'bundle-directory'
+        && file.bundleEntryPath === 'data'
+        && file.targetPath === path.join(releaseRoot, 'data')),
+      true,
+    );
+    assert.equal(
+      plan.files.some((file) =>
+        file.type === 'bundle-directory'
+        && file.bundleEntryPath === toPortablePath(path.join('sites', 'admin', 'dist'))
+        && file.targetPath.endsWith(path.join('releases', '0.1.0', 'sites', 'admin', 'dist'))),
+      true,
+    );
+    assert.equal(
+      plan.files.some((file) =>
+        file.type === 'bundle-directory'
+        && file.bundleEntryPath === toPortablePath(path.join('sites', 'portal', 'dist'))
+        && file.targetPath.endsWith(path.join('releases', '0.1.0', 'sites', 'portal', 'dist'))),
+      true,
+    );
+    assert.equal(
+      plan.files.some((file) =>
+        file.type === 'bundle-directory'
+        && file.bundleEntryPath === 'deploy'
+        && file.targetPath.endsWith(path.join('releases', '0.1.0', 'deploy'))),
+      true,
+    );
+    assert.equal(
+      plan.files.some((file) =>
+        file.type === 'bundle-file'
+        && file.bundleEntryPath === 'release-manifest.json'
+        && file.targetPath.endsWith(path.join('releases', '0.1.0', 'release-manifest.json'))),
+      true,
+    );
+    assert.equal(
+      plan.files.some((file) =>
+        file.type === 'bundle-file'
+        && file.bundleEntryPath === 'README.txt'
+        && file.targetPath.endsWith(path.join('releases', '0.1.0', 'README.txt'))),
+      true,
+    );
+    assert.equal(
+      plan.files
+        .filter((file) => file.targetPath.startsWith(releaseRoot))
+        .every((file) => file.type === 'bundle-file' || file.type === 'bundle-directory'),
+      true,
+    );
   });
-
-  assert.equal(plan.directories.includes(path.join(installRoot, 'bin')), true);
-  assert.equal(plan.directories.includes(path.join(installRoot, 'data')), true);
-  assert.equal(plan.directories.includes(path.join(installRoot, 'sites', 'admin')), true);
-  assert.equal(plan.directories.includes(path.join(installRoot, 'sites', 'portal')), true);
-  assert.equal(plan.directories.includes(path.join(installRoot, 'var', 'log')), true);
-  assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('bin', 'start.sh'))), true);
-  assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('bin', 'validate-config.sh'))), true);
-  assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('bin', 'stop.ps1'))), true);
-  assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('bin', 'validate-config.ps1'))), true);
-  assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('service', 'launchd', 'com.sdkwork.api-router.plist'))), true);
-  assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('service', 'systemd', 'sdkwork-api-router.service'))), true);
-  assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('service', 'windows-task', 'sdkwork-api-router.xml'))), true);
-  assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('service', 'systemd', 'install-service.sh'))), true);
-  assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('service', 'systemd', 'uninstall-service.sh'))), true);
-  assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('service', 'launchd', 'install-service.sh'))), true);
-  assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('service', 'launchd', 'uninstall-service.sh'))), true);
-  assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('service', 'windows-task', 'install-service.ps1'))), true);
-  assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('service', 'windows-task', 'uninstall-service.ps1'))), true);
-  assert.equal(
-    plan.files.some((file) =>
-      file.type === 'directory'
-      && file.sourcePath === path.join(repoRoot, 'data')
-      && file.targetPath === path.join(installRoot, 'data')),
-    true,
-  );
-  assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('sites', 'admin', 'dist'))), true);
-  assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('sites', 'portal', 'dist'))), true);
 });
 
 test('createInstallPlan keeps portable mode on the repo-local install root', async () => {
   const module = await loadModule();
-  const plan = module.createInstallPlan({
-    repoRoot,
-    mode: 'portable',
-    platform: 'linux',
-  });
+  await withOfficialServerBundleFixtureContext({
+    releasePlatform: 'linux',
+    arch: 'x64',
+  }, async ({ releaseOutputDir }) => {
+    const plan = module.createInstallPlan({
+      repoRoot,
+      mode: 'portable',
+      platform: 'linux',
+      releaseOutputDir,
+    });
 
-  assert.equal(plan.mode, 'portable');
-  assert.equal(
-    toPortablePath(plan.directories[0]),
-    `${toPortablePath(repoRoot)}/artifacts/install/sdkwork-api-router/current`,
-  );
-  assert.equal(
-    plan.files.some((file) => toPortablePath(file.targetPath) === `${toPortablePath(plan.directories[0])}/config/router.env`),
-    true,
-  );
+    assert.equal(plan.mode, 'portable');
+    assert.equal(
+      toPortablePath(plan.installRoot),
+      `${toPortablePath(repoRoot)}/artifacts/install/sdkwork-api-router`,
+    );
+    assert.equal(
+      plan.files.some((file) => toPortablePath(file.targetPath) === `${toPortablePath(plan.installRoot)}/config/router.env`),
+      true,
+    );
+    assert.equal(
+      plan.files.some((file) => toPortablePath(file.targetPath) === `${toPortablePath(plan.installRoot)}/current/release-manifest.json`),
+      true,
+    );
+  });
 });
 
 test('createInstallPlan system mode emits linux standard program, config, and state directories', async () => {
   const module = await loadModule();
-  const plan = module.createInstallPlan({
-    repoRoot,
-    mode: 'system',
-    platform: 'linux',
-  });
-  const directories = plan.directories.map((directoryPath) => toPortablePath(directoryPath));
-  const targetFiles = plan.files.map((file) => toPortablePath(file.targetPath));
+  await withOfficialServerBundleFixtureContext({
+    releasePlatform: 'linux',
+    arch: 'x64',
+  }, async ({ releaseOutputDir }) => {
+    const plan = module.createInstallPlan({
+      repoRoot,
+      mode: 'system',
+      platform: 'linux',
+      releaseOutputDir,
+    });
+    const directories = plan.directories.map((directoryPath) => toPortablePath(directoryPath));
+    const targetFiles = plan.files.map((file) => toPortablePath(file.targetPath));
 
-  assert.equal(plan.mode, 'system');
-  assert.equal(directories.includes('/opt/sdkwork-api-router/current'), true);
-  assert.equal(directories.includes('/etc/sdkwork-api-router'), true);
-  assert.equal(directories.includes('/etc/sdkwork-api-router/conf.d'), true);
-  assert.equal(directories.includes('/var/lib/sdkwork-api-router'), true);
-  assert.equal(directories.includes('/var/log/sdkwork-api-router'), true);
-  assert.equal(directories.includes('/run/sdkwork-api-router'), true);
-  assert.equal(targetFiles.includes('/etc/sdkwork-api-router/router.yaml'), true);
-  assert.equal(targetFiles.includes('/etc/sdkwork-api-router/router.env'), true);
-  assert.equal(targetFiles.includes('/etc/sdkwork-api-router/router.env.example'), true);
+    assert.equal(plan.mode, 'system');
+    assert.equal(directories.includes('/opt/sdkwork-api-router'), true);
+    assert.equal(directories.includes('/opt/sdkwork-api-router/current'), true);
+    assert.equal(directories.includes('/opt/sdkwork-api-router/releases/0.1.0'), true);
+    assert.equal(directories.includes('/etc/sdkwork-api-router'), true);
+    assert.equal(directories.includes('/etc/sdkwork-api-router/conf.d'), true);
+    assert.equal(directories.includes('/var/lib/sdkwork-api-router'), true);
+    assert.equal(directories.includes('/var/log/sdkwork-api-router'), true);
+    assert.equal(directories.includes('/run/sdkwork-api-router'), true);
+    assert.equal(targetFiles.includes('/etc/sdkwork-api-router/router.yaml'), true);
+    assert.equal(targetFiles.includes('/etc/sdkwork-api-router/router.env'), true);
+    assert.equal(targetFiles.includes('/etc/sdkwork-api-router/router.env.example'), true);
+    assert.equal(targetFiles.includes('/opt/sdkwork-api-router/current/release-manifest.json'), true);
+
+    const routerConfigFile = plan.files.find(
+      (file) => toPortablePath(file.targetPath) === '/etc/sdkwork-api-router/router.yaml',
+    );
+    assert.ok(routerConfigFile, 'expected system install plan to render router.yaml');
+    assert.equal(routerConfigFile.type, 'text');
+    assert.match(routerConfigFile.contents, /web_bind: "0\.0\.0\.0:3001"/);
+  });
 });
 
 test('createInstallPlan system mode publishes formal service assets alongside windows-task compatibility assets', async () => {
   const module = await loadModule();
-  const plan = module.createInstallPlan({
-    repoRoot,
-    mode: 'system',
-    platform: 'win32',
-    env: {
-      ProgramFiles: 'C:/Program Files',
-      ProgramData: 'C:/ProgramData',
-      USERPROFILE: 'C:/Users/admin',
-      TEMP: 'C:/Temp',
-    },
-  });
-  const targetFiles = plan.files.map((file) => toPortablePath(file.targetPath));
-
-  assert.equal(targetFiles.some((targetPath) => targetPath.endsWith('/service/systemd/sdkwork-api-router.service')), true);
-  assert.equal(targetFiles.some((targetPath) => targetPath.endsWith('/service/launchd/com.sdkwork.api-router.plist')), true);
-  assert.equal(targetFiles.some((targetPath) => targetPath.endsWith('/service/windows-service/install-service.ps1')), true);
-  assert.equal(targetFiles.some((targetPath) => targetPath.endsWith('/service/windows-service/uninstall-service.ps1')), true);
-  assert.equal(targetFiles.some((targetPath) => targetPath.endsWith('/service/windows-service/run-service.ps1')), true);
-  assert.equal(targetFiles.some((targetPath) => targetPath.endsWith('/service/windows-task/sdkwork-api-router.xml')), true);
-});
-
-test('createInstallPlan reads release binaries from the managed short Windows target directory when needed', async () => {
-  const module = await loadModule();
-  const installRoot = path.join(repoRoot, 'artifacts', 'install', 'sdkwork-api-router', 'current');
-
-  const plan = module.createInstallPlan({
-    repoRoot,
-    installRoot,
-    platform: 'win32',
-    env: {
-      USERPROFILE: 'C:/Users/admin',
-      TEMP: 'C:/Temp',
-    },
-  });
-
-  const binaryCopy = plan.files.find((file) => file.targetPath.endsWith(path.join('bin', 'router-product-service.exe')));
-  assert.ok(binaryCopy, 'expected router-product-service.exe copy entry');
-  assert.match(binaryCopy.sourcePath, /^C:\\Temp\\sdkwork-target\\/i);
-  assert.match(binaryCopy.sourcePath, /x86_64-pc-windows-msvc[\\/]release[\\/]router-product-service\.exe$/i);
-});
-
-test('createInstallPlan treats normalized windows platform ids as Windows executable layouts', async () => {
-  const module = await loadModule();
-  const installRoot = path.join(repoRoot, 'artifacts', 'install', 'sdkwork-api-router', 'current');
-
-  const plan = module.createInstallPlan({
-    repoRoot,
-    installRoot,
-    platform: 'windows',
+  await withOfficialServerBundleFixtureContext({
+    releasePlatform: 'windows',
     arch: 'x64',
-    env: {
-      USERPROFILE: 'C:/Users/admin',
-      TEMP: 'C:/Temp',
-    },
+  }, async ({ releaseOutputDir }) => {
+    const plan = module.createInstallPlan({
+      repoRoot,
+      mode: 'system',
+      platform: 'win32',
+      releaseOutputDir,
+      env: {
+        ProgramFiles: 'C:/Program Files',
+        ProgramData: 'C:/ProgramData',
+        USERPROFILE: 'C:/Users/admin',
+        TEMP: 'C:/Temp',
+      },
+    });
+    const targetFiles = plan.files.map((file) => toPortablePath(file.targetPath));
+
+    assert.equal(targetFiles.some((targetPath) => targetPath.endsWith('/service/systemd/sdkwork-api-router.service')), true);
+    assert.equal(targetFiles.some((targetPath) => targetPath.endsWith('/service/launchd/com.sdkwork.api-router.plist')), true);
+    assert.equal(targetFiles.some((targetPath) => targetPath.endsWith('/service/windows-service/install-service.ps1')), true);
+    assert.equal(targetFiles.some((targetPath) => targetPath.endsWith('/service/windows-service/uninstall-service.ps1')), true);
+    assert.equal(targetFiles.some((targetPath) => targetPath.endsWith('/service/windows-service/run-service.ps1')), true);
+    assert.equal(targetFiles.some((targetPath) => targetPath.endsWith('/service/windows-task/sdkwork-api-router.xml')), true);
+  });
+});
+
+test('createInstallPlan resolves the packaged Windows server bundle as the install payload source', async () => {
+  const module = await loadModule();
+  await withOfficialServerBundleFixtureContext({
+    releasePlatform: 'windows',
+    arch: 'x64',
+  }, async ({ installRoot, releaseOutputDir }) => {
+    const plan = module.createInstallPlan({
+      repoRoot,
+      installRoot,
+      platform: 'win32',
+      releaseOutputDir,
+      env: {
+        USERPROFILE: 'C:/Users/admin',
+        TEMP: 'C:/Temp',
+      },
+    });
+
+    const binaryCopy = plan.files.find((file) =>
+      file.type === 'bundle-directory'
+      && file.bundleEntryPath === 'bin'
+      && file.targetPath.endsWith(path.join('releases', '0.1.0', 'bin')));
+    assert.ok(binaryCopy, 'expected packaged bundle bin entry');
+    assert.equal(
+      toPortablePath(binaryCopy.bundlePath),
+      `${toPortablePath(releaseOutputDir)}/native/windows/x64/bundles/sdkwork-api-router-product-server-windows-x64.tar.gz`,
+    );
+    assert.equal(
+      toPortablePath(binaryCopy.bundleManifestPath),
+      `${toPortablePath(releaseOutputDir)}/native/windows/x64/bundles/sdkwork-api-router-product-server-windows-x64.manifest.json`,
+    );
+    assert.equal(
+      toPortablePath(binaryCopy.releaseCatalogPath),
+      `${toPortablePath(releaseOutputDir)}/release-catalog.json`,
+    );
+  });
+});
+
+test('createInstallPlan treats normalized windows platform ids as packaged Windows bundle layouts', async () => {
+  const module = await loadModule();
+  await withOfficialServerBundleFixtureContext({
+    releasePlatform: 'windows',
+    arch: 'x64',
+  }, async ({ installRoot, releaseOutputDir }) => {
+    const plan = module.createInstallPlan({
+      repoRoot,
+      installRoot,
+      platform: 'windows',
+      arch: 'x64',
+      releaseOutputDir,
+      env: {
+        USERPROFILE: 'C:/Users/admin',
+        TEMP: 'C:/Temp',
+      },
+    });
+
+    const binaryCopy = plan.files.find((file) =>
+      file.type === 'bundle-directory'
+      && file.bundleEntryPath === 'bin'
+      && file.targetPath.endsWith(path.join('releases', '0.1.0', 'bin')));
+    assert.ok(binaryCopy, 'expected packaged bundle bin entry for normalized windows platform ids');
+    assert.equal(
+      toPortablePath(binaryCopy.bundlePath),
+      `${toPortablePath(releaseOutputDir)}/native/windows/x64/bundles/sdkwork-api-router-product-server-windows-x64.tar.gz`,
+    );
+  });
+});
+
+test('createInstallPlan requires a matching release-catalog entry to resolve the official server bundle', async () => {
+  const module = await loadModule();
+  const fixtureRoot = createTempDir('install-plan-catalog-resolve-');
+  const installRoot = path.join(fixtureRoot, 'install');
+  const releaseOutputDir = path.join(fixtureRoot, 'release');
+  const releaseCatalogPath = path.join(releaseOutputDir, 'release-catalog.json');
+
+  try {
+    createOfficialServerBundleFixture({
+      releaseOutputDir,
+      platform: 'linux',
+      arch: 'x64',
+    });
+
+    writeFileSync(
+      releaseCatalogPath,
+      `${JSON.stringify({
+        version: 1,
+        type: 'sdkwork-release-catalog',
+        releaseTag: 'fixture-release',
+        generatedAt: '2026-04-18T00:00:00.000Z',
+        productCount: 1,
+        variantCount: 1,
+        products: [
+          {
+            productId: 'sdkwork-router-portal-desktop',
+            variants: [
+              {
+                platform: 'linux',
+                arch: 'x64',
+                outputDirectory: 'native/linux/x64/desktop/portal',
+                variantKind: 'desktop-installer',
+                primaryFile: 'sdkwork-router-portal-desktop-linux-x64.AppImage',
+                checksumFile: 'sdkwork-router-portal-desktop-linux-x64.AppImage.sha256.txt',
+                checksumAlgorithm: 'sha256',
+                manifestFile: 'sdkwork-router-portal-desktop-linux-x64.manifest.json',
+                sha256: 'desktopdigest',
+                manifest: {
+                  type: 'portal-desktop-installer',
+                  productId: 'sdkwork-router-portal-desktop',
+                  platform: 'linux',
+                  arch: 'x64',
+                },
+              },
+            ],
+          },
+        ],
+      }, null, 2)}\n`,
+      'utf8',
+    );
+
+    assert.throws(
+      () => module.createInstallPlan({
+        repoRoot,
+        installRoot,
+        platform: 'linux',
+        arch: 'x64',
+        releaseOutputDir,
+      }),
+      /Missing release-catalog variant for sdkwork-api-router-product-server\/server-archive\/linux\/x64:/,
+    );
+  } finally {
+    removeTempRuntimeHome(fixtureRoot);
+  }
+});
+
+test('assertInstallInputsExist requires the packaged bundle checksum for bundle-backed install plans', async () => {
+  const module = await loadModule();
+  const fixtureRoot = createTempDir('install-bundle-inputs-');
+  const installRoot = path.join(fixtureRoot, 'install');
+  const releaseOutputDir = path.join(fixtureRoot, 'release');
+  const { bundleChecksumPath } = createOfficialServerBundleFixture({
+    releaseOutputDir,
+    platform: 'linux',
+    arch: 'x64',
   });
 
-  const binaryCopy = plan.files.find((file) => file.targetPath.endsWith(path.join('bin', 'router-product-service.exe')));
-  assert.ok(binaryCopy, 'expected router-product-service.exe copy entry for normalized windows platform ids');
-  assert.match(binaryCopy.sourcePath, /^C:\\Temp\\sdkwork-target\\/i);
-  assert.match(binaryCopy.sourcePath, /x86_64-pc-windows-msvc[\\/]release[\\/]router-product-service\.exe$/i);
+  try {
+    const plan = module.createInstallPlan({
+      repoRoot,
+      installRoot,
+      platform: 'linux',
+      arch: 'x64',
+      releaseOutputDir,
+    });
+
+    assert.doesNotThrow(() => module.assertInstallInputsExist(plan));
+
+    rmSync(bundleChecksumPath, { force: true });
+    assert.throws(
+      () => module.assertInstallInputsExist(plan),
+      /Missing install bundle checksum file:/,
+    );
+  } finally {
+    removeTempRuntimeHome(fixtureRoot);
+  }
+});
+
+test('assertInstallInputsExist requires a matching release-catalog entry for bundle-backed install plans', async () => {
+  const module = await loadModule();
+  const fixtureRoot = createTempDir('install-bundle-catalog-');
+  const installRoot = path.join(fixtureRoot, 'install');
+  const releaseOutputDir = path.join(fixtureRoot, 'release');
+  const { releaseCatalogPath } = createOfficialServerBundleFixture({
+    releaseOutputDir,
+    platform: 'linux',
+    arch: 'x64',
+  });
+
+  try {
+    const plan = module.createInstallPlan({
+      repoRoot,
+      installRoot,
+      platform: 'linux',
+      arch: 'x64',
+      releaseOutputDir,
+    });
+
+    assert.doesNotThrow(() => module.assertInstallInputsExist(plan));
+
+    writeFileSync(
+      releaseCatalogPath,
+      `${JSON.stringify({
+        version: 1,
+        type: 'sdkwork-release-catalog',
+        releaseTag: 'fixture-release',
+        generatedAt: '2026-04-18T00:00:00.000Z',
+        productCount: 1,
+        variantCount: 1,
+        products: [
+          {
+            productId: 'sdkwork-api-router-product-server',
+            variants: [
+              {
+                platform: 'linux',
+                arch: 'x64',
+                outputDirectory: 'native/linux/x64/bundles',
+                variantKind: 'server-archive',
+                primaryFile: 'wrong-server-bundle.tar.gz',
+                checksumFile: 'wrong-server-bundle.tar.gz.sha256.txt',
+                checksumAlgorithm: 'sha256',
+                manifestFile: 'wrong-server-bundle.manifest.json',
+                sha256: 'sha256',
+                manifest: {
+                  type: 'product-server-archive',
+                  productId: 'sdkwork-api-router-product-server',
+                  platform: 'linux',
+                  arch: 'x64',
+                },
+              },
+            ],
+          },
+        ],
+      }, null, 2)}\n`,
+      'utf8',
+    );
+
+    assert.throws(
+      () => module.assertInstallInputsExist(plan),
+      /Missing install bundle release-catalog entry:/,
+    );
+  } finally {
+    removeTempRuntimeHome(fixtureRoot);
+  }
+});
+
+test('applyInstallPlan materializes the versioned payload from the packaged server bundle', async () => {
+  const module = await loadModule();
+  const fixtureRoot = createTempDir('install-bundle-apply-');
+  const installRoot = path.join(fixtureRoot, 'install');
+  const releaseOutputDir = path.join(fixtureRoot, 'release');
+
+  try {
+    createOfficialServerBundleFixture({
+      releaseOutputDir,
+      platform: 'linux',
+      arch: 'x64',
+    });
+
+    const plan = module.createInstallPlan({
+      repoRoot,
+      installRoot,
+      platform: 'linux',
+      arch: 'x64',
+      releaseOutputDir,
+    });
+
+    module.assertInstallInputsExist(plan);
+    module.applyInstallPlan(plan, { force: true });
+
+    const releaseRoot = path.join(installRoot, 'releases', '0.1.0');
+    const currentRoot = path.join(installRoot, 'current');
+    const currentManifestPath = path.join(currentRoot, 'release-manifest.json');
+    const releasePayloadManifestPath = path.join(releaseRoot, 'release-manifest.json');
+    const releasePayloadReadmePath = path.join(releaseRoot, 'README.txt');
+    const currentManifest = JSON.parse(readFileSync(currentManifestPath, 'utf8'));
+    const releasePayloadManifest = JSON.parse(readFileSync(releasePayloadManifestPath, 'utf8'));
+
+    assert.equal(existsSync(path.join(currentRoot, 'bin', 'start.sh')), true);
+    assert.equal(
+      readFileSync(path.join(releaseRoot, 'sites', 'admin', 'dist', 'index.html'), 'utf8'),
+      '<html>bundled admin</html>\n',
+    );
+    assert.equal(
+      readFileSync(path.join(releaseRoot, 'sites', 'portal', 'dist', 'index.html'), 'utf8'),
+      '<html>bundled portal</html>\n',
+    );
+    assert.equal(
+      readFileSync(path.join(releaseRoot, 'data', 'seed.json'), 'utf8'),
+      '{"seed":"bundled"}\n',
+    );
+    assert.equal(
+      readFileSync(path.join(releaseRoot, 'deploy', 'docker', 'docker-compose.yml'), 'utf8'),
+      'services:\n  router:\n    image: sdkwork\n',
+    );
+    assert.equal(readFileSync(releasePayloadReadmePath, 'utf8'), 'Official bundled readme\n');
+    assert.equal(releasePayloadManifest.bundleOrigin, 'test-fixture');
+    assert.equal(
+      toPortablePath(currentManifest.releasePayloadManifest),
+      toPortablePath(releasePayloadManifestPath),
+    );
+    assert.equal(
+      toPortablePath(currentManifest.releasePayloadReadmeFile),
+      toPortablePath(releasePayloadReadmePath),
+    );
+    assert.equal(
+      toPortablePath(currentManifest.deploymentAssetRoot),
+      toPortablePath(path.join(releaseRoot, 'deploy')),
+    );
+    assert.equal(
+      toPortablePath(currentManifest.bootstrapDataRoot),
+      toPortablePath(path.join(releaseRoot, 'data')),
+    );
+  } finally {
+    removeTempRuntimeHome(fixtureRoot);
+  }
 });
 
 test('renderRuntimeEnvTemplate defaults release runtime to writable local data and product server-mode ports', async () => {
   const module = await loadModule();
-  const installRoot = '/opt/sdkwork-api-router/current';
+  const installRoot = '/opt/sdkwork-api-router';
 
   const envFile = module.renderRuntimeEnvTemplate({
     installRoot,
     platform: 'linux',
   });
 
-  assert.match(envFile, /SDKWORK_CONFIG_DIR="\/opt\/sdkwork-api-router\/current\/config"/);
-  assert.match(envFile, /SDKWORK_DATABASE_URL="sqlite:\/\/\/opt\/sdkwork-api-router\/current\/var\/data\/sdkwork-api-router\.db"/);
+  assert.match(envFile, /SDKWORK_CONFIG_DIR="\/opt\/sdkwork-api-router\/config"/);
+  assert.match(envFile, /SDKWORK_CONFIG_FILE="\/opt\/sdkwork-api-router\/config\/router\.yaml"/);
+  assert.match(envFile, /SDKWORK_DATABASE_URL="sqlite:\/\/\/opt\/sdkwork-api-router\/data\/sdkwork-api-router\.db"/);
   assert.match(envFile, /SDKWORK_WEB_BIND="0\.0\.0\.0:3001"/);
   assert.match(envFile, /SDKWORK_GATEWAY_BIND="127\.0\.0\.1:8080"/);
   assert.match(envFile, /SDKWORK_ADMIN_BIND="127\.0\.0\.1:8081"/);
   assert.match(envFile, /SDKWORK_PORTAL_BIND="127\.0\.0\.1:8082"/);
-  assert.match(envFile, /SDKWORK_ADMIN_SITE_DIR="\/opt\/sdkwork-api-router\/current\/sites\/admin\/dist"/);
-  assert.match(envFile, /SDKWORK_PORTAL_SITE_DIR="\/opt\/sdkwork-api-router\/current\/sites\/portal\/dist"/);
+  assert.doesNotMatch(envFile, /SDKWORK_ADMIN_SITE_DIR=/);
+  assert.doesNotMatch(envFile, /SDKWORK_PORTAL_SITE_DIR=/);
+  assert.doesNotMatch(envFile, /SDKWORK_ROUTER_BINARY=/);
 });
 
 test('renderRuntimeEnvTemplate system mode prefers config-file discovery and PostgreSQL placeholders', async () => {
   const module = await loadModule();
   const envFile = module.renderRuntimeEnvTemplate({
-    installRoot: '/opt/sdkwork-api-router/current',
+    installRoot: '/opt/sdkwork-api-router',
     mode: 'system',
     platform: 'linux',
   });
@@ -882,8 +1572,9 @@ test('renderRuntimeEnvTemplate system mode prefers config-file discovery and Pos
   assert.match(envFile, /SDKWORK_CONFIG_DIR="\/etc\/sdkwork-api-router"/);
   assert.match(envFile, /SDKWORK_CONFIG_FILE="\/etc\/sdkwork-api-router\/router\.yaml"/);
   assert.match(envFile, /SDKWORK_DATABASE_URL="postgresql:\/\/sdkwork:change-me@127\.0\.0\.1:5432\/sdkwork_api_router"/);
-  assert.match(envFile, /SDKWORK_ADMIN_SITE_DIR="\/opt\/sdkwork-api-router\/current\/sites\/admin\/dist"/);
-  assert.match(envFile, /SDKWORK_PORTAL_SITE_DIR="\/opt\/sdkwork-api-router\/current\/sites\/portal\/dist"/);
+  assert.doesNotMatch(envFile, /SDKWORK_ADMIN_SITE_DIR=/);
+  assert.doesNotMatch(envFile, /SDKWORK_PORTAL_SITE_DIR=/);
+  assert.doesNotMatch(envFile, /SDKWORK_ROUTER_BINARY=/);
   assert.doesNotMatch(envFile, /sqlite:\/\/\/opt\/sdkwork-api-router\/current\/var\/data\/sdkwork-api-router\.db/);
 });
 
@@ -904,7 +1595,7 @@ test('production start scripts default to product server-mode binds instead of m
 
 test('service descriptors start the production runtime in foreground mode from the installed home', async () => {
   const module = await loadModule();
-  const installRoot = '/opt/sdkwork-api-router/current';
+  const installRoot = '/opt/sdkwork-api-router';
 
   const systemdUnit = module.renderSystemdUnit({
     installRoot,
@@ -915,12 +1606,12 @@ test('service descriptors start the production runtime in foreground mode from t
     serviceName: 'com.sdkwork.api-router',
   });
   const windowsTaskXml = module.renderWindowsTaskXml({
-    installRoot: 'C:/sdkwork/api-router/current',
+    installRoot: 'C:/sdkwork/api-router',
     taskName: 'sdkwork-api-router',
   });
 
   assert.match(systemdUnit, /ExecStart="\/opt\/sdkwork-api-router\/current\/bin\/start\.sh" --foreground --home "\/opt\/sdkwork-api-router\/current"/);
-  assert.match(systemdUnit, /EnvironmentFile=-\/opt\/sdkwork-api-router\/current\/config\/router\.env/);
+  assert.match(systemdUnit, /EnvironmentFile=-\/opt\/sdkwork-api-router\/config\/router\.env/);
   assert.match(systemdUnit, /WorkingDirectory=\/opt\/sdkwork-api-router\/current/);
 
   assert.match(launchdPlist, /<string>\/opt\/sdkwork-api-router\/current\/bin\/start\.sh<\/string>/);
@@ -936,7 +1627,7 @@ test('service descriptors start the production runtime in foreground mode from t
 
 test('rendered runtime env and systemd unit safely handle install roots with spaces', async () => {
   const module = await loadModule();
-  const installRoot = '/opt/sdkwork router/current build';
+  const installRoot = '/opt/sdkwork router';
 
   const envFile = module.renderRuntimeEnvTemplate({
     installRoot,
@@ -947,14 +1638,14 @@ test('rendered runtime env and systemd unit safely handle install roots with spa
     serviceName: 'sdkwork-api-router',
   });
 
-  assert.match(envFile, /^SDKWORK_CONFIG_DIR="\/opt\/sdkwork router\/current build\/config"$/m);
-  assert.match(envFile, /^SDKWORK_DATABASE_URL="sqlite:\/\/\/opt\/sdkwork router\/current build\/var\/data\/sdkwork-api-router\.db"$/m);
-  assert.match(envFile, /^SDKWORK_ADMIN_SITE_DIR="\/opt\/sdkwork router\/current build\/sites\/admin\/dist"$/m);
-  assert.match(envFile, /^SDKWORK_ROUTER_BINARY="\/opt\/sdkwork router\/current build\/bin\/router-product-service"$/m);
+  assert.match(envFile, /^SDKWORK_CONFIG_DIR="\/opt\/sdkwork router\/config"$/m);
+  assert.match(envFile, /^SDKWORK_DATABASE_URL="sqlite:\/\/\/opt\/sdkwork router\/data\/sdkwork-api-router\.db"$/m);
+  assert.doesNotMatch(envFile, /^SDKWORK_ADMIN_SITE_DIR=/m);
+  assert.doesNotMatch(envFile, /^SDKWORK_ROUTER_BINARY=/m);
 
-  assert.match(systemdUnit, /WorkingDirectory=\/opt\/sdkwork\\ router\/current\\ build/);
-  assert.match(systemdUnit, /EnvironmentFile=-\/opt\/sdkwork\\ router\/current\\ build\/config\/router\.env/);
-  assert.match(systemdUnit, /ExecStart="\/opt\/sdkwork router\/current build\/bin\/start\.sh" --foreground --home "\/opt\/sdkwork router\/current build"/);
+  assert.match(systemdUnit, /WorkingDirectory=\/opt\/sdkwork\\ router\/current/);
+  assert.match(systemdUnit, /EnvironmentFile=-\/opt\/sdkwork\\ router\/config\/router\.env/);
+  assert.match(systemdUnit, /ExecStart="\/opt\/sdkwork router\/current\/bin\/start\.sh" --foreground --home "\/opt\/sdkwork router\/current"/);
 });
 
 test('generated systemd service helper scripts execute against stubbed tools in a writable directory', { skip: process.platform === 'win32' }, async () => {
@@ -1214,6 +1905,51 @@ test('router-ops install rejects --home without a following value', () => {
   });
 });
 
+test('router-ops build defaults to the official release inputs without the legacy console workspace', () => {
+  return loadRouterOpsModule().then(({ parseArgs }) => {
+    const options = parseArgs(['build']);
+
+    assert.equal(options.command, 'build');
+    assert.equal(options.includeDocs, true);
+    assert.equal(Object.hasOwn(options, 'includeConsole'), false);
+  });
+});
+
+test('router-ops build parses --verify-release as an official local release smoke toggle', () => {
+  return loadRouterOpsModule().then(({ parseArgs }) => {
+    const options = parseArgs(['build', '--verify-release']);
+
+    assert.equal(options.command, 'build');
+    assert.equal(options.verifyRelease, true);
+  });
+});
+
+test('router-ops build rejects --skip-docs when official release verification is requested', () => {
+  return loadRouterOpsModule().then(({ parseArgs }) => {
+    assert.throws(
+      () => parseArgs(['build', '--verify-release', '--skip-docs']),
+      /--skip-docs cannot be combined with --verify-release/,
+    );
+    assert.throws(
+      () => parseArgs(['build', '--skip-docs', '--verify-release']),
+      /--skip-docs cannot be combined with --verify-release/,
+    );
+  });
+});
+
+test('router-ops build rejects legacy console packaging switches', () => {
+  return loadRouterOpsModule().then(({ parseArgs }) => {
+    assert.throws(
+      () => parseArgs(['build', '--include-console']),
+      /unknown option: --include-console/,
+    );
+    assert.throws(
+      () => parseArgs(['build', '--skip-console']),
+      /unknown option: --skip-console/,
+    );
+  });
+});
+
 test('router-ops install parses system mode', () => {
   return loadRouterOpsModule().then(({ parseArgs }) => {
     const options = parseArgs(['install', '--mode', 'system']);
@@ -1257,6 +1993,10 @@ test('router-ops rejects build-only flags during install', () => {
     assert.throws(
       () => parseArgs(['install', '--skip-docs']),
       /--skip-docs is only supported for the build command/,
+    );
+    assert.throws(
+      () => parseArgs(['install', '--verify-release']),
+      /--verify-release is only supported for the build command/,
     );
   });
 });
@@ -1561,8 +2301,11 @@ test('PowerShell build and install entrypoints normalize native switch names bef
   assert.match(buildScript, /\^\(\?i\)-DryRun\$/);
   assert.match(buildScript, /--dry-run/);
   assert.match(buildScript, /\^\(\?i\)-SkipDocs\$/);
-  assert.match(buildScript, /\^\(\?i\)-SkipConsole\$/);
   assert.match(buildScript, /\^\(\?i\)-Install\$/);
+  assert.doesNotMatch(buildScript, /\^\(\?i\)-SkipConsole\$/);
+  assert.doesNotMatch(buildScript, /\^\(\?i\)-IncludeConsole\$/);
+  assert.doesNotMatch(buildScript, /--skip-console/);
+  assert.doesNotMatch(buildScript, /--include-console/);
   assert.match(installScript, /\$translatedArgs = @\('install'\)/);
   assert.match(installScript, /\^\(\?i\)-DryRun\$/);
   assert.match(installScript, /\^\(\?i\)-Force\$/);
@@ -2176,6 +2919,81 @@ test('start.ps1 dry-run loads system install config from the release manifest in
   }
 });
 
+test('start.ps1 dry-run executes the versioned release payload referenced by a current-home manifest', { skip: process.platform !== 'win32' || !canSpawnPowerShellFromNode() }, () => {
+  const productRoot = createTempRuntimeHome('start-ps1-current-layout-');
+  const currentRoot = path.join(productRoot, 'current');
+  const releaseRoot = path.join(productRoot, 'releases', '0.1.0');
+  const releaseBinDir = path.join(releaseRoot, 'bin');
+  const adminSiteDir = path.join(releaseRoot, 'sites', 'admin', 'dist');
+  const portalSiteDir = path.join(releaseRoot, 'sites', 'portal', 'dist');
+  const configDir = path.join(productRoot, 'config');
+  const dataDir = path.join(productRoot, 'data');
+  const logDir = path.join(productRoot, 'log');
+  const runDir = path.join(productRoot, 'run');
+  const routerBinaryPath = path.join(releaseBinDir, 'router-product-service.cmd');
+
+  try {
+    mkdirSync(currentRoot, { recursive: true });
+    mkdirSync(releaseBinDir, { recursive: true });
+    mkdirSync(adminSiteDir, { recursive: true });
+    mkdirSync(portalSiteDir, { recursive: true });
+    mkdirSync(configDir, { recursive: true });
+    mkdirSync(dataDir, { recursive: true });
+    mkdirSync(logDir, { recursive: true });
+    mkdirSync(runDir, { recursive: true });
+
+    writeFileSync(
+      path.join(configDir, 'router.env'),
+      [
+        `SDKWORK_CONFIG_DIR="${toPortablePath(configDir)}"`,
+        `SDKWORK_CONFIG_FILE="${toPortablePath(path.join(configDir, 'router.yaml'))}"`,
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    writeFileSync(
+      path.join(currentRoot, 'release-manifest.json'),
+      `${JSON.stringify({
+        installMode: 'portable',
+        productRoot: toPortablePath(productRoot),
+        controlRoot: toPortablePath(currentRoot),
+        releaseVersion: '0.1.0',
+        releaseRoot: toPortablePath(releaseRoot),
+        routerBinary: toPortablePath(routerBinaryPath),
+        adminSiteDistDir: toPortablePath(adminSiteDir),
+        portalSiteDistDir: toPortablePath(portalSiteDir),
+        configRoot: toPortablePath(configDir),
+        configFile: toPortablePath(path.join(configDir, 'router.yaml')),
+        mutableDataRoot: toPortablePath(dataDir),
+        logRoot: toPortablePath(logDir),
+        runRoot: toPortablePath(runDir),
+      }, null, 2)}\n`,
+      'utf8',
+    );
+    writeFileSync(
+      routerBinaryPath,
+      [
+        '@echo off',
+        'if "%1"=="--dry-run" echo {"mode":"dry-run","plan_format":"json","public_web_bind":"127.0.0.1:29101","database_url":"sqlite:///from-versioned-binary.db","config_dir":"/from-versioned-binary","config_file":null,"node_id_prefix":null,"binds":{"gateway":"127.0.0.1:29102","admin":"127.0.0.1:29103","portal":"127.0.0.1:29104"},"site_dirs":{"admin":"/from-versioned-admin","portal":"/from-versioned-portal"},"upstreams":{"gateway":null,"admin":null,"portal":null}}',
+        'exit /b 0',
+        '',
+      ].join('\r\n'),
+      'utf8',
+    );
+
+    const result = runPowerShellStartDryRun(currentRoot);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+
+    const plan = JSON.parse(result.stdout.trim());
+    assert.equal(plan.config_dir, '/from-versioned-binary');
+    assert.equal(plan.site_dirs.admin, '/from-versioned-admin');
+    assert.equal(plan.site_dirs.portal, '/from-versioned-portal');
+    assert.equal(plan.database_url, 'sqlite:///from-versioned-binary.db');
+  } finally {
+    removeTempRuntimeHome(productRoot);
+  }
+});
+
 test('start.sh dry-run falls back to host-local release paths when router.env carries windows-style values', { skip: process.platform !== 'win32' || !hasWslDistro('Ubuntu-22.04') }, () => {
   const runtimeHome = createTempRuntimeHome('start-sh-');
 
@@ -2209,6 +3027,85 @@ test('start.sh dry-run falls back to host-local release paths when router.env ca
     assert.equal(plan.site_dirs.portal, `${runtimeHomeWsl}/sites/portal/dist`);
   } finally {
     removeTempRuntimeHome(runtimeHome);
+  }
+});
+
+test('start.sh dry-run executes the versioned release payload referenced by a current-home manifest', { skip: process.platform !== 'win32' || !hasWslDistro('Ubuntu-22.04') }, () => {
+  const productRoot = createTempRuntimeHome('start-sh-current-layout-');
+  const currentRoot = path.join(productRoot, 'current');
+  const releaseRoot = path.join(productRoot, 'releases', '0.1.0');
+  const releaseBinDir = path.join(releaseRoot, 'bin');
+  const adminSiteDir = path.join(releaseRoot, 'sites', 'admin', 'dist');
+  const portalSiteDir = path.join(releaseRoot, 'sites', 'portal', 'dist');
+  const configDir = path.join(productRoot, 'config');
+  const dataDir = path.join(productRoot, 'data');
+  const logDir = path.join(productRoot, 'log');
+  const runDir = path.join(productRoot, 'run');
+  const routerBinaryPath = path.join(releaseBinDir, 'router-product-service');
+
+  try {
+    mkdirSync(currentRoot, { recursive: true });
+    mkdirSync(releaseBinDir, { recursive: true });
+    mkdirSync(adminSiteDir, { recursive: true });
+    mkdirSync(portalSiteDir, { recursive: true });
+    mkdirSync(configDir, { recursive: true });
+    mkdirSync(dataDir, { recursive: true });
+    mkdirSync(logDir, { recursive: true });
+    mkdirSync(runDir, { recursive: true });
+
+    writeFileSync(
+      path.join(configDir, 'router.env'),
+      [
+        `SDKWORK_CONFIG_DIR="${toWslPath(configDir)}"`,
+        `SDKWORK_CONFIG_FILE="${toWslPath(path.join(configDir, 'router.yaml'))}"`,
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    writeFileSync(
+      path.join(currentRoot, 'release-manifest.json'),
+      `${JSON.stringify({
+        installMode: 'portable',
+        productRoot: toWslPath(productRoot),
+        controlRoot: toWslPath(currentRoot),
+        releaseVersion: '0.1.0',
+        releaseRoot: toWslPath(releaseRoot),
+        routerBinary: toWslPath(routerBinaryPath),
+        adminSiteDistDir: toWslPath(adminSiteDir),
+        portalSiteDistDir: toWslPath(portalSiteDir),
+        configRoot: toWslPath(configDir),
+        configFile: toWslPath(path.join(configDir, 'router.yaml')),
+        mutableDataRoot: toWslPath(dataDir),
+        logRoot: toWslPath(logDir),
+        runRoot: toWslPath(runDir),
+      }, null, 2)}\n`,
+      'utf8',
+    );
+    writeFileSync(
+      routerBinaryPath,
+      [
+        '#!/usr/bin/env sh',
+        'if [ "$#" -ge 2 ] && [ "$1" = "--dry-run" ] && [ "$2" = "--plan-format" ]; then',
+        '  printf \'%s\\n\' \'{"mode":"dry-run","plan_format":"json","public_web_bind":"127.0.0.1:29201","database_url":"sqlite:///from-versioned-binary.db","config_dir":"/from-versioned-binary","config_file":null,"node_id_prefix":null,"binds":{"gateway":"127.0.0.1:29202","admin":"127.0.0.1:29203","portal":"127.0.0.1:29204"},"site_dirs":{"admin":"/from-versioned-admin","portal":"/from-versioned-portal"},"upstreams":{"gateway":null,"admin":null,"portal":null}}\'',
+        '  exit 0',
+        'fi',
+        'exit 1',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    chmodSync(routerBinaryPath, 0o755);
+
+    const result = runWslStartDryRun(currentRoot);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+
+    const plan = JSON.parse(result.stdout.trim());
+    assert.equal(plan.config_dir, '/from-versioned-binary');
+    assert.equal(plan.site_dirs.admin, '/from-versioned-admin');
+    assert.equal(plan.site_dirs.portal, '/from-versioned-portal');
+    assert.equal(plan.database_url, 'sqlite:///from-versioned-binary.db');
+  } finally {
+    removeTempRuntimeHome(productRoot);
   }
 });
 
@@ -2334,6 +3231,18 @@ test('unix runtime entrypoints default to the installed home beside the packaged
 
   assert.match(startSh, /if \[ -f "\$SCRIPT_DIR\/\$\(router_binary_name router-product-service\)" \]; then[\s\S]*RUNTIME_HOME=\$\(CDPATH= cd -- "\$SCRIPT_DIR\/\.\." && pwd\)/);
   assert.match(stopSh, /if \[ -f "\$SCRIPT_DIR\/\$\(router_binary_name router-product-service\)" \]; then[\s\S]*RUNTIME_HOME=\$\(CDPATH= cd -- "\$SCRIPT_DIR\/\.\." && pwd\)/);
+});
+
+test('installed current-home wrappers also recognize a sibling release manifest as the default runtime home', () => {
+  const startPs1 = readFileSync(path.join(repoRoot, 'bin', 'start.ps1'), 'utf8');
+  const stopPs1 = readFileSync(path.join(repoRoot, 'bin', 'stop.ps1'), 'utf8');
+  const startSh = readFileSync(path.join(repoRoot, 'bin', 'start.sh'), 'utf8');
+  const stopSh = readFileSync(path.join(repoRoot, 'bin', 'stop.sh'), 'utf8');
+
+  assert.match(startSh, /if \[ -f "\$SCRIPT_DIR\/\.\.\/release-manifest\.json" \]; then[\s\S]*RUNTIME_HOME=\$\(CDPATH= cd -- "\$SCRIPT_DIR\/\.\." && pwd\)/);
+  assert.match(stopSh, /if \[ -f "\$SCRIPT_DIR\/\.\.\/release-manifest\.json" \]; then[\s\S]*RUNTIME_HOME=\$\(CDPATH= cd -- "\$SCRIPT_DIR\/\.\." && pwd\)/);
+  assert.match(startPs1, /\$manifestHome = Split-Path -Parent \$scriptDir[\s\S]*Test-Path \(Join-Path \$manifestHome 'release-manifest\.json'\)[\s\S]*\$RuntimeHome = \$manifestHome/);
+  assert.match(stopPs1, /\$manifestHome = Split-Path -Parent \$scriptDir[\s\S]*Test-Path \(Join-Path \$manifestHome 'release-manifest\.json'\)[\s\S]*\$RuntimeHome = \$manifestHome/);
 });
 
 test('installed unix runtime start.sh and stop.sh manage an installed home end-to-end', { skip: !canSpawnUnixShellFromNode() }, () => {

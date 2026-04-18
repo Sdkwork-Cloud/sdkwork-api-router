@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import {
   chmodSync,
   cpSync,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -20,8 +21,16 @@ import {
   pnpmSpawnOptions,
 } from '../../scripts/dev/pnpm-launch-lib.mjs';
 import { resolveDesktopReleaseTarget } from '../../scripts/release/desktop-targets.mjs';
+import {
+  readReleaseCatalogFile,
+  resolveReleaseCatalogVariantPaths,
+} from '../../scripts/release/materialize-release-catalog.mjs';
 import { withSupportedWindowsCmakeGenerator } from '../../scripts/run-tauri-cli.mjs';
-import { resolveWorkspaceTargetDir, withManagedWorkspaceTargetDir } from '../../scripts/workspace-target-dir.mjs';
+import {
+  resolveWorkspaceTargetDir,
+  withManagedWorkspaceTargetDir,
+  withManagedWorkspaceTempDir,
+} from '../../scripts/workspace-target-dir.mjs';
 
 export const RELEASE_BINARY_NAMES = [
   'admin-api-service',
@@ -63,6 +72,274 @@ export function defaultReleaseOutputDir(repoRoot) {
   return path.join(repoRoot, 'artifacts', 'release');
 }
 
+function resolveOfficialProductServerBundlePaths({
+  repoRoot,
+  releaseOutputDir = defaultReleaseOutputDir(repoRoot),
+  platform = process.platform,
+  arch = process.arch,
+  env = process.env,
+} = {}) {
+  const target = resolveDesktopReleaseTarget({
+    platform,
+    arch,
+    env,
+  });
+  const releaseCatalogPath = path.join(releaseOutputDir, 'release-catalog.json');
+  const resolvedVariant = resolveReleaseCatalogVariantPaths({
+    releaseCatalogPath,
+    productId: 'sdkwork-api-router-product-server',
+    variantKind: 'server-archive',
+    platform: target.platform,
+    arch: target.arch,
+  });
+
+  return {
+    target,
+    bundleDir: resolvedVariant.variantRoot,
+    bundlePath: resolvedVariant.primaryPath,
+    bundleManifestPath: resolvedVariant.manifestPath,
+    bundleChecksumPath: resolvedVariant.checksumPath,
+    releaseCatalogPath,
+    releaseCatalogVariant: resolvedVariant.variant,
+  };
+}
+
+function createBundleInstallEntry({
+  type,
+  bundlePath,
+  bundleManifestPath,
+  releaseCatalogPath,
+  bundleEntryPath,
+  targetPath,
+} = {}) {
+  return {
+    type,
+    bundlePath,
+    bundleManifestPath,
+    releaseCatalogPath,
+    bundleEntryPath: toPortablePath(bundleEntryPath),
+    targetPath,
+  };
+}
+
+function createOfficialProductServerBundleInstallEntries({
+  layout,
+  bundlePath,
+  bundleManifestPath,
+  releaseCatalogPath,
+} = {}) {
+  return [
+    createBundleInstallEntry({
+      type: 'bundle-directory',
+      bundlePath,
+      bundleManifestPath,
+      releaseCatalogPath,
+      bundleEntryPath: 'bin',
+      targetPath: layout.releaseBinDir,
+    }),
+    createBundleInstallEntry({
+      type: 'bundle-directory',
+      bundlePath,
+      bundleManifestPath,
+      releaseCatalogPath,
+      bundleEntryPath: path.posix.join('sites', 'admin', 'dist'),
+      targetPath: layout.adminSiteDistDir,
+    }),
+    createBundleInstallEntry({
+      type: 'bundle-directory',
+      bundlePath,
+      bundleManifestPath,
+      releaseCatalogPath,
+      bundleEntryPath: path.posix.join('sites', 'portal', 'dist'),
+      targetPath: layout.portalSiteDistDir,
+    }),
+    createBundleInstallEntry({
+      type: 'bundle-directory',
+      bundlePath,
+      bundleManifestPath,
+      releaseCatalogPath,
+      bundleEntryPath: 'data',
+      targetPath: layout.staticDataDir,
+    }),
+    createBundleInstallEntry({
+      type: 'bundle-directory',
+      bundlePath,
+      bundleManifestPath,
+      releaseCatalogPath,
+      bundleEntryPath: 'deploy',
+      targetPath: layout.releaseDeployDir,
+    }),
+    createBundleInstallEntry({
+      type: 'bundle-file',
+      bundlePath,
+      bundleManifestPath,
+      releaseCatalogPath,
+      bundleEntryPath: 'release-manifest.json',
+      targetPath: layout.releasePayloadManifestFile,
+    }),
+    createBundleInstallEntry({
+      type: 'bundle-file',
+      bundlePath,
+      bundleManifestPath,
+      releaseCatalogPath,
+      bundleEntryPath: 'README.txt',
+      targetPath: layout.releasePayloadReadmeFile,
+    }),
+  ];
+}
+
+function readOfficialProductServerBundleManifest(bundleManifestPath, {
+  readFile = readFileSync,
+} = {}) {
+  return JSON.parse(String(readFile(bundleManifestPath, 'utf8')));
+}
+
+function assertOfficialProductServerBundleManifest(manifest, {
+  bundlePath,
+  bundleManifestPath,
+} = {}) {
+  if (manifest?.type !== 'product-server-archive') {
+    throw new Error(`Unsupported server bundle manifest type at ${bundleManifestPath}`);
+  }
+  if (manifest?.productId !== 'sdkwork-api-router-product-server') {
+    throw new Error(`Unsupported server bundle product id at ${bundleManifestPath}`);
+  }
+  if (String(manifest.archiveFile ?? '').trim() !== path.basename(bundlePath)) {
+    throw new Error(`Server bundle manifest archiveFile mismatch at ${bundleManifestPath}`);
+  }
+
+  const requiredSites = new Set(['admin', 'portal']);
+  const actualSites = new Set(Array.isArray(manifest.sites) ? manifest.sites : []);
+  for (const site of requiredSites) {
+    if (!actualSites.has(site)) {
+      throw new Error(`Server bundle manifest is missing site ${site} at ${bundleManifestPath}`);
+    }
+  }
+
+  const requiredDataRoots = new Set(['data']);
+  const actualDataRoots = new Set(Array.isArray(manifest.bootstrapDataRoots) ? manifest.bootstrapDataRoots : []);
+  for (const root of requiredDataRoots) {
+    if (!actualDataRoots.has(root)) {
+      throw new Error(`Server bundle manifest is missing bootstrap data root ${root} at ${bundleManifestPath}`);
+    }
+  }
+
+  const requiredDeploymentRoots = new Set(['deploy']);
+  const actualDeploymentRoots = new Set(Array.isArray(manifest.deploymentAssetRoots) ? manifest.deploymentAssetRoots : []);
+  for (const root of requiredDeploymentRoots) {
+    if (!actualDeploymentRoots.has(root)) {
+      throw new Error(`Server bundle manifest is missing deployment asset root ${root} at ${bundleManifestPath}`);
+    }
+  }
+}
+
+function assertReleaseCatalogServerBundleEntry(catalog, {
+  bundlePath,
+  bundleManifestPath,
+  bundleChecksumPath,
+  releaseCatalogPath,
+} = {}) {
+  const expectedOutputDirectory = toPortablePath(
+    path.relative(path.dirname(releaseCatalogPath), path.dirname(bundlePath)),
+  );
+  const matchingVariant = Array.isArray(catalog?.products)
+    ? catalog.products
+      .filter((product) => String(product?.productId ?? '').trim() === 'sdkwork-api-router-product-server')
+      .flatMap((product) => Array.isArray(product?.variants) ? product.variants : [])
+      .find((variant) => (
+        String(variant?.variantKind ?? '').trim() === 'server-archive'
+        && String(variant?.outputDirectory ?? '').trim() === expectedOutputDirectory
+        && String(variant?.primaryFile ?? '').trim() === path.basename(bundlePath)
+        && String(variant?.manifestFile ?? '').trim() === path.basename(bundleManifestPath)
+        && String(variant?.checksumFile ?? '').trim() === path.basename(bundleChecksumPath)
+      ))
+    : null;
+
+  if (!matchingVariant) {
+    throw new Error(`Missing install bundle release-catalog entry: ${releaseCatalogPath}`);
+  }
+}
+
+function resolveBundleEntrySourcePath(bundleRoot, bundleEntryPath) {
+  return path.join(bundleRoot, ...String(bundleEntryPath ?? '').split('/'));
+}
+
+function detectTarFlavorForExtraction() {
+  if (process.platform !== 'win32') {
+    return 'default';
+  }
+
+  const result = spawnSync('tar', ['--version'], {
+    cwd: process.cwd(),
+    shell: false,
+    encoding: 'utf8',
+  });
+  if (result.error || result.status !== 0) {
+    return 'unknown';
+  }
+
+  const versionOutput = `${result.stdout ?? ''}\n${result.stderr ?? ''}`.toLowerCase();
+  if (versionOutput.includes('gnu tar')) {
+    return 'gnu';
+  }
+  if (versionOutput.includes('bsdtar') || versionOutput.includes('libarchive')) {
+    return 'bsd';
+  }
+
+  return 'unknown';
+}
+
+function createManagedStagingRoot(stagingParent, prefix) {
+  mkdirSync(stagingParent, { recursive: true });
+  return mkdtempSync(path.join(stagingParent, prefix));
+}
+
+function extractOfficialProductServerBundle(bundlePath, {
+  stagingParent = path.dirname(bundlePath),
+} = {}) {
+  const stagingRoot = createManagedStagingRoot(stagingParent, '.sdkwork-install-bundle-');
+  const tarFlavor = detectTarFlavorForExtraction();
+  const args = [];
+  if (process.platform === 'win32' && tarFlavor === 'gnu') {
+    args.push('--force-local');
+  }
+  args.push('-xzf', bundlePath, '-C', stagingRoot);
+
+  const result = spawnSync('tar', args, {
+    cwd: process.cwd(),
+    shell: process.platform === 'win32',
+    encoding: 'utf8',
+  });
+  if (result.error || result.status !== 0) {
+    const fragments = [];
+    if (result.error) {
+      fragments.push(result.error.message);
+    }
+    if (String(result.stdout ?? '').trim()) {
+      fragments.push(`stdout: ${String(result.stdout).trim()}`);
+    }
+    if (String(result.stderr ?? '').trim()) {
+      fragments.push(`stderr: ${String(result.stderr).trim()}`);
+    }
+    throw new Error(
+      `Failed to extract official server bundle ${bundlePath}${fragments.length > 0 ? `\n${fragments.join('\n')}` : ''}`,
+    );
+  }
+
+  const bundleRoot = path.join(
+    stagingRoot,
+    path.basename(bundlePath).replace(/\.tar\.gz$/u, ''),
+  );
+  if (!existsSync(bundleRoot)) {
+    throw new Error(`Extracted server bundle root not found: ${bundleRoot}`);
+  }
+
+  return {
+    stagingRoot,
+    bundleRoot,
+  };
+}
+
 function normalizeInstallMode(mode = 'portable') {
   const normalized = String(mode ?? 'portable').trim().toLowerCase() || 'portable';
   if (!['portable', 'system'].includes(normalized)) {
@@ -93,7 +370,7 @@ function resolveSystemLayoutRoots({
     const programDataRoot = env.ProgramData ?? 'C:\\ProgramData';
 
     return {
-      installRoot: pathApi.join(programFilesRoot, 'sdkwork-api-router', 'current'),
+      productRoot: pathApi.join(programFilesRoot, 'sdkwork-api-router'),
       configRoot: pathApi.join(programDataRoot, 'sdkwork-api-router'),
       dataRoot: pathApi.join(programDataRoot, 'sdkwork-api-router', 'data'),
       logRoot: pathApi.join(programDataRoot, 'sdkwork-api-router', 'log'),
@@ -103,7 +380,7 @@ function resolveSystemLayoutRoots({
 
   if (runtimePlatform === 'darwin') {
     return {
-      installRoot: pathApi.join('/usr/local/lib', 'sdkwork-api-router', 'current'),
+      productRoot: pathApi.join('/usr/local/lib', 'sdkwork-api-router'),
       configRoot: pathApi.join('/Library/Application Support', 'sdkwork-api-router'),
       dataRoot: pathApi.join('/Library/Application Support', 'sdkwork-api-router', 'data'),
       logRoot: pathApi.join('/Library/Logs', 'sdkwork-api-router'),
@@ -112,7 +389,7 @@ function resolveSystemLayoutRoots({
   }
 
   return {
-    installRoot: pathApi.join('/opt', 'sdkwork-api-router', 'current'),
+    productRoot: pathApi.join('/opt', 'sdkwork-api-router'),
     configRoot: pathApi.join('/etc', 'sdkwork-api-router'),
     dataRoot: pathApi.join('/var', 'lib', 'sdkwork-api-router'),
     logRoot: pathApi.join('/var', 'log', 'sdkwork-api-router'),
@@ -120,38 +397,73 @@ function resolveSystemLayoutRoots({
   };
 }
 
+function normalizeProductInstallRoot(installRoot, pathApi) {
+  if (!installRoot) {
+    return installRoot;
+  }
+
+  return pathApi.basename(installRoot) === 'current'
+    ? pathApi.dirname(installRoot)
+    : installRoot;
+}
+
+export function resolveProductReleaseVersion(repoRoot, {
+  readFile = readFileSync,
+} = {}) {
+  const cargoManifest = String(readFile(path.join(repoRoot, 'Cargo.toml'), 'utf8'));
+  const match = cargoManifest.match(/^\[workspace\.package\][\s\S]*?^\s*version\s*=\s*"([^"]+)"/mu);
+  return match?.[1] ?? '0.1.0';
+}
+
 function resolveRuntimeLayout({
   installRoot,
   mode = 'portable',
   platform = process.platform,
   env = process.env,
+  releaseVersion = '0.1.0',
 } = {}) {
   const normalizedMode = normalizeInstallMode(mode);
   const runtimePlatform = normalizeRuntimePlatform(platform);
+  const pathApi = runtimePathApi(runtimePlatform);
+  const activeReleaseVersion = String(releaseVersion ?? '').trim() || '0.1.0';
 
   if (normalizedMode === 'system') {
     const roots = resolveSystemLayoutRoots({
       platform: runtimePlatform,
       env,
     });
-    const pathApi = runtimePathApi(runtimePlatform);
-    const programRoot = installRoot ?? roots.installRoot;
+    const productRoot = normalizeProductInstallRoot(installRoot ?? roots.productRoot, pathApi);
+    const controlRoot = pathApi.join(productRoot, 'current');
+    const releasesRoot = pathApi.join(productRoot, 'releases');
+    const releaseRoot = pathApi.join(releasesRoot, activeReleaseVersion);
+    const releaseBinDir = pathApi.join(releaseRoot, 'bin');
 
     return {
       mode: normalizedMode,
       runtimePlatform,
       pathApi,
-      installRoot: programRoot,
-      binDir: pathApi.join(programRoot, 'bin'),
-      binLibDir: pathApi.join(programRoot, 'bin', 'lib'),
-      staticDataDir: pathApi.join(programRoot, 'data'),
-      serviceSystemdDir: pathApi.join(programRoot, 'service', 'systemd'),
-      serviceLaunchdDir: pathApi.join(programRoot, 'service', 'launchd'),
-      serviceWindowsTaskDir: pathApi.join(programRoot, 'service', 'windows-task'),
-      sitesAdminDir: pathApi.join(programRoot, 'sites', 'admin'),
-      sitesPortalDir: pathApi.join(programRoot, 'sites', 'portal'),
-      adminSiteDistDir: pathApi.join(programRoot, 'sites', 'admin', 'dist'),
-      portalSiteDistDir: pathApi.join(programRoot, 'sites', 'portal', 'dist'),
+      installRoot: productRoot,
+      controlRoot,
+      releasesRoot,
+      releaseVersion: activeReleaseVersion,
+      releaseRoot,
+      binDir: pathApi.join(controlRoot, 'bin'),
+      binLibDir: pathApi.join(controlRoot, 'bin', 'lib'),
+      startScript: pathApi.join(controlRoot, 'bin', 'start.sh'),
+      startPs1Script: pathApi.join(controlRoot, 'bin', 'start.ps1'),
+      releaseBinDir,
+      staticDataDir: pathApi.join(releaseRoot, 'data'),
+      serviceSystemdDir: pathApi.join(controlRoot, 'service', 'systemd'),
+      serviceLaunchdDir: pathApi.join(controlRoot, 'service', 'launchd'),
+      serviceWindowsTaskDir: pathApi.join(controlRoot, 'service', 'windows-task'),
+      serviceWindowsServiceDir: pathApi.join(controlRoot, 'service', 'windows-service'),
+      releaseDeployDir: pathApi.join(releaseRoot, 'deploy'),
+      releasePayloadManifestFile: pathApi.join(releaseRoot, 'release-manifest.json'),
+      releasePayloadReadmeFile: pathApi.join(releaseRoot, 'README.txt'),
+      sitesAdminDir: pathApi.join(releaseRoot, 'sites', 'admin'),
+      sitesPortalDir: pathApi.join(releaseRoot, 'sites', 'portal'),
+      adminSiteDistDir: pathApi.join(releaseRoot, 'sites', 'admin', 'dist'),
+      portalSiteDistDir: pathApi.join(releaseRoot, 'sites', 'portal', 'dist'),
       configRoot: roots.configRoot,
       configFile: pathApi.join(roots.configRoot, 'router.yaml'),
       configFragmentDir: pathApi.join(roots.configRoot, 'conf.d'),
@@ -160,43 +472,52 @@ function resolveRuntimeLayout({
       dataRoot: roots.dataRoot,
       logRoot: roots.logRoot,
       runRoot: roots.runRoot,
-      routerBinary: pathApi.join(
-        programRoot,
-        'bin',
-        withExecutable('router-product-service', runtimePlatform),
-      ),
+      routerBinary: pathApi.join(releaseBinDir, withExecutable('router-product-service', runtimePlatform)),
+      releaseManifestFile: pathApi.join(controlRoot, 'release-manifest.json'),
     };
   }
 
-  const programRoot = installRoot;
+  const productRoot = normalizeProductInstallRoot(installRoot, path);
+  const controlRoot = path.join(productRoot, 'current');
+  const releasesRoot = path.join(productRoot, 'releases');
+  const releaseRoot = path.join(releasesRoot, activeReleaseVersion);
+  const releaseBinDir = path.join(releaseRoot, 'bin');
   return {
     mode: normalizedMode,
     runtimePlatform,
     pathApi: path,
-    installRoot: programRoot,
-    binDir: path.join(programRoot, 'bin'),
-    binLibDir: path.join(programRoot, 'bin', 'lib'),
-    staticDataDir: path.join(programRoot, 'data'),
-    serviceSystemdDir: path.join(programRoot, 'service', 'systemd'),
-    serviceLaunchdDir: path.join(programRoot, 'service', 'launchd'),
-    serviceWindowsTaskDir: path.join(programRoot, 'service', 'windows-task'),
-    sitesAdminDir: path.join(programRoot, 'sites', 'admin'),
-    sitesPortalDir: path.join(programRoot, 'sites', 'portal'),
-    adminSiteDistDir: path.join(programRoot, 'sites', 'admin', 'dist'),
-    portalSiteDistDir: path.join(programRoot, 'sites', 'portal', 'dist'),
-    configRoot: path.join(programRoot, 'config'),
-    configFile: path.join(programRoot, 'config', 'router.yaml'),
-    configFragmentDir: path.join(programRoot, 'config', 'conf.d'),
-    envFile: path.join(programRoot, 'config', 'router.env'),
-    envExampleFile: path.join(programRoot, 'config', 'router.env.example'),
-    dataRoot: path.join(programRoot, 'var', 'data'),
-    logRoot: path.join(programRoot, 'var', 'log'),
-    runRoot: path.join(programRoot, 'var', 'run'),
-    routerBinary: path.join(
-      programRoot,
-      'bin',
-      withExecutable('router-product-service', runtimePlatform),
-    ),
+    installRoot: productRoot,
+    controlRoot,
+    releasesRoot,
+    releaseVersion: activeReleaseVersion,
+    releaseRoot,
+    binDir: path.join(controlRoot, 'bin'),
+    binLibDir: path.join(controlRoot, 'bin', 'lib'),
+    startScript: path.join(controlRoot, 'bin', 'start.sh'),
+    startPs1Script: path.join(controlRoot, 'bin', 'start.ps1'),
+    releaseBinDir,
+    staticDataDir: path.join(releaseRoot, 'data'),
+    serviceSystemdDir: path.join(controlRoot, 'service', 'systemd'),
+    serviceLaunchdDir: path.join(controlRoot, 'service', 'launchd'),
+    serviceWindowsTaskDir: path.join(controlRoot, 'service', 'windows-task'),
+    serviceWindowsServiceDir: path.join(controlRoot, 'service', 'windows-service'),
+    releaseDeployDir: path.join(releaseRoot, 'deploy'),
+    releasePayloadManifestFile: path.join(releaseRoot, 'release-manifest.json'),
+    releasePayloadReadmeFile: path.join(releaseRoot, 'README.txt'),
+    sitesAdminDir: path.join(releaseRoot, 'sites', 'admin'),
+    sitesPortalDir: path.join(releaseRoot, 'sites', 'portal'),
+    adminSiteDistDir: path.join(releaseRoot, 'sites', 'admin', 'dist'),
+    portalSiteDistDir: path.join(releaseRoot, 'sites', 'portal', 'dist'),
+    configRoot: path.join(productRoot, 'config'),
+    configFile: path.join(productRoot, 'config', 'router.yaml'),
+    configFragmentDir: path.join(productRoot, 'config', 'conf.d'),
+    envFile: path.join(productRoot, 'config', 'router.env'),
+    envExampleFile: path.join(productRoot, 'config', 'router.env.example'),
+    dataRoot: path.join(productRoot, 'data'),
+    logRoot: path.join(productRoot, 'log'),
+    runRoot: path.join(productRoot, 'run'),
+    routerBinary: path.join(releaseBinDir, withExecutable('router-product-service', runtimePlatform)),
+    releaseManifestFile: path.join(controlRoot, 'release-manifest.json'),
   };
 }
 
@@ -215,13 +536,13 @@ export function defaultInstallRoot(repoRoot, {
 } = {}) {
   const normalizedMode = normalizeInstallMode(mode);
   if (normalizedMode === 'portable') {
-    return path.join(repoRoot, 'artifacts', 'install', 'sdkwork-api-router', 'current');
+    return path.join(repoRoot, 'artifacts', 'install', 'sdkwork-api-router');
   }
 
   return resolveSystemLayoutRoots({
     platform,
     env,
-  }).installRoot;
+  }).productRoot;
 }
 
 function quoteEnvValue(value) {
@@ -278,11 +599,6 @@ function releaseFrontendInstallRequirements(appKey) {
         requiredPackages: ['vite', 'typescript', '@tailwindcss/vite', '@vitejs/plugin-react'],
         requiredBinCommands: ['vite', 'tsc'],
       };
-    case 'console':
-      return {
-        requiredPackages: ['vite', 'typescript', '@vitejs/plugin-react'],
-        requiredBinCommands: ['vite', 'tsc'],
-      };
     default:
       return {
         requiredPackages: [],
@@ -291,23 +607,164 @@ function releaseFrontendInstallRequirements(appKey) {
   }
 }
 
-export function createReleaseBuildPlan({
+function createReleaseVerificationSteps({
   repoRoot,
-  platform = process.platform,
-  arch = process.arch,
-  env = process.env,
-  installDependencies = false,
-  includeDocs = true,
-  includeConsole = true,
-  releaseOutputDir = defaultReleaseOutputDir(repoRoot),
-  exists = existsSync,
+  target,
+  releaseOutputDir,
+  env,
+  runtimePlatform,
 } = {}) {
+  const nodeCommand = process.execPath;
+  const bundlePath = path.join(
+    releaseOutputDir,
+    'native',
+    target.platform,
+    target.arch,
+    'bundles',
+    `sdkwork-api-router-product-server-${target.platform}-${target.arch}.tar.gz`,
+  );
+  const releaseGovernanceDir = path.join(repoRoot, 'artifacts', 'release-governance');
+  const steps = [];
+
+  if (target.platform === 'windows') {
+    steps.push({
+      label: 'windows installed runtime smoke',
+      command: nodeCommand,
+      args: [
+        path.join(repoRoot, 'scripts', 'release', 'run-windows-installed-runtime-smoke.mjs'),
+        '--platform',
+        target.platform,
+        '--arch',
+        target.arch,
+        '--target',
+        target.targetTriple,
+        '--release-output-dir',
+        releaseOutputDir,
+        '--evidence-path',
+        path.join(releaseGovernanceDir, `windows-installed-runtime-smoke-${target.platform}-${target.arch}.json`),
+      ],
+      cwd: repoRoot,
+      env,
+      shell: false,
+      windowsHide: runtimePlatform === 'win32',
+    });
+    return steps;
+  }
+
+  steps.push({
+    label: 'unix installed runtime smoke',
+    command: nodeCommand,
+    args: [
+      path.join(repoRoot, 'scripts', 'release', 'run-unix-installed-runtime-smoke.mjs'),
+      '--platform',
+      target.platform,
+      '--arch',
+      target.arch,
+      '--target',
+      target.targetTriple,
+      '--release-output-dir',
+      releaseOutputDir,
+      '--evidence-path',
+      path.join(releaseGovernanceDir, `unix-installed-runtime-smoke-${target.platform}-${target.arch}.json`),
+    ],
+    cwd: repoRoot,
+    env,
+    shell: false,
+    windowsHide: runtimePlatform === 'win32',
+  });
+
+  if (target.platform === 'linux') {
+    steps.push(
+      {
+        label: 'linux docker compose smoke',
+        command: nodeCommand,
+        args: [
+          path.join(repoRoot, 'scripts', 'release', 'run-linux-docker-compose-smoke.mjs'),
+          '--platform',
+          target.platform,
+          '--arch',
+          target.arch,
+          '--bundle-path',
+          bundlePath,
+          '--evidence-path',
+          path.join(releaseGovernanceDir, `docker-compose-smoke-${target.platform}-${target.arch}.json`),
+        ],
+        cwd: repoRoot,
+        env,
+        shell: false,
+        windowsHide: runtimePlatform === 'win32',
+      },
+      {
+        label: 'linux helm render smoke',
+        command: nodeCommand,
+        args: [
+          path.join(repoRoot, 'scripts', 'release', 'run-linux-helm-render-smoke.mjs'),
+          '--platform',
+          target.platform,
+          '--arch',
+          target.arch,
+          '--bundle-path',
+          bundlePath,
+          '--evidence-path',
+          path.join(releaseGovernanceDir, `helm-render-smoke-${target.platform}-${target.arch}.json`),
+        ],
+        cwd: repoRoot,
+        env,
+        shell: false,
+        windowsHide: runtimePlatform === 'win32',
+      },
+    );
+  }
+
+  return steps;
+}
+
+function createReleaseGovernancePreflightStep({
+  repoRoot,
+  env,
+  runtimePlatform,
+} = {}) {
+  return {
+    label: 'release governance preflight',
+    command: process.execPath,
+    args: [
+      path.join(repoRoot, 'scripts', 'release', 'run-release-governance-checks.mjs'),
+      '--profile',
+      'preflight',
+    ],
+    cwd: repoRoot,
+    env,
+    shell: false,
+    windowsHide: runtimePlatform === 'win32',
+  };
+}
+
+export function createReleaseBuildPlan(options = {}) {
+  if (Object.hasOwn(options, 'includeConsole')) {
+    throw new Error('includeConsole is no longer supported; official release builds always exclude the legacy console workspace.');
+  }
+
+  const {
+    repoRoot,
+    platform = process.platform,
+    arch = process.arch,
+    env = process.env,
+    installDependencies = false,
+    includeDocs = true,
+    verifyRelease = false,
+    releaseOutputDir = defaultReleaseOutputDir(repoRoot),
+  } = options;
+  const effectiveIncludeDocs = includeDocs || verifyRelease;
   const runtimePlatform = normalizeRuntimePlatform(platform);
   const buildEnv = withWindowsReleaseBuildWorkarounds(
     withSupportedWindowsCmakeGenerator(
-      withManagedWorkspaceTargetDir({
+      withManagedWorkspaceTempDir({
         workspaceRoot: repoRoot,
-        env,
+        env: withManagedWorkspaceTargetDir({
+          workspaceRoot: repoRoot,
+          env,
+          platform: runtimePlatform,
+        }),
         platform: runtimePlatform,
       }),
       runtimePlatform,
@@ -370,15 +827,7 @@ export function createReleaseBuildPlan({
     },
   ];
 
-  if (includeConsole) {
-    appDirs.push({
-      key: 'console',
-      label: 'console',
-      dir: path.join(repoRoot, 'console'),
-    });
-  }
-
-  if (includeDocs) {
+  if (effectiveIncludeDocs) {
     appDirs.push({
       key: 'docs',
       label: 'docs',
@@ -429,21 +878,6 @@ export function createReleaseBuildPlan({
   const nodeCommand = process.execPath;
   steps.push(
     {
-      label: 'admin desktop release build',
-      command: nodeCommand,
-      args: [
-        path.join(repoRoot, 'scripts', 'release', 'run-desktop-release-build.mjs'),
-        '--app',
-        'admin',
-        '--target',
-        target.targetTriple,
-      ],
-      cwd: repoRoot,
-      env: buildEnv,
-      shell: false,
-      windowsHide: runtimePlatform === 'win32',
-    },
-    {
       label: 'portal desktop release build',
       command: nodeCommand,
       args: [
@@ -480,6 +914,21 @@ export function createReleaseBuildPlan({
     },
   );
 
+  if (verifyRelease) {
+    steps.push(...createReleaseVerificationSteps({
+      repoRoot,
+      target,
+      releaseOutputDir,
+      env: buildEnv,
+      runtimePlatform,
+    }));
+    steps.push(createReleaseGovernancePreflightStep({
+      repoRoot,
+      env: buildEnv,
+      runtimePlatform,
+    }));
+  }
+
   return {
     target,
     steps,
@@ -501,9 +950,6 @@ export function renderRuntimeEnvTemplate({
   });
   const configDir = toPortablePath(layout.configRoot);
   const configFile = toPortablePath(layout.configFile);
-  const binaryPath = toPortablePath(layout.routerBinary);
-  const adminSiteDir = toPortablePath(layout.adminSiteDistDir);
-  const portalSiteDir = toPortablePath(layout.portalSiteDistDir);
 
   return [
     '# SDKWork Router production runtime defaults',
@@ -516,9 +962,6 @@ export function renderRuntimeEnvTemplate({
     `SDKWORK_GATEWAY_BIND=${quoteEnvValue(defaults.gatewayBind)}`,
     `SDKWORK_ADMIN_BIND=${quoteEnvValue(defaults.adminBind)}`,
     `SDKWORK_PORTAL_BIND=${quoteEnvValue(defaults.portalBind)}`,
-    `SDKWORK_ADMIN_SITE_DIR=${quoteEnvValue(adminSiteDir)}`,
-    `SDKWORK_PORTAL_SITE_DIR=${quoteEnvValue(portalSiteDir)}`,
-    `SDKWORK_ROUTER_BINARY=${quoteEnvValue(binaryPath)}`,
     '',
   ].join('\n');
 }
@@ -539,6 +982,7 @@ function renderRouterConfigTemplate({
 
   return [
     '# SDKWork Router canonical runtime config',
+    `web_bind: "${defaults.webBind}"`,
     `gateway_bind: "${defaults.gatewayBind}"`,
     `admin_bind: "${defaults.adminBind}"`,
     `portal_bind: "${defaults.portalBind}"`,
@@ -562,8 +1006,8 @@ export function renderSystemdUnit({
     platform,
     env,
   });
-  const portableRoot = toPortablePath(layout.installRoot);
-  const startScript = toPortablePath(layout.pathApi.join(layout.binDir, 'start.sh'));
+  const controlRoot = toPortablePath(layout.controlRoot);
+  const startScript = toPortablePath(layout.startScript);
   const envFile = toPortablePath(layout.envFile);
 
   return [
@@ -573,9 +1017,9 @@ export function renderSystemdUnit({
     '',
     '[Service]',
     'Type=simple',
-    `WorkingDirectory=${systemdEscapeValue(portableRoot)}`,
+    `WorkingDirectory=${systemdEscapeValue(controlRoot)}`,
     `EnvironmentFile=-${systemdEscapeValue(envFile)}`,
-    `ExecStart=${systemdQuoteArg(startScript)} --foreground --home ${systemdQuoteArg(portableRoot)}`,
+    `ExecStart=${systemdQuoteArg(startScript)} --foreground --home ${systemdQuoteArg(controlRoot)}`,
     'Restart=on-failure',
     'RestartSec=5',
     'TimeoutStopSec=30',
@@ -608,8 +1052,8 @@ export function renderLaunchdPlist({
     platform,
     env,
   });
-  const portableRoot = toPortablePath(layout.installRoot);
-  const startScript = toPortablePath(layout.pathApi.join(layout.binDir, 'start.sh'));
+  const controlRoot = toPortablePath(layout.controlRoot);
+  const startScript = toPortablePath(layout.startScript);
   const stdoutPath = toPortablePath(
     layout.pathApi.join(layout.logRoot, 'router-product-service.launchd.stdout.log'),
   );
@@ -629,10 +1073,10 @@ export function renderLaunchdPlist({
     `    <string>${xmlEscape(startScript)}</string>`,
     '    <string>--foreground</string>',
     '    <string>--home</string>',
-    `    <string>${xmlEscape(portableRoot)}</string>`,
+    `    <string>${xmlEscape(controlRoot)}</string>`,
     '  </array>',
     '  <key>WorkingDirectory</key>',
-    `  <string>${xmlEscape(portableRoot)}</string>`,
+    `  <string>${xmlEscape(controlRoot)}</string>`,
     '  <key>RunAtLoad</key>',
     '  <true/>',
     '  <key>KeepAlive</key>',
@@ -660,8 +1104,8 @@ export function renderWindowsTaskXml({
     platform,
     env,
   });
-  const portableRoot = toPortablePath(layout.installRoot);
-  const startScript = toPortablePath(layout.pathApi.join(layout.binDir, 'start.ps1'));
+  const controlRoot = toPortablePath(layout.controlRoot);
+  const startScript = toPortablePath(layout.startPs1Script);
   const taskAuthor = xmlEscape(taskName);
   const command = 'powershell.exe';
   const argumentsText = [
@@ -672,7 +1116,7 @@ export function renderWindowsTaskXml({
     `"${startScript}"`,
     '-Foreground',
     '-Home',
-    `"${portableRoot}"`,
+    `"${controlRoot}"`,
   ].join(' ');
 
   return [
@@ -716,7 +1160,7 @@ export function renderWindowsTaskXml({
     '    <Exec>',
     `      <Command>${xmlEscape(command)}</Command>`,
     `      <Arguments>${xmlEscape(argumentsText)}</Arguments>`,
-    `      <WorkingDirectory>${xmlEscape(portableRoot)}</WorkingDirectory>`,
+    `      <WorkingDirectory>${xmlEscape(controlRoot)}</WorkingDirectory>`,
     '    </Exec>',
     '  </Actions>',
     '</Task>',
@@ -1043,7 +1487,7 @@ export function renderWindowsServiceRunScript({
     platform,
     env,
   });
-  const portableRoot = toPortablePath(layout.installRoot);
+  const controlRoot = toPortablePath(layout.controlRoot);
   const envFile = toPortablePath(layout.envFile);
 
   return [
@@ -1055,7 +1499,7 @@ export function renderWindowsServiceRunScript({
     '}',
     '. $runtimeCommon',
     `Import-RouterEnvFile -EnvFile '${envFile.replaceAll("'", "''")}'`,
-    `& (Join-Path $runtimeHome 'bin\\start.ps1') -Foreground -Home '${portableRoot.replaceAll("'", "''")}'`,
+    `& (Join-Path $runtimeHome 'bin\\start.ps1') -Foreground -Home '${controlRoot.replaceAll("'", "''")}'`,
     'exit $LASTEXITCODE',
     '',
   ].join('\n');
@@ -1165,6 +1609,7 @@ export function createInstallPlan({
   platform = process.platform,
   arch = process.arch,
   env = process.env,
+  releaseOutputDir = defaultReleaseOutputDir(repoRoot),
 } = {}) {
   const runtimePlatform = normalizeRuntimePlatform(platform);
   const normalizedMode = normalizeInstallMode(mode);
@@ -1173,36 +1618,41 @@ export function createInstallPlan({
     platform: runtimePlatform,
     env,
   });
+  const releaseVersion = resolveProductReleaseVersion(repoRoot);
   const layout = resolveRuntimeLayout({
     installRoot: resolvedInstallRoot,
     mode: normalizedMode,
     platform: runtimePlatform,
     env,
+    releaseVersion,
   });
   const target = resolveDesktopReleaseTarget({
     platform: runtimePlatform,
     arch,
     env,
   });
-  const releaseRoot = path.join(
-    resolveWorkspaceTargetDir({
-      workspaceRoot: repoRoot,
-      env,
-      platform: runtimePlatform,
-    }),
-    target.targetTriple,
-    'release',
-  );
+  const serverBundlePaths = resolveOfficialProductServerBundlePaths({
+    repoRoot,
+    releaseOutputDir,
+    platform: runtimePlatform,
+    arch: target.arch,
+    env,
+  });
   const directories = Array.from(new Set([
     layout.installRoot,
+    layout.controlRoot,
     layout.binDir,
     layout.binLibDir,
+    layout.releasesRoot,
+    layout.releaseRoot,
+    layout.releaseBinDir,
+    layout.releaseDeployDir,
     layout.configRoot,
     layout.configFragmentDir,
     layout.staticDataDir,
     layout.serviceSystemdDir,
     layout.serviceLaunchdDir,
-    layout.pathApi.join(layout.installRoot, 'service', 'windows-service'),
+    layout.serviceWindowsServiceDir,
     layout.serviceWindowsTaskDir,
     layout.sitesAdminDir,
     layout.sitesPortalDir,
@@ -1212,17 +1662,6 @@ export function createInstallPlan({
   ]));
 
   const files = [];
-
-  for (const binaryName of RELEASE_BINARY_NAMES) {
-    files.push({
-      type: 'file',
-      sourcePath: path.join(releaseRoot, withExecutable(binaryName, runtimePlatform)),
-      targetPath: layout.pathApi.join(
-        layout.binDir,
-        withExecutable(binaryName, runtimePlatform),
-      ),
-    });
-  }
 
   const runtimeScripts = [
     'start.sh',
@@ -1250,21 +1689,12 @@ export function createInstallPlan({
   }
 
   files.push(
-    {
-      type: 'directory',
-      sourcePath: path.join(repoRoot, 'data'),
-      targetPath: layout.staticDataDir,
-    },
-    {
-      type: 'directory',
-      sourcePath: path.join(repoRoot, 'apps', 'sdkwork-router-admin', 'dist'),
-      targetPath: layout.adminSiteDistDir,
-    },
-    {
-      type: 'directory',
-      sourcePath: path.join(repoRoot, 'apps', 'sdkwork-router-portal', 'dist'),
-      targetPath: layout.portalSiteDistDir,
-    },
+    ...createOfficialProductServerBundleInstallEntries({
+      layout,
+      bundlePath: serverBundlePaths.bundlePath,
+      bundleManifestPath: serverBundlePaths.bundleManifestPath,
+      releaseCatalogPath: serverBundlePaths.releaseCatalogPath,
+    }),
     {
       type: 'text',
       targetPath: layout.configFile,
@@ -1350,9 +1780,7 @@ export function createInstallPlan({
     {
       type: 'text',
       targetPath: layout.pathApi.join(
-        layout.installRoot,
-        'service',
-        'windows-service',
+        layout.serviceWindowsServiceDir,
         'run-service.ps1',
       ),
       contents: renderWindowsServiceRunScript({
@@ -1365,9 +1793,7 @@ export function createInstallPlan({
     {
       type: 'text',
       targetPath: layout.pathApi.join(
-        layout.installRoot,
-        'service',
-        'windows-service',
+        layout.serviceWindowsServiceDir,
         'install-service.ps1',
       ),
       contents: renderWindowsServiceInstallScript(),
@@ -1375,9 +1801,7 @@ export function createInstallPlan({
     {
       type: 'text',
       targetPath: layout.pathApi.join(
-        layout.installRoot,
-        'service',
-        'windows-service',
+        layout.serviceWindowsServiceDir,
         'uninstall-service.ps1',
       ),
       contents: renderWindowsServiceUninstallScript(),
@@ -1413,13 +1837,25 @@ export function createInstallPlan({
     },
     {
       type: 'text',
-      targetPath: layout.pathApi.join(layout.installRoot, 'release-manifest.json'),
+      targetPath: layout.releaseManifestFile,
       contents: `${JSON.stringify({
         runtime: 'sdkwork-api-router',
+        layoutVersion: 2,
         installMode: normalizedMode,
+        productRoot: layout.installRoot,
+        controlRoot: layout.controlRoot,
+        releaseVersion,
+        releasesRoot: layout.releasesRoot,
+        releaseRoot: layout.releaseRoot,
         target,
         installedBinaries: RELEASE_BINARY_NAMES,
-        bootstrapDataRoot: 'data',
+        bootstrapDataRoot: layout.staticDataDir,
+        deploymentAssetRoot: layout.releaseDeployDir,
+        releasePayloadManifest: layout.releasePayloadManifestFile,
+        releasePayloadReadmeFile: layout.releasePayloadReadmeFile,
+        adminSiteDistDir: layout.adminSiteDistDir,
+        portalSiteDistDir: layout.portalSiteDistDir,
+        routerBinary: layout.routerBinary,
         configRoot: layout.configRoot,
         configFile: layout.configFile,
         mutableDataRoot: layout.dataRoot,
@@ -1431,6 +1867,10 @@ export function createInstallPlan({
   );
 
   return {
+    installRoot: layout.installRoot,
+    controlRoot: layout.controlRoot,
+    releaseRoot: layout.releaseRoot,
+    releaseVersion,
     mode: normalizedMode,
     target,
     directories,
@@ -1442,6 +1882,74 @@ function ensureDirectory(directoryPath) {
   mkdirSync(directoryPath, { recursive: true });
 }
 
+function collectUniqueBundleInputs(plan) {
+  const bundleInputs = new Map();
+
+  for (const file of plan?.files ?? []) {
+    if (file.type !== 'bundle-file' && file.type !== 'bundle-directory') {
+      continue;
+    }
+
+    const cacheKey = `${file.bundlePath}::${file.bundleManifestPath}::${file.releaseCatalogPath ?? ''}`;
+    if (!bundleInputs.has(cacheKey)) {
+      bundleInputs.set(cacheKey, {
+        bundlePath: file.bundlePath,
+        bundleManifestPath: file.bundleManifestPath,
+        releaseCatalogPath: file.releaseCatalogPath,
+      });
+    }
+  }
+
+  return [...bundleInputs.values()];
+}
+
+function assertBundleInputsExist({
+  bundlePath,
+  bundleManifestPath,
+  releaseCatalogPath,
+  exists = existsSync,
+  readFile = readFileSync,
+} = {}) {
+  if (!exists(bundlePath)) {
+    throw new Error(`Missing install bundle archive: ${bundlePath}`);
+  }
+  if (!exists(bundleManifestPath)) {
+    throw new Error(`Missing install bundle manifest: ${bundleManifestPath}`);
+  }
+  if (!exists(releaseCatalogPath)) {
+    throw new Error(`Missing install release catalog: ${releaseCatalogPath}`);
+  }
+
+  const manifest = readOfficialProductServerBundleManifest(bundleManifestPath, {
+    readFile,
+  });
+  assertOfficialProductServerBundleManifest(manifest, {
+    bundlePath,
+    bundleManifestPath,
+  });
+
+  const checksumFile = String(manifest.checksumFile ?? '').trim();
+  if (checksumFile.length === 0) {
+    throw new Error(`Server bundle manifest is missing checksumFile at ${bundleManifestPath}`);
+  }
+
+  const checksumPath = path.join(path.dirname(bundleManifestPath), checksumFile);
+  if (!exists(checksumPath)) {
+    throw new Error(`Missing install bundle checksum file: ${checksumPath}`);
+  }
+
+  const releaseCatalog = readReleaseCatalogFile({
+    releaseCatalogPath,
+    readFile,
+  });
+  assertReleaseCatalogServerBundleEntry(releaseCatalog, {
+    bundlePath,
+    bundleManifestPath,
+    bundleChecksumPath: checksumPath,
+    releaseCatalogPath,
+  });
+}
+
 export function applyInstallPlan(plan, { force = false } = {}) {
   if (force && plan?.directories?.[0]) {
     rmSync(plan.directories[0], { recursive: true, force: true });
@@ -1451,36 +1959,79 @@ export function applyInstallPlan(plan, { force = false } = {}) {
     ensureDirectory(directoryPath);
   }
 
-  for (const file of plan.files) {
-    ensureDirectory(path.dirname(file.targetPath));
+  const bundleExtractions = new Map();
+  try {
+    for (const file of plan.files) {
+      ensureDirectory(path.dirname(file.targetPath));
 
-    if (file.type === 'directory') {
-      rmSync(file.targetPath, { recursive: true, force: true });
-      cpSync(file.sourcePath, file.targetPath, { recursive: true });
-      continue;
-    }
-
-    if (file.type === 'file') {
-      cpSync(file.sourcePath, file.targetPath);
-      if (file.mode != null) {
-        chmodSync(file.targetPath, file.mode);
-      }
-      continue;
-    }
-
-    if (file.type === 'text') {
-      if (file.skipIfExists && existsSync(file.targetPath)) {
+      if (file.type === 'directory') {
+        rmSync(file.targetPath, { recursive: true, force: true });
+        cpSync(file.sourcePath, file.targetPath, { recursive: true });
         continue;
       }
-      writeFileSync(file.targetPath, file.contents, 'utf8');
-      if (file.mode != null) {
-        chmodSync(file.targetPath, file.mode);
+
+      if (file.type === 'file') {
+        cpSync(file.sourcePath, file.targetPath);
+        if (file.mode != null) {
+          chmodSync(file.targetPath, file.mode);
+        }
+        continue;
       }
+
+      if (file.type === 'bundle-directory' || file.type === 'bundle-file') {
+        const cacheKey = `${file.bundlePath}::${file.bundleManifestPath}::${file.releaseCatalogPath ?? ''}`;
+        let extraction = bundleExtractions.get(cacheKey);
+        if (!extraction) {
+          assertBundleInputsExist({
+            bundlePath: file.bundlePath,
+            bundleManifestPath: file.bundleManifestPath,
+            releaseCatalogPath: file.releaseCatalogPath,
+          });
+          extraction = extractOfficialProductServerBundle(file.bundlePath, {
+            stagingParent: plan.releaseRoot ?? plan.installRoot ?? path.dirname(file.targetPath),
+          });
+          bundleExtractions.set(cacheKey, extraction);
+        }
+
+        const sourcePath = resolveBundleEntrySourcePath(extraction.bundleRoot, file.bundleEntryPath);
+        if (!existsSync(sourcePath)) {
+          throw new Error(`Missing bundle entry ${file.bundleEntryPath} in ${file.bundlePath}`);
+        }
+
+        if (file.type === 'bundle-directory') {
+          rmSync(file.targetPath, { recursive: true, force: true });
+          cpSync(sourcePath, file.targetPath, { recursive: true });
+        } else {
+          cpSync(sourcePath, file.targetPath);
+          if (file.mode != null) {
+            chmodSync(file.targetPath, file.mode);
+          }
+        }
+        continue;
+      }
+
+      if (file.type === 'text') {
+        if (file.skipIfExists && existsSync(file.targetPath)) {
+          continue;
+        }
+        writeFileSync(file.targetPath, file.contents, 'utf8');
+        if (file.mode != null) {
+          chmodSync(file.targetPath, file.mode);
+        }
+      }
+    }
+  } finally {
+    for (const extraction of bundleExtractions.values()) {
+      rmSync(extraction.stagingRoot, { recursive: true, force: true });
     }
   }
 }
 
 export function assertInstallInputsExist(plan) {
+  for (const bundleInput of collectUniqueBundleInputs(plan)) {
+    assertBundleInputsExist(bundleInput);
+  }
+
   for (const file of plan.files) {
     if (file.type === 'file' || file.type === 'directory') {
       if (!existsSync(file.sourcePath)) {
@@ -1549,11 +2100,13 @@ export function createValidateConfigPlan({
     platform: runtimePlatform,
     env,
   });
+  const releaseVersion = resolveProductReleaseVersion(repoRoot);
   const layout = resolveRuntimeLayout({
     installRoot: resolvedInstallRoot,
     mode: normalizedMode,
     platform: runtimePlatform,
     env,
+    releaseVersion,
   });
   const envFileValues = readEnvFileValues(layout.envFile, {
     exists,
@@ -1578,7 +2131,7 @@ export function createValidateConfigPlan({
       label: 'validate-config',
       command: binaryPath,
       args: ['--dry-run', '--plan-format', 'json'],
-      cwd: layout.installRoot,
+      cwd: layout.controlRoot,
       env: validationEnv,
       shell: false,
       windowsHide: runtimePlatform === 'win32',

@@ -5,7 +5,7 @@
   "identifier": "com.sdkwork.router.portal",
   "build": {
     "beforeDevCommand": "pnpm dev",
-    "beforeBuildCommand": "node ../../scripts/build-router-desktop-assets.mjs",
+    "beforeBuildCommand": "node ../../scripts/prepare-router-portal-desktop-runtime.mjs",
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5174/portal/"
   },
@@ -19,8 +19,7 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "../dist/": "embedded-sites/portal/",
-      "../../sdkwork-router-admin/dist/": "embedded-sites/admin/"
+      "../../../bin/portal-rt/router-product/": "router-product/"
     }
   },
   "app": {

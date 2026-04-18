@@ -11,6 +11,11 @@ function read(relativePath) {
   return readFileSync(path.join(repoRoot, relativePath), 'utf8');
 }
 
+function writeModule(filePath, source) {
+  mkdirSync(path.dirname(filePath), { recursive: true });
+  writeFileSync(filePath, source, 'utf8');
+}
+
 function writeReleaseWorkflowContractFixture({
   workflowText,
   coverage = {
@@ -29,7 +34,7 @@ function writeReleaseWorkflowContractFixture({
     'utf8',
   );
 
-  writeFileSync(
+  writeModule(
     path.join(fixtureRoot, 'scripts', 'release', 'materialize-external-deps.mjs'),
     `
 export function listExternalReleaseDependencySpecs() {
@@ -40,1455 +45,137 @@ export function listExternalReleaseDependencySpecs() {
     { id: 'sdkwork-craw-chat-sdk', repository: 'Sdkwork-Cloud/craw-chat', envRefKey: 'SDKWORK_CRAW_CHAT_SDK_GIT_REF', defaultRef: 'main' },
   ];
 }
-
 export function buildExternalReleaseClonePlan() {
   return { command: 'git', args: [] };
 }
-
 export function auditExternalReleaseDependencyCoverage() {
   return ${JSON.stringify(coverage, null, 2)};
 }
 `,
-    'utf8',
   );
 
-  writeFileSync(
-    path.join(fixtureRoot, 'scripts', 'release', 'materialize-release-telemetry-export.mjs'),
-    `
-export function resolveReleaseTelemetryExportProducerInput() {
-  return { source: 'json', payload: {} };
-}
-
-export function materializeReleaseTelemetryExport() {
-  return { outputPath: 'docs/release/release-telemetry-export-latest.json' };
-}
+  for (const [name, body] of Object.entries({
+    'materialize-release-window-snapshot.mjs': `
+export function resolveReleaseWindowSnapshotProducerInput() { return { source: 'json', snapshot: {} }; }
+export function materializeReleaseWindowSnapshot() { return { outputPath: 'docs/release/release-window-snapshot-latest.json' }; }
 `,
-    'utf8',
-  );
-
-  writeFileSync(
-    path.join(fixtureRoot, 'scripts', 'release', 'materialize-release-window-snapshot.mjs'),
-    `
-export function resolveReleaseWindowSnapshotProducerInput() {
-  return { source: 'json', snapshot: {} };
-}
-
-export function materializeReleaseWindowSnapshot() {
-  return { outputPath: 'docs/release/release-window-snapshot-latest.json' };
-}
+    'materialize-release-sync-audit.mjs': `
+export function resolveReleaseSyncAuditProducerInput() { return { source: 'json', summary: {} }; }
+export function materializeReleaseSyncAudit() { return { outputPath: 'docs/release/release-sync-audit-latest.json' }; }
 `,
-    'utf8',
-  );
-
-  writeFileSync(
-    path.join(fixtureRoot, 'scripts', 'release', 'materialize-release-sync-audit.mjs'),
-    `
-export function resolveReleaseSyncAuditProducerInput() {
-  return { source: 'json', summary: {} };
-}
-
-export function materializeReleaseSyncAudit() {
-  return { outputPath: 'docs/release/release-sync-audit-latest.json' };
-}
+    'materialize-release-telemetry-export.mjs': `
+export function resolveReleaseTelemetryExportProducerInput() { return { source: 'json', payload: {} }; }
+export function materializeReleaseTelemetryExport() { return { outputPath: 'docs/release/release-telemetry-export-latest.json' }; }
 `,
-    'utf8',
-  );
-
-  writeFileSync(
-    path.join(fixtureRoot, 'scripts', 'release', 'materialize-release-telemetry-snapshot.mjs'),
-    `
-export function resolveReleaseTelemetryExportInput() {
-  return { source: 'json', payload: {} };
-}
-
-export function resolveReleaseTelemetrySnapshotInput() {
-  return { source: 'json', payload: {} };
-}
-
-export function deriveReleaseTelemetrySnapshotFromExport() {
-  return {
-    generatedAt: '2026-04-08T10:00:00Z',
-    source: { kind: 'release-telemetry-export' },
-    targets: {},
-  };
-}
-
-export function validateReleaseTelemetrySnapshotShape() {
-  return { snapshotId: 'release-telemetry-snapshot-v1', targetCount: 14 };
-}
-
-export function materializeReleaseTelemetrySnapshot() {
-  return { outputPath: 'docs/release/release-telemetry-snapshot-latest.json' };
-}
+    'materialize-release-telemetry-snapshot.mjs': `
+export function resolveReleaseTelemetryExportInput() { return { source: 'json', payload: {} }; }
+export function resolveReleaseTelemetrySnapshotInput() { return { source: 'json', payload: {} }; }
+export function deriveReleaseTelemetrySnapshotFromExport() { return { generatedAt: '2026-04-18T10:00:00Z', source: { kind: 'release-telemetry-export' }, targets: {} }; }
+export function validateReleaseTelemetrySnapshotShape() { return { snapshotId: 'release-telemetry-snapshot-v1', targetCount: 3 }; }
+export function materializeReleaseTelemetrySnapshot() { return { outputPath: 'docs/release/release-telemetry-snapshot-latest.json' }; }
 `,
-    'utf8',
-  );
-
-  writeFileSync(
-    path.join(fixtureRoot, 'scripts', 'release', 'materialize-slo-governance-evidence.mjs'),
-    `
-export function resolveSloGovernanceEvidenceInput() {
-  return { source: 'json', payload: {} };
-}
-
-export function validateSloGovernanceEvidenceShape() {
-  return { baselineId: 'release-slo-governance-baseline-2026-04-08', targetCount: 14 };
-}
-
-export function materializeSloGovernanceEvidence() {
-  return { outputPath: 'docs/release/slo-governance-latest.json' };
-}
+    'materialize-slo-governance-evidence.mjs': `
+export function resolveSloGovernanceEvidenceInput() { return { source: 'json', payload: {} }; }
+export function validateSloGovernanceEvidenceShape() { return { baselineId: 'release-slo-governance-baseline', targetCount: 3 }; }
+export function materializeSloGovernanceEvidence() { return { outputPath: 'docs/release/slo-governance-latest.json' }; }
 `,
-    'utf8',
-  );
-
-  writeFileSync(
-    path.join(fixtureRoot, 'scripts', 'release', 'materialize-release-governance-bundle.mjs'),
-    `
-export function listReleaseGovernanceBundleArtifactSpecs() {
-  return [];
-}
-
-export function createReleaseGovernanceBundleManifest() {
-  return {
-    version: 1,
-    bundleEntryCount: 0,
-    artifacts: [],
-    restore: {
-      command: 'node scripts/release/restore-release-governance-latest.mjs --artifact-dir <downloaded-dir>',
-    },
-  };
-}
-
-export function materializeReleaseGovernanceBundle() {
-  return {
-    outputDir: 'artifacts/release-governance-bundle',
-    bundleEntryCount: 0,
-    manifestPath: 'artifacts/release-governance-bundle/release-governance-bundle-manifest.json',
-  };
-}
+    'materialize-release-governance-bundle.mjs': `
+export function listReleaseGovernanceBundleArtifactSpecs() { return []; }
+export function createReleaseGovernanceBundleManifest() { return { version: 1, bundleEntryCount: 0, artifacts: [] }; }
+export function materializeReleaseGovernanceBundle() { return { outputDir: 'artifacts/release-governance-bundle', bundleEntryCount: 0, manifestPath: 'artifacts/release-governance-bundle/release-governance-bundle-manifest.json' }; }
 `,
-    'utf8',
-  );
-
-  writeFileSync(
-    path.join(fixtureRoot, 'scripts', 'release', 'run-unix-installed-runtime-smoke.mjs'),
-    `
-export function parseArgs() {
-  return {
-    platform: 'linux',
-    arch: 'x64',
-    target: 'x86_64-unknown-linux-gnu',
-    runtimeHome: 'artifacts/release-smoke/linux-x64',
-    evidencePath: 'artifacts/release-governance/unix-installed-runtime-smoke-linux-x64.json',
-  };
-}
-
-export function createUnixInstalledRuntimeSmokeOptions() {
-  return parseArgs();
-}
-
-export function createUnixInstalledRuntimeSmokePlan() {
-  return {
-    runtimeHome: 'artifacts/release-smoke/linux-x64',
-    evidencePath: 'artifacts/release-governance/unix-installed-runtime-smoke-linux-x64.json',
-    installPlan: { directories: ['artifacts/release-smoke/linux-x64'] },
-    startCommand: { command: './bin/start.sh', args: ['--home', 'artifacts/release-smoke/linux-x64', '--wait-seconds', '120'] },
-    stopCommand: { command: './bin/stop.sh', args: ['--home', 'artifacts/release-smoke/linux-x64', '--wait-seconds', '120'] },
-    healthUrls: [],
-    routerEnvContents: '',
-  };
-}
-
-export function createUnixInstalledRuntimeSmokeEvidence() {
-  return {
-    ok: true,
-    platform: 'linux',
-    arch: 'x64',
-    target: 'x86_64-unknown-linux-gnu',
-    runtimeHome: 'artifacts/release-smoke/linux-x64',
-    evidencePath: 'artifacts/release-governance/unix-installed-runtime-smoke-linux-x64.json',
-    healthUrls: [],
-  };
-}
+    'run-unix-installed-runtime-smoke.mjs': `
+export function parseArgs() { return {}; }
+export function createUnixInstalledRuntimeSmokeOptions() { return {}; }
+export function createUnixInstalledRuntimeSmokePlan() { return {}; }
+export function createUnixInstalledRuntimeSmokeEvidence() { return {}; }
 `,
-    'utf8',
-  );
-
-  writeFileSync(
-    path.join(fixtureRoot, 'scripts', 'release', 'run-windows-installed-runtime-smoke.mjs'),
-    `
-export function parseArgs() {
-  return {
-    platform: 'windows',
-    arch: 'x64',
-    target: 'x86_64-pc-windows-msvc',
-    runtimeHome: 'artifacts/release-smoke/windows-x64',
-    evidencePath: 'artifacts/release-governance/windows-installed-runtime-smoke-windows-x64.json',
-  };
-}
-
-export function createWindowsInstalledRuntimeSmokeOptions() {
-  return parseArgs();
-}
-
-export function createWindowsInstalledRuntimeSmokePlan() {
-  return {
-    runtimeHome: 'artifacts/release-smoke/windows-x64',
-    evidencePath: 'artifacts/release-governance/windows-installed-runtime-smoke-windows-x64.json',
-    installPlan: { directories: ['artifacts/release-smoke/windows-x64'] },
-    startCommand: { command: 'powershell.exe', args: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'bin/start.ps1', '-Home', 'artifacts/release-smoke/windows-x64', '-WaitSeconds', '120'] },
-    stopCommand: { command: 'powershell.exe', args: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'bin/stop.ps1', '-Home', 'artifacts/release-smoke/windows-x64', '-WaitSeconds', '120'] },
-    healthUrls: [],
-    routerEnvContents: '',
-  };
-}
-
-export function createWindowsInstalledRuntimeSmokeEvidence() {
-  return {
-    ok: true,
-    platform: 'windows',
-    arch: 'x64',
-    target: 'x86_64-pc-windows-msvc',
-    runtimeHome: 'artifacts/release-smoke/windows-x64',
-    evidencePath: 'artifacts/release-governance/windows-installed-runtime-smoke-windows-x64.json',
-    healthUrls: [],
-  };
-}
+    'run-windows-installed-runtime-smoke.mjs': `
+export function parseArgs() { return {}; }
+export function createWindowsInstalledRuntimeSmokeOptions() { return {}; }
+export function createWindowsInstalledRuntimeSmokePlan() { return {}; }
+export function createWindowsInstalledRuntimeSmokeEvidence() { return {}; }
 `,
-    'utf8',
-  );
-
-  writeFileSync(
-    path.join(fixtureRoot, 'scripts', 'release', 'run-linux-docker-compose-smoke.mjs'),
-    `
-export function parseArgs() {
-  return {
-    platform: 'linux',
-    arch: 'x64',
-    bundlePath: 'artifacts/release/native/linux/x64/bundles/sdkwork-api-router-product-server-linux-x64.tar.gz',
-    evidencePath: 'artifacts/release-governance/docker-compose-smoke-linux-x64.json',
-  };
-}
-
-export function createLinuxDockerComposeSmokeOptions() {
-  return parseArgs();
-}
-
-export function createLinuxDockerComposeSmokePlan() {
-  return {
-    bundlePath: 'artifacts/release/native/linux/x64/bundles/sdkwork-api-router-product-server-linux-x64.tar.gz',
-    evidencePath: 'artifacts/release-governance/docker-compose-smoke-linux-x64.json',
-    composeRelativePath: 'deploy/docker/docker-compose.yml',
-    envRelativePath: 'deploy/docker/.env',
-    overrideRelativePath: 'deploy/docker/docker-compose.smoke.override.yml',
-    healthUrls: [
-      'http://127.0.0.1:3001/api/v1/health',
-      'http://127.0.0.1:3001/api/admin/health',
-      'http://127.0.0.1:3001/api/portal/health',
-    ],
-    siteUrls: [
-      'http://127.0.0.1:3001/admin/',
-      'http://127.0.0.1:3001/portal/',
-    ],
-    envContents: '',
-    overrideContents: '',
-    databaseAssertions: [],
-  };
-}
-
-export function createLinuxDockerComposeSmokeEvidence() {
-  return {
-    ok: true,
-    platform: 'linux',
-    arch: 'x64',
-    bundlePath: 'artifacts/release/native/linux/x64/bundles/sdkwork-api-router-product-server-linux-x64.tar.gz',
-    evidencePath: 'artifacts/release-governance/docker-compose-smoke-linux-x64.json',
-    healthUrls: [
-      'http://127.0.0.1:3001/api/v1/health',
-      'http://127.0.0.1:3001/api/admin/health',
-      'http://127.0.0.1:3001/api/portal/health',
-    ],
-    siteUrls: [
-      'http://127.0.0.1:3001/admin/',
-      'http://127.0.0.1:3001/portal/',
-    ],
-    databaseAssertions: [],
-  };
-}
+    'run-linux-docker-compose-smoke.mjs': `
+export function parseArgs() { return {}; }
+export function createLinuxDockerComposeSmokeOptions() { return {}; }
+export function createLinuxDockerComposeSmokePlan() { return {}; }
+export function createLinuxDockerComposeSmokeEvidence() { return {}; }
 `,
-    'utf8',
-  );
-
-  writeFileSync(
-    path.join(fixtureRoot, 'scripts', 'release', 'run-linux-helm-render-smoke.mjs'),
-    `
-export function parseArgs() {
-  return {
-    platform: 'linux',
-    arch: 'x64',
-    bundlePath: 'artifacts/release/native/linux/x64/bundles/sdkwork-api-router-product-server-linux-x64.tar.gz',
-    evidencePath: 'artifacts/release-governance/helm-render-smoke-linux-x64.json',
-  };
-}
-
-export function createLinuxHelmRenderSmokeOptions() {
-  return parseArgs();
-}
-
-export function createLinuxHelmRenderSmokePlan() {
-  return {
-    bundlePath: 'artifacts/release/native/linux/x64/bundles/sdkwork-api-router-product-server-linux-x64.tar.gz',
-    evidencePath: 'artifacts/release-governance/helm-render-smoke-linux-x64.json',
-    chartRelativePath: 'deploy/helm/sdkwork-api-router',
-    renderedManifestRelativePath: 'artifacts/release-smoke/helm-render-linux-x64.yaml',
-    requiredTemplateKinds: ['Secret', 'Service', 'Deployment', 'Ingress'],
-    helmValues: {
-      databaseUrl: 'postgresql://sdkwork:sdkwork-release-smoke@postgres:5432/sdkwork_api_router',
-      adminJwtSigningSecret: 'admin-secret',
-      portalJwtSigningSecret: 'portal-secret',
-      credentialMasterKey: 'credential-master-key',
-      metricsBearerToken: 'metrics-token',
-      ingressEnabled: true,
-    },
-  };
-}
-
-export function createLinuxHelmRenderSmokeEvidence() {
-  return {
-    ok: true,
-    platform: 'linux',
-    arch: 'x64',
-    bundlePath: 'artifacts/release/native/linux/x64/bundles/sdkwork-api-router-product-server-linux-x64.tar.gz',
-    evidencePath: 'artifacts/release-governance/helm-render-smoke-linux-x64.json',
-    renderedManifestPath: 'artifacts/release-smoke/helm-render-linux-x64.yaml',
-    renderedKinds: ['Secret', 'Service', 'Deployment', 'Ingress'],
-  };
-}
+    'run-linux-helm-render-smoke.mjs': `
+export function parseArgs() { return {}; }
+export function createLinuxHelmRenderSmokeOptions() { return {}; }
+export function createLinuxHelmRenderSmokePlan() { return {}; }
+export function createLinuxHelmRenderSmokeEvidence() { return {}; }
 `,
-    'utf8',
-  );
+    'materialize-release-catalog.mjs': `
+export function collectReleaseCatalogEntries() { return []; }
+export function createReleaseCatalog() { return { version: 1, products: [] }; }
+export function materializeReleaseCatalog() { return { outputPath: 'artifacts/release/release-catalog.json', productCount: 2, variantCount: 2 }; }
+`,
+  })) {
+    writeModule(path.join(fixtureRoot, 'scripts', 'release', name), body);
+  }
 
   return fixtureRoot;
 }
 
-test('repository exposes a multi-platform GitHub release workflow for tagged and manual product releases', () => {
+test('release workflow publishes only official server and portal desktop products', () => {
   const workflowPath = path.join(repoRoot, '.github', 'workflows', 'release.yml');
-
   assert.equal(existsSync(workflowPath), true, 'missing .github/workflows/release.yml');
 
   const workflow = read('.github/workflows/release.yml');
 
-  assert.match(workflow, /workflow_dispatch:/);
-  assert.match(workflow, /push:\s*[\s\S]*tags:\s*[\s\S]*release-\*/);
-  assert.match(workflow, /windows-2022/);
-  assert.match(workflow, /windows-11-arm/);
-  assert.match(workflow, /ubuntu-22\.04/);
-  assert.match(workflow, /ubuntu-24\.04-arm/);
-  assert.match(workflow, /macos-15-intel/);
-  assert.match(workflow, /macos-14/);
-  assert.match(workflow, /arch:\s*x64/);
-  assert.match(workflow, /arch:\s*arm64/);
-  assert.match(workflow, /target:\s*x86_64-pc-windows-msvc/);
-  assert.match(workflow, /target:\s*aarch64-pc-windows-msvc/);
-  assert.match(workflow, /target:\s*x86_64-unknown-linux-gnu/);
-  assert.match(workflow, /target:\s*aarch64-unknown-linux-gnu/);
-  assert.match(workflow, /target:\s*x86_64-apple-darwin/);
-  assert.match(workflow, /target:\s*aarch64-apple-darwin/);
-  assert.match(workflow, /cargo build --release --target \$\{\{ matrix\.target \}\} -p admin-api-service -p gateway-service -p portal-api-service -p router-web-service -p router-product-service/);
-  assert.match(workflow, /node scripts\/release\/run-desktop-release-build\.mjs --app admin --target \$\{\{ matrix\.target \}\}/);
+  assert.match(workflow, /governance-release:/);
+  assert.match(workflow, /native-release:/);
+  assert.match(workflow, /publish:/);
   assert.match(workflow, /node scripts\/release\/run-desktop-release-build\.mjs --app portal --target \$\{\{ matrix\.target \}\}/);
+  assert.match(workflow, /native-release:[\s\S]*?Collect native release assets[\s\S]*?Run installed native runtime smoke on Windows/);
+  assert.match(workflow, /native-release:[\s\S]*?Collect native release assets[\s\S]*?Run installed native runtime smoke on Unix/);
+  assert.match(workflow, /node scripts\/release\/materialize-release-catalog\.mjs --release-tag \$\{\{ needs\.prepare\.outputs\.release_tag \}\} --assets-root artifacts\/release --output artifacts\/release\/release-catalog\.json/);
+  assert.match(workflow, /Generate release catalog attestation/);
+  assert.match(workflow, /subject-path:\s*artifacts\/release\/release-catalog\.json/);
+  assert.match(workflow, /publish:[\s\S]*?Checkout release ref/);
+  assert.match(workflow, /publish:[\s\S]*?actions\/setup-node@v5[\s\S]*?node-version:\s*22/);
+  assert.match(workflow, /sdkwork-api-router-product-server-\$\{\{ matrix\.platform \}\}-\$\{\{ matrix\.arch \}\}\.tar\.gz/);
+  assert.match(workflow, /sdkwork-api-router-product-server-\$\{\{ matrix\.platform \}\}-\$\{\{ matrix\.arch \}\}\.manifest\.json/);
+  assert.match(workflow, /desktop\/portal\/sdkwork-router-portal-desktop-\*/);
+  assert.doesNotMatch(workflow, /console\/pnpm-lock\.yaml/);
+  assert.match(workflow, /docs\/pnpm-lock\.yaml/);
   assert.match(
     workflow,
-    /Run installed native runtime smoke on Windows[\s\S]*if: matrix\.platform == 'windows'[\s\S]*node scripts\/release\/run-windows-installed-runtime-smoke\.mjs --platform \$\{\{ matrix\.platform \}\} --arch \$\{\{ matrix\.arch \}\} --target \$\{\{ matrix\.target \}\} --evidence-path artifacts\/release-governance\/windows-installed-runtime-smoke-\$\{\{ matrix\.platform \}\}-\$\{\{ matrix\.arch \}\}\.json/,
+    /Install product verification workspace dependencies[\s\S]*?pnpm --dir apps\/sdkwork-router-admin install --frozen-lockfile[\s\S]*?pnpm --dir apps\/sdkwork-router-portal install --frozen-lockfile[\s\S]*?pnpm --dir docs install --frozen-lockfile/,
   );
   assert.match(
     workflow,
-    /Upload Windows installed runtime smoke evidence[\s\S]*if:\s*\$\{\{\s*always\(\)\s*&&\s*matrix\.platform == 'windows'\s*\}\}[\s\S]*uses:\s*actions\/upload-artifact@v4[\s\S]*name:\s*release-governance-windows-installed-runtime-smoke-\$\{\{ matrix\.platform \}\}-\$\{\{ matrix\.arch \}\}[\s\S]*path:\s*artifacts\/release-governance\/windows-installed-runtime-smoke-\$\{\{ matrix\.platform \}\}-\$\{\{ matrix\.arch \}\}\.json/,
+    /Build docs site[\s\S]*?pnpm --dir docs build/,
   );
-  assert.match(
-    workflow,
-    /Run installed native runtime smoke on Unix[\s\S]*if: matrix\.platform != 'windows'[\s\S]*node scripts\/release\/run-unix-installed-runtime-smoke\.mjs --platform \$\{\{ matrix\.platform \}\} --arch \$\{\{ matrix\.arch \}\} --target \$\{\{ matrix\.target \}\} --evidence-path artifacts\/release-governance\/unix-installed-runtime-smoke-\$\{\{ matrix\.platform \}\}-\$\{\{ matrix\.arch \}\}\.json/,
-  );
-  assert.match(
-    workflow,
-    /Upload Unix installed runtime smoke evidence[\s\S]*if:\s*\$\{\{\s*always\(\)\s*&&\s*matrix\.platform != 'windows'\s*\}\}[\s\S]*uses:\s*actions\/upload-artifact@v4[\s\S]*name:\s*release-governance-unix-installed-runtime-smoke-\$\{\{ matrix\.platform \}\}-\$\{\{ matrix\.arch \}\}[\s\S]*path:\s*artifacts\/release-governance\/unix-installed-runtime-smoke-\$\{\{ matrix\.platform \}\}-\$\{\{ matrix\.arch \}\}\.json/,
-  );
-  assert.match(
-    workflow,
-    /Run Linux Docker Compose packaged product smoke[\s\S]*if: matrix\.platform == 'linux'[\s\S]*node scripts\/release\/run-linux-docker-compose-smoke\.mjs --platform \$\{\{ matrix\.platform \}\} --arch \$\{\{ matrix\.arch \}\} --bundle-path artifacts\/release\/native\/\$\{\{ matrix\.platform \}\}\/\$\{\{ matrix\.arch \}\}\/bundles\/sdkwork-api-router-product-server-\$\{\{ matrix\.platform \}\}-\$\{\{ matrix\.arch \}\}\.tar\.gz --evidence-path artifacts\/release-governance\/docker-compose-smoke-\$\{\{ matrix\.platform \}\}-\$\{\{ matrix\.arch \}\}\.json/,
-  );
-  assert.match(
-    workflow,
-    /Upload Linux Docker Compose smoke evidence[\s\S]*if:\s*\$\{\{\s*always\(\)\s*&&\s*matrix\.platform == 'linux'\s*\}\}[\s\S]*uses:\s*actions\/upload-artifact@v4[\s\S]*name:\s*release-governance-docker-compose-smoke-\$\{\{ matrix\.platform \}\}-\$\{\{ matrix\.arch \}\}[\s\S]*path:\s*artifacts\/release-governance\/docker-compose-smoke-\$\{\{ matrix\.platform \}\}-\$\{\{ matrix\.arch \}\}\.json/,
-  );
-  assert.match(
-    workflow,
-    /Run Linux Helm render packaged smoke[\s\S]*if: matrix\.platform == 'linux'[\s\S]*node scripts\/release\/run-linux-helm-render-smoke\.mjs --platform \$\{\{ matrix\.platform \}\} --arch \$\{\{ matrix\.arch \}\} --bundle-path artifacts\/release\/native\/\$\{\{ matrix\.platform \}\}\/\$\{\{ matrix\.arch \}\}\/bundles\/sdkwork-api-router-product-server-\$\{\{ matrix\.platform \}\}-\$\{\{ matrix\.arch \}\}\.tar\.gz --evidence-path artifacts\/release-governance\/helm-render-smoke-\$\{\{ matrix\.platform \}\}-\$\{\{ matrix\.arch \}\}\.json/,
-  );
-  assert.match(
-    workflow,
-    /Upload Linux Helm render smoke evidence[\s\S]*if:\s*\$\{\{\s*always\(\)\s*&&\s*matrix\.platform == 'linux'\s*\}\}[\s\S]*uses:\s*actions\/upload-artifact@v4[\s\S]*name:\s*release-governance-helm-render-smoke-\$\{\{ matrix\.platform \}\}-\$\{\{ matrix\.arch \}\}[\s\S]*path:\s*artifacts\/release-governance\/helm-render-smoke-\$\{\{ matrix\.platform \}\}-\$\{\{ matrix\.arch \}\}\.json/,
-  );
-  assert.match(workflow, /node scripts\/release\/package-release-assets\.mjs native --platform \$\{\{ matrix\.platform \}\} --arch \$\{\{ matrix\.arch \}\} --target \$\{\{ matrix\.target \}\}/);
-  assert.match(workflow, /pnpm --dir apps\/sdkwork-router-admin build/);
-  assert.match(workflow, /pnpm --dir apps\/sdkwork-router-portal build/);
-  assert.match(workflow, /pnpm --dir console build/);
-  assert.match(workflow, /pnpm --dir docs build/);
-  assert.match(workflow, /release-assets-native-\$\{\{ matrix\.platform \}\}-\$\{\{ matrix\.arch \}\}/);
-  assert.match(workflow, /softprops\/action-gh-release@/);
-  assert.match(workflow, /permissions:\s*[\s\S]*contents:\s*write/);
-  assert.match(workflow, /permissions:\s*[\s\S]*id-token:\s*write/);
-  assert.match(workflow, /permissions:\s*[\s\S]*attestations:\s*write/);
-  assert.match(workflow, /permissions:\s*[\s\S]*artifact-metadata:\s*write/);
+  assert.doesNotMatch(workflow, /run-desktop-release-build\.mjs --app admin/);
+  assert.doesNotMatch(workflow, /web-release:/);
+  assert.doesNotMatch(workflow, /package-release-assets\.mjs web/);
+  assert.doesNotMatch(workflow, /release-assets-web/);
+  assert.doesNotMatch(workflow, /release-assets\/\*\*\/\*/);
+  assert.doesNotMatch(workflow, /desktop\/portal\/\*\*\/*/);
+  assert.match(workflow, /artifacts\/release\/\*\*\/sdkwork-api-router-product-server-\*\.tar\.gz/);
+  assert.match(workflow, /artifacts\/release\/\*\*\/sdkwork-api-router-product-server-\*\.tar\.gz\.sha256\.txt/);
+  assert.match(workflow, /artifacts\/release\/\*\*\/sdkwork-api-router-product-server-\*\.manifest\.json/);
+  assert.match(workflow, /artifacts\/release\/\*\*\/desktop\/portal\/sdkwork-router-portal-desktop-\*/);
+  assert.match(workflow, /artifacts\/release\/release-catalog\.json/);
 });
 
-test('release workflow blocks native and web publishing on a dedicated Rust dependency audit gate', () => {
-  const workflow = read('.github/workflows/release.yml');
-
-  assert.match(
-    workflow,
-    /rust-dependency-audit:[\s\S]*?runs-on:\s*ubuntu-latest[\s\S]*?actions\/checkout@v5[\s\S]*?actions\/setup-node@v5[\s\S]*?dtolnay\/rust-toolchain@stable[\s\S]*?taiki-e\/install-action@cargo-audit[\s\S]*?node scripts\/check-rust-dependency-audit\.mjs/,
-  );
-  assert.match(
-    workflow,
-    /native-release:[\s\S]*?needs:\s*[\r\n]+\s*-\s*prepare[\r\n]+\s*-\s*rust-dependency-audit/,
-  );
-  assert.match(
-    workflow,
-    /web-release:[\s\S]*?needs:\s*[\r\n]+\s*-\s*prepare[\r\n]+\s*-\s*rust-dependency-audit/,
-  );
-});
-
-test('release workflow blocks native and web publishing on a dedicated product verification gate', () => {
-  const workflow = read('.github/workflows/release.yml');
-
-  assert.match(
-    workflow,
-    /product-verification:[\s\S]*?runs-on:\s*ubuntu-latest[\s\S]*?actions\/checkout@v5[\s\S]*?pnpm\/action-setup@v4[\s\S]*?actions\/setup-node@v5[\s\S]*?dtolnay\/rust-toolchain@stable[\s\S]*?Swatinem\/rust-cache@v2[\s\S]*?taiki-e\/install-action@cargo-audit[\s\S]*?node scripts\/check-router-product\.mjs/,
-  );
-  assert.match(
-    workflow,
-    /native-release:[\s\S]*?needs:\s*[\r\n]+\s*-\s*prepare[\r\n]+\s*-\s*rust-dependency-audit[\r\n]+\s*-\s*product-verification/,
-  );
-  assert.match(
-    workflow,
-    /web-release:[\s\S]*?needs:\s*[\r\n]+\s*-\s*prepare[\r\n]+\s*-\s*rust-dependency-audit[\r\n]+\s*-\s*product-verification/,
-  );
-});
-
-test('product verification installs governed frontend dependencies with frozen lockfiles before running release checks', () => {
-  const workflow = read('.github/workflows/release.yml');
-
-  assert.match(
-    workflow,
-    /product-verification:[\s\S]*?Setup Node\.js[\s\S]*?Install product verification workspace dependencies[\s\S]*?pnpm --dir apps\/sdkwork-router-admin install --frozen-lockfile[\s\S]*?pnpm --dir apps\/sdkwork-router-portal install --frozen-lockfile[\s\S]*?Run release product verification[\s\S]*?node scripts\/check-router-product\.mjs/,
-  );
-});
-
-test('product verification exports strict frontend install mode before running release checks', () => {
-  const workflow = read('.github/workflows/release.yml');
-
-  assert.match(
-    workflow,
-    /product-verification:[\s\S]*?Run release product verification[\s\S]*?env:[\s\S]*?SDKWORK_STRICT_FRONTEND_INSTALLS:\s*'1'[\s\S]*?run:\s*node scripts\/check-router-product\.mjs/,
-  );
-});
-
-test('release workflow materializes GitHub-backed external sibling dependencies before frontend installs', async () => {
-  const workflow = read('.github/workflows/release.yml');
-
-  assert.match(
-    workflow,
-    /Materialize external release dependencies[\s\S]*node scripts\/release\/materialize-external-deps\.mjs/,
-  );
-  assert.match(
-    workflow,
-    /Materialize external release dependencies[\s\S]*Install native workspace dependencies/,
-  );
-  assert.match(
-    workflow,
-    /Materialize external release dependencies[\s\S]*Install web workspace dependencies/,
-  );
-
-  const helper = await import(
-    pathToFileURL(
-      path.join(repoRoot, 'scripts', 'release', 'materialize-external-deps.mjs'),
-    ).href,
-  );
-  const releaseWindowHelper = await import(
-    pathToFileURL(
-      path.join(repoRoot, 'scripts', 'release', 'materialize-release-window-snapshot.mjs'),
-    ).href,
-  );
-  const releaseSyncHelper = await import(
-    pathToFileURL(
-      path.join(repoRoot, 'scripts', 'release', 'materialize-release-sync-audit.mjs'),
-    ).href,
-  );
-  const telemetryExportHelper = await import(
-    pathToFileURL(
-      path.join(repoRoot, 'scripts', 'release', 'materialize-release-telemetry-export.mjs'),
-    ).href,
-  );
-
-  assert.equal(typeof helper.listExternalReleaseDependencySpecs, 'function');
-  assert.equal(typeof helper.buildExternalReleaseClonePlan, 'function');
-  assert.equal(typeof helper.auditExternalReleaseDependencyCoverage, 'function');
-  assert.equal(typeof releaseWindowHelper.resolveReleaseWindowSnapshotProducerInput, 'function');
-  assert.equal(typeof releaseWindowHelper.materializeReleaseWindowSnapshot, 'function');
-  assert.equal(typeof releaseSyncHelper.resolveReleaseSyncAuditProducerInput, 'function');
-  assert.equal(typeof releaseSyncHelper.materializeReleaseSyncAudit, 'function');
-  assert.equal(typeof telemetryExportHelper.resolveReleaseTelemetryExportProducerInput, 'function');
-  assert.equal(typeof telemetryExportHelper.materializeReleaseTelemetryExport, 'function');
-
-  const specs = helper.listExternalReleaseDependencySpecs();
-  assert.equal(specs.length, 4);
-  assert.deepEqual(
-    specs.map((spec) => spec.id),
-    ['sdkwork-core', 'sdkwork-ui', 'sdkwork-appbase', 'sdkwork-craw-chat-sdk'],
-  );
-
-  const [sdkworkCoreSpec, sdkworkUiSpec, sdkworkAppbaseSpec, sdkworkImSdkSpec] = specs;
-  assert.equal(sdkworkCoreSpec.id, 'sdkwork-core');
-  assert.equal(sdkworkCoreSpec.repository, 'Sdkwork-Cloud/sdkwork-core');
-  assert.equal(sdkworkCoreSpec.envRefKey, 'SDKWORK_CORE_GIT_REF');
-  assert.equal(sdkworkCoreSpec.defaultRef, 'main');
-  assert.deepEqual(
-    sdkworkCoreSpec.requiredPaths,
-    ['package.json'],
-  );
-  assert.equal(sdkworkUiSpec.id, 'sdkwork-ui');
-  assert.equal(sdkworkUiSpec.repository, 'Sdkwork-Cloud/sdkwork-ui');
-  assert.equal(sdkworkUiSpec.envRefKey, 'SDKWORK_UI_GIT_REF');
-  assert.equal(sdkworkUiSpec.defaultRef, 'main');
-  assert.deepEqual(
-    sdkworkUiSpec.requiredPaths,
-    ['sdkwork-ui-pc-react/package.json'],
-  );
-  assert.match(
-    sdkworkUiSpec.targetDir.replaceAll('\\', '/'),
-    /\/sdkwork-ui$/,
-  );
-  assert.equal(sdkworkAppbaseSpec.id, 'sdkwork-appbase');
-  assert.equal(sdkworkAppbaseSpec.repository, 'Sdkwork-Cloud/sdkwork-appbase');
-  assert.equal(sdkworkAppbaseSpec.envRefKey, 'SDKWORK_APPBASE_GIT_REF');
-  assert.equal(sdkworkAppbaseSpec.defaultRef, 'main');
-  assert.deepEqual(
-    sdkworkAppbaseSpec.requiredPaths,
-    ['package.json'],
-  );
-  assert.equal(sdkworkImSdkSpec.id, 'sdkwork-craw-chat-sdk');
-  assert.equal(sdkworkImSdkSpec.repository, 'Sdkwork-Cloud/craw-chat');
-  assert.equal(sdkworkImSdkSpec.envRefKey, 'SDKWORK_CRAW_CHAT_SDK_GIT_REF');
-  assert.equal(sdkworkImSdkSpec.defaultRef, 'main');
-  assert.deepEqual(
-    sdkworkImSdkSpec.requiredPaths,
-    ['package.json'],
-  );
-  assert.match(
-    sdkworkImSdkSpec.targetDir.replaceAll('\\', '/'),
-    /\/craw-chat\/sdks\/sdkwork-craw-chat-sdk\/sdkwork-craw-chat-sdk-typescript\/composed$/,
-  );
-  assert.match(
-    sdkworkImSdkSpec.expectedGitRoot.replaceAll('\\', '/'),
-    /\/craw-chat$/,
-  );
-
-  const plan = helper.buildExternalReleaseClonePlan({
-    spec: sdkworkUiSpec,
-    env: {},
-  });
-  assert.equal(plan.command, 'git');
-  assert.deepEqual(
-    plan.args,
-    [
-      'clone',
-      '--depth',
-      '1',
-      '--branch',
-      'main',
-      'https://github.com/Sdkwork-Cloud/sdkwork-ui.git',
-      sdkworkUiSpec.targetDir,
-    ],
-  );
-
-  const crawChatPlan = helper.buildExternalReleaseClonePlan({
-    spec: sdkworkImSdkSpec,
-    env: {},
-  });
-  assert.equal(crawChatPlan.command, 'git');
-  assert.deepEqual(
-    crawChatPlan.args,
-    [
-      'clone',
-      '--depth',
-      '1',
-      '--branch',
-      'main',
-      'https://github.com/Sdkwork-Cloud/craw-chat.git',
-      sdkworkImSdkSpec.expectedGitRoot,
-    ],
-  );
-
-  const coverage = helper.auditExternalReleaseDependencyCoverage();
-  assert.equal(coverage.covered, true);
-  assert.deepEqual(coverage.uncoveredReferences, []);
-  assert.deepEqual(coverage.externalDependencyIds, ['sdkwork-ui']);
-  assert.ok(
-    coverage.references.some((reference) =>
-      reference.sourceFile === 'apps/sdkwork-router-admin/pnpm-workspace.yaml'
-      && reference.kind === 'pnpm-workspace',
-    ),
-    'expected admin workspace config to contribute an external sibling dependency reference',
-  );
-  assert.ok(
-    coverage.references.some((reference) =>
-      reference.sourceFile === 'apps/sdkwork-router-portal/pnpm-workspace.yaml'
-      && reference.kind === 'pnpm-workspace',
-    ),
-    'expected portal workspace config to contribute an external sibling dependency reference',
-  );
-  assert.ok(
-    coverage.references.some((reference) =>
-      reference.sourceFile === 'apps/sdkwork-router-portal/tsconfig.json'
-      && reference.kind === 'tsconfig-path',
-    ),
-    'expected portal tsconfig paths to contribute an external sibling dependency reference',
-  );
-  assert.match(
-    workflow,
-    /Materialize external release dependencies[\s\S]*Run release governance gate[\s\S]*Install native workspace dependencies/,
-  );
-  assert.match(
-    workflow,
-    /Materialize external release dependencies[\s\S]*Run release governance gate[\s\S]*Install web workspace dependencies/,
-  );
-  assert.match(
-    workflow,
-    /Run release governance gate[\s\S]*node scripts\/release\/run-release-governance-checks\.mjs --format json/,
-  );
-  assert.match(
-    workflow,
-    /Materialize release window snapshot[\s\S]*node scripts\/release\/materialize-release-window-snapshot\.mjs/,
-  );
-  assert.match(
-    workflow,
-    /native-release:[\s\S]*?Materialize release window snapshot[\s\S]*?SDKWORK_RELEASE_WINDOW_SNAPSHOT_JSON:[\s\S]*?run: node scripts\/release\/materialize-release-window-snapshot\.mjs/,
-    'native release job must materialize a governed release-window snapshot artifact before the governance gate',
-  );
-  assert.match(
-    workflow,
-    /web-release:[\s\S]*?Materialize release window snapshot[\s\S]*?SDKWORK_RELEASE_WINDOW_SNAPSHOT_JSON:[\s\S]*?run: node scripts\/release\/materialize-release-window-snapshot\.mjs/,
-    'web release job must materialize a governed release-window snapshot artifact before the governance gate',
-  );
-  assert.match(
-    workflow,
-    /native-release:[\s\S]*?Upload release window snapshot governance artifact[\s\S]*?uses:\s*actions\/upload-artifact@v4[\s\S]*?name:\s*release-governance-window-snapshot-\$\{\{\s*matrix\.platform\s*\}\}-\$\{\{\s*matrix\.arch\s*\}\}[\s\S]*?path:\s*docs\/release\/release-window-snapshot-latest\.json/,
-    'native release job must upload the governed release-window snapshot as a dedicated release-governance artifact',
-  );
-  assert.match(
-    workflow,
-    /web-release:[\s\S]*?Upload release window snapshot governance artifact[\s\S]*?uses:\s*actions\/upload-artifact@v4[\s\S]*?name:\s*release-governance-window-snapshot-web[\s\S]*?path:\s*docs\/release\/release-window-snapshot-latest\.json/,
-    'web release job must upload the governed release-window snapshot as a dedicated release-governance artifact',
-  );
-  assert.match(
-    workflow,
-    /Materialize release sync audit[\s\S]*node scripts\/release\/materialize-release-sync-audit\.mjs/,
-  );
-  assert.match(
-    workflow,
-    /native-release:[\s\S]*?Materialize release sync audit[\s\S]*?SDKWORK_RELEASE_SYNC_AUDIT_JSON:[\s\S]*?SDKWORK_API_ROUTER_GIT_REF:[\s\S]*?SDKWORK_CORE_GIT_REF:[\s\S]*?SDKWORK_UI_GIT_REF:[\s\S]*?SDKWORK_APPBASE_GIT_REF:[\s\S]*?SDKWORK_CRAW_CHAT_SDK_GIT_REF:[\s\S]*?run: node scripts\/release\/materialize-release-sync-audit\.mjs/,
-    'native release job must materialize a governed release-sync audit artifact before the governance gate',
-  );
-  assert.match(
-    workflow,
-    /web-release:[\s\S]*?Materialize release sync audit[\s\S]*?SDKWORK_RELEASE_SYNC_AUDIT_JSON:[\s\S]*?SDKWORK_API_ROUTER_GIT_REF:[\s\S]*?SDKWORK_CORE_GIT_REF:[\s\S]*?SDKWORK_UI_GIT_REF:[\s\S]*?SDKWORK_APPBASE_GIT_REF:[\s\S]*?SDKWORK_CRAW_CHAT_SDK_GIT_REF:[\s\S]*?run: node scripts\/release\/materialize-release-sync-audit\.mjs/,
-    'web release job must materialize a governed release-sync audit artifact before the governance gate',
-  );
-  assert.match(
-    workflow,
-    /native-release:[\s\S]*?Upload release sync audit governance artifact[\s\S]*?uses:\s*actions\/upload-artifact@v4[\s\S]*?name:\s*release-governance-sync-audit-\$\{\{\s*matrix\.platform\s*\}\}-\$\{\{\s*matrix\.arch\s*\}\}[\s\S]*?path:\s*docs\/release\/release-sync-audit-latest\.json/,
-    'native release job must upload the governed release-sync audit as a dedicated release-governance artifact',
-  );
-  assert.match(
-    workflow,
-    /web-release:[\s\S]*?Upload release sync audit governance artifact[\s\S]*?uses:\s*actions\/upload-artifact@v4[\s\S]*?name:\s*release-governance-sync-audit-web[\s\S]*?path:\s*docs\/release\/release-sync-audit-latest\.json/,
-    'web release job must upload the governed release-sync audit as a dedicated release-governance artifact',
-  );
-  assert.match(
-    workflow,
-    /Materialize release telemetry export[\s\S]*node scripts\/release\/materialize-release-telemetry-export\.mjs/,
-  );
-  assert.match(
-    workflow,
-    /native-release:[\s\S]*?Materialize release telemetry export[\s\S]*?SDKWORK_RELEASE_TELEMETRY_EXPORT_JSON:[\s\S]*?run: node scripts\/release\/materialize-release-telemetry-export\.mjs/,
-    'native release job must materialize a governed telemetry export artifact before snapshot derivation',
-  );
-  assert.match(
-    workflow,
-    /web-release:[\s\S]*?Materialize release telemetry export[\s\S]*?SDKWORK_RELEASE_TELEMETRY_EXPORT_JSON:[\s\S]*?run: node scripts\/release\/materialize-release-telemetry-export\.mjs/,
-    'web release job must materialize a governed telemetry export artifact before snapshot derivation',
-  );
-  assert.match(
-    workflow,
-    /Materialize release telemetry snapshot[\s\S]*node scripts\/release\/materialize-release-telemetry-snapshot\.mjs/,
-  );
-  assert.match(
-    workflow,
-    /native-release:[\s\S]*?Materialize release telemetry snapshot[\s\S]*?SDKWORK_RELEASE_TELEMETRY_EXPORT_PATH:[\s\S]*?release-telemetry-export-latest\.json[\s\S]*?run: node scripts\/release\/materialize-release-telemetry-snapshot\.mjs/,
-    'native release job must wire the governed telemetry export artifact into the snapshot materializer step',
-  );
-  assert.match(
-    workflow,
-    /web-release:[\s\S]*?Materialize release telemetry snapshot[\s\S]*?SDKWORK_RELEASE_TELEMETRY_EXPORT_PATH:[\s\S]*?release-telemetry-export-latest\.json[\s\S]*?run: node scripts\/release\/materialize-release-telemetry-snapshot\.mjs/,
-    'web release job must wire the governed telemetry export artifact into the snapshot materializer step',
-  );
-  assert.match(
-    workflow,
-    /Materialize SLO governance evidence[\s\S]*node scripts\/release\/materialize-slo-governance-evidence\.mjs/,
-  );
-  assert.match(
-    workflow,
-    /native-release:[\s\S]*?Upload release telemetry export governance artifact[\s\S]*?uses:\s*actions\/upload-artifact@v4[\s\S]*?name:\s*release-governance-telemetry-export-\$\{\{\s*matrix\.platform\s*\}\}-\$\{\{\s*matrix\.arch\s*\}\}[\s\S]*?path:\s*docs\/release\/release-telemetry-export-latest\.json/,
-    'native release job must upload the governed telemetry export as a dedicated release-governance artifact',
-  );
-  assert.match(
-    workflow,
-    /native-release:[\s\S]*?Upload release telemetry snapshot governance artifact[\s\S]*?uses:\s*actions\/upload-artifact@v4[\s\S]*?name:\s*release-governance-telemetry-snapshot-\$\{\{\s*matrix\.platform\s*\}\}-\$\{\{\s*matrix\.arch\s*\}\}[\s\S]*?path:\s*docs\/release\/release-telemetry-snapshot-latest\.json/,
-    'native release job must upload the governed telemetry snapshot as a dedicated release-governance artifact',
-  );
-  assert.match(
-    workflow,
-    /native-release:[\s\S]*?Upload SLO governance evidence artifact[\s\S]*?uses:\s*actions\/upload-artifact@v4[\s\S]*?name:\s*release-governance-slo-evidence-\$\{\{\s*matrix\.platform\s*\}\}-\$\{\{\s*matrix\.arch\s*\}\}[\s\S]*?path:\s*docs\/release\/slo-governance-latest\.json/,
-    'native release job must upload governed SLO evidence as a dedicated release-governance artifact',
-  );
-  assert.match(
-    workflow,
-    /web-release:[\s\S]*?Upload release telemetry export governance artifact[\s\S]*?uses:\s*actions\/upload-artifact@v4[\s\S]*?name:\s*release-governance-telemetry-export-web[\s\S]*?path:\s*docs\/release\/release-telemetry-export-latest\.json/,
-    'web release job must upload the governed telemetry export as a dedicated release-governance artifact',
-  );
-  assert.match(
-    workflow,
-    /web-release:[\s\S]*?Upload release telemetry snapshot governance artifact[\s\S]*?uses:\s*actions\/upload-artifact@v4[\s\S]*?name:\s*release-governance-telemetry-snapshot-web[\s\S]*?path:\s*docs\/release\/release-telemetry-snapshot-latest\.json/,
-    'web release job must upload the governed telemetry snapshot as a dedicated release-governance artifact',
-  );
-  assert.match(
-    workflow,
-    /web-release:[\s\S]*?Upload SLO governance evidence artifact[\s\S]*?uses:\s*actions\/upload-artifact@v4[\s\S]*?name:\s*release-governance-slo-evidence-web[\s\S]*?path:\s*docs\/release\/slo-governance-latest\.json/,
-    'web release job must upload governed SLO evidence as a dedicated release-governance artifact',
-  );
-  assert.match(
-    workflow,
-    /native-release:[\s\S]*?Materialize SLO governance evidence[\s\S]*?SDKWORK_RELEASE_TELEMETRY_SNAPSHOT_PATH:[\s\S]*?release-telemetry-snapshot-latest\.json[\s\S]*?run: node scripts\/release\/materialize-slo-governance-evidence\.mjs/,
-    'native release job must wire the governed telemetry snapshot artifact into the SLO materializer step',
-  );
-  assert.match(
-    workflow,
-    /web-release:[\s\S]*?Materialize SLO governance evidence[\s\S]*?SDKWORK_RELEASE_TELEMETRY_SNAPSHOT_PATH:[\s\S]*?release-telemetry-snapshot-latest\.json[\s\S]*?run: node scripts\/release\/materialize-slo-governance-evidence\.mjs/,
-    'web release job must wire the governed telemetry snapshot artifact into the SLO materializer step',
-  );
-  assert.match(
-    workflow,
-    /Materialize release telemetry export[\s\S]*Materialize release telemetry snapshot[\s\S]*Materialize SLO governance evidence[\s\S]*Run release governance gate/,
-  );
-  assert.match(
-    workflow,
-    /Materialize release telemetry export[\s\S]*Upload release telemetry export governance artifact[\s\S]*Materialize release telemetry snapshot[\s\S]*Upload release telemetry snapshot governance artifact[\s\S]*Materialize SLO governance evidence[\s\S]*Upload SLO governance evidence artifact[\s\S]*Run release governance gate/,
-    'workflow must persist telemetry export, telemetry snapshot, and SLO evidence artifacts before the governance gate runs',
-  );
-  assert.match(
-    workflow,
-    /native-release:[\s\S]*?Generate governance evidence attestation[\s\S]*?if:\s*\$\{\{\s*!github\.event\.repository\.private\s*\|\|\s*vars\.SDKWORK_RELEASE_ARTIFACT_ATTESTATIONS_ENABLED\s*==\s*'true'\s*\}\}[\s\S]*?uses:\s*actions\/attest-build-provenance@v3[\s\S]*?subject-path:\s*\|[\s\S]*?docs\/release\/release-window-snapshot-latest\.json[\s\S]*?docs\/release\/release-sync-audit-latest\.json[\s\S]*?docs\/release\/release-telemetry-export-latest\.json[\s\S]*?docs\/release\/release-telemetry-snapshot-latest\.json[\s\S]*?docs\/release\/slo-governance-latest\.json/,
-    'native release job must attest governed window, sync, telemetry export, telemetry snapshot, and SLO evidence when artifact attestations are supported',
-  );
-  assert.match(
-    workflow,
-    /native-release:[\s\S]*?Generate Windows smoke evidence attestation[\s\S]*?if:\s*\$\{\{\s*\(\s*!github\.event\.repository\.private\s*\|\|\s*vars\.SDKWORK_RELEASE_ARTIFACT_ATTESTATIONS_ENABLED\s*==\s*'true'\s*\)\s*&&\s*matrix\.platform\s*==\s*'windows'\s*\}\}[\s\S]*?uses:\s*actions\/attest-build-provenance@v3[\s\S]*?path:\s*artifacts\/release-governance\/windows-installed-runtime-smoke-\$\{\{\s*matrix\.platform\s*\}\}-\$\{\{\s*matrix\.arch\s*\}\}\.json/,
-    'native Windows release lanes must attest installed-runtime smoke evidence when artifact attestations are supported',
-  );
-  assert.match(
-    workflow,
-    /native-release:[\s\S]*?Generate Unix smoke evidence attestation[\s\S]*?if:\s*\$\{\{\s*\(\s*!github\.event\.repository\.private\s*\|\|\s*vars\.SDKWORK_RELEASE_ARTIFACT_ATTESTATIONS_ENABLED\s*==\s*'true'\s*\)\s*&&\s*matrix\.platform\s*!=\s*'windows'\s*\}\}[\s\S]*?uses:\s*actions\/attest-build-provenance@v3[\s\S]*?path:\s*artifacts\/release-governance\/unix-installed-runtime-smoke-\$\{\{\s*matrix\.platform\s*\}\}-\$\{\{\s*matrix\.arch\s*\}\}\.json/,
-    'native Unix release lanes must attest installed-runtime smoke evidence when artifact attestations are supported',
-  );
-  assert.match(
-    workflow,
-    /native-release:[\s\S]*?Generate Linux Docker Compose smoke evidence attestation[\s\S]*?if:\s*\$\{\{\s*\(\s*!github\.event\.repository\.private\s*\|\|\s*vars\.SDKWORK_RELEASE_ARTIFACT_ATTESTATIONS_ENABLED\s*==\s*'true'\s*\)\s*&&\s*matrix\.platform\s*==\s*'linux'\s*\}\}[\s\S]*?uses:\s*actions\/attest-build-provenance@v3[\s\S]*?subject-path:\s*artifacts\/release-governance\/docker-compose-smoke-\$\{\{\s*matrix\.platform\s*\}\}-\$\{\{\s*matrix\.arch\s*\}\}\.json/,
-    'native Linux release lanes must attest packaged Docker Compose smoke evidence when artifact attestations are supported',
-  );
-  assert.match(
-    workflow,
-    /native-release:[\s\S]*?Generate Linux Helm render smoke evidence attestation[\s\S]*?if:\s*\$\{\{\s*\(\s*!github\.event\.repository\.private\s*\|\|\s*vars\.SDKWORK_RELEASE_ARTIFACT_ATTESTATIONS_ENABLED\s*==\s*'true'\s*\)\s*&&\s*matrix\.platform\s*==\s*'linux'\s*\}\}[\s\S]*?uses:\s*actions\/attest-build-provenance@v3[\s\S]*?subject-path:\s*artifacts\/release-governance\/helm-render-smoke-\$\{\{\s*matrix\.platform\s*\}\}-\$\{\{\s*matrix\.arch\s*\}\}\.json/,
-    'native Linux release lanes must attest packaged Helm render smoke evidence when artifact attestations are supported',
-  );
-  assert.match(
-    workflow,
-    /native-release:[\s\S]*?Generate native release assets attestation[\s\S]*?if:\s*\$\{\{\s*!github\.event\.repository\.private\s*\|\|\s*vars\.SDKWORK_RELEASE_ARTIFACT_ATTESTATIONS_ENABLED\s*==\s*'true'\s*\}\}[\s\S]*?uses:\s*actions\/attest-build-provenance@v3[\s\S]*?subject-path:\s*artifacts\/release\/\*\*\/*/,
-    'native release job must attest packaged release assets when artifact attestations are supported',
-  );
-  assert.match(
-    workflow,
-    /web-release:[\s\S]*?Generate governance evidence attestation[\s\S]*?if:\s*\$\{\{\s*!github\.event\.repository\.private\s*\|\|\s*vars\.SDKWORK_RELEASE_ARTIFACT_ATTESTATIONS_ENABLED\s*==\s*'true'\s*\}\}[\s\S]*?uses:\s*actions\/attest-build-provenance@v3[\s\S]*?subject-path:\s*\|[\s\S]*?docs\/release\/release-window-snapshot-latest\.json[\s\S]*?docs\/release\/release-sync-audit-latest\.json[\s\S]*?docs\/release\/release-telemetry-export-latest\.json[\s\S]*?docs\/release\/release-telemetry-snapshot-latest\.json[\s\S]*?docs\/release\/slo-governance-latest\.json/,
-    'web release job must attest governed window, sync, telemetry export, telemetry snapshot, and SLO evidence when artifact attestations are supported',
-  );
-  assert.match(
-    workflow,
-    /web-release:[\s\S]*?Generate web release assets attestation[\s\S]*?if:\s*\$\{\{\s*!github\.event\.repository\.private\s*\|\|\s*vars\.SDKWORK_RELEASE_ARTIFACT_ATTESTATIONS_ENABLED\s*==\s*'true'\s*\}\}[\s\S]*?uses:\s*actions\/attest-build-provenance@v3[\s\S]*?subject-path:\s*artifacts\/release\/\*\*\/*/,
-    'web release job must attest packaged release assets when artifact attestations are supported',
-  );
-  assert.match(
-    workflow,
-    /Build portal desktop release[\s\S]*Run installed native runtime smoke on Windows[\s\S]*Upload Windows installed runtime smoke evidence[\s\S]*Run installed native runtime smoke on Unix[\s\S]*Upload Unix installed runtime smoke evidence[\s\S]*Collect native release assets[\s\S]*Run Linux Docker Compose packaged product smoke[\s\S]*Upload Linux Docker Compose smoke evidence[\s\S]*Run Linux Helm render packaged smoke[\s\S]*Upload Linux Helm render smoke evidence[\s\S]*Upload native release assets/,
-    'native release workflow must execute install-asset smokes, then Linux packaged bundle smokes, and only then upload packaged assets',
-  );
-  assert.match(
-    workflow,
-    /Build portal desktop release[\s\S]*Run installed native runtime smoke on Unix[\s\S]*Upload Unix installed runtime smoke evidence[\s\S]*Collect native release assets[\s\S]*Run Linux Docker Compose packaged product smoke[\s\S]*Upload Linux Docker Compose smoke evidence[\s\S]*Run Linux Helm render packaged smoke[\s\S]*Upload Linux Helm render smoke evidence[\s\S]*Upload native release assets/,
-    'native Linux release workflow must execute packaged Docker and Helm smokes after packaging the bundle and before asset upload',
-  );
-  assert.match(
-    workflow,
-    /Upload release window snapshot governance artifact[\s\S]*Upload release sync audit governance artifact[\s\S]*Upload release telemetry export governance artifact[\s\S]*Upload release telemetry snapshot governance artifact[\s\S]*Upload SLO governance evidence artifact[\s\S]*Generate governance evidence attestation[\s\S]*Run release governance gate/,
-    'governed release evidence must be persisted before it is attested and evaluated',
-  );
-  assert.match(
-    workflow,
-    /Collect native release assets[\s\S]*Run Linux Docker Compose packaged product smoke[\s\S]*Upload Linux Docker Compose smoke evidence[\s\S]*Generate Linux Docker Compose smoke evidence attestation[\s\S]*Run Linux Helm render packaged smoke[\s\S]*Upload Linux Helm render smoke evidence[\s\S]*Generate Linux Helm render smoke evidence attestation[\s\S]*Upload native release assets[\s\S]*Generate native release assets attestation/,
-    'native Linux bundle smoke evidence must be collected and attested before native release assets are uploaded and attested',
-  );
-  assert.match(
-    workflow,
-    /Build web release assets[\s\S]*Run frontend asset budget gate[\s\S]*Package web release assets/,
-    'web release workflow must enforce the frontend asset budget gate after building and before packaging release assets',
-  );
-  assert.match(
-    workflow,
-    /Package web release assets[\s\S]*Upload web release assets[\s\S]*Generate web release assets attestation/,
-    'web release assets must be packaged and uploaded before attestation generation',
-  );
-});
-
-test('web release workflow enforces the frontend asset budget gate before packaging release assets', () => {
-  const workflow = read('.github/workflows/release.yml');
-
-  assert.match(
-    workflow,
-    /Build web release assets[\s\S]*Run frontend asset budget gate[\s\S]*Package web release assets/,
-  );
-});
-
-test('release workflow contract helper rejects workflows that omit governed repository ref env wiring', async () => {
+test('release workflow contract helper accepts the repository workflow', async () => {
   const contracts = await import(
     pathToFileURL(
       path.join(repoRoot, 'scripts', 'release', 'release-workflow-contracts.mjs'),
     ).href,
   );
 
-  const fixtureRoot = writeReleaseWorkflowContractFixture({
-    workflowText: `
-name: release
-
-on:
-  push:
-    tags:
-      - 'release-*'
-  workflow_dispatch:
-
-jobs:
-  native-release:
-    steps:
-      - name: Materialize external release dependencies
-        env:
-          SDKWORK_CORE_GIT_REF: \${{ vars.SDKWORK_CORE_GIT_REF || 'main' }}
-          SDKWORK_UI_GIT_REF: \${{ vars.SDKWORK_UI_GIT_REF || 'main' }}
-          SDKWORK_APPBASE_GIT_REF: \${{ vars.SDKWORK_APPBASE_GIT_REF || 'main' }}
-        run: node scripts/release/materialize-external-deps.mjs
-
-      - name: Materialize release telemetry snapshot
-        env:
-          SDKWORK_RELEASE_TELEMETRY_EXPORT_JSON: \${{ vars.SDKWORK_RELEASE_TELEMETRY_EXPORT_JSON || '' }}
-        run: node scripts/release/materialize-release-telemetry-snapshot.mjs
-
-      - name: Materialize SLO governance evidence
-        env:
-          SDKWORK_RELEASE_TELEMETRY_SNAPSHOT_PATH: docs/release/release-telemetry-snapshot-latest.json
-        run: node scripts/release/materialize-slo-governance-evidence.mjs
-
-      - name: Run release governance gate
-        env:
-          SDKWORK_CORE_GIT_REF: \${{ vars.SDKWORK_CORE_GIT_REF || 'main' }}
-          SDKWORK_UI_GIT_REF: \${{ vars.SDKWORK_UI_GIT_REF || 'main' }}
-          SDKWORK_APPBASE_GIT_REF: \${{ vars.SDKWORK_APPBASE_GIT_REF || 'main' }}
-          SDKWORK_CRAW_CHAT_SDK_GIT_REF: \${{ vars.SDKWORK_CRAW_CHAT_SDK_GIT_REF || 'main' }}
-        run: node scripts/release/run-release-governance-checks.mjs --format json
-
-      - name: Install native workspace dependencies
-        run: pnpm --dir apps/sdkwork-router-admin install --frozen-lockfile
-
-  web-release:
-    steps:
-      - name: Materialize external release dependencies
-        env:
-          SDKWORK_CORE_GIT_REF: \${{ vars.SDKWORK_CORE_GIT_REF || 'main' }}
-          SDKWORK_UI_GIT_REF: \${{ vars.SDKWORK_UI_GIT_REF || 'main' }}
-          SDKWORK_APPBASE_GIT_REF: \${{ vars.SDKWORK_APPBASE_GIT_REF || 'main' }}
-          SDKWORK_CRAW_CHAT_SDK_GIT_REF: \${{ vars.SDKWORK_CRAW_CHAT_SDK_GIT_REF || 'main' }}
-        run: node scripts/release/materialize-external-deps.mjs
-
-      - name: Materialize release telemetry snapshot
-        env:
-          SDKWORK_RELEASE_TELEMETRY_EXPORT_JSON: \${{ vars.SDKWORK_RELEASE_TELEMETRY_EXPORT_JSON || '' }}
-        run: node scripts/release/materialize-release-telemetry-snapshot.mjs
-
-      - name: Materialize SLO governance evidence
-        env:
-          SDKWORK_RELEASE_TELEMETRY_SNAPSHOT_PATH: docs/release/release-telemetry-snapshot-latest.json
-        run: node scripts/release/materialize-slo-governance-evidence.mjs
-
-      - name: Run release governance gate
-        env:
-          SDKWORK_CORE_GIT_REF: \${{ vars.SDKWORK_CORE_GIT_REF || 'main' }}
-          SDKWORK_UI_GIT_REF: \${{ vars.SDKWORK_UI_GIT_REF || 'main' }}
-          SDKWORK_APPBASE_GIT_REF: \${{ vars.SDKWORK_APPBASE_GIT_REF || 'main' }}
-          SDKWORK_CRAW_CHAT_SDK_GIT_REF: \${{ vars.SDKWORK_CRAW_CHAT_SDK_GIT_REF || 'main' }}
-        run: node scripts/release/run-release-governance-checks.mjs --format json
-
-      - name: Install web workspace dependencies
-        run: pnpm --dir apps/sdkwork-router-admin install --frozen-lockfile
-`,
+  await contracts.assertReleaseWorkflowContracts({
+    repoRoot,
   });
-
-  await assert.rejects(
-    contracts.assertReleaseWorkflowContracts({
-      repoRoot: fixtureRoot,
-    }),
-  );
 });
 
-test('release workflow contract helper rejects workflows that omit the dedicated Rust dependency audit gate', async () => {
-  const contracts = await import(
-    pathToFileURL(
-      path.join(repoRoot, 'scripts', 'release', 'release-workflow-contracts.mjs'),
-    ).href,
-  );
-
-  const workflowWithoutDependencyAudit = read('.github/workflows/release.yml')
-    .replace(
-      /\r?\n  rust-dependency-audit:[\s\S]*?\r?\n  native-release:/,
-      '\n  native-release:',
-    )
-    .replace(/\r?\n\s*-\s*rust-dependency-audit/g, '');
-
-  const fixtureRoot = writeReleaseWorkflowContractFixture({
-    workflowText: workflowWithoutDependencyAudit,
-  });
-
-  await assert.rejects(
-    contracts.assertReleaseWorkflowContracts({
-      repoRoot: fixtureRoot,
-    }),
-    /dedicated Rust dependency audit gate/i,
-  );
-});
-
-test('release workflow contract helper rejects workflows that omit the dedicated product verification gate', async () => {
-  const contracts = await import(
-    pathToFileURL(
-      path.join(repoRoot, 'scripts', 'release', 'release-workflow-contracts.mjs'),
-    ).href,
-  );
-
-  const workflowWithoutProductVerification = read('.github/workflows/release.yml')
-    .replace(
-      /\r?\n  product-verification:[\s\S]*?\r?\n  native-release:/,
-      '\n  native-release:',
-    )
-    .replace(/\r?\n\s*-\s*product-verification/g, '');
-
-  const fixtureRoot = writeReleaseWorkflowContractFixture({
-    workflowText: workflowWithoutProductVerification,
-  });
-
-  await assert.rejects(
-    contracts.assertReleaseWorkflowContracts({
-      repoRoot: fixtureRoot,
-    }),
-    /dedicated product verification gate/i,
-  );
-});
-
-test('release workflow contract helper rejects workflows that omit frozen installs before product verification', async () => {
-  const contracts = await import(
-    pathToFileURL(
-      path.join(repoRoot, 'scripts', 'release', 'release-workflow-contracts.mjs'),
-    ).href,
-  );
-
-  const workflowWithoutFrozenProductInstalls = read('.github/workflows/release.yml')
-    .replace(
-      /\r?\n\s*- name: Install product verification workspace dependencies[\s\S]*?\r?\n\s*- name: Run release product verification/,
-      '\n      - name: Run release product verification',
-    );
-
-  const fixtureRoot = writeReleaseWorkflowContractFixture({
-    workflowText: workflowWithoutFrozenProductInstalls,
-  });
-
-  await assert.rejects(
-    contracts.assertReleaseWorkflowContracts({
-      repoRoot: fixtureRoot,
-    }),
-    /product verification frozen install/i,
-  );
-});
-
-test('release workflow contract helper rejects workflows that omit strict frontend install mode before product verification', async () => {
-  const contracts = await import(
-    pathToFileURL(
-      path.join(repoRoot, 'scripts', 'release', 'release-workflow-contracts.mjs'),
-    ).href,
-  );
-
-  const workflowWithoutStrictFrontendEnv = read('.github/workflows/release.yml')
-    .replace(
-      /\r?\n\s*env:\r?\n\s*SDKWORK_STRICT_FRONTEND_INSTALLS: '1'/,
-      '',
-    );
-
-  const fixtureRoot = writeReleaseWorkflowContractFixture({
-    workflowText: workflowWithoutStrictFrontendEnv,
-  });
-
-  await assert.rejects(
-    contracts.assertReleaseWorkflowContracts({
-      repoRoot: fixtureRoot,
-    }),
-    /strict frontend install mode/i,
-  );
-});
-
-test('release workflow contract helper rejects workflows that omit the governed SLO evidence materialization step', async () => {
-  const contracts = await import(
-    pathToFileURL(
-      path.join(repoRoot, 'scripts', 'release', 'release-workflow-contracts.mjs'),
-    ).href,
-  );
-
-  const fixtureRoot = writeReleaseWorkflowContractFixture({
-    workflowText: `
-name: release
-
-on:
-  push:
-    tags:
-      - 'release-*'
-  workflow_dispatch:
-
-jobs:
-  native-release:
-    steps:
-      - name: Materialize external release dependencies
-        env:
-          SDKWORK_CORE_GIT_REF: \${{ vars.SDKWORK_CORE_GIT_REF || 'main' }}
-          SDKWORK_UI_GIT_REF: \${{ vars.SDKWORK_UI_GIT_REF || 'main' }}
-          SDKWORK_APPBASE_GIT_REF: \${{ vars.SDKWORK_APPBASE_GIT_REF || 'main' }}
-          SDKWORK_CRAW_CHAT_SDK_GIT_REF: \${{ vars.SDKWORK_CRAW_CHAT_SDK_GIT_REF || 'main' }}
-        run: node scripts/release/materialize-external-deps.mjs
-
-      - name: Materialize release telemetry snapshot
-        env:
-          SDKWORK_RELEASE_TELEMETRY_EXPORT_JSON: \${{ vars.SDKWORK_RELEASE_TELEMETRY_EXPORT_JSON || '' }}
-        run: node scripts/release/materialize-release-telemetry-snapshot.mjs
-
-      - name: Run release governance gate
-        env:
-          SDKWORK_API_ROUTER_GIT_REF: \${{ needs.prepare.outputs.git_ref }}
-          SDKWORK_CORE_GIT_REF: \${{ vars.SDKWORK_CORE_GIT_REF || 'main' }}
-          SDKWORK_UI_GIT_REF: \${{ vars.SDKWORK_UI_GIT_REF || 'main' }}
-          SDKWORK_APPBASE_GIT_REF: \${{ vars.SDKWORK_APPBASE_GIT_REF || 'main' }}
-          SDKWORK_CRAW_CHAT_SDK_GIT_REF: \${{ vars.SDKWORK_CRAW_CHAT_SDK_GIT_REF || 'main' }}
-        run: node scripts/release/run-release-governance-checks.mjs --format json
-
-      - name: Install native workspace dependencies
-        run: pnpm --dir apps/sdkwork-router-admin install --frozen-lockfile
-
-  web-release:
-    steps:
-      - name: Materialize external release dependencies
-        env:
-          SDKWORK_CORE_GIT_REF: \${{ vars.SDKWORK_CORE_GIT_REF || 'main' }}
-          SDKWORK_UI_GIT_REF: \${{ vars.SDKWORK_UI_GIT_REF || 'main' }}
-          SDKWORK_APPBASE_GIT_REF: \${{ vars.SDKWORK_APPBASE_GIT_REF || 'main' }}
-          SDKWORK_CRAW_CHAT_SDK_GIT_REF: \${{ vars.SDKWORK_CRAW_CHAT_SDK_GIT_REF || 'main' }}
-        run: node scripts/release/materialize-external-deps.mjs
-
-      - name: Materialize release telemetry snapshot
-        env:
-          SDKWORK_RELEASE_TELEMETRY_EXPORT_JSON: \${{ vars.SDKWORK_RELEASE_TELEMETRY_EXPORT_JSON || '' }}
-        run: node scripts/release/materialize-release-telemetry-snapshot.mjs
-
-      - name: Run release governance gate
-        env:
-          SDKWORK_API_ROUTER_GIT_REF: \${{ needs.prepare.outputs.git_ref }}
-          SDKWORK_CORE_GIT_REF: \${{ vars.SDKWORK_CORE_GIT_REF || 'main' }}
-          SDKWORK_UI_GIT_REF: \${{ vars.SDKWORK_UI_GIT_REF || 'main' }}
-          SDKWORK_APPBASE_GIT_REF: \${{ vars.SDKWORK_APPBASE_GIT_REF || 'main' }}
-          SDKWORK_CRAW_CHAT_SDK_GIT_REF: \${{ vars.SDKWORK_CRAW_CHAT_SDK_GIT_REF || 'main' }}
-        run: node scripts/release/run-release-governance-checks.mjs --format json
-
-      - name: Install web workspace dependencies
-        run: pnpm --dir apps/sdkwork-router-admin install --frozen-lockfile
-`,
-  });
-
-  await assert.rejects(
-    contracts.assertReleaseWorkflowContracts({
-      repoRoot: fixtureRoot,
-    }),
-  );
-});
-
-test('release workflow contract helper rejects workflows that omit telemetry snapshot governance artifact uploads', async () => {
-  const contracts = await import(
-    pathToFileURL(
-      path.join(repoRoot, 'scripts', 'release', 'release-workflow-contracts.mjs'),
-    ).href,
-  );
-
-  const fixtureRoot = writeReleaseWorkflowContractFixture({
-    workflowText: `
-name: release
-
-on:
-  push:
-    tags:
-      - 'release-*'
-  workflow_dispatch:
-
-jobs:
-  native-release:
-    steps:
-      - name: Materialize external release dependencies
-        env:
-          SDKWORK_CORE_GIT_REF: \${{ vars.SDKWORK_CORE_GIT_REF || 'main' }}
-          SDKWORK_UI_GIT_REF: \${{ vars.SDKWORK_UI_GIT_REF || 'main' }}
-          SDKWORK_APPBASE_GIT_REF: \${{ vars.SDKWORK_APPBASE_GIT_REF || 'main' }}
-          SDKWORK_CRAW_CHAT_SDK_GIT_REF: \${{ vars.SDKWORK_CRAW_CHAT_SDK_GIT_REF || 'main' }}
-        run: node scripts/release/materialize-external-deps.mjs
-
-      - name: Materialize release telemetry snapshot
-        env:
-          SDKWORK_RELEASE_TELEMETRY_EXPORT_JSON: \${{ vars.SDKWORK_RELEASE_TELEMETRY_EXPORT_JSON || '' }}
-        run: node scripts/release/materialize-release-telemetry-snapshot.mjs
-
-      - name: Materialize SLO governance evidence
-        env:
-          SDKWORK_RELEASE_TELEMETRY_SNAPSHOT_PATH: docs/release/release-telemetry-snapshot-latest.json
-        run: node scripts/release/materialize-slo-governance-evidence.mjs
-
-      - name: Upload SLO governance evidence artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-governance-slo-evidence-\${{ matrix.platform }}-\${{ matrix.arch }}
-          path: docs/release/slo-governance-latest.json
-
-      - name: Run release governance gate
-        env:
-          SDKWORK_API_ROUTER_GIT_REF: \${{ needs.prepare.outputs.git_ref }}
-          SDKWORK_CORE_GIT_REF: \${{ vars.SDKWORK_CORE_GIT_REF || 'main' }}
-          SDKWORK_UI_GIT_REF: \${{ vars.SDKWORK_UI_GIT_REF || 'main' }}
-          SDKWORK_APPBASE_GIT_REF: \${{ vars.SDKWORK_APPBASE_GIT_REF || 'main' }}
-          SDKWORK_CRAW_CHAT_SDK_GIT_REF: \${{ vars.SDKWORK_CRAW_CHAT_SDK_GIT_REF || 'main' }}
-        run: node scripts/release/run-release-governance-checks.mjs --format json
-
-      - name: Install native workspace dependencies
-        run: pnpm --dir apps/sdkwork-router-admin install --frozen-lockfile
-
-  web-release:
-    steps:
-      - name: Materialize external release dependencies
-        env:
-          SDKWORK_CORE_GIT_REF: \${{ vars.SDKWORK_CORE_GIT_REF || 'main' }}
-          SDKWORK_UI_GIT_REF: \${{ vars.SDKWORK_UI_GIT_REF || 'main' }}
-          SDKWORK_APPBASE_GIT_REF: \${{ vars.SDKWORK_APPBASE_GIT_REF || 'main' }}
-          SDKWORK_CRAW_CHAT_SDK_GIT_REF: \${{ vars.SDKWORK_CRAW_CHAT_SDK_GIT_REF || 'main' }}
-        run: node scripts/release/materialize-external-deps.mjs
-
-      - name: Materialize release telemetry snapshot
-        env:
-          SDKWORK_RELEASE_TELEMETRY_EXPORT_JSON: \${{ vars.SDKWORK_RELEASE_TELEMETRY_EXPORT_JSON || '' }}
-        run: node scripts/release/materialize-release-telemetry-snapshot.mjs
-
-      - name: Materialize SLO governance evidence
-        env:
-          SDKWORK_RELEASE_TELEMETRY_SNAPSHOT_PATH: docs/release/release-telemetry-snapshot-latest.json
-        run: node scripts/release/materialize-slo-governance-evidence.mjs
-
-      - name: Upload SLO governance evidence artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-governance-slo-evidence-web
-          path: docs/release/slo-governance-latest.json
-
-      - name: Run release governance gate
-        env:
-          SDKWORK_API_ROUTER_GIT_REF: \${{ needs.prepare.outputs.git_ref }}
-          SDKWORK_CORE_GIT_REF: \${{ vars.SDKWORK_CORE_GIT_REF || 'main' }}
-          SDKWORK_UI_GIT_REF: \${{ vars.SDKWORK_UI_GIT_REF || 'main' }}
-          SDKWORK_APPBASE_GIT_REF: \${{ vars.SDKWORK_APPBASE_GIT_REF || 'main' }}
-          SDKWORK_CRAW_CHAT_SDK_GIT_REF: \${{ vars.SDKWORK_CRAW_CHAT_SDK_GIT_REF || 'main' }}
-        run: node scripts/release/run-release-governance-checks.mjs --format json
-
-      - name: Install web workspace dependencies
-        run: pnpm --dir apps/sdkwork-router-admin install --frozen-lockfile
-`,
-  });
-
-  await assert.rejects(
-    contracts.assertReleaseWorkflowContracts({
-      repoRoot: fixtureRoot,
-    }),
-  );
-});
-
-test('release workflow contract helper rejects workflows that omit SLO governance evidence artifact uploads', async () => {
-  const contracts = await import(
-    pathToFileURL(
-      path.join(repoRoot, 'scripts', 'release', 'release-workflow-contracts.mjs'),
-    ).href,
-  );
-
-  const fixtureRoot = writeReleaseWorkflowContractFixture({
-    workflowText: `
-name: release
-
-on:
-  push:
-    tags:
-      - 'release-*'
-  workflow_dispatch:
-
-jobs:
-  native-release:
-    steps:
-      - name: Materialize external release dependencies
-        env:
-          SDKWORK_CORE_GIT_REF: \${{ vars.SDKWORK_CORE_GIT_REF || 'main' }}
-          SDKWORK_UI_GIT_REF: \${{ vars.SDKWORK_UI_GIT_REF || 'main' }}
-          SDKWORK_APPBASE_GIT_REF: \${{ vars.SDKWORK_APPBASE_GIT_REF || 'main' }}
-          SDKWORK_CRAW_CHAT_SDK_GIT_REF: \${{ vars.SDKWORK_CRAW_CHAT_SDK_GIT_REF || 'main' }}
-        run: node scripts/release/materialize-external-deps.mjs
-
-      - name: Materialize release telemetry snapshot
-        env:
-          SDKWORK_RELEASE_TELEMETRY_EXPORT_JSON: \${{ vars.SDKWORK_RELEASE_TELEMETRY_EXPORT_JSON || '' }}
-        run: node scripts/release/materialize-release-telemetry-snapshot.mjs
-
-      - name: Upload release telemetry snapshot governance artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-governance-telemetry-snapshot-\${{ matrix.platform }}-\${{ matrix.arch }}
-          path: docs/release/release-telemetry-snapshot-latest.json
-
-      - name: Materialize SLO governance evidence
-        env:
-          SDKWORK_RELEASE_TELEMETRY_SNAPSHOT_PATH: docs/release/release-telemetry-snapshot-latest.json
-        run: node scripts/release/materialize-slo-governance-evidence.mjs
-
-      - name: Run release governance gate
-        env:
-          SDKWORK_API_ROUTER_GIT_REF: \${{ needs.prepare.outputs.git_ref }}
-          SDKWORK_CORE_GIT_REF: \${{ vars.SDKWORK_CORE_GIT_REF || 'main' }}
-          SDKWORK_UI_GIT_REF: \${{ vars.SDKWORK_UI_GIT_REF || 'main' }}
-          SDKWORK_APPBASE_GIT_REF: \${{ vars.SDKWORK_APPBASE_GIT_REF || 'main' }}
-          SDKWORK_CRAW_CHAT_SDK_GIT_REF: \${{ vars.SDKWORK_CRAW_CHAT_SDK_GIT_REF || 'main' }}
-        run: node scripts/release/run-release-governance-checks.mjs --format json
-
-      - name: Install native workspace dependencies
-        run: pnpm --dir apps/sdkwork-router-admin install --frozen-lockfile
-
-  web-release:
-    steps:
-      - name: Materialize external release dependencies
-        env:
-          SDKWORK_CORE_GIT_REF: \${{ vars.SDKWORK_CORE_GIT_REF || 'main' }}
-          SDKWORK_UI_GIT_REF: \${{ vars.SDKWORK_UI_GIT_REF || 'main' }}
-          SDKWORK_APPBASE_GIT_REF: \${{ vars.SDKWORK_APPBASE_GIT_REF || 'main' }}
-          SDKWORK_CRAW_CHAT_SDK_GIT_REF: \${{ vars.SDKWORK_CRAW_CHAT_SDK_GIT_REF || 'main' }}
-        run: node scripts/release/materialize-external-deps.mjs
-
-      - name: Materialize release telemetry snapshot
-        env:
-          SDKWORK_RELEASE_TELEMETRY_EXPORT_JSON: \${{ vars.SDKWORK_RELEASE_TELEMETRY_EXPORT_JSON || '' }}
-        run: node scripts/release/materialize-release-telemetry-snapshot.mjs
-
-      - name: Upload release telemetry snapshot governance artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-governance-telemetry-snapshot-web
-          path: docs/release/release-telemetry-snapshot-latest.json
-
-      - name: Materialize SLO governance evidence
-        env:
-          SDKWORK_RELEASE_TELEMETRY_SNAPSHOT_PATH: docs/release/release-telemetry-snapshot-latest.json
-        run: node scripts/release/materialize-slo-governance-evidence.mjs
-
-      - name: Run release governance gate
-        env:
-          SDKWORK_API_ROUTER_GIT_REF: \${{ needs.prepare.outputs.git_ref }}
-          SDKWORK_CORE_GIT_REF: \${{ vars.SDKWORK_CORE_GIT_REF || 'main' }}
-          SDKWORK_UI_GIT_REF: \${{ vars.SDKWORK_UI_GIT_REF || 'main' }}
-          SDKWORK_APPBASE_GIT_REF: \${{ vars.SDKWORK_APPBASE_GIT_REF || 'main' }}
-          SDKWORK_CRAW_CHAT_SDK_GIT_REF: \${{ vars.SDKWORK_CRAW_CHAT_SDK_GIT_REF || 'main' }}
-        run: node scripts/release/run-release-governance-checks.mjs --format json
-
-      - name: Install web workspace dependencies
-        run: pnpm --dir apps/sdkwork-router-admin install --frozen-lockfile
-`,
-  });
-
-  await assert.rejects(
-    contracts.assertReleaseWorkflowContracts({
-      repoRoot: fixtureRoot,
-    }),
-  );
-});
-
-test('release workflow contract helper rejects workflows that omit artifact attestation permissions', async () => {
-  const contracts = await import(
-    pathToFileURL(
-      path.join(repoRoot, 'scripts', 'release', 'release-workflow-contracts.mjs'),
-    ).href,
-  );
-
-  const fixtureRoot = writeReleaseWorkflowContractFixture({
-    workflowText: `
-name: release
-
-on:
-  push:
-    tags:
-      - 'release-*'
-  workflow_dispatch:
-
-permissions:
-  contents: write
-
-jobs:
-  native-release:
-    steps:
-      - name: Materialize external release dependencies
-        env:
-          SDKWORK_CORE_GIT_REF: \${{ vars.SDKWORK_CORE_GIT_REF || 'main' }}
-          SDKWORK_UI_GIT_REF: \${{ vars.SDKWORK_UI_GIT_REF || 'main' }}
-          SDKWORK_APPBASE_GIT_REF: \${{ vars.SDKWORK_APPBASE_GIT_REF || 'main' }}
-          SDKWORK_CRAW_CHAT_SDK_GIT_REF: \${{ vars.SDKWORK_CRAW_CHAT_SDK_GIT_REF || 'main' }}
-        run: node scripts/release/materialize-external-deps.mjs
-
-      - name: Materialize release telemetry snapshot
-        env:
-          SDKWORK_RELEASE_TELEMETRY_EXPORT_JSON: \${{ vars.SDKWORK_RELEASE_TELEMETRY_EXPORT_JSON || '' }}
-        run: node scripts/release/materialize-release-telemetry-snapshot.mjs
-
-      - name: Upload release telemetry snapshot governance artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-governance-telemetry-snapshot-\${{ matrix.platform }}-\${{ matrix.arch }}
-          path: docs/release/release-telemetry-snapshot-latest.json
-
-      - name: Materialize SLO governance evidence
-        env:
-          SDKWORK_RELEASE_TELEMETRY_SNAPSHOT_PATH: docs/release/release-telemetry-snapshot-latest.json
-        run: node scripts/release/materialize-slo-governance-evidence.mjs
-
-      - name: Upload SLO governance evidence artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-governance-slo-evidence-\${{ matrix.platform }}-\${{ matrix.arch }}
-          path: docs/release/slo-governance-latest.json
-
-      - name: Run release governance gate
-        env:
-          SDKWORK_API_ROUTER_GIT_REF: \${{ needs.prepare.outputs.git_ref }}
-          SDKWORK_CORE_GIT_REF: \${{ vars.SDKWORK_CORE_GIT_REF || 'main' }}
-          SDKWORK_UI_GIT_REF: \${{ vars.SDKWORK_UI_GIT_REF || 'main' }}
-          SDKWORK_APPBASE_GIT_REF: \${{ vars.SDKWORK_APPBASE_GIT_REF || 'main' }}
-          SDKWORK_CRAW_CHAT_SDK_GIT_REF: \${{ vars.SDKWORK_CRAW_CHAT_SDK_GIT_REF || 'main' }}
-        run: node scripts/release/run-release-governance-checks.mjs --format json
-
-      - name: Install native workspace dependencies
-        run: pnpm --dir apps/sdkwork-router-admin install --frozen-lockfile
-
-      - name: Collect native release assets
-        run: node scripts/release/package-release-assets.mjs native --platform \${{ matrix.platform }} --arch \${{ matrix.arch }} --target \${{ matrix.target }} --output-dir artifacts/release
-
-      - name: Upload native release assets
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-assets-native-\${{ matrix.platform }}-\${{ matrix.arch }}
-          path: artifacts/release/**/*
-
-  web-release:
-    steps:
-      - name: Materialize external release dependencies
-        env:
-          SDKWORK_CORE_GIT_REF: \${{ vars.SDKWORK_CORE_GIT_REF || 'main' }}
-          SDKWORK_UI_GIT_REF: \${{ vars.SDKWORK_UI_GIT_REF || 'main' }}
-          SDKWORK_APPBASE_GIT_REF: \${{ vars.SDKWORK_APPBASE_GIT_REF || 'main' }}
-          SDKWORK_CRAW_CHAT_SDK_GIT_REF: \${{ vars.SDKWORK_CRAW_CHAT_SDK_GIT_REF || 'main' }}
-        run: node scripts/release/materialize-external-deps.mjs
-
-      - name: Materialize release telemetry snapshot
-        env:
-          SDKWORK_RELEASE_TELEMETRY_EXPORT_JSON: \${{ vars.SDKWORK_RELEASE_TELEMETRY_EXPORT_JSON || '' }}
-        run: node scripts/release/materialize-release-telemetry-snapshot.mjs
-
-      - name: Upload release telemetry snapshot governance artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-governance-telemetry-snapshot-web
-          path: docs/release/release-telemetry-snapshot-latest.json
-
-      - name: Materialize SLO governance evidence
-        env:
-          SDKWORK_RELEASE_TELEMETRY_SNAPSHOT_PATH: docs/release/release-telemetry-snapshot-latest.json
-        run: node scripts/release/materialize-slo-governance-evidence.mjs
-
-      - name: Upload SLO governance evidence artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-governance-slo-evidence-web
-          path: docs/release/slo-governance-latest.json
-
-      - name: Run release governance gate
-        env:
-          SDKWORK_API_ROUTER_GIT_REF: \${{ needs.prepare.outputs.git_ref }}
-          SDKWORK_CORE_GIT_REF: \${{ vars.SDKWORK_CORE_GIT_REF || 'main' }}
-          SDKWORK_UI_GIT_REF: \${{ vars.SDKWORK_UI_GIT_REF || 'main' }}
-          SDKWORK_APPBASE_GIT_REF: \${{ vars.SDKWORK_APPBASE_GIT_REF || 'main' }}
-          SDKWORK_CRAW_CHAT_SDK_GIT_REF: \${{ vars.SDKWORK_CRAW_CHAT_SDK_GIT_REF || 'main' }}
-        run: node scripts/release/run-release-governance-checks.mjs --format json
-
-      - name: Package web release assets
-        run: node scripts/release/package-release-assets.mjs web --release-tag \${{ needs.prepare.outputs.release_tag }} --output-dir artifacts/release
-
-      - name: Upload web release assets
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-assets-web
-          path: artifacts/release/**/*
-`,
-  });
-
-  await assert.rejects(
-    contracts.assertReleaseWorkflowContracts({
-      repoRoot: fixtureRoot,
-    }),
-  );
-});
-
-test('release workflow contract helper rejects workflows that omit build provenance attestation steps', async () => {
+test('release workflow contract helper rejects workflows that omit the governance release job', async () => {
   const contracts = await import(
     pathToFileURL(
       path.join(repoRoot, 'scripts', 'release', 'release-workflow-contracts.mjs'),
@@ -1512,111 +199,165 @@ permissions:
   artifact-metadata: write
 
 jobs:
-  native-release:
+  rust-dependency-audit:
+    runs-on: ubuntu-latest
     steps:
-      - name: Materialize external release dependencies
-        env:
-          SDKWORK_CORE_GIT_REF: \${{ vars.SDKWORK_CORE_GIT_REF || 'main' }}
-          SDKWORK_UI_GIT_REF: \${{ vars.SDKWORK_UI_GIT_REF || 'main' }}
-          SDKWORK_APPBASE_GIT_REF: \${{ vars.SDKWORK_APPBASE_GIT_REF || 'main' }}
-          SDKWORK_CRAW_CHAT_SDK_GIT_REF: \${{ vars.SDKWORK_CRAW_CHAT_SDK_GIT_REF || 'main' }}
-        run: node scripts/release/materialize-external-deps.mjs
-
-      - name: Materialize release telemetry snapshot
-        env:
-          SDKWORK_RELEASE_TELEMETRY_EXPORT_JSON: \${{ vars.SDKWORK_RELEASE_TELEMETRY_EXPORT_JSON || '' }}
-        run: node scripts/release/materialize-release-telemetry-snapshot.mjs
-
-      - name: Upload release telemetry snapshot governance artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/checkout@v5
         with:
-          name: release-governance-telemetry-snapshot-\${{ matrix.platform }}-\${{ matrix.arch }}
-          path: docs/release/release-telemetry-snapshot-latest.json
-
-      - name: Materialize SLO governance evidence
-        env:
-          SDKWORK_RELEASE_TELEMETRY_SNAPSHOT_PATH: docs/release/release-telemetry-snapshot-latest.json
-        run: node scripts/release/materialize-slo-governance-evidence.mjs
-
-      - name: Upload SLO governance evidence artifact
-        uses: actions/upload-artifact@v4
+          ref: \${{ needs.prepare.outputs.git_ref }}
+      - uses: actions/setup-node@v5
         with:
-          name: release-governance-slo-evidence-\${{ matrix.platform }}-\${{ matrix.arch }}
-          path: docs/release/slo-governance-latest.json
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@cargo-audit
+      - run: node scripts/check-rust-dependency-audit.mjs
 
-      - name: Run release governance gate
-        env:
-          SDKWORK_API_ROUTER_GIT_REF: \${{ needs.prepare.outputs.git_ref }}
-          SDKWORK_CORE_GIT_REF: \${{ vars.SDKWORK_CORE_GIT_REF || 'main' }}
-          SDKWORK_UI_GIT_REF: \${{ vars.SDKWORK_UI_GIT_REF || 'main' }}
-          SDKWORK_APPBASE_GIT_REF: \${{ vars.SDKWORK_APPBASE_GIT_REF || 'main' }}
-          SDKWORK_CRAW_CHAT_SDK_GIT_REF: \${{ vars.SDKWORK_CRAW_CHAT_SDK_GIT_REF || 'main' }}
-        run: node scripts/release/run-release-governance-checks.mjs --format json
-
-      - name: Run installed native runtime smoke on Unix
-        if: matrix.platform != 'windows'
-        run: node scripts/release/run-unix-installed-runtime-smoke.mjs --platform \${{ matrix.platform }} --arch \${{ matrix.arch }} --target \${{ matrix.target }} --evidence-path artifacts/release-governance/unix-installed-runtime-smoke-\${{ matrix.platform }}-\${{ matrix.arch }}.json
-
-      - name: Upload Unix installed runtime smoke evidence
-        if: \${{ always() && matrix.platform != 'windows' }}
-        uses: actions/upload-artifact@v4
+  product-verification:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
         with:
-          name: release-governance-unix-installed-runtime-smoke-\${{ matrix.platform }}-\${{ matrix.arch }}
-          path: artifacts/release-governance/unix-installed-runtime-smoke-\${{ matrix.platform }}-\${{ matrix.arch }}.json
+          ref: \${{ needs.prepare.outputs.git_ref }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@cargo-audit
+      - name: Install product verification workspace dependencies
+        run: |
+          pnpm --dir apps/sdkwork-router-admin install --frozen-lockfile
+          pnpm --dir apps/sdkwork-router-portal install --frozen-lockfile
+      - name: Run release product verification
+        env:
+          SDKWORK_STRICT_FRONTEND_INSTALLS: '1'
+        run: node scripts/check-router-product.mjs
 
-      - name: Collect native release assets
-        run: node scripts/release/package-release-assets.mjs native --platform \${{ matrix.platform }} --arch \${{ matrix.arch }} --target \${{ matrix.target }} --output-dir artifacts/release
-
-      - name: Upload native release assets
+  native-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build portal desktop release
+        run: node scripts/release/run-desktop-release-build.mjs --app portal --target \${{ matrix.target }}
+      - name: Upload official release assets
         uses: actions/upload-artifact@v4
         with:
           name: release-assets-native-\${{ matrix.platform }}-\${{ matrix.arch }}
-          path: artifacts/release/**/*
+          path: |
+            artifacts/release/native/\${{ matrix.platform }}/\${{ matrix.arch }}/bundles/sdkwork-api-router-product-server-\${{ matrix.platform }}-\${{ matrix.arch }}.tar.gz
+            artifacts/release/native/\${{ matrix.platform }}/\${{ matrix.arch }}/desktop/portal/**/*
+`,
+  });
 
-  web-release:
+  await assert.rejects(
+    contracts.assertReleaseWorkflowContracts({
+      repoRoot: fixtureRoot,
+    }),
+  );
+});
+
+test('release workflow contract helper rejects workflows that still publish web release assets', async () => {
+  const contracts = await import(
+    pathToFileURL(
+      path.join(repoRoot, 'scripts', 'release', 'release-workflow-contracts.mjs'),
+    ).href,
+  );
+
+  const fixtureRoot = writeReleaseWorkflowContractFixture({
+    workflowText: `
+name: release
+
+on:
+  push:
+    tags:
+      - 'release-*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+
+jobs:
+  rust-dependency-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: \${{ needs.prepare.outputs.git_ref }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@cargo-audit
+      - run: node scripts/check-rust-dependency-audit.mjs
+
+  product-verification:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: \${{ needs.prepare.outputs.git_ref }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@cargo-audit
+      - name: Install product verification workspace dependencies
+        run: |
+          pnpm --dir apps/sdkwork-router-admin install --frozen-lockfile
+          pnpm --dir apps/sdkwork-router-portal install --frozen-lockfile
+      - name: Run release product verification
+        env:
+          SDKWORK_STRICT_FRONTEND_INSTALLS: '1'
+        run: node scripts/check-router-product.mjs
+
+  governance-release:
+    needs:
+      - prepare
+      - rust-dependency-audit
+      - product-verification
+    runs-on: ubuntu-latest
     steps:
       - name: Materialize external release dependencies
-        env:
-          SDKWORK_CORE_GIT_REF: \${{ vars.SDKWORK_CORE_GIT_REF || 'main' }}
-          SDKWORK_UI_GIT_REF: \${{ vars.SDKWORK_UI_GIT_REF || 'main' }}
-          SDKWORK_APPBASE_GIT_REF: \${{ vars.SDKWORK_APPBASE_GIT_REF || 'main' }}
-          SDKWORK_CRAW_CHAT_SDK_GIT_REF: \${{ vars.SDKWORK_CRAW_CHAT_SDK_GIT_REF || 'main' }}
         run: node scripts/release/materialize-external-deps.mjs
-
+      - name: Materialize release window snapshot
+        run: node scripts/release/materialize-release-window-snapshot.mjs
+      - name: Materialize release sync audit
+        run: node scripts/release/materialize-release-sync-audit.mjs
+      - name: Materialize release telemetry export
+        run: node scripts/release/materialize-release-telemetry-export.mjs
       - name: Materialize release telemetry snapshot
-        env:
-          SDKWORK_RELEASE_TELEMETRY_EXPORT_JSON: \${{ vars.SDKWORK_RELEASE_TELEMETRY_EXPORT_JSON || '' }}
         run: node scripts/release/materialize-release-telemetry-snapshot.mjs
-
-      - name: Upload release telemetry snapshot governance artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-governance-telemetry-snapshot-web
-          path: docs/release/release-telemetry-snapshot-latest.json
-
       - name: Materialize SLO governance evidence
-        env:
-          SDKWORK_RELEASE_TELEMETRY_SNAPSHOT_PATH: docs/release/release-telemetry-snapshot-latest.json
         run: node scripts/release/materialize-slo-governance-evidence.mjs
-
-      - name: Upload SLO governance evidence artifact
+      - name: Materialize release governance bundle
+        run: node scripts/release/materialize-release-governance-bundle.mjs
+      - name: Upload release governance bundle artifact
         uses: actions/upload-artifact@v4
         with:
-          name: release-governance-slo-evidence-web
-          path: docs/release/slo-governance-latest.json
-
+          name: release-governance-bundle
+          path: artifacts/release-governance-bundle/**/*
       - name: Run release governance gate
-        env:
-          SDKWORK_API_ROUTER_GIT_REF: \${{ needs.prepare.outputs.git_ref }}
-          SDKWORK_CORE_GIT_REF: \${{ vars.SDKWORK_CORE_GIT_REF || 'main' }}
-          SDKWORK_UI_GIT_REF: \${{ vars.SDKWORK_UI_GIT_REF || 'main' }}
-          SDKWORK_APPBASE_GIT_REF: \${{ vars.SDKWORK_APPBASE_GIT_REF || 'main' }}
-          SDKWORK_CRAW_CHAT_SDK_GIT_REF: \${{ vars.SDKWORK_CRAW_CHAT_SDK_GIT_REF || 'main' }}
         run: node scripts/release/run-release-governance-checks.mjs --format json
 
+  native-release:
+    needs:
+      - prepare
+      - rust-dependency-audit
+      - product-verification
+      - governance-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build portal desktop release
+        run: node scripts/release/run-desktop-release-build.mjs --app portal --target \${{ matrix.target }}
       - name: Package web release assets
         run: node scripts/release/package-release-assets.mjs web --release-tag \${{ needs.prepare.outputs.release_tag }} --output-dir artifacts/release
-
       - name: Upload web release assets
         uses: actions/upload-artifact@v4
         with:
@@ -1632,7 +373,7 @@ jobs:
   );
 });
 
-test('release workflow contract helper rejects workflows that omit the Unix installed runtime smoke gate', async () => {
+test('release workflow contract helper rejects workflows that still build the admin desktop product', async () => {
   const contracts = await import(
     pathToFileURL(
       path.join(repoRoot, 'scripts', 'release', 'release-workflow-contracts.mjs'),
@@ -1649,83 +390,97 @@ on:
       - 'release-*'
   workflow_dispatch:
 
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+
 jobs:
-  native-release:
+  rust-dependency-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: \${{ needs.prepare.outputs.git_ref }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@cargo-audit
+      - run: node scripts/check-rust-dependency-audit.mjs
+
+  product-verification:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: \${{ needs.prepare.outputs.git_ref }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@cargo-audit
+      - name: Install product verification workspace dependencies
+        run: |
+          pnpm --dir apps/sdkwork-router-admin install --frozen-lockfile
+          pnpm --dir apps/sdkwork-router-portal install --frozen-lockfile
+      - name: Run release product verification
+        env:
+          SDKWORK_STRICT_FRONTEND_INSTALLS: '1'
+        run: node scripts/check-router-product.mjs
+
+  governance-release:
+    needs:
+      - prepare
+      - rust-dependency-audit
+      - product-verification
+    runs-on: ubuntu-latest
     steps:
       - name: Materialize external release dependencies
-        env:
-          SDKWORK_CORE_GIT_REF: \${{ vars.SDKWORK_CORE_GIT_REF || 'main' }}
-          SDKWORK_UI_GIT_REF: \${{ vars.SDKWORK_UI_GIT_REF || 'main' }}
-          SDKWORK_APPBASE_GIT_REF: \${{ vars.SDKWORK_APPBASE_GIT_REF || 'main' }}
-          SDKWORK_CRAW_CHAT_SDK_GIT_REF: \${{ vars.SDKWORK_CRAW_CHAT_SDK_GIT_REF || 'main' }}
         run: node scripts/release/materialize-external-deps.mjs
-
+      - name: Materialize release window snapshot
+        run: node scripts/release/materialize-release-window-snapshot.mjs
+      - name: Materialize release sync audit
+        run: node scripts/release/materialize-release-sync-audit.mjs
+      - name: Materialize release telemetry export
+        run: node scripts/release/materialize-release-telemetry-export.mjs
       - name: Materialize release telemetry snapshot
-        env:
-          SDKWORK_RELEASE_TELEMETRY_EXPORT_JSON: \${{ vars.SDKWORK_RELEASE_TELEMETRY_EXPORT_JSON || '' }}
         run: node scripts/release/materialize-release-telemetry-snapshot.mjs
-
       - name: Materialize SLO governance evidence
-        env:
-          SDKWORK_RELEASE_TELEMETRY_SNAPSHOT_PATH: docs/release/release-telemetry-snapshot-latest.json
         run: node scripts/release/materialize-slo-governance-evidence.mjs
-
+      - name: Materialize release governance bundle
+        run: node scripts/release/materialize-release-governance-bundle.mjs
+      - name: Upload release governance bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-governance-bundle
+          path: artifacts/release-governance-bundle/**/*
       - name: Run release governance gate
-        env:
-          SDKWORK_API_ROUTER_GIT_REF: \${{ needs.prepare.outputs.git_ref }}
-          SDKWORK_CORE_GIT_REF: \${{ vars.SDKWORK_CORE_GIT_REF || 'main' }}
-          SDKWORK_UI_GIT_REF: \${{ vars.SDKWORK_UI_GIT_REF || 'main' }}
-          SDKWORK_APPBASE_GIT_REF: \${{ vars.SDKWORK_APPBASE_GIT_REF || 'main' }}
-          SDKWORK_CRAW_CHAT_SDK_GIT_REF: \${{ vars.SDKWORK_CRAW_CHAT_SDK_GIT_REF || 'main' }}
         run: node scripts/release/run-release-governance-checks.mjs --format json
 
-      - name: Install native workspace dependencies
-        run: pnpm --dir apps/sdkwork-router-admin install --frozen-lockfile
-
-      - name: Build release service binaries on Unix
-        if: matrix.platform != 'windows'
-        run: cargo build --release --target \${{ matrix.target }} -p admin-api-service -p gateway-service -p portal-api-service -p router-web-service -p router-product-service
-
+  native-release:
+    needs:
+      - prepare
+      - rust-dependency-audit
+      - product-verification
+      - governance-release
+    runs-on: ubuntu-latest
+    steps:
       - name: Build admin desktop release
         run: node scripts/release/run-desktop-release-build.mjs --app admin --target \${{ matrix.target }}
-
       - name: Build portal desktop release
         run: node scripts/release/run-desktop-release-build.mjs --app portal --target \${{ matrix.target }}
-
-      - name: Collect native release assets
-        run: node scripts/release/package-release-assets.mjs native --platform \${{ matrix.platform }} --arch \${{ matrix.arch }} --target \${{ matrix.target }} --output-dir artifacts/release
-
-  web-release:
-    steps:
-      - name: Materialize external release dependencies
-        env:
-          SDKWORK_CORE_GIT_REF: \${{ vars.SDKWORK_CORE_GIT_REF || 'main' }}
-          SDKWORK_UI_GIT_REF: \${{ vars.SDKWORK_UI_GIT_REF || 'main' }}
-          SDKWORK_APPBASE_GIT_REF: \${{ vars.SDKWORK_APPBASE_GIT_REF || 'main' }}
-          SDKWORK_CRAW_CHAT_SDK_GIT_REF: \${{ vars.SDKWORK_CRAW_CHAT_SDK_GIT_REF || 'main' }}
-        run: node scripts/release/materialize-external-deps.mjs
-
-      - name: Materialize release telemetry snapshot
-        env:
-          SDKWORK_RELEASE_TELEMETRY_EXPORT_JSON: \${{ vars.SDKWORK_RELEASE_TELEMETRY_EXPORT_JSON || '' }}
-        run: node scripts/release/materialize-release-telemetry-snapshot.mjs
-
-      - name: Materialize SLO governance evidence
-        env:
-          SDKWORK_RELEASE_TELEMETRY_SNAPSHOT_PATH: docs/release/release-telemetry-snapshot-latest.json
-        run: node scripts/release/materialize-slo-governance-evidence.mjs
-
-      - name: Run release governance gate
-        env:
-          SDKWORK_API_ROUTER_GIT_REF: \${{ needs.prepare.outputs.git_ref }}
-          SDKWORK_CORE_GIT_REF: \${{ vars.SDKWORK_CORE_GIT_REF || 'main' }}
-          SDKWORK_UI_GIT_REF: \${{ vars.SDKWORK_UI_GIT_REF || 'main' }}
-          SDKWORK_APPBASE_GIT_REF: \${{ vars.SDKWORK_APPBASE_GIT_REF || 'main' }}
-          SDKWORK_CRAW_CHAT_SDK_GIT_REF: \${{ vars.SDKWORK_CRAW_CHAT_SDK_GIT_REF || 'main' }}
-        run: node scripts/release/run-release-governance-checks.mjs --format json
-
-      - name: Install web workspace dependencies
-        run: pnpm --dir apps/sdkwork-router-admin install --frozen-lockfile
+      - name: Upload official release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets-native-\${{ matrix.platform }}-\${{ matrix.arch }}
+          path: |
+            artifacts/release/native/\${{ matrix.platform }}/\${{ matrix.arch }}/bundles/sdkwork-api-router-product-server-\${{ matrix.platform }}-\${{ matrix.arch }}.tar.gz
+            artifacts/release/native/\${{ matrix.platform }}/\${{ matrix.arch }}/desktop/portal/**/*
 `,
   });
 
@@ -1736,7 +491,7 @@ jobs:
   );
 });
 
-test('release workflow contract helper rejects workflows that omit the Unix installed runtime smoke evidence artifact wiring', async () => {
+test('release workflow contract helper rejects workflows that do not build the docs site before release product verification', async () => {
   const contracts = await import(
     pathToFileURL(
       path.join(repoRoot, 'scripts', 'release', 'release-workflow-contracts.mjs'),
@@ -1753,87 +508,71 @@ on:
       - 'release-*'
   workflow_dispatch:
 
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+
 jobs:
-  native-release:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: \${{ steps.resolve.outputs.release_tag }}
+      git_ref: \${{ steps.resolve.outputs.git_ref }}
     steps:
-      - name: Materialize external release dependencies
-        env:
-          SDKWORK_CORE_GIT_REF: \${{ vars.SDKWORK_CORE_GIT_REF || 'main' }}
-          SDKWORK_UI_GIT_REF: \${{ vars.SDKWORK_UI_GIT_REF || 'main' }}
-          SDKWORK_APPBASE_GIT_REF: \${{ vars.SDKWORK_APPBASE_GIT_REF || 'main' }}
-          SDKWORK_CRAW_CHAT_SDK_GIT_REF: \${{ vars.SDKWORK_CRAW_CHAT_SDK_GIT_REF || 'main' }}
-        run: node scripts/release/materialize-external-deps.mjs
+      - id: resolve
+        run: |
+          echo "release_tag=release-fixture" >> "$GITHUB_OUTPUT"
+          echo "git_ref=refs/tags/release-fixture" >> "$GITHUB_OUTPUT"
 
-      - name: Materialize release telemetry snapshot
-        env:
-          SDKWORK_RELEASE_TELEMETRY_EXPORT_JSON: \${{ vars.SDKWORK_RELEASE_TELEMETRY_EXPORT_JSON || '' }}
-        run: node scripts/release/materialize-release-telemetry-snapshot.mjs
-
-      - name: Materialize SLO governance evidence
-        env:
-          SDKWORK_RELEASE_TELEMETRY_SNAPSHOT_PATH: docs/release/release-telemetry-snapshot-latest.json
-        run: node scripts/release/materialize-slo-governance-evidence.mjs
-
-      - name: Run release governance gate
-        env:
-          SDKWORK_API_ROUTER_GIT_REF: \${{ needs.prepare.outputs.git_ref }}
-          SDKWORK_CORE_GIT_REF: \${{ vars.SDKWORK_CORE_GIT_REF || 'main' }}
-          SDKWORK_UI_GIT_REF: \${{ vars.SDKWORK_UI_GIT_REF || 'main' }}
-          SDKWORK_APPBASE_GIT_REF: \${{ vars.SDKWORK_APPBASE_GIT_REF || 'main' }}
-          SDKWORK_CRAW_CHAT_SDK_GIT_REF: \${{ vars.SDKWORK_CRAW_CHAT_SDK_GIT_REF || 'main' }}
-        run: node scripts/release/run-release-governance-checks.mjs --format json
-
-      - name: Install native workspace dependencies
-        run: pnpm --dir apps/sdkwork-router-admin install --frozen-lockfile
-
-      - name: Build release service binaries on Unix
-        if: matrix.platform != 'windows'
-        run: cargo build --release --target \${{ matrix.target }} -p admin-api-service -p gateway-service -p portal-api-service -p router-web-service -p router-product-service
-
-      - name: Build admin desktop release
-        run: node scripts/release/run-desktop-release-build.mjs --app admin --target \${{ matrix.target }}
-
-      - name: Build portal desktop release
-        run: node scripts/release/run-desktop-release-build.mjs --app portal --target \${{ matrix.target }}
-
-      - name: Run installed native runtime smoke on Unix
-        if: matrix.platform != 'windows'
-        run: node scripts/release/run-unix-installed-runtime-smoke.mjs --platform \${{ matrix.platform }} --arch \${{ matrix.arch }} --target \${{ matrix.target }} --evidence-path artifacts/release-governance/unix-installed-runtime-smoke-\${{ matrix.platform }}-\${{ matrix.arch }}.json
-
-      - name: Collect native release assets
-        run: node scripts/release/package-release-assets.mjs native --platform \${{ matrix.platform }} --arch \${{ matrix.arch }} --target \${{ matrix.target }} --output-dir artifacts/release
-
-  web-release:
+  rust-dependency-audit:
+    needs: prepare
+    runs-on: ubuntu-latest
     steps:
-      - name: Materialize external release dependencies
-        env:
-          SDKWORK_CORE_GIT_REF: \${{ vars.SDKWORK_CORE_GIT_REF || 'main' }}
-          SDKWORK_UI_GIT_REF: \${{ vars.SDKWORK_UI_GIT_REF || 'main' }}
-          SDKWORK_APPBASE_GIT_REF: \${{ vars.SDKWORK_APPBASE_GIT_REF || 'main' }}
-          SDKWORK_CRAW_CHAT_SDK_GIT_REF: \${{ vars.SDKWORK_CRAW_CHAT_SDK_GIT_REF || 'main' }}
-        run: node scripts/release/materialize-external-deps.mjs
+      - uses: actions/checkout@v5
+        with:
+          ref: \${{ needs.prepare.outputs.git_ref }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@cargo-audit
+      - run: node scripts/check-rust-dependency-audit.mjs
 
-      - name: Materialize release telemetry snapshot
+  product-verification:
+    needs:
+      - prepare
+      - rust-dependency-audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: \${{ needs.prepare.outputs.git_ref }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: |
+            apps/sdkwork-router-admin/pnpm-lock.yaml
+            apps/sdkwork-router-portal/pnpm-lock.yaml
+            docs/pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@cargo-audit
+      - name: Install product verification workspace dependencies
+        run: |
+          pnpm --dir apps/sdkwork-router-admin install --frozen-lockfile
+          pnpm --dir apps/sdkwork-router-portal install --frozen-lockfile
+          pnpm --dir docs install --frozen-lockfile
+      - name: Run release product verification
         env:
-          SDKWORK_RELEASE_TELEMETRY_EXPORT_JSON: \${{ vars.SDKWORK_RELEASE_TELEMETRY_EXPORT_JSON || '' }}
-        run: node scripts/release/materialize-release-telemetry-snapshot.mjs
-
-      - name: Materialize SLO governance evidence
-        env:
-          SDKWORK_RELEASE_TELEMETRY_SNAPSHOT_PATH: docs/release/release-telemetry-snapshot-latest.json
-        run: node scripts/release/materialize-slo-governance-evidence.mjs
-
-      - name: Run release governance gate
-        env:
-          SDKWORK_API_ROUTER_GIT_REF: \${{ needs.prepare.outputs.git_ref }}
-          SDKWORK_CORE_GIT_REF: \${{ vars.SDKWORK_CORE_GIT_REF || 'main' }}
-          SDKWORK_UI_GIT_REF: \${{ vars.SDKWORK_UI_GIT_REF || 'main' }}
-          SDKWORK_APPBASE_GIT_REF: \${{ vars.SDKWORK_APPBASE_GIT_REF || 'main' }}
-          SDKWORK_CRAW_CHAT_SDK_GIT_REF: \${{ vars.SDKWORK_CRAW_CHAT_SDK_GIT_REF || 'main' }}
-        run: node scripts/release/run-release-governance-checks.mjs --format json
-
-      - name: Install web workspace dependencies
-        run: pnpm --dir apps/sdkwork-router-admin install --frozen-lockfile
+          SDKWORK_STRICT_FRONTEND_INSTALLS: '1'
+        run: node scripts/check-router-product.mjs
 `,
   });
 
@@ -1841,192 +580,6 @@ jobs:
     contracts.assertReleaseWorkflowContracts({
       repoRoot: fixtureRoot,
     }),
+    /docs site/i,
   );
-});
-
-test('portal package exposes unified product launchers and all desktop scripts use the shared tauri runner', () => {
-  const adminPackage = JSON.parse(read('apps/sdkwork-router-admin/package.json'));
-  const packageJson = JSON.parse(read('apps/sdkwork-router-portal/package.json'));
-  const consolePackage = JSON.parse(read('console/package.json'));
-  const runnerPath = path.join(repoRoot, 'scripts', 'run-tauri-cli.mjs');
-
-  assert.equal(existsSync(runnerPath), true, 'missing shared scripts/run-tauri-cli.mjs');
-  assert.match(packageJson.scripts['product:start'], /node \.\.\/\.\.\/scripts\/run-router-product\.mjs/);
-  assert.match(packageJson.scripts['product:service'], /node \.\.\/\.\.\/scripts\/run-router-product\.mjs service/);
-  assert.match(packageJson.scripts['server:start'], /node \.\.\/\.\.\/scripts\/run-router-product-service\.mjs/);
-  assert.match(packageJson.scripts['server:plan'], /node \.\.\/\.\.\/scripts\/run-router-product-service\.mjs --dry-run --plan-format json/);
-  assert.match(packageJson.scripts['product:check'], /node \.\.\/\.\.\/scripts\/check-router-product\.mjs/);
-  assert.match(adminPackage.scripts['tauri:dev'], /node \.\.\/\.\.\/scripts\/run-tauri-cli\.mjs dev/);
-  assert.match(adminPackage.scripts['tauri:build'], /node \.\.\/\.\.\/scripts\/run-tauri-cli\.mjs build/);
-  assert.match(packageJson.scripts['tauri:dev'], /node \.\.\/\.\.\/scripts\/run-tauri-cli\.mjs dev/);
-  assert.match(packageJson.scripts['tauri:dev:service'], /node \.\.\/\.\.\/scripts\/run-tauri-cli\.mjs dev -- --service/);
-  assert.match(packageJson.scripts['tauri:build'], /node \.\.\/\.\.\/scripts\/run-tauri-cli\.mjs build/);
-  assert.match(consolePackage.scripts.dev, /node \.\.\/scripts\/dev\/run-vite-cli\.mjs --host 0\.0\.0\.0/);
-  assert.match(consolePackage.scripts.build, /node \.\.\/scripts\/dev\/run-vite-cli\.mjs build/);
-  assert.match(consolePackage.scripts.preview, /node \.\.\/scripts\/dev\/run-vite-cli\.mjs preview --host 0\.0\.0\.0/);
-  assert.match(consolePackage.scripts['tauri:dev'], /node \.\.\/scripts\/run-tauri-cli\.mjs dev/);
-  assert.match(consolePackage.scripts['tauri:build'], /node \.\.\/scripts\/run-tauri-cli\.mjs build/);
-  assert.doesNotMatch(packageJson.scripts['tauri:dev'], /powershell/i);
-  assert.doesNotMatch(packageJson.scripts['tauri:build'], /powershell/i);
-});
-
-test('release workflow exposes a single governance bundle artifact for operator restore', async () => {
-  const workflow = read('.github/workflows/release.yml');
-
-  assert.match(
-    workflow,
-    /web-release:[\s\S]*?Materialize release governance bundle[\s\S]*?run: node scripts\/release\/materialize-release-governance-bundle\.mjs/,
-  );
-  assert.match(
-    workflow,
-    /web-release:[\s\S]*?Upload release governance bundle artifact[\s\S]*?uses:\s*actions\/upload-artifact@v4[\s\S]*?name:\s*release-governance-bundle-web[\s\S]*?path:\s*artifacts\/release-governance-bundle\/\*\*\/*/,
-  );
-
-  const helper = await import(
-    pathToFileURL(
-      path.join(repoRoot, 'scripts', 'release', 'materialize-release-governance-bundle.mjs'),
-    ).href,
-  );
-
-  assert.equal(typeof helper.listReleaseGovernanceBundleArtifactSpecs, 'function');
-  assert.equal(typeof helper.createReleaseGovernanceBundleManifest, 'function');
-  assert.equal(typeof helper.materializeReleaseGovernanceBundle, 'function');
-});
-
-test('shared tauri runner only injects the Visual Studio generator on Windows and carries explicit release target metadata', async () => {
-  const runner = await import(
-    pathToFileURL(
-      path.join(repoRoot, 'scripts', 'run-tauri-cli.mjs'),
-    ).href,
-  );
-
-  assert.equal(typeof runner.createTauriCliPlan, 'function');
-  assert.equal(typeof runner.withSupportedWindowsCmakeGenerator, 'function');
-
-  const windowsPlan = runner.createTauriCliPlan({
-    commandName: 'build',
-    args: ['--target', 'aarch64-pc-windows-msvc'],
-    platform: 'win32',
-    env: {},
-  });
-  const linuxPlan = runner.createTauriCliPlan({
-    commandName: 'build',
-    args: ['--target', 'x86_64-unknown-linux-gnu'],
-    platform: 'linux',
-    env: {
-      CMAKE_GENERATOR: 'Visual Studio 17 2022',
-      HOST_CMAKE_GENERATOR: 'Visual Studio 17 2022',
-    },
-  });
-  const linuxNinjaPlan = runner.createTauriCliPlan({
-    commandName: 'build',
-    args: ['--target', 'x86_64-unknown-linux-gnu'],
-    platform: 'linux',
-    env: {
-      CMAKE_GENERATOR: 'Ninja',
-      HOST_CMAKE_GENERATOR: 'Ninja',
-    },
-  });
-  const backgroundDevPlan = runner.createTauriCliPlan({
-    commandName: 'dev',
-    args: ['--', '--service'],
-    platform: 'linux',
-    env: {},
-  });
-
-  assert.equal(windowsPlan.command, 'tauri.cmd');
-  assert.deepEqual(windowsPlan.args, ['build', '--target', 'aarch64-pc-windows-msvc']);
-  assert.equal(windowsPlan.env.CMAKE_GENERATOR, 'Visual Studio 17 2022');
-  assert.equal(windowsPlan.env.HOST_CMAKE_GENERATOR, 'Visual Studio 17 2022');
-  assert.equal(windowsPlan.env.SDKWORK_DESKTOP_TARGET, 'aarch64-pc-windows-msvc');
-  assert.equal(windowsPlan.env.SDKWORK_DESKTOP_TARGET_PLATFORM, 'windows');
-  assert.equal(windowsPlan.env.SDKWORK_DESKTOP_TARGET_ARCH, 'arm64');
-  assert.equal(windowsPlan.windowsHide, true);
-
-  assert.equal(linuxPlan.command, 'tauri');
-  assert.deepEqual(linuxPlan.args, ['build', '--target', 'x86_64-unknown-linux-gnu']);
-  assert.equal(linuxPlan.env.SDKWORK_DESKTOP_TARGET, 'x86_64-unknown-linux-gnu');
-  assert.equal(linuxPlan.env.SDKWORK_DESKTOP_TARGET_PLATFORM, 'linux');
-  assert.equal(linuxPlan.env.SDKWORK_DESKTOP_TARGET_ARCH, 'x64');
-  assert.equal(Object.hasOwn(linuxPlan.env, 'CMAKE_GENERATOR'), false);
-  assert.equal(Object.hasOwn(linuxPlan.env, 'HOST_CMAKE_GENERATOR'), false);
-  assert.equal(linuxNinjaPlan.env.CMAKE_GENERATOR, 'Ninja');
-  assert.equal(Object.hasOwn(linuxNinjaPlan.env, 'HOST_CMAKE_GENERATOR'), false);
-  assert.equal(backgroundDevPlan.detached, true);
-  assert.equal(backgroundDevPlan.windowsHide, false);
-});
-
-test('shared tauri runner prepends the local cargo bin directory on Windows', async () => {
-  if (process.platform !== 'win32') {
-    return;
-  }
-
-  const runner = await import(
-    pathToFileURL(
-      path.join(repoRoot, 'scripts', 'run-tauri-cli.mjs'),
-    ).href,
-  );
-
-  const plan = runner.createTauriCliPlan({
-    commandName: 'dev',
-    platform: 'win32',
-    env: {
-      USERPROFILE: process.env.USERPROFILE ?? '',
-      PATH: '',
-    },
-  });
-
-  const expectedCargoBin = path.join(process.env.USERPROFILE ?? '', '.cargo', 'bin').toLowerCase();
-  assert.ok(
-    String(plan.env.PATH ?? '')
-      .toLowerCase()
-      .startsWith(expectedCargoBin),
-    'cargo bin should be the first PATH entry for tauri commands',
-  );
-  assert.match(
-    String(plan.env.CARGO_TARGET_DIR ?? ''),
-    /sdkwork-tauri-target/i,
-  );
-});
-
-test('shared tauri runner replaces inherited workspace-managed Windows target dirs with app-specific tauri target dirs', async () => {
-  if (process.platform !== 'win32') {
-    return;
-  }
-
-  const runner = await import(
-    pathToFileURL(
-      path.join(repoRoot, 'scripts', 'run-tauri-cli.mjs'),
-    ).href,
-  );
-  const workspaceTargetDir = await import(
-    pathToFileURL(
-      path.join(repoRoot, 'scripts', 'workspace-target-dir.mjs'),
-    ).href,
-  );
-
-  const inheritedWorkspaceTargetDir = workspaceTargetDir.resolveWorkspaceTargetDir({
-    workspaceRoot: repoRoot,
-    env: {
-      USERPROFILE: process.env.USERPROFILE ?? '',
-      TEMP: process.env.TEMP ?? '',
-    },
-    platform: 'win32',
-  });
-
-  const plan = runner.createTauriCliPlan({
-    commandName: 'build',
-    cwd: path.join(repoRoot, 'apps', 'sdkwork-router-admin'),
-    platform: 'win32',
-    env: {
-      USERPROFILE: process.env.USERPROFILE ?? '',
-      TEMP: process.env.TEMP ?? '',
-      PATH: '',
-      CARGO_TARGET_DIR: inheritedWorkspaceTargetDir,
-    },
-  });
-
-  assert.notEqual(plan.env.CARGO_TARGET_DIR, inheritedWorkspaceTargetDir);
-  assert.match(String(plan.env.CARGO_TARGET_DIR ?? ''), /sdkwork-tauri-target/i);
-  assert.match(String(plan.env.CARGO_TARGET_DIR ?? ''), /sdkwork-router-admin/i);
 });

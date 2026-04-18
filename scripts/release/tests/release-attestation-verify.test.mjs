@@ -49,8 +49,9 @@ test('release attestation verifier exposes governed subjects and gh command plan
       fixtureRoot,
       'artifacts/release-governance/windows-installed-runtime-smoke-windows-x64.json',
     );
-    writeFixtureFile(fixtureRoot, 'artifacts/release/admin/router-admin.zip', 'binary');
-    writeFixtureFile(fixtureRoot, 'artifacts/release/portal/router-portal.zip', 'binary');
+    writeFixtureFile(fixtureRoot, 'artifacts/release/release-catalog.json');
+    writeFixtureFile(fixtureRoot, 'artifacts/release/native/linux/x64/bundles/router-server.tar.gz', 'binary');
+    writeFixtureFile(fixtureRoot, 'artifacts/release/native/linux/x64/desktop/portal/router-portal.zip', 'binary');
 
     const plan = module.createReleaseAttestationVerificationPlan({
       repoRoot: fixtureRoot,
@@ -68,8 +69,9 @@ test('release attestation verifier exposes governed subjects and gh command plan
         'docs/release/slo-governance-latest.json',
         'artifacts/release-governance/unix-installed-runtime-smoke-linux-x64.json',
         'artifacts/release-governance/windows-installed-runtime-smoke-windows-x64.json',
-        'artifacts/release/admin/router-admin.zip',
-        'artifacts/release/portal/router-portal.zip',
+        'artifacts/release/release-catalog.json',
+        'artifacts/release/native/linux/x64/bundles/router-server.tar.gz',
+        'artifacts/release/native/linux/x64/desktop/portal/router-portal.zip',
       ],
     );
     assert.deepEqual(
@@ -92,6 +94,7 @@ test('release attestation verifier exposes governed subjects and gh command plan
         'release-slo-governance',
         'unix-installed-runtime-smoke',
         'windows-installed-runtime-smoke',
+        'release-catalog',
         'release-assets',
       ],
     );
@@ -130,6 +133,7 @@ test('release attestation verifier reports blocked when required subject paths a
         'release-slo-governance',
         'unix-installed-runtime-smoke',
         'windows-installed-runtime-smoke',
+        'release-catalog',
         'release-assets',
       ],
     );
@@ -161,7 +165,8 @@ test('release attestation verifier reports blocked when gh execution is unavaila
       fixtureRoot,
       'artifacts/release-governance/windows-installed-runtime-smoke-windows-x64.json',
     );
-    writeFixtureFile(fixtureRoot, 'artifacts/release/admin/router-admin.zip', 'binary');
+    writeFixtureFile(fixtureRoot, 'artifacts/release/release-catalog.json');
+    writeFixtureFile(fixtureRoot, 'artifacts/release/native/linux/x64/bundles/router-server.tar.gz', 'binary');
 
     const result = await module.verifyReleaseAttestations({
       repoRoot: fixtureRoot,
@@ -208,7 +213,8 @@ test('release attestation verifier reports real verification failures separately
       fixtureRoot,
       'artifacts/release-governance/windows-installed-runtime-smoke-windows-x64.json',
     );
-    writeFixtureFile(fixtureRoot, 'artifacts/release/admin/router-admin.zip', 'binary');
+    writeFixtureFile(fixtureRoot, 'artifacts/release/release-catalog.json');
+    writeFixtureFile(fixtureRoot, 'artifacts/release/native/linux/x64/bundles/router-server.tar.gz', 'binary');
 
     let callCount = 0;
     const result = await module.verifyReleaseAttestations({
@@ -236,7 +242,7 @@ test('release attestation verifier reports real verification failures separately
     assert.equal(result.blocked, false);
     assert.equal(result.reason, 'attestation-verify-failed');
     assert.equal(result.failedCount, 1);
-    assert.equal(result.verifiedCount, 7);
+    assert.equal(result.verifiedCount, 8);
     assert.match(
       result.reports.find((report) => report.ok === false)?.stderr ?? '',
       /no matching attestation/,

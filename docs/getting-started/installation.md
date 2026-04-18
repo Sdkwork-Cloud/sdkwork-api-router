@@ -4,19 +4,22 @@ This page covers prerequisites, repository bootstrap, and first-run verification
 
 ## What You Are Installing
 
-SDKWork API Router is not a single binary. The repository contains:
+SDKWork API Router is a multi-surface product workspace, not a single binary. The repository contains:
 
-- three standalone Rust services
-- a browser/Tauri operator console under `console/`
-- a standalone browser portal app under `apps/sdkwork-router-portal/`
+- standalone gateway, admin, and portal Rust services
+- the integrated `router-product-service` host used by the official server product
+- the development-only admin browser app under `apps/sdkwork-router-admin/`
+- the standalone portal app plus official desktop shell under `apps/sdkwork-router-portal/`
 - a VitePress documentation site
 - a Rust extension and provider runtime workspace
+
+The admin browser app is part of the source workspace and the server-delivered admin surface. It is not an official release product.
 
 The fastest way to become productive is:
 
 1. install the required toolchain
 2. clone the repository
-3. install `console/`, `apps/sdkwork-router-portal/`, and `docs/` dependencies
+3. install frontend and docs dependencies
 4. continue to [Quickstart](/getting-started/quickstart)
 
 ## Required Tooling
@@ -29,7 +32,7 @@ Install these on every platform:
 
 Recommended optional tooling:
 
-- PostgreSQL 15 or newer for PostgreSQL-backed deployments
+- PostgreSQL 15 or newer for PostgreSQL-backed server deployments
 - Tauri CLI for desktop development or packaging
 
 Install the Tauri CLI:
@@ -82,10 +85,10 @@ If pnpm is not already available, enable Corepack first:
 corepack enable
 ```
 
-Install console dependencies:
+Install admin app dependencies:
 
 ```bash
-pnpm --dir console install
+pnpm --dir apps/sdkwork-router-admin install
 ```
 
 Install portal app dependencies:
@@ -131,24 +134,31 @@ cargo fmt --all --check
 pnpm --dir docs build
 ```
 
-If you plan to work on the UI shell as well:
+If you plan to work on the browser or desktop shells as well:
 
 ```bash
-pnpm --dir console build
+pnpm --dir apps/sdkwork-router-admin build
 pnpm --dir apps/sdkwork-router-portal build
+```
+
+If you plan to work on the official desktop bundle:
+
+```bash
+node scripts/prepare-router-portal-desktop-runtime.mjs
 ```
 
 ## Next Steps
 
-- Run a verified first request flow:
+- run a verified first request flow:
   - [Quickstart](/getting-started/quickstart)
-- Run the full stack locally:
+- run the full stack locally:
   - [Source Development](/getting-started/source-development)
-- Compile and package services, admin console, portal app, docs, or Tauri:
+- compile and package the official products:
   - [Build and Packaging](/getting-started/build-and-packaging)
-- Prepare deployment artifacts:
   - [Release Builds](/getting-started/release-builds)
-- Review the system shape before deeper changes:
+- review deployment and OS-native installation:
+  - [Production Deployment](/getting-started/production-deployment)
+- review the system shape before deeper changes:
   - [Software Architecture](/architecture/software-architecture)
 
 To preview the docs site locally:

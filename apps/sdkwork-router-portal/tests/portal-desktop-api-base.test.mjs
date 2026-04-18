@@ -137,8 +137,9 @@ test('desktop runtime snapshot reads the tauri runtime topology bridge', async (
         return {
           mode: 'desktop',
           roles: ['web', 'gateway', 'admin', 'portal'],
-          publicBaseUrl: 'http://127.0.0.1:48123',
-          publicBindAddr: '127.0.0.1:48123',
+          accessMode: 'local',
+          publicBaseUrl: 'http://127.0.0.1:3001',
+          publicBindAddr: '127.0.0.1:3001',
           gatewayBindAddr: '127.0.0.1:8080',
           adminBindAddr: '127.0.0.1:8081',
           portalBindAddr: '127.0.0.1:8082',
@@ -150,8 +151,9 @@ test('desktop runtime snapshot reads the tauri runtime topology bridge', async (
   try {
     const snapshot = await portalApi.getDesktopRuntimeSnapshot();
     assert.equal(snapshot.mode, 'desktop');
+    assert.equal(snapshot.accessMode, 'local');
     assert.deepEqual(snapshot.roles, ['web', 'gateway', 'admin', 'portal']);
-    assert.equal(snapshot.publicBaseUrl, 'http://127.0.0.1:48123');
+    assert.equal(snapshot.publicBaseUrl, 'http://127.0.0.1:3001');
     assert.equal(snapshot.gatewayBindAddr, '127.0.0.1:8080');
   } finally {
     globalThis.window = originalWindow;
@@ -522,8 +524,9 @@ test('desktop runtime health probes public, gateway, admin, and portal service r
         return {
           mode: 'desktop',
           roles: ['web', 'gateway', 'admin', 'portal'],
-          publicBaseUrl: 'http://127.0.0.1:48123',
-          publicBindAddr: '127.0.0.1:48123',
+          accessMode: 'local',
+          publicBaseUrl: 'http://127.0.0.1:3001',
+          publicBindAddr: '127.0.0.1:3001',
           gatewayBindAddr: '127.0.0.1:8080',
           adminBindAddr: '127.0.0.1:8081',
           portalBindAddr: '127.0.0.1:8082',
@@ -531,8 +534,8 @@ test('desktop runtime health probes public, gateway, admin, and portal service r
       },
     },
     location: {
-      origin: 'http://127.0.0.1:48123',
-      port: '48123',
+      origin: 'http://127.0.0.1:3001',
+      port: '3001',
     },
   };
 
@@ -553,10 +556,10 @@ test('desktop runtime health probes public, gateway, admin, and portal service r
   }
 
   assert.deepEqual(requests, [
-    'http://127.0.0.1:48123/',
-    'http://127.0.0.1:8080/health',
-    'http://127.0.0.1:8081/admin/health',
-    'http://127.0.0.1:8082/portal/health',
+    'http://127.0.0.1:3001/',
+    'http://127.0.0.1:3001/api/health',
+    'http://127.0.0.1:3001/api/admin/health',
+    'http://127.0.0.1:3001/api/portal/health',
   ]);
 });
 
@@ -574,8 +577,9 @@ test('desktop runtime restart uses the tauri runtime management bridge', async (
         return {
           mode: 'desktop',
           roles: ['web', 'gateway', 'admin', 'portal'],
-          publicBaseUrl: 'http://127.0.0.1:49123',
-          publicBindAddr: '127.0.0.1:49123',
+          accessMode: 'shared',
+          publicBaseUrl: 'http://127.0.0.1:3001',
+          publicBindAddr: '0.0.0.0:3001',
           gatewayBindAddr: '127.0.0.1:9080',
           adminBindAddr: '127.0.0.1:9081',
           portalBindAddr: '127.0.0.1:9082',
@@ -587,11 +591,54 @@ test('desktop runtime restart uses the tauri runtime management bridge', async (
   try {
     const snapshot = await portalApi.restartDesktopRuntime();
     assert.equal(snapshot.mode, 'desktop');
-    assert.equal(snapshot.publicBaseUrl, 'http://127.0.0.1:49123');
+    assert.equal(snapshot.accessMode, 'shared');
+    assert.equal(snapshot.publicBaseUrl, 'http://127.0.0.1:3001');
     assert.equal(snapshot.gatewayBindAddr, '127.0.0.1:9080');
   } finally {
     globalThis.window = originalWindow;
   }
 
   assert.deepEqual(commands, ['restart_product_runtime']);
+});
+
+test('desktop runtime access mode updates through the tauri runtime management bridge', async () => {
+  const commands = [];
+  const portalApi = loadPortalApi();
+  const originalWindow = globalThis.window;
+
+  globalThis.window = {
+    isTauri: true,
+    __TAURI_INTERNALS__: {
+      invoke: async (command, args) => {
+        commands.push({ command, args });
+        assert.equal(command, 'update_desktop_runtime_access_mode');
+        assert.deepEqual(args, { accessMode: 'shared' });
+        return {
+          mode: 'desktop',
+          roles: ['web', 'gateway', 'admin', 'portal'],
+          accessMode: 'shared',
+          publicBaseUrl: 'http://127.0.0.1:3001',
+          publicBindAddr: '0.0.0.0:3001',
+          gatewayBindAddr: '127.0.0.1:8080',
+          adminBindAddr: '127.0.0.1:8081',
+          portalBindAddr: '127.0.0.1:8082',
+        };
+      },
+    },
+  };
+
+  try {
+    const snapshot = await portalApi.updateDesktopRuntimeAccessMode('shared');
+    assert.equal(snapshot.accessMode, 'shared');
+    assert.equal(snapshot.publicBindAddr, '0.0.0.0:3001');
+  } finally {
+    globalThis.window = originalWindow;
+  }
+
+  assert.deepEqual(commands, [
+    {
+      command: 'update_desktop_runtime_access_mode',
+      args: { accessMode: 'shared' },
+    },
+  ]);
 });

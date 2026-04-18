@@ -21,6 +21,7 @@ fn standalone_defaults_are_local_friendly() {
     let config = StandaloneConfig::default();
     assert_eq!(config.gateway_bind, "127.0.0.1:8080");
     assert_eq!(config.admin_bind, "127.0.0.1:8081");
+    assert_eq!(config.public_web_bind, None);
     assert_eq!(config.database_url, "sqlite://sdkwork-api-router.db");
     assert!(config.extension_paths.is_empty());
     assert!(config.enable_connector_extensions);
@@ -105,6 +106,7 @@ fn parses_secret_backend_identifiers() {
 #[test]
 fn builds_config_from_pairs() {
     let config = StandaloneConfig::from_pairs([
+        ("SDKWORK_WEB_BIND", "0.0.0.0:3001"),
         ("SDKWORK_GATEWAY_BIND", "0.0.0.0:9000"),
         ("SDKWORK_ADMIN_BIND", "0.0.0.0:9001"),
         (
@@ -117,6 +119,7 @@ fn builds_config_from_pairs() {
     ])
     .unwrap();
 
+    assert_eq!(config.public_web_bind.as_deref(), Some("0.0.0.0:3001"));
     assert_eq!(config.gateway_bind, "0.0.0.0:9000");
     assert_eq!(config.admin_bind, "0.0.0.0:9001");
     assert_eq!(config.secret_backend, SecretBackendKind::OsKeyring);
@@ -403,6 +406,7 @@ fn prefers_router_yaml_over_environment_overrides() {
     fs::write(
         root.join("router.yaml"),
         r#"
+web_bind: "0.0.0.0:3301"
 gateway_bind: "127.0.0.1:18080"
 admin_bind: "127.0.0.1:18081"
 database_url: "sqlite://router.db"
@@ -417,12 +421,14 @@ extension_paths:
     let config = StandaloneConfig::from_local_root_and_pairs(
         &root,
         [
+            ("SDKWORK_WEB_BIND", "127.0.0.1:4301"),
             ("SDKWORK_GATEWAY_BIND", "127.0.0.1:28080"),
             ("SDKWORK_BOOTSTRAP_PROFILE", "dev"),
         ],
     )
     .unwrap();
 
+    assert_eq!(config.public_web_bind.as_deref(), Some("0.0.0.0:3301"));
     assert_eq!(config.gateway_bind, "127.0.0.1:18080");
     assert_eq!(config.admin_bind, "127.0.0.1:18081");
     assert_eq!(
@@ -459,6 +465,7 @@ admin_bind: "127.0.0.1:18081"
     let config = StandaloneConfig::from_local_root_and_pairs(
         &root,
         [
+            ("SDKWORK_WEB_BIND", "127.0.0.1:3301"),
             ("SDKWORK_GATEWAY_BIND", "127.0.0.1:28080"),
             (
                 "SDKWORK_DATABASE_URL",
@@ -469,6 +476,7 @@ admin_bind: "127.0.0.1:18081"
     )
     .unwrap();
 
+    assert_eq!(config.public_web_bind.as_deref(), Some("127.0.0.1:3301"));
     assert_eq!(config.gateway_bind, "127.0.0.1:28080");
     assert_eq!(config.admin_bind, "127.0.0.1:18081");
     assert_eq!(
@@ -665,7 +673,7 @@ fn exports_resolved_config_back_to_sdkwork_environment_pairs() {
     let root = temp_config_root("resolved-env");
     fs::write(
         root.join("config.yaml"),
-        "admin_bind: \"127.0.0.1:19081\"\n",
+        "web_bind: \"0.0.0.0:3301\"\nadmin_bind: \"127.0.0.1:19081\"\n",
     )
     .unwrap();
 
@@ -677,6 +685,7 @@ fn exports_resolved_config_back_to_sdkwork_environment_pairs() {
         .into_iter()
         .collect::<std::collections::HashMap<_, _>>();
 
+    assert_eq!(values["SDKWORK_WEB_BIND"], "0.0.0.0:3301");
     assert_eq!(values["SDKWORK_ADMIN_BIND"], "127.0.0.1:19081");
     assert_eq!(
         values["SDKWORK_SECRET_LOCAL_FILE"],
@@ -686,6 +695,26 @@ fn exports_resolved_config_back_to_sdkwork_environment_pairs() {
         values["SDKWORK_EXTENSION_PATHS"],
         root.join("extensions").to_string_lossy()
     );
+}
+
+#[test]
+fn loads_public_web_bind_from_config_file_before_environment_fallback() {
+    let root = temp_config_root("public-web-bind-config");
+    fs::write(
+        root.join("router.yaml"),
+        r#"
+web_bind: "0.0.0.0:3301"
+"#,
+    )
+    .unwrap();
+
+    let config = StandaloneConfig::from_local_root_and_pairs(
+        &root,
+        [("SDKWORK_WEB_BIND", "127.0.0.1:4301")],
+    )
+    .unwrap();
+
+    assert_eq!(config.public_web_bind.as_deref(), Some("0.0.0.0:3301"));
 }
 
 #[test]

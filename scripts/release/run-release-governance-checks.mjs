@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -205,68 +206,156 @@ function createSyntheticReleaseSyncAuditArtifact() {
   }).artifact;
 }
 
+function toPortablePath(value) {
+  return String(value ?? '').replaceAll('\\', '/');
+}
+
+function createSyntheticReleaseCatalogFixture({
+  platform,
+  arch,
+} = {}) {
+  const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), 'sdkwork-release-governance-assets-'));
+  const releaseOutputDir = path.join(fixtureRoot, 'release');
+  const bundleOutputDir = path.join(releaseOutputDir, 'native', platform, arch, 'bundles');
+  const archiveBaseName = `sdkwork-api-router-product-server-${platform}-${arch}`;
+  const archiveFile = `${archiveBaseName}.tar.gz`;
+  const checksumFile = `${archiveFile}.sha256.txt`;
+  const manifestFile = `${archiveBaseName}.manifest.json`;
+
+  mkdirSync(bundleOutputDir, { recursive: true });
+  writeFileSync(
+    path.join(releaseOutputDir, 'release-catalog.json'),
+    `${JSON.stringify({
+      version: 1,
+      type: 'sdkwork-release-catalog',
+      releaseTag: 'release-governance-fallback',
+      generatedAt: '2026-04-18T00:00:00.000Z',
+      productCount: 1,
+      variantCount: 1,
+      products: [
+        {
+          productId: 'sdkwork-api-router-product-server',
+          variants: [
+            {
+              platform,
+              arch,
+              outputDirectory: toPortablePath(path.relative(releaseOutputDir, bundleOutputDir)),
+              variantKind: 'server-archive',
+              primaryFile: archiveFile,
+              primaryFileSizeBytes: 0,
+              checksumFile,
+              checksumAlgorithm: 'sha256',
+              manifestFile,
+              sha256: 'synthetic-sha256',
+              manifest: {
+                type: 'product-server-archive',
+                productId: 'sdkwork-api-router-product-server',
+                platform,
+                arch,
+                archiveFile,
+                checksumFile,
+                embeddedManifestFile: 'release-manifest.json',
+                services: ['router-product-service'],
+                sites: ['admin', 'portal'],
+                bootstrapDataRoots: ['data'],
+                deploymentAssetRoots: ['deploy'],
+              },
+            },
+          ],
+        },
+      ],
+    }, null, 2)}\n`,
+    'utf8',
+  );
+
+  return {
+    releaseOutputDir,
+    cleanup() {
+      rmSync(fixtureRoot, { recursive: true, force: true });
+    },
+  };
+}
+
 function createSyntheticUnixInstalledRuntimeSmokeFallback() {
+  const releaseCatalogFixture = createSyntheticReleaseCatalogFixture({
+    platform: 'linux',
+    arch: 'x64',
+  });
   const options = createUnixInstalledRuntimeSmokeOptions({
     repoRoot: rootDir,
     platform: 'linux',
     arch: 'x64',
     target: 'x86_64-unknown-linux-gnu',
+    releaseOutputDir: releaseCatalogFixture.releaseOutputDir,
     runtimeHome: 'artifacts/release-smoke/linux-x64',
     evidencePath: 'artifacts/release-governance/unix-installed-runtime-smoke-linux-x64.json',
   });
-  const plan = createUnixInstalledRuntimeSmokePlan({
-    repoRoot: rootDir,
-    ...options,
-    ports: {
-      web: 19483,
-      gateway: 19480,
-      admin: 19481,
-      portal: 19482,
-    },
-  });
-  const evidence = createUnixInstalledRuntimeSmokeEvidence({
-    repoRoot: rootDir,
-    plan,
-    ok: true,
-  });
+  try {
+    const plan = createUnixInstalledRuntimeSmokePlan({
+      repoRoot: rootDir,
+      ...options,
+      ports: {
+        web: 19483,
+        gateway: 19480,
+        admin: 19481,
+        portal: 19482,
+      },
+    });
+    const evidence = createUnixInstalledRuntimeSmokeEvidence({
+      repoRoot: rootDir,
+      plan,
+      ok: true,
+    });
 
-  return {
-    options,
-    plan,
-    evidence,
-  };
+    return {
+      options,
+      plan,
+      evidence,
+    };
+  } finally {
+    releaseCatalogFixture.cleanup();
+  }
 }
 
 function createSyntheticWindowsInstalledRuntimeSmokeFallback() {
+  const releaseCatalogFixture = createSyntheticReleaseCatalogFixture({
+    platform: 'windows',
+    arch: 'x64',
+  });
   const options = createWindowsInstalledRuntimeSmokeOptions({
     repoRoot: rootDir,
     platform: 'windows',
     arch: 'x64',
     target: 'x86_64-pc-windows-msvc',
+    releaseOutputDir: releaseCatalogFixture.releaseOutputDir,
     runtimeHome: 'artifacts/release-smoke/windows-x64',
     evidencePath: 'artifacts/release-governance/windows-installed-runtime-smoke-windows-x64.json',
   });
-  const plan = createWindowsInstalledRuntimeSmokePlan({
-    repoRoot: rootDir,
-    ...options,
-    ports: {
-      web: 29483,
-      gateway: 29480,
-      admin: 29481,
-      portal: 29482,
-    },
-  });
-  const evidence = createWindowsInstalledRuntimeSmokeEvidence({
-    repoRoot: rootDir,
-    plan,
-    ok: true,
-  });
+  try {
+    const plan = createWindowsInstalledRuntimeSmokePlan({
+      repoRoot: rootDir,
+      ...options,
+      ports: {
+        web: 29483,
+        gateway: 29480,
+        admin: 29481,
+        portal: 29482,
+      },
+    });
+    const evidence = createWindowsInstalledRuntimeSmokeEvidence({
+      repoRoot: rootDir,
+      plan,
+      ok: true,
+    });
 
-  return {
-    options,
-    plan,
-    evidence,
-  };
+    return {
+      options,
+      plan,
+      evidence,
+    };
+  } finally {
+    releaseCatalogFixture.cleanup();
+  }
 }
 
 function materializeLiveSloGovernanceEvidence({

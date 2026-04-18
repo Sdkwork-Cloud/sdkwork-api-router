@@ -93,7 +93,7 @@ test('buildWorkspaceCommandPlan keeps local config defaults when database overri
   ]);
 });
 
-test('buildWorkspaceCommandPlan forwards backend and console flags to child scripts', () => {
+test('buildWorkspaceCommandPlan routes tauri workspace mode through the portal desktop shell', () => {
   const plan = buildWorkspaceCommandPlan({
     databaseUrl: 'postgres://postgres:postgres@127.0.0.1:5432/sdkwork_api_router',
     gatewayBind: '0.0.0.0:18080',
@@ -122,9 +122,9 @@ test('buildWorkspaceCommandPlan forwards backend and console flags to child scri
     '--dry-run',
   ]);
 
-  assert.equal(plan.admin.scriptPath, 'scripts/dev/start-admin.mjs');
-  assert.deepEqual(plan.admin.args, [
-    'scripts/dev/start-admin.mjs',
+  assert.equal(plan.desktop.scriptPath, 'scripts/dev/start-portal.mjs');
+  assert.deepEqual(plan.desktop.args, [
+    'scripts/dev/start-portal.mjs',
     '--install',
     '--tauri',
     '--dry-run',

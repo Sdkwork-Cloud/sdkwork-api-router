@@ -31,20 +31,31 @@ test('check-router-product exposes Windows-safe pnpm and rust runner plans witho
     env: {},
   });
 
-  assert.equal(plan[0].label, 'portal typecheck');
-  assert.equal(plan[0].command, process.execPath);
-  assert.match(plan[0].args.join(' '), /run-tsc-cli\.mjs --noEmit/);
-  assert.equal(plan[2].label, 'portal browser runtime smoke');
-  assert.match(plan[2].args.join(' '), /check-portal-browser-runtime\.mjs/);
-  assert.equal(plan[3].label, 'admin typecheck');
-  assert.equal(plan[3].command, process.execPath);
-  assert.match(plan[3].args.join(' '), /run-tsc-cli\.mjs --noEmit/);
-  assert.equal(plan[5].label, 'admin browser runtime smoke');
-  assert.match(plan[5].args.join(' '), /check-admin-browser-runtime\.mjs/);
-  assert.equal(plan[6].label, 'docs bootstrap safety');
-  assert.match(plan[6].args.join(' '), /check-router-docs-safety\.mjs/);
-  assert.equal(plan[7].label, 'workspace dependency audit');
-  assert.match(plan[7].args.join(' '), /check-rust-dependency-audit\.mjs/);
+  const stepByLabel = new Map(plan.map((step) => [step.label, step]));
+
+  assert.equal(stepByLabel.get('portal typecheck')?.command, process.execPath);
+  assert.match(stepByLabel.get('portal typecheck')?.args.join(' ') ?? '', /run-tsc-cli\.mjs --noEmit/);
+  assert.match(stepByLabel.get('portal browser runtime smoke')?.args.join(' ') ?? '', /check-portal-browser-runtime\.mjs/);
+  assert.equal(stepByLabel.get('admin typecheck')?.command, process.execPath);
+  assert.match(stepByLabel.get('admin typecheck')?.args.join(' ') ?? '', /run-tsc-cli\.mjs --noEmit/);
+  assert.match(stepByLabel.get('admin browser runtime smoke')?.args.join(' ') ?? '', /check-admin-browser-runtime\.mjs/);
+  assert.match(stepByLabel.get('docs bootstrap safety')?.args.join(' ') ?? '', /check-router-docs-safety\.mjs/);
+  assert.equal(stepByLabel.get('docs site build')?.command, 'powershell.exe');
+  assert.deepEqual(stepByLabel.get('docs site build')?.args.slice(0, 4), [
+    '-NoProfile',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-Command',
+  ]);
+  assert.match(stepByLabel.get('docs site build')?.args[4] ?? '', /pnpm\.cjs/);
+  assert.match(stepByLabel.get('docs site build')?.args[4] ?? '', /--dir/);
+  assert.match(stepByLabel.get('docs site build')?.args[4] ?? '', /docs/);
+  assert.match(stepByLabel.get('docs site build')?.args[4] ?? '', /build/);
+  assert.equal(stepByLabel.get('docs site build')?.cwd, workspaceRoot);
+  assert.match(stepByLabel.get('workspace dependency audit')?.args.join(' ') ?? '', /check-rust-dependency-audit\.mjs/);
+  assert.match(stepByLabel.get('portal desktop runtime payload')?.args.join(' ') ?? '', /prepare-router-portal-desktop-runtime\.mjs/);
+  assert.doesNotMatch(stepByLabel.get('portal desktop runtime payload')?.args.join(' ') ?? '', /build-router-desktop-assets\.mjs/);
+  assert.match(stepByLabel.get('server deployment plan')?.args.join(' ') ?? '', /--bind 127\.0\.0\.1:3001/);
 
   const linuxPlan = module.createProductCheckPlan({
     workspaceRoot,
@@ -56,6 +67,10 @@ test('check-router-product exposes Windows-safe pnpm and rust runner plans witho
   });
   assert.equal(Object.hasOwn(linuxPlan[0].env, 'CMAKE_GENERATOR'), false);
   assert.equal(Object.hasOwn(linuxPlan[0].env, 'HOST_CMAKE_GENERATOR'), false);
+  assert.equal(
+    linuxPlan.some((step) => step.args.join(' ').includes('build-router-desktop-assets.mjs')),
+    false,
+  );
 });
 
 test('workspace TypeScript app configs keep ignoreDeprecations compatible with the pinned compiler major', () => {

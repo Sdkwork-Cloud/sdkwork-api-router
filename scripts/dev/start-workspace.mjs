@@ -113,7 +113,7 @@ function main() {
       console.log(`[start-workspace] ${plan.portal.name}: ${formatCommand(plan.nodeExecutable, plan.portal.args)}`);
       console.log(`[start-workspace] ${plan.web.name}: ${formatCommand(plan.nodeExecutable, plan.web.args)}`);
     } else if (settings.tauri) {
-      console.log(`[start-workspace] ${plan.admin.name}: ${formatCommand(plan.nodeExecutable, plan.admin.args)}`);
+      console.log(`[start-workspace] ${plan.desktop.name}: ${formatCommand(plan.nodeExecutable, plan.desktop.args)}`);
       console.log(`[start-workspace] ${plan.web.name}: ${formatCommand(plan.nodeExecutable, plan.web.args)}`);
     } else {
       console.log(`[start-workspace] ${plan.admin.name}: ${formatCommand(plan.nodeExecutable, plan.admin.args)}`);
@@ -149,7 +149,7 @@ function main() {
     : settings.proxyDev
       ? [plan.backend, plan.admin, plan.portal, plan.web]
     : settings.tauri
-      ? [plan.backend, plan.admin, plan.web]
+      ? [plan.backend, plan.desktop, plan.web]
       : [plan.backend, plan.admin, plan.portal];
 
   for (const step of steps) {

@@ -39,6 +39,7 @@ import type {
   PortalCouponReservationResponse,
   PortalCouponValidationRequest,
   PortalCouponValidationResponse,
+  PortalDesktopRuntimeAccessMode,
   PortalDesktopRuntimeSnapshot,
   PortalMarketingCodesResponse,
   PortalMarketingRedemptionsResponse,
@@ -235,6 +236,28 @@ export async function restartDesktopRuntime(): Promise<PortalDesktopRuntimeSnaps
   return snapshot;
 }
 
+export async function updateDesktopRuntimeAccessMode(
+  accessMode: PortalDesktopRuntimeAccessMode,
+): Promise<PortalDesktopRuntimeSnapshot> {
+  const snapshot = await invokeDesktopCommand<PortalDesktopRuntimeSnapshot>(
+    'update_desktop_runtime_access_mode',
+    { accessMode },
+  );
+
+  cachedDesktopRuntimeSnapshot = snapshot;
+
+  const runtimeBaseUrl = snapshot.publicBaseUrl?.trim();
+  if (runtimeBaseUrl) {
+    cachedPortalDesktopBaseUrl = joinUrl(runtimeBaseUrl, portalProxyPrefix);
+    cachedGatewayDesktopBaseUrl = joinUrl(runtimeBaseUrl, gatewayProxyPrefix);
+  } else {
+    cachedPortalDesktopBaseUrl = null;
+    cachedGatewayDesktopBaseUrl = null;
+  }
+
+  return snapshot;
+}
+
 type ProductHealthTarget = {
   id: PortalRuntimeServiceHealth['id'];
   label: string;
@@ -260,29 +283,23 @@ function desktopHealthTargets(snapshot: PortalDesktopRuntimeSnapshot): ProductHe
     {
       id: 'gateway',
       label: 'Gateway',
-      healthUrl: snapshot.gatewayBindAddr
-        ? bindAddrUrl(snapshot.gatewayBindAddr, '/health')
-        : joinUrl(publicBaseUrl, '/api/health'),
+      healthUrl: joinUrl(publicBaseUrl, '/api/health'),
       detail:
-        'The gateway role is responding directly on its runtime health route.',
+        'The gateway role is responding through the fixed public product entrypoint instead of a desktop-only direct bind.',
     },
     {
       id: 'admin',
       label: 'Admin control plane',
-      healthUrl: snapshot.adminBindAddr
-        ? bindAddrUrl(snapshot.adminBindAddr, '/admin/health')
-        : joinUrl(publicBaseUrl, '/api/admin/health'),
+      healthUrl: joinUrl(publicBaseUrl, '/api/admin/health'),
       detail:
-        'The admin role is reachable and can accept operator traffic on the current runtime.',
+        'The admin role is reachable through the unified public product entrypoint on port 3001.',
     },
     {
       id: 'portal',
       label: 'Portal API',
-      healthUrl: snapshot.portalBindAddr
-        ? bindAddrUrl(snapshot.portalBindAddr, '/portal/health')
-        : joinUrl(publicBaseUrl, '/api/portal/health'),
+      healthUrl: joinUrl(publicBaseUrl, '/api/portal/health'),
       detail:
-        'The portal role is reachable for authentication, workspace reads, and commerce workflows.',
+        'The portal role is reachable through the unified public product entrypoint on port 3001.',
     },
   ];
 }

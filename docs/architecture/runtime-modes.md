@@ -18,10 +18,10 @@ Embedded mode is the desktop-oriented deployment shape.
 
 Characteristics:
 
-- the runtime is hosted in-process through `sdkwork-api-runtime-host`
-- the Tauri shell under `console/src-tauri/` can start or call into the embedded runtime
-- the admin console build can be opened in a normal browser or hosted inside Tauri
-- the portal now ships as a separate browser-first app under `apps/sdkwork-router-portal/`
+- the runtime is hosted through the shared product host and local desktop sidecar contract
+- the official Tauri shell lives under `apps/sdkwork-router-portal/src-tauri/`
+- the admin app remains available in the browser and as an explicit development-only Tauri shell
+- the portal app now ships as both a standalone browser app and the official desktop shell
 - the portal now includes a `Gateway` command center that explains compatibility, desktop mode, server mode, and role-sliced rollout posture from inside the product
 - loopback binding is the default trust boundary
 - SQLite is the preferred local persistence strategy
@@ -35,7 +35,7 @@ The current repository includes:
 - a minimal `EmbeddedRuntime` abstraction
 - a loopback base URL contract
 - a Tauri shell scaffold with an initial runtime command
-- a live landing plus admin console with browser and Tauri-friendly entry points under `console/`
+- separate admin and portal browser apps plus a portal-first Tauri desktop shell
 - a standalone portal app with dedicated dashboard, usage, credits, billing, API key, and account modules
 - a standalone portal `Gateway` module that turns compatibility, topology, and launch-readiness into a first-class product surface
 - a public portal API surface for self-service registration, login, workspace inspection, dashboard, usage, billing, and scoped API key issuance

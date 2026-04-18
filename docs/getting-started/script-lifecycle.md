@@ -53,11 +53,12 @@ Characteristics:
 | Script | Scope | Primary purpose | Runtime state | How it stops |
 |---|---|---|---|---|
 | `bin/build.sh` / `bin/build.ps1` | release | build release binaries, browser assets, docs, and desktop bundles | `artifacts/release/` and Rust target output | exits when the build finishes |
-| `bin/install.sh` / `bin/install.ps1` | release | install the built release runtime into an install home | `artifacts/install/sdkwork-api-router/current/` by default | exits when installation finishes |
-| `bin/start.sh` / `bin/start.ps1` | release | start the installed `router-product-service` runtime | install home `var/log/`, `var/run/`, `config/router.env` | `bin/stop.sh` / `bin/stop.ps1`, or service manager stop |
-| `bin/stop.sh` / `bin/stop.ps1` | release | stop the managed release runtime using the recorded PID | install home `var/run/` PID file | exits after the process tree stops |
+| `bin/install.sh` / `bin/install.ps1` | release | install the built release runtime into a product root | `artifacts/install/sdkwork-api-router/` by default | exits when installation finishes |
+| `bin/start.sh` / `bin/start.ps1` | release | start the installed `router-product-service` runtime | product-root `config/`, `log/`, `run/`, plus `current/release-manifest.json` | `bin/stop.sh` / `bin/stop.ps1`, or service manager stop |
+| `bin/stop.sh` / `bin/stop.ps1` | release | stop the managed release runtime using the recorded PID | product-root `run/` PID file | exits after the process tree stops |
 | `bin/start-dev.sh` / `bin/start-dev.ps1` | managed development | start a managed development runtime with writable local state | `artifacts/runtime/dev/` | `bin/stop-dev.sh` / `bin/stop-dev.ps1`, or `Ctrl+C` in foreground mode |
 | `bin/stop-dev.sh` / `bin/stop-dev.ps1` | managed development | stop the managed development runtime | `artifacts/runtime/dev/run/` PID file | exits after the process tree stops |
+| `node scripts/prepare-router-portal-desktop-runtime.mjs` | desktop packaging | stage the portal desktop sidecar payload | `bin/portal-rt/router-product/` | exits when staging completes |
 | `scripts/dev/start-workspace.mjs` / `.ps1` | raw source development | start backend services plus browser or desktop surfaces | source tree only | `Ctrl+C` in the current terminal |
 | `scripts/dev/start-stack.mjs` / `start-servers.ps1` | raw source development | start backend services only | source tree only | `Ctrl+C` in the current terminal |
 | `scripts/dev/start-admin.mjs` | raw source development | start the admin browser app or Tauri shell | source tree only | `Ctrl+C` in the current terminal |
@@ -188,12 +189,14 @@ Windows:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\build.ps1
 ```
 
-This stage compiles:
+This stage compiles and prepares:
 
 - Rust release binaries
-- admin and portal static assets
-- docs and optional desktop bundles
-- the native release package under `artifacts/release/`
+- admin and portal static assets for the server product
+- optional docs site assets for documentation validation
+- the staged portal desktop `router-product/` sidecar payload
+- the official portal desktop bundle
+- the native release assets under `artifacts/release/`
 
 ### 2. Install the runtime home
 
@@ -209,53 +212,60 @@ Windows:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\install.ps1
 ```
 
-This creates an install home, by default:
+This creates a product root, by default:
 
-- `artifacts/install/sdkwork-api-router/current/`
+- `artifacts/install/sdkwork-api-router/`
 
 Key directories:
 
-- `bin/`
+- `current/`
+- `releases/<version>/`
 - `config/router.env`
-- `sites/admin/dist`
-- `sites/portal/dist`
-- `var/log/`
-- `var/run/`
-- `service/systemd/`
-- `service/launchd/`
-- `service/windows-task/`
+- `config/router.yaml`
+- `data/`
+- `log/`
+- `run/`
+- `current/service/systemd/`
+- `current/service/launchd/`
+- `current/service/windows-service/`
 
 ### 3. Review or override runtime configuration
 
 Before starting production, review:
 
 - `config/router.env`
+- `config/router.yaml`
+- `current/release-manifest.json`
 
-That is the supported place to override:
+Use `router.yaml` as the canonical runtime configuration file for:
 
 - bind addresses
 - database location
-- site directories
 - proxy targets
+
+Use `router.env` only for config discovery and fallback values that the config file leaves unset.
+
+`current/release-manifest.json` is generated metadata. It points `current/` at the active immutable payload under `releases/<version>/`.
 
 ### 4. Start the release runtime
 
 Linux or macOS:
 
 ```bash
-./bin/start.sh
+./bin/start.sh --home artifacts/install/sdkwork-api-router/current
 ```
 
 Windows:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\start.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\start.ps1 -Home .\artifacts\install\sdkwork-api-router\current
 ```
 
 The release startup scripts:
 
 - start `router-product-service`
-- use the install-home SQLite database by default
+- resolve the active binary and static sites from `current/release-manifest.json`
+- use the portable product-root SQLite database by default
 - wait for unified health checks to pass
 - print the same formatted startup summary style as the dev scripts
 
@@ -264,33 +274,55 @@ The release startup scripts:
 Linux or macOS:
 
 ```bash
-./bin/stop.sh
+./bin/stop.sh --home artifacts/install/sdkwork-api-router/current
 ```
 
 Windows:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\stop.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\stop.ps1 -Home .\artifacts\install\sdkwork-api-router\current
 ```
 
 ### 6. Optional: register a service manager entry
 
-From the install home:
+From the product root:
 
 - Linux / systemd:
-  - `./service/systemd/install-service.sh`
-  - `./service/systemd/uninstall-service.sh`
+  - `./current/service/systemd/install-service.sh`
+  - `./current/service/systemd/uninstall-service.sh`
 - macOS / launchd:
-  - `./service/launchd/install-service.sh`
-  - `./service/launchd/uninstall-service.sh`
-- Windows / Task Scheduler:
-  - `powershell -NoProfile -ExecutionPolicy Bypass -File .\service\windows-task\install-service.ps1 -StartNow`
-  - `powershell -NoProfile -ExecutionPolicy Bypass -File .\service\windows-task\uninstall-service.ps1`
+  - `./current/service/launchd/install-service.sh`
+  - `./current/service/launchd/uninstall-service.sh`
+- Windows / Service Control Manager:
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File .\current\service\windows-service\install-service.ps1`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File .\current\service\windows-service\uninstall-service.ps1`
 
 For service-manager scenarios, use foreground mode:
 
-- `bin/start.sh --foreground`
-- `bin/start.ps1 -Foreground`
+- `bin/start.sh --foreground --home <product-root>/current`
+- `bin/start.ps1 -Foreground -Home <product-root>\current`
+
+## Portal Desktop Lifecycle
+
+The portal desktop product has its own packaging and runtime lifecycle. It does not use `bin/start.sh` or OS service registration for the bundled user-facing app.
+
+Build inputs:
+
+- `pnpm --dir apps/sdkwork-router-admin build`
+- `pnpm --dir apps/sdkwork-router-portal build`
+- `cargo build --release -p router-product-service`
+- `node scripts/prepare-router-portal-desktop-runtime.mjs`
+
+Runtime contract:
+
+- Tauri shell starts the bundled `router-product-service` sidecar
+- fixed local shell base URL: `http://127.0.0.1:3001`
+- access mode controls the public bind:
+  - local-only: `127.0.0.1:3001`
+  - shared network: `0.0.0.0:3001`
+- mutable desktop runtime state lives in OS-standard app config, data, and log directories
+- `desktop-runtime.json` persists shell access mode
+- `router.yaml` is the canonical sidecar config file
 
 ## Dry-Run Lifecycle
 

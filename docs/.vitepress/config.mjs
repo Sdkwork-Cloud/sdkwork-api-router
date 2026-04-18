@@ -145,6 +145,27 @@ export default defineConfig({
   lang: 'en-US',
   cleanUrls: true,
   lastUpdated: true,
+  markdown: {
+    languageAlias: {
+      promql: 'txt',
+    },
+    config: (md) => {
+      md.core.ruler.push('normalize-promql-fences', (state) => {
+        for (const token of state.tokens) {
+          if (token.type !== 'fence') {
+            continue;
+          }
+
+          const info = String(token.info ?? '').trim();
+          if (!info.toLowerCase().startsWith('promql')) {
+            continue;
+          }
+
+          token.info = info.replace(/^promql\b/i, 'txt');
+        }
+      });
+    },
+  },
   srcExclude: [
     'superpowers/**',
     'step/**',

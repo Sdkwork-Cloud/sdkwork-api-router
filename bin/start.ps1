@@ -31,8 +31,11 @@ $defaultHome = Get-RouterDefaultInstallHome -RepoRoot $repoRoot
 $binaryName = Get-RouterBinaryName -BaseName 'router-product-service'
 
 if ([string]::IsNullOrWhiteSpace($RuntimeHome)) {
+    $manifestHome = Split-Path -Parent $scriptDir
     $siblingBinary = Join-Path $scriptDir $binaryName
-    if (Test-Path $siblingBinary) {
+    if (Test-Path (Join-Path $manifestHome 'release-manifest.json')) {
+        $RuntimeHome = $manifestHome
+    } elseif (Test-Path $siblingBinary) {
         $RuntimeHome = Split-Path -Parent $scriptDir
     } else {
         $RuntimeHome = $defaultHome
@@ -47,6 +50,11 @@ $manifestConfigFile = Get-RouterReleaseManifestString -Manifest $releaseManifest
 $manifestDataDirectory = Get-RouterReleaseManifestString -Manifest $releaseManifest -PropertyName 'mutableDataRoot'
 $manifestLogDirectory = Get-RouterReleaseManifestString -Manifest $releaseManifest -PropertyName 'logRoot'
 $manifestRunDirectory = Get-RouterReleaseManifestString -Manifest $releaseManifest -PropertyName 'runRoot'
+$manifestReleaseRoot = Get-RouterReleaseManifestString -Manifest $releaseManifest -PropertyName 'releaseRoot'
+$manifestRouterBinary = Get-RouterReleaseManifestString -Manifest $releaseManifest -PropertyName 'routerBinary'
+$manifestAdminSiteDirectory = Get-RouterReleaseManifestString -Manifest $releaseManifest -PropertyName 'adminSiteDistDir'
+$manifestPortalSiteDirectory = Get-RouterReleaseManifestString -Manifest $releaseManifest -PropertyName 'portalSiteDistDir'
+$manifestBootstrapDataDirectory = Get-RouterReleaseManifestString -Manifest $releaseManifest -PropertyName 'bootstrapDataRoot'
 $installMode = Get-RouterNormalizedInstallMode -RequestedMode ([string]$env:SDKWORK_ROUTER_INSTALL_MODE) -FallbackMode $manifestInstallMode
 $defaultConfigDirectoryRaw = Get-RouterDefaultConfigRoot -RuntimeHome $runtimeHome -InstallMode $installMode
 $initialConfigDirectory = [string]$env:SDKWORK_CONFIG_DIR
@@ -113,15 +121,43 @@ $runDirectoryRaw = if (-not [string]::IsNullOrWhiteSpace($manifestRunDirectory))
 $runDirectory = Resolve-RouterHostPath -PathValue $runDirectoryRaw -DefaultValue $defaultRunDirectoryRaw
 
 $binDir = Join-Path $runtimeHome 'bin'
-$binaryPath = Join-Path $binDir $binaryName
+$binaryPath = if (-not [string]::IsNullOrWhiteSpace($manifestReleaseRoot)) {
+    Join-Path $manifestReleaseRoot (Join-Path 'bin' $binaryName)
+} else {
+    Join-Path $binDir $binaryName
+}
+if (-not [string]::IsNullOrWhiteSpace($manifestRouterBinary)) {
+    $binaryPath = $manifestRouterBinary
+}
 $pidFile = Join-Path $runDirectory 'router-product-service.pid'
 $stateFile = Join-Path $runDirectory 'router-product-service.state.env'
 $stdoutLog = Join-Path $logDirectory 'router-product-service.stdout.log'
 $stderrLog = Join-Path $logDirectory 'router-product-service.stderr.log'
 $planFile = Join-Path $runDirectory 'router-product-service.plan.json'
-$defaultAdminSiteDir = Join-Path $runtimeHome 'sites\admin\dist'
-$defaultPortalSiteDir = Join-Path $runtimeHome 'sites\portal\dist'
-$defaultBootstrapDataDir = Join-Path $runtimeHome 'data'
+$defaultAdminSiteDir = if (-not [string]::IsNullOrWhiteSpace($manifestReleaseRoot)) {
+    Join-Path $manifestReleaseRoot 'sites\admin\dist'
+} else {
+    Join-Path $runtimeHome 'sites\admin\dist'
+}
+$defaultPortalSiteDir = if (-not [string]::IsNullOrWhiteSpace($manifestReleaseRoot)) {
+    Join-Path $manifestReleaseRoot 'sites\portal\dist'
+} else {
+    Join-Path $runtimeHome 'sites\portal\dist'
+}
+$defaultBootstrapDataDir = if (-not [string]::IsNullOrWhiteSpace($manifestReleaseRoot)) {
+    Join-Path $manifestReleaseRoot 'data'
+} else {
+    Join-Path $runtimeHome 'data'
+}
+if (-not [string]::IsNullOrWhiteSpace($manifestAdminSiteDirectory)) {
+    $defaultAdminSiteDir = $manifestAdminSiteDirectory
+}
+if (-not [string]::IsNullOrWhiteSpace($manifestPortalSiteDirectory)) {
+    $defaultPortalSiteDir = $manifestPortalSiteDirectory
+}
+if (-not [string]::IsNullOrWhiteSpace($manifestBootstrapDataDirectory)) {
+    $defaultBootstrapDataDir = $manifestBootstrapDataDirectory
+}
 $repositoryBootstrapDataDir = Join-Path $repoRoot 'data'
 $defaultConfigDirPortable = Convert-ToRouterPortablePath -PathValue $configDirectory
 $defaultConfigFilePortable = Convert-ToRouterPortablePath -PathValue $configFilePath

@@ -72,7 +72,7 @@ This is the raw source desktop-oriented workflow.
 Characteristics:
 
 - backend services stay on `9980`, `9981`, and `9982`
-- admin lives in the Tauri desktop shell
+- portal lives in the Tauri desktop shell
 - Pingora still exposes browser access through the unified web host
 
 Entry points:

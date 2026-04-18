@@ -41,7 +41,9 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ -z "$RUNTIME_HOME" ]; then
-  if [ -f "$SCRIPT_DIR/$(router_binary_name router-product-service)" ]; then
+  if [ -f "$SCRIPT_DIR/../release-manifest.json" ]; then
+    RUNTIME_HOME=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+  elif [ -f "$SCRIPT_DIR/$(router_binary_name router-product-service)" ]; then
     RUNTIME_HOME=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
   else
     RUNTIME_HOME="$DEFAULT_HOME"

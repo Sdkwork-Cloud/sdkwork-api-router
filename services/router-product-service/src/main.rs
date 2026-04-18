@@ -107,8 +107,13 @@ async fn main() -> anyhow::Result<()> {
     let cli = RouterProductServiceCli::parse();
     let settings = resolve_service_settings(&cli, env::vars())?;
     let (loader, config) = load_runtime_config(&settings, &cli)?;
+    let effective_public_web_bind = resolve_effective_public_web_bind(&settings, &config);
     let install_mode = env::var(SDKWORK_ROUTER_INSTALL_MODE).ok();
-    validate_runtime_config_for_install_mode(&config, install_mode.as_deref())?;
+    validate_runtime_config_for_install_mode(
+        &config,
+        effective_public_web_bind,
+        install_mode.as_deref(),
+    )?;
 
     if settings.dry_run {
         print!("{}", render_service_plan(&settings, &config)?);
@@ -116,7 +121,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     init_tracing("router-product-service");
-    let options = build_runtime_options(&settings)?;
+    let options = build_runtime_options(&settings, &config)?;
     let runtime = RouterProductRuntime::start(loader, config, options).await?;
     print_runtime_summary(&runtime);
 
@@ -212,12 +217,11 @@ where
 
 fn build_runtime_options(
     settings: &ProductServiceSettings,
+    config: &StandaloneConfig,
 ) -> anyhow::Result<RouterProductRuntimeOptions> {
-    let mut options = RouterProductRuntimeOptions::server(resolve_site_dirs(settings)?);
+    let mut options = RouterProductRuntimeOptions::server(resolve_site_dirs(settings)?)
+        .with_public_web_bind(resolve_effective_public_web_bind(settings, config));
 
-    if let Some(bind) = settings.public_web_bind.as_deref() {
-        options = options.with_public_web_bind(bind);
-    }
     if let Some(node_id_prefix) = settings.node_id_prefix.as_deref() {
         options = options.with_node_id_prefix(node_id_prefix);
     }
@@ -281,9 +285,11 @@ fn build_loader_cli_overrides(cli: &RouterProductServiceCli) -> Vec<(String, Str
 
 fn validate_runtime_config_for_install_mode(
     config: &StandaloneConfig,
+    effective_public_web_bind: &str,
     install_mode: Option<&str>,
 ) -> anyhow::Result<()> {
     config.validate_security_posture()?;
+    validate_public_web_bind_security_posture(config, effective_public_web_bind)?;
 
     let normalized_install_mode = install_mode
         .map(str::trim)
@@ -301,6 +307,55 @@ fn validate_runtime_config_for_install_mode(
     }
 
     Ok(())
+}
+
+fn resolve_effective_public_web_bind<'a>(
+    settings: &'a ProductServiceSettings,
+    config: &'a StandaloneConfig,
+) -> &'a str {
+    settings
+        .public_web_bind
+        .as_deref()
+        .or(config.public_web_bind.as_deref())
+        .unwrap_or("0.0.0.0:3001")
+}
+
+fn validate_public_web_bind_security_posture(
+    config: &StandaloneConfig,
+    effective_public_web_bind: &str,
+) -> anyhow::Result<()> {
+    if bind_is_loopback(effective_public_web_bind) {
+        return Ok(());
+    }
+
+    let mut externally_exposed = config.clone();
+    externally_exposed.gateway_bind = effective_public_web_bind.to_owned();
+    externally_exposed.validate_security_posture().map_err(|error| {
+        anyhow::anyhow!(
+            "refusing public_web_bind {} while the public product entrypoint would expose development defaults: {}",
+            effective_public_web_bind,
+            error
+        )
+    })
+}
+
+fn bind_is_loopback(bind: &str) -> bool {
+    let normalized = bind
+        .trim()
+        .trim_start_matches("http://")
+        .trim_start_matches("https://");
+    let authority = normalized.split('/').next().unwrap_or(normalized);
+    let host = if authority.starts_with('[') {
+        authority
+            .split(']')
+            .next()
+            .map(|value| format!("{value}]"))
+            .unwrap_or_else(|| authority.to_owned())
+    } else {
+        authority.split(':').next().unwrap_or(authority).to_owned()
+    };
+
+    matches!(host.as_str(), "127.0.0.1" | "localhost" | "[::1]" | "::1")
 }
 
 fn parse_roles(value: &str) -> anyhow::Result<Vec<ProductRuntimeRole>> {
@@ -482,10 +537,7 @@ fn render_service_plan_text(
         format!("roles={roles}"),
         format!(
             "public_web_bind={}",
-            settings
-                .public_web_bind
-                .as_deref()
-                .unwrap_or("0.0.0.0:3001")
+            resolve_effective_public_web_bind(settings, config)
         ),
         format!("gateway_bind={}", config.gateway_bind),
         format!("admin_bind={}", config.admin_bind),
@@ -542,7 +594,7 @@ fn render_service_plan_json(
         "mode": "dry-run",
         "plan_format": settings.plan_format.as_str(),
         "roles": roles,
-        "public_web_bind": settings.public_web_bind.as_deref().unwrap_or("0.0.0.0:3001"),
+        "public_web_bind": resolve_effective_public_web_bind(settings, config),
         "database_url": config.database_url,
         "config_dir": settings.config_dir,
         "config_file": settings.config_file,
@@ -752,6 +804,7 @@ database_url: "sqlite://router.db"
                 database_url: "sqlite:///tmp/router.db".to_owned(),
                 ..StandaloneConfig::default()
             },
+            "127.0.0.1:3001",
             Some("system"),
         )
         .expect_err("system installs should reject sqlite by default");
@@ -766,11 +819,29 @@ database_url: "sqlite://router.db"
             &StandaloneConfig {
                 database_url:
                     "postgresql://sdkwork:change-me@127.0.0.1:5432/sdkwork_api_router".to_owned(),
+                admin_jwt_signing_secret: "rotated-admin-jwt-secret".to_owned(),
+                portal_jwt_signing_secret: "rotated-portal-jwt-secret".to_owned(),
+                credential_master_key: "rotated-credential-master-key".to_owned(),
+                metrics_bearer_token: "rotated-metrics-bearer-token".to_owned(),
                 ..StandaloneConfig::default()
             },
+            "0.0.0.0:3001",
             Some("system"),
         )
         .expect("system installs should accept PostgreSQL validation placeholders");
+    }
+
+    #[test]
+    fn system_install_mode_rejects_non_loopback_public_web_bind_with_dev_defaults() {
+        let error = validate_runtime_config_for_install_mode(
+            &StandaloneConfig::default(),
+            "0.0.0.0:3001",
+            Some("system"),
+        )
+        .expect_err("system installs should reject public non-loopback binds with dev defaults");
+
+        assert!(error.to_string().contains("0.0.0.0:3001"));
+        assert!(error.to_string().contains("SDKWORK_ALLOW_INSECURE_DEV_DEFAULTS"));
     }
 
     fn sqlite_url_for(path: impl AsRef<Path>) -> String {
@@ -805,6 +876,7 @@ database_url: "sqlite://router.db"
             dry_run: true,
         };
         let config = StandaloneConfig {
+            public_web_bind: Some("0.0.0.0:3301".to_owned()),
             gateway_bind: "127.0.0.1:9080".to_owned(),
             admin_bind: "127.0.0.1:8081".to_owned(),
             portal_bind: "127.0.0.1:8082".to_owned(),
@@ -848,6 +920,7 @@ database_url: "sqlite://router.db"
             dry_run: true,
         };
         let config = StandaloneConfig {
+            public_web_bind: Some("0.0.0.0:3301".to_owned()),
             gateway_bind: "127.0.0.1:9080".to_owned(),
             admin_bind: "127.0.0.1:8081".to_owned(),
             portal_bind: "127.0.0.1:8082".to_owned(),
@@ -878,6 +951,23 @@ database_url: "sqlite://router.db"
             parsed["upstreams"]["portal"],
             serde_json::Value::String("10.0.0.13:8082".to_owned())
         );
+    }
+
+    #[test]
+    fn render_service_plan_uses_config_file_public_web_bind_when_cli_and_env_are_absent() {
+        let settings = ProductServiceSettings {
+            plan_format: PlanFormat::Text,
+            dry_run: true,
+            ..ProductServiceSettings::default()
+        };
+        let config = StandaloneConfig {
+            public_web_bind: Some("127.0.0.1:3001".to_owned()),
+            ..StandaloneConfig::default()
+        };
+
+        let plan = render_service_plan(&settings, &config).expect("plan should render");
+
+        assert!(plan.contains("public_web_bind=127.0.0.1:3001"));
     }
 
     #[test]

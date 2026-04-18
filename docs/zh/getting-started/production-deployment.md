@@ -1,22 +1,48 @@
 # 生产部署
 
-本页是 SDKWork API Router 的唯一生产部署入口。
+本页是 SDKWork API Router 的正式生产部署入口。
 
-当你要发布线上版本、执行原生服务器安装、使用 Docker Compose 或 Helm 部署时，请从这里开始。
+当你要发布线上 server、生成原生安装、使用 Docker Compose，或通过 Helm 进行部署时，请从这里开始。
 
-## 生产契约
+## 产品契约
 
-- 原生生产安装标准是 `system` 模式。
-- `system` 模式默认数据库契约是 PostgreSQL。
-- 配置文件是业务配置的主来源。
-- 环境变量主要用于发现配置文件和补全缺省值。
-- 服务托管应交给 `systemd`、`launchd` 或 Windows Service Control Manager。
+- 正式的 server 产品是 `sdkwork-api-router-product-server`
+- 正式的 desktop 产品是 `sdkwork-router-portal-desktop`
+- 公开 GitHub Release 只发布这两个正式产品
+- `release-catalog.json` 会随发布一起提供，但它只是发布元数据，不是第三个产品
+- `system` 安装模式是原生生产安装标准
+- `system` 模式默认数据库契约是 PostgreSQL
+- 配置文件是运行时配置的主数据源
+- 环境变量只承担配置发现和字段兜底
+- 服务托管应交给 `systemd`、`launchd` 或 Windows Service Control Manager
+
+desktop 产品不是线上 server 的部署方式。它是一个每用户的 Tauri 桌面壳，负责托管随包分发的 `router-product-service` sidecar，并在固定的桌面端口 `3001` 上暴露同一套 Web 与 API 面。
+
+## Server 产品包含什么
+
+server 产品以 `router-product-service` 为核心，归档包中包含：
+
+- release 服务二进制
+- admin 静态资源
+- portal 静态资源
+- bootstrap 数据
+- Docker 与 Helm 所需的部署资产
+
+这个归档包是以下部署方式的统一输入：
+
+- 原生 server 安装
+- Docker 镜像构建
+- Docker Compose
+- Helm
+
+Release 流程还会在发布前对同一份 `packaged server bundle` 执行 `installed-runtime smoke`，确保原生安装链路验证的是与最终交付完全一致的打包产物。
+原生安装工具会先通过 `release-catalog.json` 解析正式 server archive，再把 archive、checksum 和外部 manifest 与 catalog 条目逐一比对，之后才执行解包安装。
 
 ## 选择部署路径
 
 ### Docker Compose
 
-适合单机快速上线，并默认带 PostgreSQL。
+适合单机快速上线，并内置 PostgreSQL。
 
 主要资产：
 
@@ -26,7 +52,7 @@
 
 ### Helm
 
-适合 Kubernetes 集群部署，默认假设 PostgreSQL 由外部托管。
+适合 Kubernetes 集群，通常使用外部托管的 PostgreSQL。
 
 主要资产：
 
@@ -34,11 +60,11 @@
 
 ### 原生 System 安装
 
-适合需要操作系统标准目录和服务化启动的服务器环境。
+适合需要操作系统标准目录、标准服务托管和长期运维的服务器环境。
 
-## 构建发布产物
+## 构建正式发布输入
 
-Linux / macOS：
+Linux 或 macOS：
 
 ```bash
 ./bin/build.sh
@@ -50,18 +76,32 @@ Windows：
 powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\build.ps1
 ```
 
-跨平台发布约束：
+这一步会准备与正式 Release 相同的 server 输入：
 
-- 仅在 Windows 入口脚本和 CI 中设置 Windows 专属的 `CMAKE_GENERATOR`、`HOST_CMAKE_GENERATOR`
-- 不要把 Visual Studio 的 CMake 生成器默认值写进全局 Cargo 配置或 Unix shell profile
-- 如果在 Docker 中执行 Unix installed-runtime smoke，`cargo build` 与 `run-unix-installed-runtime-smoke.mjs` 两步必须使用同一个 `CARGO_TARGET_DIR`
-- 即使 `ss`、`netstat` 和 `lsof` 都不可用，运行时仍能正确启动；如果你希望在启动前获得更丰富的端口冲突诊断，建议额外安装其中任意一个工具
+- Rust release 服务二进制
+- admin / portal 前端静态资源
+- portal desktop 的 `router-product/` sidecar 载荷
+- server 产品归档包
 
-## 本地 Release Governance 准备
+如果你希望本地仓库执行的就是与正式发布一致的受治理校验路径，请改用 `./bin/build.sh --verify-release` 或 `powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\build.ps1 -VerifyRelease`。这个模式会复用同一套构建输入，并额外要求 docs 站点构建、打包运行时 smoke，以及本地 `release governance preflight`。
 
-如果你是在开发机上执行 release governance，而本地 sibling 仓库并不是干净的独立 release checkout，请先把发布工具指向一个受管 external dependency root。这样 `materialize-external-deps`、`verify-release-sync` 和 `run-release-governance-checks` 就会基于受管克隆执行，而不是误读当前机器上的脏 worktree。
+对于原生安装，唯一有效的输入就是 `packaged server bundle`。安装器会把其中的 `bin/`、`sites/*/dist/`、`data/`、`deploy/`、`release-manifest.json` 和 `README.txt` 物化到 `releases/<version>/`。
+当一套正式资产已经齐备时，`release-catalog.json` 就是选择这份 bundle 的发布级真相源。
 
-Linux / macOS：
+## Release Governance
+
+正式发布流程会把治理证据和用户可下载产品分开处理：
+
+- `governance-release` 负责生成 release-window、sync-audit、telemetry 和 SLO 证据
+- `native-release` 负责构建正式的 server 与 portal desktop 产品
+- 治理证据保留为 workflow artifact 和 attestation
+- 对外可安装产品仍然只包含 server 归档集合和 portal desktop 安装包集合
+- `release-catalog.json` 会在 `artifacts/release/release-catalog.json` 生成、纳入 attestation，并作为正式资产集合的机器可读发布索引一起发布
+- catalog 还会显式提供 `generatedAt` 以及每个 variant 的 `variantKind`、`primaryFileSizeBytes`、`checksumAlgorithm` 元数据，供审计和部署工具直接使用
+
+在本地仓库 checkout 中执行治理校验时，可使用：
+
+Linux 或 macOS：
 
 ```bash
 export SDKWORK_RELEASE_EXTERNAL_DEPENDENCY_ROOT="$PWD/artifacts/external-release-deps"
@@ -79,11 +119,9 @@ node scripts/release/verify-release-sync.mjs --format text --live
 node scripts/release/run-release-governance-checks.mjs
 ```
 
-当 sibling 审计出现 `not-standalone-root`、`dirty-working-tree`、`branch-not-synced` 或 `head-mismatch` 这类原因时，优先使用这条路径。
+## 生成原生 Server 安装
 
-## 生成原生生产安装
-
-Linux / macOS：
+Linux 或 macOS：
 
 ```bash
 ./bin/install.sh --mode system
@@ -95,57 +133,71 @@ Windows：
 powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\install.ps1 -Mode system
 ```
 
-生成内容包括：
+生成的生产安装资产包括：
 
 - 标准 `router.yaml`
 - `conf.d/` 覆盖目录
 - `router.env`
 - `router.env.example`
-- `systemd`、`launchd` 与 Windows Service 描述文件
+- 面向 `systemd`、`launchd` 与 Windows Service 的服务描述文件
 
 ## 初始化生产配置
 
-首次启动前请审阅并修改：
+首次启动前，请编辑生成的运行时配置：
 
 - `router.yaml`
-  - 运行时主配置
+  - 运行时的标准主配置
 - `conf.d/*.yaml`
-  - 可选的分域覆盖配置
+  - 可选的领域化覆盖配置
 - `router.env`
-  - 配置发现信息与少量兜底变量
+  - 配置发现信息，以及配置文件未定义字段的兜底值
 
 建议优先修改：
 
 - PostgreSQL 连接串
-- JWT、凭据主密钥、Metrics Token 等密钥
-- 对外与对内绑定地址
-- admin / portal 静态目录
+- JWT、凭据主密钥和 metrics token
+- 对外与对内监听地址
+- admin / portal 静态资源目录
 
-## 服务注册前先校验
+## 在注册服务前先校验
 
-在构建或发布工具环境中执行：
+在安装目录中执行：
 
 ```bash
-./bin/validate-config.sh
+./current/bin/validate-config.sh --home ./current
 ```
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\validate-config.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\current\bin\validate-config.ps1 -Home .\current
+```
+
+在源码仓库 checkout 中，也可以使用：
+
+```bash
+node bin/router-ops.mjs validate-config --mode system --home <install-root>
+```
+
+```powershell
+node .\bin\router-ops.mjs validate-config --mode system --home <install-root>
 ```
 
 校验内容包括：
 
 - 配置发现与合并顺序
+- 业务字段遵循“配置文件覆盖环境变量兜底”的优先级
 - 生产安全姿态
-- `system` 模式下默认拒绝 SQLite，除非显式开启开发覆盖
+- `system` 模式默认拒绝 SQLite，除非显式开启开发覆盖
 
 ## 注册并启动服务
 
-通过前台模式交给系统服务管理器托管：
+使用前台模式交给系统服务管理器托管：
 
-- Linux：`./service/systemd/install-service.sh`
-- macOS：`./service/launchd/install-service.sh`
-- Windows：`powershell -NoProfile -ExecutionPolicy Bypass -File .\service\windows-service\install-service.ps1`
+- Linux：
+  - `./current/service/systemd/install-service.sh`
+- macOS：
+  - `./current/service/launchd/install-service.sh`
+- Windows：
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File .\current\service\windows-service\install-service.ps1`
 
 配套说明：
 
@@ -165,16 +217,16 @@ docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/.env
 ```bash
 helm upgrade --install sdkwork-api-router deploy/helm/sdkwork-api-router \
   --set image.repository=ghcr.io/your-org/sdkwork-api-router \
-  --set image.tag=2026.04.15 \
+  --set image.tag=2026.04.18 \
   --set secrets.databaseUrl='postgresql://sdkwork:change-me@postgresql:5432/sdkwork_api_router'
 ```
 
 ## 初始化检查清单
 
-- 目标平台的发布包已生成
+- 目标平台发布输入已成功构建
 - PostgreSQL 已创建并可连通
-- `router.yaml` 已审阅
+- `router.yaml` 已完成审阅
 - `router.env` 中的密钥已替换
-- `validate-config` 已成功通过
-- 已通过操作系统原生服务管理器注册
+- `validate-config` 已成功执行
+- 已通过操作系统原生服务管理器完成注册
 - 首次启动后已验证健康检查端点

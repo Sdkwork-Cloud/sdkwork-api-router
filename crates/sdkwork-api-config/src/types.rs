@@ -57,6 +57,7 @@ impl LocalConfigPaths {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StandaloneConfig {
+    pub public_web_bind: Option<String>,
     pub gateway_bind: String,
     pub admin_bind: String,
     pub portal_bind: String,

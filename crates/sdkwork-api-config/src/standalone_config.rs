@@ -3,6 +3,7 @@ use super::*;
 impl Default for StandaloneConfig {
     fn default() -> Self {
         Self {
+            public_web_bind: None,
             gateway_bind: "127.0.0.1:8080".to_owned(),
             admin_bind: "127.0.0.1:8081".to_owned(),
             portal_bind: "127.0.0.1:8082".to_owned(),
@@ -178,6 +179,10 @@ impl StandaloneConfig {
             ),
         ];
 
+        if let Some(public_web_bind) = &self.public_web_bind {
+            pairs.push((SDKWORK_WEB_BIND.to_owned(), public_web_bind.clone()));
+        }
+
         if !self.extension_paths.is_empty() {
             pairs.push((
                 SDKWORK_EXTENSION_PATHS.to_owned(),
@@ -330,6 +335,9 @@ impl StandaloneConfig {
         if self.gateway_bind != next.gateway_bind {
             fields.push("gateway_bind");
         }
+        if self.public_web_bind != next.public_web_bind {
+            fields.push("public_web_bind");
+        }
         if self.admin_bind != next.admin_bind {
             fields.push("admin_bind");
         }
@@ -469,6 +477,7 @@ impl StandaloneConfig {
 
     fn local_defaults(paths: &LocalConfigPaths) -> Self {
         Self {
+            public_web_bind: None,
             gateway_bind: "127.0.0.1:8080".to_owned(),
             admin_bind: "127.0.0.1:8081".to_owned(),
             portal_bind: "127.0.0.1:8082".to_owned(),
@@ -515,6 +524,9 @@ impl StandaloneConfig {
         base_dir: &Path,
         config_file: &Path,
     ) -> Result<()> {
+        if let Some(value) = file.web_bind {
+            self.public_web_bind = normalize_optional_string(value);
+        }
         if let Some(value) = file.gateway_bind {
             self.gateway_bind = value;
         }
@@ -645,6 +657,9 @@ impl StandaloneConfig {
     }
 
     fn apply_env_overrides(&mut self, values: &HashMap<String, String>) -> Result<()> {
+        if let Some(value) = values.get(SDKWORK_WEB_BIND) {
+            self.public_web_bind = normalize_optional_string(value.clone());
+        }
         if let Some(value) = values.get(SDKWORK_GATEWAY_BIND) {
             self.gateway_bind = value.clone();
         }

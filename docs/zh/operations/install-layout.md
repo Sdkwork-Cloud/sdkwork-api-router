@@ -1,78 +1,104 @@
 # 安装布局
 
-本页定义 `portable` 与 `system` 两种安装模式下的生产布局标准。
+本页定义正式 server 产品 `sdkwork-api-router-product-server` 的安装布局标准。
 
-## 安装模式
+## 打包模型
 
-### Portable
+每个 server 安装都拆分为三层：
 
-适用于：
+- 产品根目录：稳定的顶层安装目录
+- `current` 控制层：供运维和服务管理器使用的稳定运行时入口
+- `releases/<version>/`：不可变的版本化程序载荷
 
-- 本地验证
-- CI smoke 测试
-- 单目录便携安装
+所有可变状态都不能写入版本化程序载荷。
 
-默认根目录：
+安装器只接受官方 bundle 输入：`artifacts/release/native/<platform>/<arch>/bundles/`。
+安装器会先读取 `artifacts/release/release-catalog.json`，确认目标 archive、checksum 和外部 manifest 与正式 catalog 条目一致后，才会把载荷物化到 `releases/<version>/`。
+版本化载荷会保留包内的 `bin/`、`sites/*/dist/`、`data/`、`deploy/`、`release-manifest.json` 和 `README.txt`。
 
-- `artifacts/install/sdkwork-api-router/current/`
+## Portable 布局
 
-### System
+`portable` 用于本地验证、CI smoke test 和显式的非系统安装。
 
-适用于：
+默认产品根目录：
 
-- 生产服务器
-- 长期运行的私有化部署
-- 服务管理器托管启动
+- `artifacts/install/sdkwork-api-router/`
 
-## 逻辑根目录
+目录结构：
 
-两种模式都遵循同一套逻辑根：
+- `current/`
+  - `bin/`
+  - `service/`
+  - `release-manifest.json`
+- `releases/<version>/`
+  - `bin/`
+  - `sites/admin/dist/`
+  - `sites/portal/dist/`
+  - `data/`
+  - `deploy/`
+  - `release-manifest.json`
+  - `README.txt`
+- `config/`
+  - `router.yaml`
+  - `router.env`
+  - `router.env.example`
+  - `conf.d/`
+- `data/`
+- `log/`
+- `run/`
 
-- program home
-- config home
-- data home
-- log home
-- run home
-- service definition home
+说明：
 
-## 各操作系统的 System 默认布局
+- `current/` 是控制层，只放包装脚本和 service 资产。
+- `releases/<version>/` 是当前激活的不可变程序载荷。
+- `config/`、`data/`、`log/`、`run/` 是可写目录，升级时必须保留。
+
+## System 布局
+
+`system` 安装遵循操作系统标准目录，同时把程序载荷固定在独立的产品根目录下。
 
 ### Linux
 
-- program home：`/opt/sdkwork-api-router/current/`
-- config home：`/etc/sdkwork-api-router/`
-- config file：`/etc/sdkwork-api-router/router.yaml`
-- config fragments：`/etc/sdkwork-api-router/conf.d/`
-- env file：`/etc/sdkwork-api-router/router.env`
-- data home：`/var/lib/sdkwork-api-router/`
-- log home：`/var/log/sdkwork-api-router/`
-- run home：`/run/sdkwork-api-router/`
+- 产品根目录：`/opt/sdkwork-api-router/`
+- `current` 控制层：`/opt/sdkwork-api-router/current/`
+- 版本化载荷：`/opt/sdkwork-api-router/releases/<version>/`
+- 配置目录：`/etc/sdkwork-api-router/`
+- 主配置文件：`/etc/sdkwork-api-router/router.yaml`
+- 配置片段目录：`/etc/sdkwork-api-router/conf.d/`
+- 环境变量文件：`/etc/sdkwork-api-router/router.env`
+- 数据目录：`/var/lib/sdkwork-api-router/`
+- 日志目录：`/var/log/sdkwork-api-router/`
+- 运行时目录：`/run/sdkwork-api-router/`
 
 ### macOS
 
-- program home：`/usr/local/lib/sdkwork-api-router/current/`
-- config home：`/Library/Application Support/sdkwork-api-router/`
-- config file：`/Library/Application Support/sdkwork-api-router/router.yaml`
-- config fragments：`/Library/Application Support/sdkwork-api-router/conf.d/`
-- env file：`/Library/Application Support/sdkwork-api-router/router.env`
-- data home：`/Library/Application Support/sdkwork-api-router/data/`
-- log home：`/Library/Logs/sdkwork-api-router/`
-- run home：`/Library/Application Support/sdkwork-api-router/run/`
+- 产品根目录：`/usr/local/lib/sdkwork-api-router/`
+- `current` 控制层：`/usr/local/lib/sdkwork-api-router/current/`
+- 版本化载荷：`/usr/local/lib/sdkwork-api-router/releases/<version>/`
+- 配置目录：`/Library/Application Support/sdkwork-api-router/`
+- 主配置文件：`/Library/Application Support/sdkwork-api-router/router.yaml`
+- 配置片段目录：`/Library/Application Support/sdkwork-api-router/conf.d/`
+- 环境变量文件：`/Library/Application Support/sdkwork-api-router/router.env`
+- 数据目录：`/Library/Application Support/sdkwork-api-router/data/`
+- 日志目录：`/Library/Logs/sdkwork-api-router/`
+- 运行时目录：`/Library/Application Support/sdkwork-api-router/run/`
 
 ### Windows
 
-- program home：`C:\Program Files\sdkwork-api-router\current\`
-- config home：`C:\ProgramData\sdkwork-api-router\`
-- config file：`C:\ProgramData\sdkwork-api-router\router.yaml`
-- config fragments：`C:\ProgramData\sdkwork-api-router\conf.d\`
-- env file：`C:\ProgramData\sdkwork-api-router\router.env`
-- data home：`C:\ProgramData\sdkwork-api-router\data\`
-- log home：`C:\ProgramData\sdkwork-api-router\log\`
-- run home：`C:\ProgramData\sdkwork-api-router\run\`
+- 产品根目录：`C:\Program Files\sdkwork-api-router\`
+- `current` 控制层：`C:\Program Files\sdkwork-api-router\current\`
+- 版本化载荷：`C:\Program Files\sdkwork-api-router\releases\<version>\`
+- 配置目录：`C:\ProgramData\sdkwork-api-router\`
+- 主配置文件：`C:\ProgramData\sdkwork-api-router\router.yaml`
+- 配置片段目录：`C:\ProgramData\sdkwork-api-router\conf.d\`
+- 环境变量文件：`C:\ProgramData\sdkwork-api-router\router.env`
+- 数据目录：`C:\ProgramData\sdkwork-api-router\data\`
+- 日志目录：`C:\ProgramData\sdkwork-api-router\log\`
+- 运行时目录：`C:\ProgramData\sdkwork-api-router\run\`
 
 ## 配置发现顺序
 
-主配置文件发现顺序：
+主配置文件的发现顺序为：
 
 1. `router.yaml`
 2. `router.yml`
@@ -81,29 +107,45 @@
 5. `config.yml`
 6. `config.json`
 
-随后按字典序加载 `conf.d/*.yaml`。
+`conf.d/*.yaml` 会在主文件之后按字典序加载。
 
 ## 配置优先级
 
-从低到高的实际优先级：
+实际优先级从低到高为：
 
-- built-in defaults
-- environment fallback
-- config file
+- 内建默认值
+- 环境变量兜底
+- 配置文件
 - CLI
 
-发现配置文件的例外变量：
+发现阶段的例外项：
 
 - `SDKWORK_CONFIG_DIR`
 - `SDKWORK_CONFIG_FILE`
 
-这两个变量会最先读取，用于定位配置文件。
+这两个变量会先被读取，用来定位配置文件集合。完成发现后，配置文件中定义的业务字段优先于环境变量兜底值。
 
-## 数据库默认策略
+## Release Manifest 约定
+
+安装生成的 `current/release-manifest.json` 是 `current/` 与 `releases/<version>/` 之间的控制桥接文件。
+
+其中记录：
+
+- 当前激活版本
+- 当前激活的 release 根目录
+- 实际 router 二进制路径
+- admin / portal 静态资源目录
+- 当前 release 内 `deploy/` 的部署资产根目录
+- 当前 release 内 `release-manifest.json` 与 `README.txt` 的路径
+- config / data / log / run 根目录
+
+`current/release-manifest.json` 属于生成文件，正常运维中不应手工修改。
+
+## 数据库默认值
 
 - `portable`
-  - 允许使用 SQLite 进行本地验证
+  - 默认使用 portable `data/` 目录下的 SQLite
 - `system`
-  - 默认数据库契约是 PostgreSQL
+  - 默认使用 PostgreSQL
 
-在 `system` 模式下，除非显式开启开发覆盖，否则会拒绝 SQLite。
+在 `system` 模式下，PostgreSQL 是正式标准契约。SQLite 只用于本地验证，不是生产默认值。

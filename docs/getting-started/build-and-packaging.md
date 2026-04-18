@@ -1,123 +1,144 @@
 # Build and Packaging
 
-This page is the compilation guide for the repository. Use it when you need to produce artifacts instead of simply running from source.
+This page explains how to compile engineering outputs, prepare official release inputs, and package the two supported SDKWork products from a repository checkout.
+
+For the exact release artifacts published by GitHub Releases, use [Release Builds](/getting-started/release-builds). For production installation and deployment, use [Production Deployment](/getting-started/production-deployment).
+
+## Official Products
+
+SDKWork API Router publishes exactly two official user-facing products:
+
+- `sdkwork-api-router-product-server`
+- `sdkwork-router-portal-desktop`
+
+Everything else in this repository is either a build input, a developer-facing workspace output, or a validation artifact.
 
 ## Build Targets
 
 | Target | Command | Output |
 |---|---|---|
-| gateway service | `cargo build --release -p gateway-service` | `target/release/gateway-service` |
-| admin service | `cargo build --release -p admin-api-service` | `target/release/admin-api-service` |
-| portal service | `cargo build --release -p portal-api-service` | `target/release/portal-api-service` |
-| admin console | `pnpm --dir console build` | `console/dist/` |
-| portal web app | `pnpm --dir apps/sdkwork-router-portal build` | `apps/sdkwork-router-portal/dist/` |
+| product host runtime | `cargo build --release -p router-product-service` | `target/release/router-product-service` |
+| standalone service binaries | `cargo build --release -p gateway-service -p admin-api-service -p portal-api-service -p router-web-service` | `target/release/` |
+| admin browser app | `pnpm --dir apps/sdkwork-router-admin build` | `apps/sdkwork-router-admin/dist/` |
+| portal browser app | `pnpm --dir apps/sdkwork-router-portal build` | `apps/sdkwork-router-portal/dist/` |
+| portal desktop sidecar payload | `node scripts/prepare-router-portal-desktop-runtime.mjs` | `bin/portal-rt/router-product/` |
+| official portal desktop bundle | `pnpm --dir apps/sdkwork-router-portal tauri:build` | Tauri platform bundle output |
 | docs site | `pnpm --dir docs build` | `docs/.vitepress/dist/` |
-| Tauri desktop app | `pnpm --dir console tauri:build` | platform-specific Tauri bundle output |
 
-## Compile the Standalone Services
+## Build Server Product Inputs
 
-Build all three production binaries:
+Compile the server-facing Rust binaries:
 
 ```bash
-cargo build --release -p admin-api-service -p gateway-service -p portal-api-service
+cargo build --release -p router-product-service -p gateway-service -p admin-api-service -p portal-api-service -p router-web-service
 ```
 
-For day-to-day development, a non-release build is usually enough:
+Then build the browser assets bundled into the server product:
 
 ```bash
-cargo build -p admin-api-service -p gateway-service -p portal-api-service
-```
-
-## Build the Admin Console
-
-Install dependencies if needed:
-
-```bash
-pnpm --dir console install
-```
-
-Build:
-
-```bash
-pnpm --dir console build
-```
-
-Preview locally:
-
-```bash
-pnpm --dir console preview
-```
-
-## Build the Standalone Portal App
-
-Install dependencies if needed:
-
-```bash
+pnpm --dir apps/sdkwork-router-admin install
+pnpm --dir apps/sdkwork-router-admin build
 pnpm --dir apps/sdkwork-router-portal install
-```
-
-Build:
-
-```bash
 pnpm --dir apps/sdkwork-router-portal build
 ```
 
-Preview locally:
+If you want the repository-managed packaging flow that matches the release workflow, use:
 
 ```bash
+./bin/build.sh
+```
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\build.ps1
+```
+
+That managed build prepares the inputs used by `sdkwork-api-router-product-server` and stages the native release assets under `artifacts/release/`.
+
+For the governed local release path, run `./bin/build.sh --verify-release` or `powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\build.ps1 -VerifyRelease`. That mode always includes the docs site build because the docs site is treated as part of the public product surface for official release verification. It also runs the local release governance preflight (`node scripts/release/run-release-governance-checks.mjs --profile preflight`) so the official build path validates governance contracts in addition to packaged runtime smoke. `--skip-docs cannot be combined with --verify-release`.
+
+The managed build output contract for the official server product is:
+
+- `artifacts/release/native/<platform>/<arch>/bundles/sdkwork-api-router-product-server-<platform>-<arch>.tar.gz`
+- `artifacts/release/native/<platform>/<arch>/bundles/sdkwork-api-router-product-server-<platform>-<arch>.tar.gz.sha256.txt`
+- `artifacts/release/native/<platform>/<arch>/bundles/sdkwork-api-router-product-server-<platform>-<arch>.manifest.json`
+
+The external server manifest describes the archive file, checksum file, and the embedded bundle contract. The server archive itself expands into a product root that already includes `bin/`, `sites/`, `data/`, `deploy/`, `README.txt`, and an embedded `release-manifest.json`.
+
+## Build The Official Portal Desktop Product
+
+The official desktop product is portal-first. It packages `apps/sdkwork-router-portal` as a native shell and embeds a release-like `router-product-service` sidecar payload.
+
+Stage the runtime payload first:
+
+```bash
+node scripts/prepare-router-portal-desktop-runtime.mjs
+```
+
+Run the desktop shell in development:
+
+```bash
+pnpm --dir apps/sdkwork-router-portal tauri:dev
+```
+
+Build the production desktop installer or bundle:
+
+```bash
+pnpm --dir apps/sdkwork-router-portal tauri:build
+```
+
+The managed build normalizes the official desktop product files to:
+
+- `artifacts/release/native/<platform>/<arch>/desktop/portal/sdkwork-router-portal-desktop-<platform>-<arch>.<ext>`
+- `artifacts/release/native/<platform>/<arch>/desktop/portal/sdkwork-router-portal-desktop-<platform>-<arch>.<ext>.sha256.txt`
+- `artifacts/release/native/<platform>/<arch>/desktop/portal/sdkwork-router-portal-desktop-<platform>-<arch>.manifest.json`
+
+Raw Tauri bundle trees remain intermediate platform build output. They are not the public product contract for packaging, docs, or release publication.
+
+The admin Tauri shell remains available as an explicit development path, but it is not part of the official release product set.
+
+## Build The Standalone Browser Apps
+
+Admin browser app:
+
+```bash
+pnpm --dir apps/sdkwork-router-admin build
+pnpm --dir apps/sdkwork-router-admin preview
+```
+
+Portal browser app:
+
+```bash
+pnpm --dir apps/sdkwork-router-portal build
 pnpm --dir apps/sdkwork-router-portal preview
 ```
 
-## Build the Documentation Site
+These are useful for local validation and source development, but they are not published as standalone GitHub release products.
 
-Install docs dependencies if needed:
+## Build The Documentation Site
 
 ```bash
 pnpm --dir docs install
-```
-
-Build:
-
-```bash
 pnpm --dir docs build
-```
-
-Preview locally:
-
-```bash
 pnpm --dir docs preview
 ```
 
-## Build the Tauri Desktop App
-
-Development shell:
-
-```bash
-pnpm --dir console tauri:dev
-```
-
-Production package:
-
-```bash
-pnpm --dir console tauri:build
-```
-
-Use this path when you want an embedded, desktop-oriented operator experience instead of separately deployed services.
+The docs site is optional for ad hoc engineering builds, but it becomes mandatory again when you run the managed local release-verification flow with `--verify-release`. The same flow also runs the release governance preflight to keep local official verification aligned with release-governance expectations.
 
 ## Recommended Verification Before Packaging
 
 ```bash
 cargo fmt --all --check
 cargo test --workspace -q -j 1
-pnpm --dir console build
+pnpm --dir apps/sdkwork-router-admin build
 pnpm --dir apps/sdkwork-router-portal build
+node scripts/prepare-router-portal-desktop-runtime.mjs
 pnpm --dir docs build
 ```
 
 If you are changing TypeScript or docs config as well:
 
 ```bash
-pnpm --dir console -r typecheck
+pnpm --dir apps/sdkwork-router-admin typecheck
 pnpm --dir apps/sdkwork-router-portal typecheck
 pnpm --dir docs typecheck
 ```
@@ -126,7 +147,9 @@ pnpm --dir docs typecheck
 
 - source workflows:
   - [Source Development](/getting-started/source-development)
-- deployable artifacts:
+- official release assets:
   - [Release Builds](/getting-started/release-builds)
+- production install and deployment:
+  - [Production Deployment](/getting-started/production-deployment)
 - workspace structure:
   - [Repository Layout](/reference/repository-layout)

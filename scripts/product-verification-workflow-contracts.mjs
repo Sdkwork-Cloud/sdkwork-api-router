@@ -17,6 +17,11 @@ export async function assertProductVerificationWorkflowContracts({
 
   assert.match(workflow, /pull_request:/);
   assert.match(workflow, /workflow_dispatch:/);
+  assert.match(
+    workflow,
+    /\.github\/workflows\/release\.yml/,
+    'product verification workflow must watch the release workflow because release packaging contract changes are product-surface changes',
+  );
   assert.match(workflow, /actions\/checkout@v5/);
   assert.match(workflow, /pnpm\/action-setup@v4/);
   assert.match(workflow, /actions\/setup-node@v5/);
@@ -26,8 +31,12 @@ export async function assertProductVerificationWorkflowContracts({
   assert.match(workflow, /\.github\/workflows\/product-verification\.yml/);
   assert.match(workflow, /apps\/sdkwork-router-admin\/\*\*/);
   assert.match(workflow, /apps\/sdkwork-router-portal\/\*\*/);
-  assert.match(workflow, /console\/\*\*/);
   assert.match(workflow, /docs\/\*\*/);
+  assert.doesNotMatch(
+    workflow,
+    /console\/\*\*/,
+    'product verification workflow should not treat the legacy console workspace as an official product verification trigger surface',
+  );
   assert.match(workflow, /README\.md/);
   assert.match(workflow, /README\.zh-CN\.md/);
   assert.match(workflow, /scripts\/check-router-product\.mjs/);
@@ -68,6 +77,26 @@ export async function assertProductVerificationWorkflowContracts({
   );
   assert.match(
     workflow,
+    /scripts\/prepare-router-portal-desktop-runtime\.mjs/,
+    'product verification workflow must watch the portal desktop runtime helper staging script',
+  );
+  assert.match(
+    workflow,
+    /scripts\/prepare-router-portal-desktop-runtime\.test\.mjs/,
+    'product verification workflow must watch the portal desktop runtime helper staging contract test',
+  );
+  assert.match(
+    workflow,
+    /scripts\/release\/\*\*/,
+    'product verification workflow must watch the shared release-packaging helper subtree',
+  );
+  assert.match(
+    workflow,
+    /scripts\/release-flow-contract\.test\.mjs/,
+    'product verification workflow must watch the release flow contract test',
+  );
+  assert.match(
+    workflow,
     /scripts\/release\/desktop-targets\.mjs/,
     'product verification workflow must watch the shared desktop target helper',
   );
@@ -79,17 +108,37 @@ export async function assertProductVerificationWorkflowContracts({
   assert.match(workflow, /scripts\/product-verification-workflow\.test\.mjs/);
   assert.match(
     workflow,
-    /Run product governance node tests[\s\S]*?node --test scripts\/product-verification-workflow\.test\.mjs scripts\/check-router-product\.test\.mjs scripts\/browser-runtime-smoke\.test\.mjs scripts\/check-admin-browser-runtime\.test\.mjs scripts\/check-portal-browser-runtime\.test\.mjs scripts\/build-router-desktop-assets\.test\.mjs scripts\/check-router-docs-safety\.test\.mjs scripts\/check-router-frontend-budgets\.test\.mjs scripts\/dev\/tests\/pnpm-launch-lib\.test\.mjs console\/tests\/sdk-transport-unsafe-integer\.test\.mjs apps\/sdkwork-router-portal\/tests\/product-entrypoint-scripts\.test\.mjs/,
-    'product verification workflow must run workflow, product, shared pnpm helper tests, and console transport regression tests before the main product gate',
+    /Run product governance node tests[\s\S]*?node --test scripts\/product-verification-workflow\.test\.mjs scripts\/check-router-product\.test\.mjs scripts\/browser-runtime-smoke\.test\.mjs scripts\/check-admin-browser-runtime\.test\.mjs scripts\/check-portal-browser-runtime\.test\.mjs scripts\/build-router-desktop-assets\.test\.mjs scripts\/check-router-docs-safety\.test\.mjs scripts\/check-router-frontend-budgets\.test\.mjs scripts\/dev\/tests\/pnpm-launch-lib\.test\.mjs scripts\/prepare-router-portal-desktop-runtime\.test\.mjs scripts\/release-flow-contract\.test\.mjs scripts\/release\/tests\/materialize-release-catalog\.test\.mjs scripts\/release\/tests\/release-workflow\.test\.mjs scripts\/release\/tests\/release-attestation-verify\.test\.mjs scripts\/release\/tests\/docs-product-contract\.test\.mjs apps\/sdkwork-router-portal\/tests\/product-entrypoint-scripts\.test\.mjs/,
+    'product verification workflow must run workflow, packaging, product, and shared pnpm helper tests before the main product gate',
   );
   assert.match(
     workflow,
-    /Install product verification workspace dependencies[\s\S]*?pnpm --dir apps\/sdkwork-router-admin install --frozen-lockfile[\s\S]*?pnpm --dir apps\/sdkwork-router-portal install --frozen-lockfile[\s\S]*?pnpm --dir console install --frozen-lockfile/,
-    'product verification workflow must use explicit frozen installs for admin, portal, and console workspaces',
+    /Install product verification workspace dependencies[\s\S]*?pnpm --dir apps\/sdkwork-router-admin install --frozen-lockfile[\s\S]*?pnpm --dir apps\/sdkwork-router-portal install --frozen-lockfile/,
+    'product verification workflow must use explicit frozen installs for the official admin and portal workspaces',
+  );
+  assert.doesNotMatch(
+    workflow,
+    /console\/tests\/sdk-transport-unsafe-integer\.test\.mjs|console\/pnpm-lock\.yaml/,
+    'product verification workflow must not include legacy console-specific test or dependency inputs',
   );
   assert.match(
     workflow,
     /Run product verification gate[\s\S]*?env:[\s\S]*?SDKWORK_STRICT_FRONTEND_INSTALLS:\s*'1'[\s\S]*?run:\s*node scripts\/check-router-product\.mjs/,
     'strict frontend install mode must be exported before the product verification gate runs',
+  );
+  assert.match(
+    workflow,
+    /docs\/pnpm-lock\.yaml/,
+    'product verification workflow must cache the docs lockfile because docs build is part of the governed public documentation surface',
+  );
+  assert.match(
+    workflow,
+    /Install product verification workspace dependencies[\s\S]*?pnpm --dir apps\/sdkwork-router-admin install --frozen-lockfile[\s\S]*?pnpm --dir apps\/sdkwork-router-portal install --frozen-lockfile[\s\S]*?pnpm --dir docs install --frozen-lockfile/,
+    'product verification workflow must use an explicit frozen install for the docs workspace before building the public docs site',
+  );
+  assert.match(
+    workflow,
+    /Build docs site[\s\S]*?pnpm --dir docs build/,
+    'product verification workflow must build the public docs site before the node contract suite runs',
   );
 }

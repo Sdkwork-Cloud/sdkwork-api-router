@@ -21,6 +21,7 @@ Thumbs.db
 /bin/.sdkwork-target/
 /bin/.sdkwork-target-*/
 /bin/.sdkrt-*/
+/bin/portal-rt/
 /tmp/
 **/.codex-local/
 **/node_modules__rebuild_*/

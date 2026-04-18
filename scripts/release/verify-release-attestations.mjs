@@ -58,10 +58,16 @@ const RELEASE_ATTESTATION_SUBJECT_SPECS = Object.freeze([
     description: 'Windows installed runtime smoke evidence',
   }),
   Object.freeze({
+    id: 'release-catalog',
+    type: 'file',
+    relativePath: path.join('artifacts', 'release', 'release-catalog.json'),
+    description: 'published release catalog',
+  }),
+  Object.freeze({
     id: 'release-assets',
     type: 'tree',
-    relativeDirectory: path.join('artifacts', 'release'),
-    description: 'packaged release assets',
+    relativeDirectory: path.join('artifacts', 'release', 'native'),
+    description: 'packaged native release assets',
   }),
 ]);
 

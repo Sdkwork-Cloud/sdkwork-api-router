@@ -17,7 +17,7 @@ import {
 } from './lib/router-runtime-tooling.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const BUILD_ONLY_FLAGS = new Set(['--install', '--skip-docs', '--skip-console']);
+const BUILD_ONLY_FLAGS = new Set(['--install', '--skip-docs', '--verify-release']);
 const RUNTIME_LAYOUT_FLAGS = new Set(['--home', '--mode']);
 const INSTALL_ONLY_FLAGS = new Set(['--force']);
 const INSTALL_MODES = new Set(['portable', 'system']);
@@ -28,9 +28,14 @@ function printUsage() {
   console.error(
     [
       'Usage:',
-      '  node bin/router-ops.mjs build [--install] [--skip-docs] [--skip-console] [--dry-run]',
+      '  node bin/router-ops.mjs build [--install] [--skip-docs] [--verify-release] [--dry-run]',
       '  node bin/router-ops.mjs install [--mode <portable|system>] [--home <dir>] [--force] [--dry-run]',
       '  node bin/router-ops.mjs validate-config [--mode <portable|system>] [--home <dir>] [--dry-run]',
+      '',
+      'Build notes:',
+      '  --verify-release always includes the governed docs build.',
+      '  --verify-release also runs the release governance preflight checks.',
+      '  --skip-docs cannot be combined with --verify-release.',
     ].join('\n'),
   );
 }
@@ -64,9 +69,9 @@ export function parseArgs(argv) {
     mode: 'portable',
     installDependencies: false,
     includeDocs: true,
-    includeConsole: true,
     force: false,
     dryRun: false,
+    verifyRelease: false,
     installRoot: null,
   };
 
@@ -87,14 +92,14 @@ export function parseArgs(argv) {
       case '--skip-docs':
         options.includeDocs = false;
         break;
-      case '--skip-console':
-        options.includeConsole = false;
-        break;
       case '--force':
         options.force = true;
         break;
       case '--dry-run':
         options.dryRun = true;
+        break;
+      case '--verify-release':
+        options.verifyRelease = true;
         break;
       case '--mode': {
         const mode = String(readOptionValue(token, next)).trim().toLowerCase();
@@ -112,6 +117,10 @@ export function parseArgs(argv) {
       default:
         throw new UserInputError(`unknown option: ${token}`);
     }
+  }
+
+  if (options.command === 'build' && options.verifyRelease && !options.includeDocs) {
+    throw new UserInputError('--skip-docs cannot be combined with --verify-release');
   }
 
   if ((options.command === 'install' || options.command === 'validate-config') && !options.installRoot) {
@@ -164,7 +173,7 @@ async function main() {
       repoRoot,
       installDependencies: options.installDependencies,
       includeDocs: options.includeDocs,
-      includeConsole: options.includeConsole,
+      verifyRelease: options.verifyRelease,
     });
 
     if (options.dryRun) {

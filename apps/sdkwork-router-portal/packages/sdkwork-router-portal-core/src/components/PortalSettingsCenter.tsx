@@ -13,6 +13,11 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { PORTAL_LOCALE_OPTIONS, usePortalI18n } from 'sdkwork-router-portal-commons';
 import {
+  getDesktopRuntimeSnapshot,
+  portalErrorMessage,
+  updateDesktopRuntimeAccessMode,
+} from 'sdkwork-router-portal-portal-api';
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -29,7 +34,11 @@ import {
   DialogDescription,
   DialogTitle,
 } from 'sdkwork-router-portal-commons/framework/overlays';
-import type { PortalThemeMode } from 'sdkwork-router-portal-types';
+import type {
+  PortalDesktopRuntimeAccessMode,
+  PortalDesktopRuntimeSnapshot,
+  PortalThemeMode,
+} from 'sdkwork-router-portal-types';
 
 import {
   PORTAL_THEME_COLOR_OPTIONS,
@@ -96,6 +105,9 @@ export function PortalSettingsCenter({
   } = usePortalShellStore();
   const [searchQuery, setSearchQuery] = useState('');
   const [activeSection, setActiveSection] = useState<ConfigCenterSectionId>('appearance');
+  const [desktopRuntime, setDesktopRuntime] = useState<PortalDesktopRuntimeSnapshot | null | undefined>(undefined);
+  const [desktopRuntimeBusy, setDesktopRuntimeBusy] = useState<PortalDesktopRuntimeAccessMode | null>(null);
+  const [desktopRuntimeError, setDesktopRuntimeError] = useState('');
   const configSections = useMemo(
     () =>
       CONFIG_CENTER_SECTIONS.map((section) => ({
@@ -136,10 +148,57 @@ export function PortalSettingsCenter({
     }
   }, [activeSection, filteredSections]);
 
+  useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+
+    let active = true;
+    setDesktopRuntimeError('');
+
+    void (async () => {
+      try {
+        const snapshot = await getDesktopRuntimeSnapshot();
+        if (!active) {
+          return;
+        }
+        setDesktopRuntime(snapshot);
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setDesktopRuntime(null);
+        setDesktopRuntimeError(portalErrorMessage(error));
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [open]);
+
   const workspaceName = workspace?.project.name ?? t('Portal workspace');
   const workspaceEmail = workspace?.user.email ?? t('Awaiting workspace session');
   const tenantName = workspace?.tenant.name ?? t('Portal tenant');
   const operatorName = workspace?.user.display_name ?? t('Portal operator');
+
+  const applyDesktopAccessMode = async (accessMode: PortalDesktopRuntimeAccessMode) => {
+    if (desktopRuntimeBusy === accessMode) {
+      return;
+    }
+
+    setDesktopRuntimeBusy(accessMode);
+    setDesktopRuntimeError('');
+
+    try {
+      const snapshot = await updateDesktopRuntimeAccessMode(accessMode);
+      setDesktopRuntime(snapshot);
+    } catch (error) {
+      setDesktopRuntimeError(portalErrorMessage(error));
+    } finally {
+      setDesktopRuntimeBusy(null);
+    }
+  };
 
   return (
     <Dialog onOpenChange={onOpenChange} open={open}>
@@ -319,6 +378,58 @@ export function PortalSettingsCenter({
                           </Select>
                         </SettingsField>
                       </div>
+                    </PortalSettingsPanelCard>
+
+                    <PortalSettingsPanelCard
+                      title={t('Desktop access')}
+                      description={t('Choose whether the bundled router-product-service stays local-only or accepts shared network access on the fixed public port 3001.')}
+                    >
+                      {desktopRuntime ? (
+                        <div className="space-y-4">
+                          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                            <PortalSettingsToggleRow
+                              checked={desktopRuntime.accessMode === 'local'}
+                              label={t('Local-only access')}
+                              description={t('Bind the public desktop router endpoint to 127.0.0.1:3001 so only the local machine can reach the web app and APIs.')}
+                              onCheckedChange={() => {
+                                void applyDesktopAccessMode('local');
+                              }}
+                            />
+                            <PortalSettingsToggleRow
+                              checked={desktopRuntime.accessMode === 'shared'}
+                              label={t('Shared network access')}
+                              description={t('Bind the public desktop router endpoint to 0.0.0.0:3001 so remote browsers and API clients on the local network can reach the same router product.')}
+                              onCheckedChange={() => {
+                                void applyDesktopAccessMode('shared');
+                              }}
+                            />
+                          </div>
+                          <div className="rounded-[24px] border border-zinc-200 bg-zinc-50/90 p-4 text-sm text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900/70 dark:text-zinc-300">
+                            <strong className="block text-zinc-950 dark:text-zinc-50">
+                              {t('Current public bind')}
+                            </strong>
+                            <p className="mt-2">
+                              {desktopRuntime.publicBindAddr ?? (desktopRuntime.accessMode === 'shared' ? '0.0.0.0:3001' : '127.0.0.1:3001')}
+                            </p>
+                            <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+                              {desktopRuntime.accessMode === 'shared'
+                                ? t('The desktop product keeps the same public port 3001 while allowing remote web and API access.')
+                                : t('The desktop product keeps the same public port 3001 while restricting access to the local machine.')}
+                            </p>
+                          </div>
+                          {desktopRuntimeBusy ? (
+                            <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                              {t('Applying desktop access mode and restarting the runtime...')}
+                            </p>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                          {desktopRuntimeError
+                            ? desktopRuntimeError
+                            : t('Desktop access controls appear when the portal is running inside the desktop shell.')}
+                        </p>
+                      )}
                     </PortalSettingsPanelCard>
 
                     <PortalSettingsPanelCard
