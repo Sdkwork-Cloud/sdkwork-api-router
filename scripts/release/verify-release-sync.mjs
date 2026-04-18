@@ -85,6 +85,9 @@ const RELEASE_SYNC_REPOSITORY_SPECS = Object.freeze([
     defaultRef: 'main',
   }),
 ]);
+const RELEASE_SYNC_LIVE_REFRESH_REPOSITORY_IDS = new Set([
+  'sdkwork-api-router',
+]);
 
 export function listReleaseSyncRepositorySpecs() {
   return RELEASE_SYNC_REPOSITORY_SPECS.map((spec) => ({
@@ -612,6 +615,44 @@ function auditRepositorySpec(spec, {
   });
 }
 
+function mergeGovernedReleaseSyncSummaryWithLiveReports(summary, {
+  specs = [],
+  spawnSyncImpl = spawnSync,
+} = {}) {
+  if (!Array.isArray(specs) || specs.length === 0) {
+    return summary;
+  }
+
+  const refreshSpecs = specs.filter((spec) => RELEASE_SYNC_LIVE_REFRESH_REPOSITORY_IDS.has(spec.id));
+  if (refreshSpecs.length === 0) {
+    return summary;
+  }
+
+  const liveReportsById = new Map(
+    refreshSpecs.map((spec) => [
+      spec.id,
+      auditRepositorySpec(spec, {
+        spawnSyncImpl,
+      }),
+    ]),
+  );
+
+  const existingReportIds = new Set(summary.reports.map((report) => report.id));
+  const reports = summary.reports.map((report) => liveReportsById.get(report.id) ?? report);
+  for (const [id, report] of liveReportsById.entries()) {
+    if (!existingReportIds.has(id)) {
+      reports.push(report);
+    }
+  }
+
+  const mergedSummary = {
+    releasable: isReleaseSyncAuditPassing(reports),
+    reports,
+  };
+  validateReleaseSyncAuditSummary(mergedSummary);
+  return mergedSummary;
+}
+
 export function auditReleaseSyncRepositories({
   specs,
   auditPath,
@@ -621,6 +662,9 @@ export function auditReleaseSyncRepositories({
   readFile = readFileSync,
   spawnSyncImpl = spawnSync,
 } = {}) {
+  const resolvedSpecs = Array.isArray(specs)
+    ? specs
+    : resolveReleaseSyncRepositorySpecs({ env });
   const resolvedInput = resolveReleaseSyncAuditInput({
     auditPath,
     auditJson,
@@ -629,12 +673,12 @@ export function auditReleaseSyncRepositories({
     readFile,
   });
   if (resolvedInput) {
-    return resolvedInput.summary;
+    return mergeGovernedReleaseSyncSummaryWithLiveReports(resolvedInput.summary, {
+      specs: resolvedSpecs,
+      spawnSyncImpl,
+    });
   }
 
-  const resolvedSpecs = Array.isArray(specs)
-    ? specs
-    : resolveReleaseSyncRepositorySpecs({ env });
   const reports = resolvedSpecs.map((spec) => auditRepositorySpec(spec, {
     spawnSyncImpl,
   }));

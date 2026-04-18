@@ -174,6 +174,96 @@ function createReleaseSyncAuditArtifactPayload() {
   };
 }
 
+function createGovernedReleaseSyncAuditArtifactPayload() {
+  const externalTargetDir = path.join(
+    repoRoot,
+    'artifacts',
+    'external-release-deps',
+    'sdkwork-ui',
+  );
+  const artifact = createReleaseSyncAuditArtifactPayload();
+  artifact.summary.reports.push({
+    id: 'sdkwork-ui',
+    targetDir: externalTargetDir,
+    expectedGitRoot: externalTargetDir,
+    topLevel: externalTargetDir,
+    remoteUrl: 'https://github.com/Sdkwork-Cloud/sdkwork-ui.git',
+    localHead: 'ui123',
+    remoteHead: 'ui123',
+    expectedRef: 'main',
+    branch: 'main',
+    upstream: 'origin/main',
+    ahead: 0,
+    behind: 0,
+    isDirty: false,
+    reasons: [],
+    releasable: true,
+  });
+  return artifact;
+}
+
+function createCurrentRepoReleaseSyncGitFallback(spec, {
+  localHead = 'fed456',
+  remoteHead = localHead,
+  statusText = '## main...origin/main\n',
+} = {}) {
+  let gitSpawnCount = 0;
+
+  return {
+    getCount() {
+      return gitSpawnCount;
+    },
+    fallbackSpawnSyncImpl(command, args, options = {}) {
+      gitSpawnCount += 1;
+      assert.equal(command, process.platform === 'win32' ? 'git.exe' : 'git');
+      assert.equal(options.cwd, spec.targetDir);
+
+      const key = args.join('\u0000');
+      if (key === 'rev-parse\u0000--show-toplevel') {
+        return {
+          status: 0,
+          stdout: `${spec.expectedGitRoot}\n`,
+          stderr: '',
+        };
+      }
+
+      if (key === 'status\u0000--short\u0000--branch') {
+        return {
+          status: 0,
+          stdout: statusText,
+          stderr: '',
+        };
+      }
+
+      if (key === 'remote\u0000get-url\u0000origin') {
+        return {
+          status: 0,
+          stdout: `${spec.expectedRemoteUrl}\n`,
+          stderr: '',
+        };
+      }
+
+      if (key === 'rev-parse\u0000HEAD') {
+        return {
+          status: 0,
+          stdout: `${localHead}\n`,
+          stderr: '',
+        };
+      }
+
+      if (key === 'ls-remote\u0000origin\u0000main') {
+        return {
+          status: 0,
+          stdout: `${remoteHead}\trefs/heads/main\n`,
+          stderr: '',
+        };
+      }
+
+      throw new Error(`unexpected git command: ${command} ${args.join(' ')}`);
+    },
+  };
+}
+
 function cleanupGovernedReleaseArtifacts() {
   if (existsSync(releaseTelemetryExportPath)) {
     rmSync(releaseTelemetryExportPath, { force: true });
@@ -1725,16 +1815,26 @@ test('release governance runner consumes governed release sync audit input when 
       path.join(repoRoot, 'scripts', 'release', 'run-release-governance-checks.mjs'),
     ).href,
   );
+  const verifyReleaseSyncModule = await import(
+    pathToFileURL(
+      path.join(repoRoot, 'scripts', 'release', 'verify-release-sync.mjs'),
+    ).href,
+  );
 
   const plan = module.listReleaseGovernanceCheckPlans({
     nodeExecutable: 'node',
+  });
+  const [routerSpec] = verifyReleaseSyncModule.listReleaseSyncRepositorySpecs();
+  const liveGit = createCurrentRepoReleaseSyncGitFallback(routerSpec, {
+    localHead: 'fed456',
+    remoteHead: 'fed456',
   });
 
   const result = await module.runReleaseGovernanceCheckPlan({
     plan: getPlanById(plan, 'release-sync-audit'),
     env: {
       SDKWORK_RELEASE_SYNC_AUDIT_JSON: JSON.stringify(
-        createReleaseSyncAuditArtifactPayload(),
+        createGovernedReleaseSyncAuditArtifactPayload(),
       ),
     },
     spawnSyncImpl() {
@@ -1745,22 +1845,23 @@ test('release governance runner consumes governed release sync audit input when 
         error: new Error('spawnSync node EPERM'),
       };
     },
-    fallbackSpawnSyncImpl() {
-      throw new Error('git spawn should not run when governed sync audit input is provided');
-    },
+    fallbackSpawnSyncImpl: liveGit.fallbackSpawnSyncImpl,
   });
 
   assert.equal(result.mode, 'fallback');
   assert.equal(result.ok, true);
   assert.equal(result.status, 0);
+  assert.equal(liveGit.getCount(), 5);
   assert.match(result.stdout, /"releasable": true/);
+  assert.match(result.stdout, /"localHead": "fed456"/);
+  assert.match(result.stdout, /"id": "sdkwork-ui"/);
 });
 
 test('release governance runner replays the default release sync audit artifact when node child execution is blocked', async () => {
   await withCleanedGovernedReleaseArtifacts(async () => {
     writeFileSync(
       releaseSyncAuditPath,
-      `${JSON.stringify(createReleaseSyncAuditArtifactPayload(), null, 2)}\n`,
+      `${JSON.stringify(createGovernedReleaseSyncAuditArtifactPayload(), null, 2)}\n`,
       'utf8',
     );
 
@@ -1769,9 +1870,19 @@ test('release governance runner replays the default release sync audit artifact 
         path.join(repoRoot, 'scripts', 'release', 'run-release-governance-checks.mjs'),
       ).href,
     );
+    const verifyReleaseSyncModule = await import(
+      pathToFileURL(
+        path.join(repoRoot, 'scripts', 'release', 'verify-release-sync.mjs'),
+      ).href,
+    );
 
     const plan = module.listReleaseGovernanceCheckPlans({
       nodeExecutable: 'node',
+    });
+    const [routerSpec] = verifyReleaseSyncModule.listReleaseSyncRepositorySpecs();
+    const liveGit = createCurrentRepoReleaseSyncGitFallback(routerSpec, {
+      localHead: 'fed456',
+      remoteHead: 'fed456',
     });
 
     const result = await module.runReleaseGovernanceCheckPlan({
@@ -1785,14 +1896,15 @@ test('release governance runner replays the default release sync audit artifact 
           error: new Error('spawnSync node EPERM'),
         };
       },
-      fallbackSpawnSyncImpl() {
-        throw new Error('git spawn should not run when a default latest artifact is available');
-      },
+      fallbackSpawnSyncImpl: liveGit.fallbackSpawnSyncImpl,
     });
 
     assert.equal(result.mode, 'fallback');
     assert.equal(result.ok, true);
     assert.equal(result.status, 0);
+    assert.equal(liveGit.getCount(), 5);
     assert.match(result.stdout, /"releasable": true/);
+    assert.match(result.stdout, /"localHead": "fed456"/);
+    assert.match(result.stdout, /"id": "sdkwork-ui"/);
   });
 });

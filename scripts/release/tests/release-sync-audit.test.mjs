@@ -61,6 +61,96 @@ function createReleaseSyncAuditArtifactPayload() {
   };
 }
 
+function createGovernedReleaseSyncAuditArtifactPayload() {
+  const externalTargetDir = path.join(
+    repoRoot,
+    'artifacts',
+    'external-release-deps',
+    'sdkwork-ui',
+  );
+  const artifact = createReleaseSyncAuditArtifactPayload();
+  artifact.summary.reports.push({
+    id: 'sdkwork-ui',
+    targetDir: externalTargetDir,
+    expectedGitRoot: externalTargetDir,
+    topLevel: externalTargetDir,
+    remoteUrl: 'https://github.com/Sdkwork-Cloud/sdkwork-ui.git',
+    localHead: 'ui123',
+    remoteHead: 'ui123',
+    expectedRef: 'main',
+    branch: 'main',
+    upstream: 'origin/main',
+    ahead: 0,
+    behind: 0,
+    isDirty: false,
+    reasons: [],
+    releasable: true,
+  });
+  return artifact;
+}
+
+function createLiveCurrentRepoGitSpawn(spec, {
+  localHead = 'fed456',
+  remoteHead = localHead,
+  statusText = '## main...origin/main\n',
+} = {}) {
+  let gitSpawnCount = 0;
+
+  return {
+    getCount() {
+      return gitSpawnCount;
+    },
+    spawnSyncImpl(command, args, options = {}) {
+      gitSpawnCount += 1;
+      assert.equal(command, process.platform === 'win32' ? 'git.exe' : 'git');
+      assert.equal(options.cwd, spec.targetDir);
+
+      const key = args.join('\u0000');
+      if (key === 'rev-parse\u0000--show-toplevel') {
+        return {
+          status: 0,
+          stdout: `${spec.expectedGitRoot}\n`,
+          stderr: '',
+        };
+      }
+
+      if (key === 'status\u0000--short\u0000--branch') {
+        return {
+          status: 0,
+          stdout: statusText,
+          stderr: '',
+        };
+      }
+
+      if (key === 'remote\u0000get-url\u0000origin') {
+        return {
+          status: 0,
+          stdout: `${spec.expectedRemoteUrl}\n`,
+          stderr: '',
+        };
+      }
+
+      if (key === 'rev-parse\u0000HEAD') {
+        return {
+          status: 0,
+          stdout: `${localHead}\n`,
+          stderr: '',
+        };
+      }
+
+      if (key === 'ls-remote\u0000origin\u0000main') {
+        return {
+          status: 0,
+          stdout: `${remoteHead}\trefs/heads/main\n`,
+          stderr: '',
+        };
+      }
+
+      throw new Error(`unexpected command: ${command} ${args.join(' ')}`);
+    },
+  };
+}
+
 test('release sync audit exposes repository specs and blocks non-standalone, dirty, or remote-unverifiable repositories', async () => {
   const module = await import(
     pathToFileURL(
@@ -287,7 +377,38 @@ test('release sync audit consumes governed JSON input without spawning git', asy
   assert.deepEqual(summary, artifact.summary);
 });
 
-test('release sync audit prefers the default latest artifact before live git collection', async () => {
+test('release sync audit refreshes the current repository live while preserving governed external reports', async () => {
+  const module = await import(
+    pathToFileURL(
+      path.join(repoRoot, 'scripts', 'release', 'verify-release-sync.mjs'),
+    ).href,
+  );
+
+  const artifact = createGovernedReleaseSyncAuditArtifactPayload();
+  const [routerSpec] = module.listReleaseSyncRepositorySpecs();
+  const liveGit = createLiveCurrentRepoGitSpawn(routerSpec, {
+    localHead: 'fed456',
+    remoteHead: 'fed456',
+  });
+
+  const summary = module.auditReleaseSyncRepositories({
+    env: {
+      SDKWORK_RELEASE_SYNC_AUDIT_JSON: JSON.stringify(artifact),
+    },
+    spawnSyncImpl: liveGit.spawnSyncImpl,
+  });
+
+  assert.equal(liveGit.getCount(), 5);
+  assert.equal(summary.releasable, true);
+  assert.equal(summary.reports[0].id, 'sdkwork-api-router');
+  assert.equal(summary.reports[0].localHead, 'fed456');
+  assert.equal(summary.reports[0].remoteHead, 'fed456');
+  assert.equal(summary.reports[1].id, 'sdkwork-ui');
+  assert.equal(summary.reports[1].localHead, 'ui123');
+  assert.equal(summary.reports[1].remoteHead, 'ui123');
+});
+
+test('release sync audit can replay the default latest artifact without live refresh when specs are explicitly empty', async () => {
   const module = await import(
     pathToFileURL(
       path.join(repoRoot, 'scripts', 'release', 'verify-release-sync.mjs'),
@@ -302,6 +423,7 @@ test('release sync audit prefers the default latest artifact before live git col
     () => {
       let gitSpawned = false;
       const summary = module.auditReleaseSyncRepositories({
+        specs: [],
         env: {},
         spawnSyncImpl() {
           gitSpawned = true;
@@ -316,6 +438,40 @@ test('release sync audit prefers the default latest artifact before live git col
 
       assert.equal(gitSpawned, false);
       assert.deepEqual(summary, artifact.summary);
+    },
+  );
+});
+
+test('release sync audit refreshes the current repository live when replaying the default latest artifact', async () => {
+  const module = await import(
+    pathToFileURL(
+      path.join(repoRoot, 'scripts', 'release', 'verify-release-sync.mjs'),
+    ).href,
+  );
+
+  const artifact = createGovernedReleaseSyncAuditArtifactPayload();
+  const [routerSpec] = module.listReleaseSyncRepositorySpecs();
+  const liveGit = createLiveCurrentRepoGitSpawn(routerSpec, {
+    localHead: 'fed456',
+    remoteHead: 'fed456',
+  });
+
+  withTemporaryFile(
+    releaseSyncAuditPath,
+    `${JSON.stringify(artifact, null, 2)}\n`,
+    () => {
+      const summary = module.auditReleaseSyncRepositories({
+        env: {},
+        spawnSyncImpl: liveGit.spawnSyncImpl,
+      });
+
+      assert.equal(liveGit.getCount(), 5);
+      assert.equal(summary.releasable, true);
+      assert.equal(summary.reports[0].id, 'sdkwork-api-router');
+      assert.equal(summary.reports[0].localHead, 'fed456');
+      assert.equal(summary.reports[0].remoteHead, 'fed456');
+      assert.equal(summary.reports[1].id, 'sdkwork-ui');
+      assert.equal(summary.reports[1].localHead, 'ui123');
     },
   );
 });

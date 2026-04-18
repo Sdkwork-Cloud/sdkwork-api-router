@@ -1172,10 +1172,11 @@ async function runFallbackReleaseGovernanceCheck({
         env,
         spawnSyncImpl: fallbackSpawnSyncImpl,
       })
-      : existsSync(defaultReleaseSyncAuditPath)
+        : existsSync(defaultReleaseSyncAuditPath)
         ? auditReleaseSyncRepositories({
         auditPath: defaultReleaseSyncAuditPath,
         env: {},
+        spawnSyncImpl: fallbackSpawnSyncImpl,
       })
         : auditReleaseSyncRepositories({
           env,
