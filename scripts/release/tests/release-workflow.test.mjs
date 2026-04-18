@@ -11,6 +11,16 @@ function read(relativePath) {
   return readFileSync(path.join(repoRoot, relativePath), 'utf8');
 }
 
+function extractTopLevelJobBlock(workflow, jobName) {
+  const blockPattern = new RegExp(
+    String.raw`^  ${jobName}:\r?\n[\s\S]*?(?=^  [a-z0-9][a-z0-9-]*:|\Z)`,
+    'im',
+  );
+  const match = workflow.match(blockPattern);
+  assert.ok(match, `missing ${jobName} job definition`);
+  return match[0];
+}
+
 function writeModule(filePath, source) {
   mkdirSync(path.dirname(filePath), { recursive: true });
   writeFileSync(filePath, source, 'utf8');
@@ -247,6 +257,7 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 22
+          package-manager-cache: false
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@cargo-audit
@@ -343,6 +354,7 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 22
+          package-manager-cache: false
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@cargo-audit
@@ -475,6 +487,7 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 22
+          package-manager-cache: false
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@cargo-audit
@@ -619,6 +632,7 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 22
+          package-manager-cache: false
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@cargo-audit
@@ -690,5 +704,47 @@ test('release workflow contract helper rejects workflows that do not seed teleme
       repoRoot: fixtureRoot,
     }),
     /telemetry(?:-|\s)export/i,
+  );
+});
+
+test('release workflow disables setup-node package-manager auto-cache in non-pnpm jobs', () => {
+  const workflow = read('.github/workflows/release.yml');
+  const rustDependencyAuditJob = extractTopLevelJobBlock(workflow, 'rust-dependency-audit');
+  const governanceReleaseJob = extractTopLevelJobBlock(workflow, 'governance-release');
+  const publishJob = extractTopLevelJobBlock(workflow, 'publish');
+
+  assert.match(
+    rustDependencyAuditJob,
+    /actions\/setup-node@v5[\s\S]*?node-version:\s*22[\s\S]*?package-manager-cache:\s*false/,
+  );
+  assert.match(
+    governanceReleaseJob,
+    /actions\/setup-node@v5[\s\S]*?node-version:\s*22[\s\S]*?package-manager-cache:\s*false/,
+  );
+  assert.match(
+    publishJob,
+    /actions\/setup-node@v5[\s\S]*?node-version:\s*22[\s\S]*?package-manager-cache:\s*false/,
+  );
+});
+
+test('release workflow contract helper rejects non-pnpm setup-node jobs that do not disable package-manager auto-cache', async () => {
+  const contracts = await import(
+    pathToFileURL(
+      path.join(repoRoot, 'scripts', 'release', 'release-workflow-contracts.mjs'),
+    ).href,
+  );
+
+  const fixtureRoot = writeReleaseWorkflowContractFixture({
+    workflowText: read('.github/workflows/release.yml').replace(
+      /^\s*package-manager-cache:\s*false\r?\n/m,
+      '',
+    ),
+  });
+
+  await assert.rejects(
+    contracts.assertReleaseWorkflowContracts({
+      repoRoot: fixtureRoot,
+    }),
+    /package-manager(?:\s|-)?auto-cache|package-manager-cache/i,
   );
 });

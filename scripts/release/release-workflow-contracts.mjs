@@ -7,6 +7,16 @@ function read(repoRoot, relativePath) {
   return readFileSync(path.join(repoRoot, relativePath), 'utf8');
 }
 
+function extractTopLevelJobBlock(workflow, jobName) {
+  const blockPattern = new RegExp(
+    String.raw`^  ${jobName}:\r?\n[\s\S]*?(?=^  [a-z0-9][a-z0-9-]*:|\Z)`,
+    'im',
+  );
+  const match = workflow.match(blockPattern);
+  assert.ok(match, `missing ${jobName} job definition`);
+  return match[0];
+}
+
 export async function assertReleaseWorkflowContracts({
   repoRoot,
 } = {}) {
@@ -26,6 +36,11 @@ export async function assertReleaseWorkflowContracts({
     workflow,
     /rust-dependency-audit:[\s\S]*?runs-on:\s*ubuntu-latest[\s\S]*?actions\/checkout@v5[\s\S]*?ref:\s*\$\{\{\s*needs\.prepare\.outputs\.git_ref\s*\}\}[\s\S]*?actions\/setup-node@v5[\s\S]*?node-version:\s*22[\s\S]*?dtolnay\/rust-toolchain@stable[\s\S]*?Swatinem\/rust-cache@v2[\s\S]*?taiki-e\/install-action@cargo-audit[\s\S]*?node scripts\/check-rust-dependency-audit\.mjs/,
     'release workflow must execute a dedicated Rust dependency audit gate against the exact release ref before any assets are built',
+  );
+  assert.match(
+    extractTopLevelJobBlock(workflow, 'rust-dependency-audit'),
+    /actions\/setup-node@v5[\s\S]*?node-version:\s*22[\s\S]*?package-manager-cache:\s*false/,
+    'rust dependency audit must disable setup-node package-manager auto-cache because the job does not install pnpm before actions/setup-node@v5 runs',
   );
 
   assert.match(
@@ -63,6 +78,11 @@ export async function assertReleaseWorkflowContracts({
     workflow,
     /governance-release:[\s\S]*?needs:\s*[\r\n]+\s*-\s*prepare[\r\n]+\s*-\s*rust-dependency-audit[\r\n]+\s*-\s*product-verification/,
     'governance release job must wait for prepare, Rust dependency audit, and product verification gates',
+  );
+  assert.match(
+    extractTopLevelJobBlock(workflow, 'governance-release'),
+    /actions\/setup-node@v5[\s\S]*?node-version:\s*22[\s\S]*?package-manager-cache:\s*false/,
+    'governance release must disable setup-node package-manager auto-cache because the job uses Node-owned scripts without installing pnpm',
   );
   assert.match(
     workflow,
@@ -130,6 +150,11 @@ export async function assertReleaseWorkflowContracts({
     workflow,
     /publish:[\s\S]*?actions\/setup-node@v5[\s\S]*?node-version:\s*22/,
     'publish job must pin the Node runtime before generating repository-owned release metadata',
+  );
+  assert.match(
+    extractTopLevelJobBlock(workflow, 'publish'),
+    /actions\/setup-node@v5[\s\S]*?node-version:\s*22[\s\S]*?package-manager-cache:\s*false/,
+    'publish job must disable setup-node package-manager auto-cache because it does not install pnpm before setup-node evaluates the repository packageManager field',
   );
   assert.match(
     workflow,
