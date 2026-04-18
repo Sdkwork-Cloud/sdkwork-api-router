@@ -217,6 +217,42 @@ test('ensureFrontendDependenciesReady refuses to auto-install when strict mode i
   });
 });
 
+test('ensureFrontendDependenciesReady surfaces unhealthy verification details in strict mode errors', () => {
+  withTempApp((appRoot) => {
+    const nodeModulesRoot = path.join(appRoot, 'node_modules');
+    const viteRoot = path.join(nodeModulesRoot, 'vite');
+    const typescriptRoot = path.join(nodeModulesRoot, 'typescript');
+    const binRoot = path.join(nodeModulesRoot, '.bin');
+
+    mkdirSync(viteRoot, { recursive: true });
+    mkdirSync(typescriptRoot, { recursive: true });
+    mkdirSync(binRoot, { recursive: true });
+    writeFileSync(path.join(nodeModulesRoot, '.modules.yaml'), 'layoutVersion: 5\n');
+    writeFileSync(path.join(viteRoot, 'package.json'), '{"name":"vite"}\n');
+    writeFileSync(path.join(typescriptRoot, 'package.json'), '{"name":"typescript"}\n');
+    writeFileSync(path.join(binRoot, 'vite'), '#!/usr/bin/env node\n');
+    writeFileSync(path.join(binRoot, 'tsc'), '#!/usr/bin/env node\n');
+
+    assert.throws(
+      () => ensureFrontendDependenciesReady({
+        appRoot,
+        platform: 'linux',
+        env: {
+          SDKWORK_STRICT_FRONTEND_INSTALLS: '1',
+        },
+        requiredPackages: ['vite', 'typescript'],
+        requiredBinCommands: ['vite', 'tsc'],
+        verifyInstalled: () => ({
+          ok: false,
+          reason: 'vite config failed to load',
+          stderr: 'Error: missing aliased module',
+        }),
+      }),
+      /vite config failed to load[\s\S]*missing aliased module/i,
+    );
+  });
+});
+
 test('preview installs can reuse existing dist on Windows spawn EPERM when explicitly allowed', () => {
   assert.equal(
     shouldReuseExistingFrontendDist({

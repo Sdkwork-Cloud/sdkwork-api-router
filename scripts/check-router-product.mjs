@@ -8,8 +8,8 @@ import { fileURLToPath } from 'node:url';
 
 import { withSupportedWindowsCmakeGenerator } from './run-tauri-cli.mjs';
 import {
+  checkFrontendViteConfig,
   ensureFrontendDependenciesReady,
-  frontendViteConfigHealthy,
   pnpmExecutable,
   pnpmProcessSpec,
 } from './dev/pnpm-launch-lib.mjs';
@@ -223,7 +223,7 @@ async function main() {
       appRoot,
       requiredPackages: ['vite', 'typescript'],
       requiredBinCommands: ['vite', 'tsc'],
-      verifyInstalled: () => frontendViteConfigHealthy({
+      verifyInstalled: () => checkFrontendViteConfig({
         appRoot,
         command: 'build',
       }),

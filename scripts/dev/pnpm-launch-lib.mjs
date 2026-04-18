@@ -125,25 +125,27 @@ function frontendBinRoot(appRoot) {
   return path.join(appRoot, 'node_modules', '.bin');
 }
 
-function missingFrontendPackages(appRoot, requiredPackages) {
+function collectMissingFrontendPackages(appRoot, requiredPackages) {
   const nodeModulesRoot = frontendNodeModulesRoot(appRoot);
-  return requiredPackages.some((packageName) => !existsSync(
+  return requiredPackages.filter((packageName) => !existsSync(
     path.join(nodeModulesRoot, ...packagePathSegments(packageName), 'package.json'),
   ));
 }
 
-function missingFrontendBinCommands(
+function collectMissingFrontendBinCommands(
   appRoot,
   requiredBinCommands,
   platform = process.platform,
 ) {
   if (!Array.isArray(requiredBinCommands) || requiredBinCommands.length === 0) {
-    return false;
+    return [];
   }
 
   const binRoot = frontendBinRoot(appRoot);
   if (!existsSync(binRoot)) {
-    return true;
+    return requiredBinCommands
+      .map((commandName) => String(commandName ?? '').trim())
+      .filter(Boolean);
   }
 
   const availableCommands = new Set(
@@ -152,7 +154,7 @@ function missingFrontendBinCommands(
       .map((entry) => entry.name.toLowerCase()),
   );
 
-  return requiredBinCommands.some((commandName) => {
+  return requiredBinCommands.filter((commandName) => {
     const normalizedCommandName = String(commandName ?? '').trim().toLowerCase();
     if (!normalizedCommandName) {
       return false;
@@ -166,7 +168,76 @@ function missingFrontendBinCommands(
   });
 }
 
-export function frontendInstallStatus({
+function truncateDiagnosticText(value, maxLength = 1200) {
+  const text = String(value ?? '').trim();
+  if (text.length <= maxLength) {
+    return text;
+  }
+
+  return `${text.slice(0, Math.max(0, maxLength - 15))}...[truncated]`;
+}
+
+function normalizeFrontendVerificationResult(result) {
+  if (result == null || typeof result === 'boolean') {
+    return {
+      ok: Boolean(result),
+      reason: '',
+      stdout: '',
+      stderr: '',
+    };
+  }
+
+  if (typeof result !== 'object') {
+    return {
+      ok: Boolean(result),
+      reason: '',
+      stdout: '',
+      stderr: '',
+    };
+  }
+
+  const ok = result.ok === true || result.ready === true || result.status === 'ready';
+  const reason = truncateDiagnosticText(
+    result.reason ?? result.message ?? result.summary ?? '',
+  );
+  const stdout = truncateDiagnosticText(result.stdout ?? '');
+  const stderr = truncateDiagnosticText(result.stderr ?? '');
+
+  return {
+    ok,
+    reason,
+    stdout,
+    stderr,
+  };
+}
+
+function formatFrontendInstallReport(report = {}) {
+  const details = [];
+
+  if (Array.isArray(report.missingPackages) && report.missingPackages.length > 0) {
+    details.push(`missing packages: ${report.missingPackages.join(', ')}`);
+  }
+
+  if (Array.isArray(report.missingBinCommands) && report.missingBinCommands.length > 0) {
+    details.push(`missing bin commands: ${report.missingBinCommands.join(', ')}`);
+  }
+
+  if (report.verify?.reason) {
+    details.push(`verification: ${report.verify.reason}`);
+  }
+
+  if (report.verify?.stderr) {
+    details.push(`verification stderr:\n${report.verify.stderr}`);
+  }
+
+  if (report.verify?.stdout) {
+    details.push(`verification stdout:\n${report.verify.stdout}`);
+  }
+
+  return details.join('\n');
+}
+
+export function frontendInstallReport({
   appRoot,
   requiredPackages = [],
   requiredBinCommands = [],
@@ -179,26 +250,92 @@ export function frontendInstallStatus({
 
   const nodeModulesRoot = frontendNodeModulesRoot(appRoot);
   if (!existsSync(nodeModulesRoot)) {
-    return 'missing';
+    return {
+      status: 'missing',
+      missingPackages: [...requiredPackages],
+      missingBinCommands: [...requiredBinCommands],
+      verify: null,
+    };
   }
 
   if (!existsSync(path.join(nodeModulesRoot, '.modules.yaml'))) {
-    return 'missing';
+    return {
+      status: 'missing',
+      missingPackages: [...requiredPackages],
+      missingBinCommands: [...requiredBinCommands],
+      verify: null,
+    };
   }
 
-  if (missingFrontendPackages(appRoot, requiredPackages)) {
-    return 'missing';
+  const missingPackages = collectMissingFrontendPackages(appRoot, requiredPackages);
+  if (missingPackages.length > 0) {
+    return {
+      status: 'missing',
+      missingPackages,
+      missingBinCommands: [],
+      verify: null,
+    };
   }
 
-  if (missingFrontendBinCommands(appRoot, requiredBinCommands, platform)) {
-    return 'unhealthy';
+  const missingBinCommands = collectMissingFrontendBinCommands(
+    appRoot,
+    requiredBinCommands,
+    platform,
+  );
+  if (missingBinCommands.length > 0) {
+    return {
+      status: 'unhealthy',
+      missingPackages: [],
+      missingBinCommands,
+      verify: null,
+    };
   }
 
-  if (typeof verifyInstalled === 'function' && !verifyInstalled({ appRoot })) {
-    return 'unhealthy';
+  if (typeof verifyInstalled === 'function') {
+    let verify;
+    try {
+      verify = normalizeFrontendVerificationResult(verifyInstalled({ appRoot }));
+    } catch (error) {
+      verify = {
+        ok: false,
+        reason: truncateDiagnosticText(error instanceof Error ? error.message : String(error)),
+        stdout: '',
+        stderr: '',
+      };
+    }
+
+    if (!verify.ok) {
+      return {
+        status: 'unhealthy',
+        missingPackages: [],
+        missingBinCommands: [],
+        verify,
+      };
+    }
   }
 
-  return 'ready';
+  return {
+    status: 'ready',
+    missingPackages: [],
+    missingBinCommands: [],
+    verify: null,
+  };
+}
+
+export function frontendInstallStatus({
+  appRoot,
+  requiredPackages = [],
+  requiredBinCommands = [],
+  verifyInstalled = null,
+  platform = process.platform,
+} = {}) {
+  return frontendInstallReport({
+    appRoot,
+    requiredPackages,
+    requiredBinCommands,
+    verifyInstalled,
+    platform,
+  }).status;
 }
 
 export function frontendInstallRequired(options = {}) {
@@ -225,21 +362,23 @@ export function ensureFrontendDependenciesReady({
     throw new Error('appRoot is required');
   }
 
-  const installStatus = frontendInstallStatus({
+  const installReport = frontendInstallReport({
     appRoot,
     requiredPackages,
     requiredBinCommands,
     verifyInstalled,
     platform,
   });
+  const installStatus = installReport.status;
 
   if (installStatus === 'ready') {
     return installStatus;
   }
 
   if (strictFrontendInstallsEnabled(env)) {
+    const reportDetails = formatFrontendInstallReport(installReport);
     throw new Error(
-      `strict frontend install mode requires a prior frozen install step for ${appRoot}; current frontend install status is ${installStatus}`,
+      `strict frontend install mode requires a prior frozen install step for ${appRoot}; current frontend install status is ${installStatus}${reportDetails ? `\n${reportDetails}` : ''}`,
     );
   }
 
@@ -357,6 +496,22 @@ export function frontendViteConfigHealthy({
   env = process.env,
   platform = process.platform,
 } = {}) {
+  return checkFrontendViteConfig({
+    appRoot,
+    command,
+    mode,
+    env,
+    platform,
+  }).ok;
+}
+
+export function checkFrontendViteConfig({
+  appRoot,
+  command = 'serve',
+  mode = 'development',
+  env = process.env,
+  platform = process.platform,
+} = {}) {
   if (!appRoot) {
     throw new Error('appRoot is required');
   }
@@ -385,7 +540,12 @@ export function frontendViteConfigHealthy({
     },
   );
 
-  return result.status === 0;
+  return {
+    ok: result.status === 0,
+    status: result.status ?? 1,
+    stdout: String(result.stdout ?? ''),
+    stderr: String(result.stderr ?? ''),
+  };
 }
 
 export function removeFrontendNodeModules(appRoot) {
