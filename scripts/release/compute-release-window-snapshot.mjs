@@ -6,6 +6,10 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
+import {
+  filterGovernedReleaseArtifactStatusLines,
+} from './release-governed-artifact-status.mjs';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, '..', '..');
@@ -159,11 +163,14 @@ export function findLatestReleaseTag(tagListOutput = '') {
 }
 
 export function countWorkingTreeEntries(statusText = '') {
-  return String(statusText ?? '')
-    .split(/\r?\n/u)
-    .map((line) => line.trimEnd())
-    .filter((line) => line.length > 0)
-    .length;
+  const relevantStatusLines = filterGovernedReleaseArtifactStatusLines(
+    String(statusText ?? '')
+      .split(/\r?\n/u)
+      .map((line) => line.trimEnd())
+      .filter((line) => line.length > 0),
+  );
+
+  return relevantStatusLines.length;
 }
 
 export function resolveGitRunner({

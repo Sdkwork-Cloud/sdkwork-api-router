@@ -1959,6 +1959,17 @@ test('router-ops install parses system mode', () => {
   });
 });
 
+test('router-ops resolveInstallRootOption keeps Windows absolute homes stable on posix hosts', () => {
+  return loadRouterOpsModule().then(({ resolveInstallRootOption }) => {
+    const resolved = resolveInstallRootOption('D:/router/runtime', {
+      cwd: '/workspace/sdkwork-api-router',
+      pathModule: path.posix,
+    });
+
+    assert.equal(resolved, 'D:/router/runtime');
+  });
+});
+
 test('router-ops validate-config parses system mode with runtime-home overrides', () => {
   return loadRouterOpsModule().then(({ parseArgs }) => {
     const options = parseArgs(['validate-config', '--mode', 'system', '--home', 'D:/router/runtime']);

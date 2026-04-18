@@ -222,6 +222,17 @@ test('release sync audit exposes repository specs and blocks non-standalone, dir
   assert.equal(branchSummary.isDirty, true);
   assert.equal(branchSummary.hasTrackingDivergence, true);
 
+  const governedArtifactOnlySummary = module.parseGitStatusBranchSummary(
+    [
+      '## HEAD (no branch)',
+      ' M docs/release/release-sync-audit-latest.json',
+      ' M docs/release/release-window-snapshot-latest.json',
+    ].join('\n'),
+  );
+  assert.equal(governedArtifactOnlySummary.branch, 'HEAD (no branch)');
+  assert.equal(governedArtifactOnlySummary.isDirty, false);
+  assert.deepEqual(governedArtifactOnlySummary.changeLines, []);
+
   const cleanAudit = module.evaluateReleaseSyncRepositoryAudit({
     spec: specs[0],
     expectedRef: 'main',

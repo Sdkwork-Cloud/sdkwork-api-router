@@ -88,6 +88,16 @@ test('release window snapshot helpers expose release baseline parsing and workin
     2,
   );
   assert.equal(module.countWorkingTreeEntries('\n'), 0);
+  assert.equal(
+    module.countWorkingTreeEntries(
+      [
+        ' M docs/release/release-window-snapshot-latest.json',
+        ' M docs/release/release-sync-audit-latest.json',
+        '?? docs/review/new-note.md',
+      ].join('\n'),
+    ),
+    1,
+  );
 
   const windowsGitRunner = module.resolveGitRunner({
     platform: 'win32',
@@ -218,7 +228,7 @@ test('release window snapshot can bypass the default latest artifact in explicit
       assert.equal(result.ok, true);
       assert.equal(result.snapshot.latestReleaseTag, 'release-2026-03-28-8');
       assert.equal(result.snapshot.commitsSinceLatestRelease, 56);
-      assert.equal(result.snapshot.workingTreeEntryCount, 1);
+      assert.equal(result.snapshot.workingTreeEntryCount, 0);
       assert.notDeepEqual(result.snapshot, artifact.snapshot);
     },
   );

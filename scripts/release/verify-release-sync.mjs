@@ -6,6 +6,10 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
+import {
+  filterGovernedReleaseArtifactStatusLines,
+} from './release-governed-artifact-status.mjs';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, '..', '..');
@@ -352,7 +356,9 @@ export function parseGitStatusBranchSummary(statusText = '') {
     .split(/\r?\n/u)
     .filter((line) => line.length > 0);
   const branchLine = lines.find((line) => line.startsWith('## ')) ?? '';
-  const changeLines = lines.filter((line) => line !== branchLine);
+  const changeLines = filterGovernedReleaseArtifactStatusLines(
+    lines.filter((line) => line !== branchLine),
+  );
 
   let branch = '';
   let upstream = '';

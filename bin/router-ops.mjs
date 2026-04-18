@@ -62,6 +62,22 @@ function readOptionValue(token, next) {
   return next;
 }
 
+export function resolveInstallRootOption(value, {
+  cwd = process.cwd(),
+  pathModule = path,
+} = {}) {
+  const candidate = String(value ?? '').trim();
+  if (candidate.length === 0) {
+    return candidate;
+  }
+
+  if (pathModule.isAbsolute(candidate) || path.win32.isAbsolute(candidate)) {
+    return candidate;
+  }
+
+  return pathModule.resolve(cwd, candidate);
+}
+
 export function parseArgs(argv) {
   const [command, ...rest] = argv;
   const options = {
@@ -111,7 +127,7 @@ export function parseArgs(argv) {
         break;
       }
       case '--home':
-        options.installRoot = path.resolve(readOptionValue(token, next));
+        options.installRoot = resolveInstallRootOption(readOptionValue(token, next));
         index += 1;
         break;
       default:
