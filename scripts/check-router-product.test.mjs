@@ -158,6 +158,17 @@ test('product frontend package manifests explicitly allow esbuild build scripts 
   }
 });
 
+test('product check requires the shared frontend runtime packages used by app regression tests', async () => {
+  const module = await import(
+    pathToFileURL(path.join(workspaceRoot, 'scripts', 'check-router-product.mjs')).href,
+  );
+
+  assert.deepEqual(
+    module.PRODUCT_FRONTEND_REQUIRED_PACKAGES,
+    ['vite', 'typescript', 'jiti'],
+  );
+});
+
 test('workspace cargo config does not pin Windows-only CMake generators globally', () => {
   const cargoConfig = readText('.cargo/config.toml');
 

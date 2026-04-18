@@ -16,6 +16,7 @@ import {
 } from './dev/pnpm-launch-lib.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+export const PRODUCT_FRONTEND_REQUIRED_PACKAGES = ['vite', 'typescript', 'jiti'];
 
 export function pnpmCommand(platform = process.platform) {
   return pnpmExecutable(platform);
@@ -257,7 +258,7 @@ async function main() {
   ]) {
     ensureFrontendDependenciesReady({
       appRoot,
-      requiredPackages: ['vite', 'typescript'],
+      requiredPackages: PRODUCT_FRONTEND_REQUIRED_PACKAGES,
       requiredBinCommands: ['vite', 'tsc'],
       verifyInstalled: () => checkFrontendViteConfig({
         appRoot,
