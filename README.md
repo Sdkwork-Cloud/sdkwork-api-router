@@ -129,6 +129,16 @@ Use the managed development entrypoints:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\start-dev.ps1
 ```
 
+For product-mode development from the repository root, the workspace package also exposes:
+
+```bash
+pnpm tauri:dev
+pnpm server:dev
+```
+
+`pnpm tauri:dev` launches the portal desktop product path through the packaged product entrypoint.
+`pnpm server:dev` launches the router product server path through the same root-level workspace contract.
+
 The local development contract is documented in:
 
 - [Quickstart](./docs/getting-started/quickstart.md)

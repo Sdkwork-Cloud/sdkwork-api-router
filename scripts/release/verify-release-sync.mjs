@@ -411,6 +411,22 @@ function isTagLikeRef(ref = '') {
     || /^release-/u.test(normalizedRef);
 }
 
+export function buildRemoteHeadLookupArgs(expectedRef = 'main') {
+  const normalizedRef = String(expectedRef ?? '').trim();
+  if (normalizedRef.length === 0) {
+    return ['ls-remote', 'origin'];
+  }
+
+  if (isTagLikeRef(normalizedRef)) {
+    const canonicalRef = normalizedRef.startsWith('refs/tags/')
+      ? normalizedRef
+      : `refs/tags/${normalizedRef}`;
+    return ['ls-remote', 'origin', canonicalRef, `${canonicalRef}^{}`];
+  }
+
+  return ['ls-remote', 'origin', normalizedRef];
+}
+
 export function parseRemoteHeadStdout(stdout = '') {
   const lines = String(stdout ?? '')
     .trim()
@@ -582,7 +598,7 @@ function auditRepositorySpec(spec, {
   });
   const remoteHeadResult = runGitCommand({
     cwd: spec.targetDir,
-    args: ['ls-remote', 'origin', expectedRef],
+    args: buildRemoteHeadLookupArgs(expectedRef),
     spawnSyncImpl,
   });
 

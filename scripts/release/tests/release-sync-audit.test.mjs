@@ -296,6 +296,19 @@ test('release sync audit exposes repository specs and blocks non-standalone, dir
     module.parseRemoteHeadStdout('abc123\trefs/tags/release-1\nfed456\trefs/tags/release-1^{}\n'),
     'fed456',
   );
+  assert.deepEqual(
+    module.buildRemoteHeadLookupArgs('refs/tags/release-2026-03-28-8'),
+    [
+      'ls-remote',
+      'origin',
+      'refs/tags/release-2026-03-28-8',
+      'refs/tags/release-2026-03-28-8^{}',
+    ],
+  );
+  assert.deepEqual(
+    module.buildRemoteHeadLookupArgs('main'),
+    ['ls-remote', 'origin', 'main'],
+  );
 
   const detachedTagAudit = module.evaluateReleaseSyncRepositoryAudit({
     spec: specs[0],

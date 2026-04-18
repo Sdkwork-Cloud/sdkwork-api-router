@@ -1,9 +1,27 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 
 const workspaceRoot = path.resolve(import.meta.dirname, '..');
+
+test('root workspace package exposes packaged desktop and server dev entrypoints', () => {
+  const rootPackage = JSON.parse(
+    readFileSync(path.join(workspaceRoot, 'package.json'), 'utf8'),
+  );
+
+  assert.equal(rootPackage.private, true);
+  assert.equal(rootPackage.packageManager, 'pnpm@10.30.2');
+  assert.equal(
+    rootPackage.scripts['tauri:dev'],
+    'node scripts/run-router-product.mjs desktop',
+  );
+  assert.equal(
+    rootPackage.scripts['server:dev'],
+    'node scripts/run-router-product.mjs server',
+  );
+});
 
 test('router product launcher preserves forwarded mode arguments after --', async () => {
   const module = await import(
