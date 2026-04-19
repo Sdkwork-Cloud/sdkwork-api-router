@@ -149,6 +149,29 @@ pnpm server:dev
 `pnpm tauri:dev` launches the portal desktop product path through the packaged product entrypoint.
 `pnpm server:dev` launches the router product server path through the same root-level workspace contract.
 
+## Desktop IPC Permissions
+
+Desktop IPC permissions are defined explicitly per Tauri product:
+
+- `apps/sdkwork-router-portal/src-tauri/capabilities/main.json`
+- `apps/sdkwork-router-admin/src-tauri/capabilities/main.json`
+- `console/src-tauri/capabilities/main.json`
+
+Maintenance rules:
+
+- every `#[tauri::command]` exposed in `src-tauri/src/main.rs` must also be listed in `src-tauri/build.rs` through `tauri_build::AppManifest::commands(...)`
+- the main-window capability stays limited to `windows: ["main"]` and must not use `core:default`
+- portal remote runtime windows such as admin and gateway stay outside the desktop IPC capability surface
+- `pnpm server:dev` remains outside the Tauri permission model entirely
+
+Use this contract test after changing desktop commands or window APIs:
+
+```bash
+node --test tests/tauri-permission-contract.test.mjs
+```
+
+On Windows, the managed Tauri entrypoints also pin `Visual Studio 17 2022` and use short managed target/temp directories to avoid CMake/MSBuild generator drift and deep path failures during development builds.
+
 The local development contract is documented in:
 
 - [Quickstart](./docs/getting-started/quickstart.md)

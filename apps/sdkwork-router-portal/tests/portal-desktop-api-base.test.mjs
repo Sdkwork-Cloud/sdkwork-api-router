@@ -557,9 +557,46 @@ test('desktop runtime health probes public, gateway, admin, and portal service r
 
   assert.deepEqual(requests, [
     'http://127.0.0.1:3001/',
-    'http://127.0.0.1:3001/api/health',
+    'http://127.0.0.1:3001/api/v1/health',
     'http://127.0.0.1:3001/api/admin/health',
     'http://127.0.0.1:3001/api/portal/health',
+  ]);
+});
+
+test('browser runtime health probes use the unified gateway v1 health route', async () => {
+  const requests = [];
+  const portalApi = loadPortalApi();
+  const originalFetch = globalThis.fetch;
+  const originalWindow = globalThis.window;
+
+  globalThis.fetch = async (input) => {
+    requests.push(String(input));
+    return textResponse('ok');
+  };
+  globalThis.window = {
+    location: {
+      origin: 'https://router.example.com',
+      port: '443',
+    },
+  };
+
+  try {
+    const snapshot = await portalApi.getProductRuntimeHealthSnapshot();
+    assert.equal(snapshot.mode, 'browser');
+    assert.deepEqual(
+      snapshot.services.map((service) => service.status),
+      ['healthy', 'healthy', 'healthy', 'healthy'],
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.window = originalWindow;
+  }
+
+  assert.deepEqual(requests, [
+    'https://router.example.com/',
+    'https://router.example.com/api/v1/health',
+    'https://router.example.com/api/admin/health',
+    'https://router.example.com/api/portal/health',
   ]);
 });
 

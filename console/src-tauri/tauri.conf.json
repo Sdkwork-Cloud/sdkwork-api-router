@@ -9,9 +9,20 @@
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173"
   },
+  "bundle": {
+    "active": true,
+    "icon": [
+      "../../apps/sdkwork-router-portal/src-tauri/icons/32x32.png",
+      "../../apps/sdkwork-router-portal/src-tauri/icons/128x128.png",
+      "../../apps/sdkwork-router-portal/src-tauri/icons/128x128@2x.png",
+      "../../apps/sdkwork-router-portal/src-tauri/icons/icon.icns",
+      "../../apps/sdkwork-router-portal/src-tauri/icons/icon.ico"
+    ]
+  },
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "SDKWork API Console",
         "width": 1280,
         "height": 900

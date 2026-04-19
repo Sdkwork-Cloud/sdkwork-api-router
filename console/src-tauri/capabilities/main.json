@@ -1,0 +1,10 @@
+{
+  "identifier": "main",
+  "description": "Allows the local main console window to query the embedded runtime base URL without exposing broader desktop APIs.",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "allow-runtime-base-url"
+  ]
+}

@@ -1,1 +1,1 @@
-{}
+{"main":{"identifier":"main","description":"Allows the local main portal window to manage desktop window chrome and the supervised router-product runtime.","local":true,"windows":["main"],"permissions":["core:window:allow-close","core:window:allow-maximize","core:window:allow-minimize","core:window:allow-toggle-maximize","allow-runtime-base-url","allow-runtime-desktop-snapshot","allow-restart-product-runtime","allow-update-desktop-runtime-access-mode","allow-install-api-router-client-setup","allow-list-api-key-instances"]}}

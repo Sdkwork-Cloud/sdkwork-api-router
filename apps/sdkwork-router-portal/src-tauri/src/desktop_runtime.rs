@@ -339,12 +339,7 @@ fn wait_for_runtime_ready(
         bail!("desktop runtime snapshot did not expose a public base URL");
     };
     let deadline = Instant::now() + RUNTIME_HEALTH_TIMEOUT;
-    let health_urls = [
-        format!("{public_base_url}/"),
-        format!("{public_base_url}/api/health"),
-        format!("{public_base_url}/api/admin/health"),
-        format!("{public_base_url}/api/portal/health"),
-    ];
+    let health_urls = health_probe_urls(public_base_url);
 
     while Instant::now() < deadline {
         if let Some(exit_status) = child
@@ -367,6 +362,15 @@ fn wait_for_runtime_ready(
     )
 }
 
+fn health_probe_urls(public_base_url: &str) -> Vec<String> {
+    vec![
+        format!("{public_base_url}/"),
+        format!("{public_base_url}/api/v1/health"),
+        format!("{public_base_url}/api/admin/health"),
+        format!("{public_base_url}/api/portal/health"),
+    ]
+}
+
 fn endpoint_is_ready(client: &Client, url: &str) -> bool {
     client
         .get(url)
@@ -381,7 +385,9 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use super::{release_like_layout, resolve_product_resource_layout_for_paths};
+    use super::{
+        health_probe_urls, release_like_layout, resolve_product_resource_layout_for_paths,
+    };
 
     fn unique_temp_dir(name: &str) -> PathBuf {
         let suffix = SystemTime::now()
@@ -515,5 +521,21 @@ mod tests {
         fs::remove_file(resource_root.join("release-manifest.json"))
             .expect("release manifest removal should succeed");
         assert!(release_like_layout(&resource_root).is_none());
+    }
+
+    #[test]
+    fn desktop_runtime_health_probes_use_gateway_v1_contract() {
+        let urls = health_probe_urls("http://127.0.0.1:3001");
+
+        assert_eq!(
+            urls,
+            vec![
+                "http://127.0.0.1:3001/".to_owned(),
+                "http://127.0.0.1:3001/api/v1/health".to_owned(),
+                "http://127.0.0.1:3001/api/admin/health".to_owned(),
+                "http://127.0.0.1:3001/api/portal/health".to_owned(),
+            ]
+        );
+        assert!(!urls.iter().any(|url| url.ends_with("/api/health")));
     }
 }

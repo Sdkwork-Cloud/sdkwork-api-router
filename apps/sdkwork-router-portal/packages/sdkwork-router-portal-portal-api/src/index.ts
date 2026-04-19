@@ -66,6 +66,8 @@ const portalSessionTokenKey = 'sdkwork.router.portal.session-token';
 const portalSessionExpiredEvent = 'sdkwork.router.portal.session-expired';
 const portalProxyPrefix = '/api/portal';
 const gatewayProxyPrefix = '/api';
+const unifiedGatewayHealthPath = '/api/v1/health';
+const directGatewayHealthPath = '/health';
 const standalonePortalDevPorts = new Set(['4174', '5174']);
 const standaloneGatewayBaseUrl = 'http://127.0.0.1:8080';
 
@@ -283,7 +285,7 @@ function desktopHealthTargets(snapshot: PortalDesktopRuntimeSnapshot): ProductHe
     {
       id: 'gateway',
       label: 'Gateway',
-      healthUrl: joinUrl(publicBaseUrl, '/api/health'),
+      healthUrl: joinUrl(publicBaseUrl, unifiedGatewayHealthPath),
       detail:
         'The gateway role is responding through the fixed public product entrypoint instead of a desktop-only direct bind.',
     },
@@ -304,9 +306,17 @@ function desktopHealthTargets(snapshot: PortalDesktopRuntimeSnapshot): ProductHe
   ];
 }
 
+function resolveBrowserGatewayHealthUrl(currentOrigin: string, currentPort: string): string {
+  if (currentOrigin && currentPort && standalonePortalDevPorts.has(currentPort)) {
+    return joinUrl(standaloneGatewayBaseUrl, directGatewayHealthPath);
+  }
+
+  return joinUrl(currentOrigin || 'http://127.0.0.1:3001', unifiedGatewayHealthPath);
+}
+
 async function browserHealthTargets(): Promise<ProductHealthTarget[]> {
   const currentOrigin = resolveWindow()?.location?.origin?.trim() ?? 'http://127.0.0.1:3001';
-  const gatewayBaseUrl = await resolveGatewayBaseUrl();
+  const currentPort = resolveWindow()?.location?.port?.trim() ?? '';
 
   return [
     {
@@ -319,7 +329,7 @@ async function browserHealthTargets(): Promise<ProductHealthTarget[]> {
     {
       id: 'gateway',
       label: 'Gateway',
-      healthUrl: joinUrl(gatewayBaseUrl, '/health'),
+      healthUrl: resolveBrowserGatewayHealthUrl(currentOrigin, currentPort),
       detail:
         'Gateway health is checked through the current public or standalone gateway surface.',
     },

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-install-api-router-client-setup"
+description = "Enables the install_api_router_client_setup command without any pre-configured scope."
+commands.allow = ["install_api_router_client_setup"]
+
+[[permission]]
+identifier = "deny-install-api-router-client-setup"
+description = "Denies the install_api_router_client_setup command without any pre-configured scope."
+commands.deny = ["install_api_router_client_setup"]
