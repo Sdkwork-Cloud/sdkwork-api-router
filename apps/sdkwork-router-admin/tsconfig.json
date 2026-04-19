@@ -19,9 +19,9 @@
     "baseUrl": ".",
     "paths": {
       "motion/react": ["src/vendor/motion-react.tsx"],
-      "@sdkwork/ui-pc-react": ["src/types/sdkwork-ui-pc-react-shim.d.ts"],
-      "@sdkwork/ui-pc-react/theme": ["../../../sdkwork-ui/sdkwork-ui-pc-react/dist/theme/index.d.ts"],
-      "@sdkwork/ui-pc-react/*": ["../../../sdkwork-ui/sdkwork-ui-pc-react/dist/*"],
+      "@sdkwork/ui-pc-react": ["../../../sdkwork-ui/sdkwork-ui-pc-react/dist/src/index.d.ts"],
+      "@sdkwork/ui-pc-react/theme": ["../../../sdkwork-ui/sdkwork-ui-pc-react/dist/src/theme/index.d.ts"],
+      "@sdkwork/ui-pc-react/*": ["../../../sdkwork-ui/sdkwork-ui-pc-react/dist/src/*"],
       "@sdkwork/ui-pc-react/styles.css": [
         "../../../sdkwork-ui/sdkwork-ui-pc-react/dist/sdkwork-ui.css"
       ],

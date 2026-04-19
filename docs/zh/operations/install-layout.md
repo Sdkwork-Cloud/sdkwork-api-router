@@ -107,7 +107,7 @@
 5. `config.yml`
 6. `config.json`
 
-`conf.d/*.yaml` 会在主文件之后按字典序加载。
+`conf.d/*.{yaml,yml,json}` 下的受支持片段会在主文件之后按字典序加载。
 
 ## 配置优先级
 
@@ -131,13 +131,17 @@
 
 其中记录：
 
+- manifest 架构与生成元数据：`layoutVersion`、`installedAt`
+- 安装拓扑与版本选择：`installMode`、`productRoot`、`controlRoot`、`releasesRoot`、`releaseRoot`、`releaseVersion`
+- 解析后的目标描述：`target`
+- 已安装服务载荷清单：`installedBinaries`
 - 当前激活版本
 - 当前激活的 release 根目录
 - 实际 router 二进制路径
 - admin / portal 静态资源目录
-- 当前 release 内 `deploy/` 的部署资产根目录
-- 当前 release 内 `release-manifest.json` 与 `README.txt` 的路径
-- config / data / log / run 根目录
+- 当前 release 内的引导数据与 `deploy/` 部署资产根目录：`bootstrapDataRoot`、`deploymentAssetRoot`
+- 当前 release 内 `release-manifest.json` 与 `README.txt` 的路径：`releasePayloadManifest`、`releasePayloadReadmeFile`
+- config / data / log / run 根目录以及主配置文件路径：`configRoot`、`configFile`、`mutableDataRoot`、`logRoot`、`runRoot`
 
 `current/release-manifest.json` 属于生成文件，正常运维中不应手工修改。
 

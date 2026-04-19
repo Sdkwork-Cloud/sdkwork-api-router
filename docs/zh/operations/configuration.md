@@ -113,6 +113,8 @@ desktop 壳会以 `--config-dir <config-root>` 启动 sidecar，并在拉起 sid
 
 如果 `SDKWORK_CONFIG_FILE` 是相对路径，则相对于 `SDKWORK_CONFIG_DIR` 或默认配置根目录解析。
 
+`conf.d/*.{yaml,yml,json}` 中的受支持覆盖文件会在主配置之后按字典序叠加。
+
 ## 内建默认值
 
 当没有配置文件时，服务仍会使用以下默认值启动：
@@ -120,7 +122,7 @@ desktop 壳会以 `--config-dir <config-root>` 启动 sidecar，并在拉起 sid
 - `gateway_bind`：`127.0.0.1:8080`
 - `admin_bind`：`127.0.0.1:8081`
 - `portal_bind`：`127.0.0.1:8082`
-- `web_bind`：`0.0.0.0:3001`
+- `web_bind`：`127.0.0.1:3001`
 - `database_url`：`sqlite://<config-root>/sdkwork-api-router.db`
 - `cache_backend`：`memory`
 - `cache_url`：未设置
@@ -130,6 +132,8 @@ desktop 壳会以 `--config-dir <config-root>` 启动 sidecar，并在拉起 sid
 - `enable_native_dynamic_extensions`：`false`
 - `secret_backend`：`database_encrypted`
 - `secret_keyring_service`：`sdkwork-api-router`
+
+这里的回环 `web_bind` 默认值适用于 native server 产品和原始 standalone 二进制在未提供配置文件、环境变量或 CLI 覆盖时的行为。desktop 的局域网共享模式，以及 Docker / Helm 这类面向远程访问的部署资产，会显式改用 `0.0.0.0:3001`。
 
 ## 配置文件字段
 

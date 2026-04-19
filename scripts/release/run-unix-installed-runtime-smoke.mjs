@@ -15,6 +15,7 @@ import {
   renderRuntimeEnvTemplate,
 } from '../../bin/lib/router-runtime-tooling.mjs';
 import {
+  assertInstalledRuntimeBackupBundle,
   assertInstalledPackagedBootstrapData,
   createInstalledRuntimeSmokeLayout,
   resolveInstalledBootstrapDataRoot,
@@ -409,6 +410,7 @@ export function createUnixInstalledRuntimeSmokePlan({
     installPlan,
     evidencePath: options.evidencePath,
     controlHome: runtimeLayout.controlHome,
+    backupBundlePath: path.join(options.runtimeHome, 'backup-smoke'),
     routerEnvPath: path.join(runtimeLayout.configDir, 'router.env'),
     routerEnvContents: renderUnixInstalledRuntimeSmokeEnvContents({
       runtimeHome: options.runtimeHome,
@@ -422,6 +424,22 @@ export function createUnixInstalledRuntimeSmokePlan({
     stopCommand: {
       command: path.join(runtimeLayout.controlHome, 'bin', 'stop.sh'),
       args: ['--home', runtimeLayout.controlHome, '--wait-seconds', String(DEFAULT_WAIT_SECONDS)],
+    },
+    backupDryRunCommand: {
+      command: path.join(runtimeLayout.controlHome, 'bin', 'backup.sh'),
+      args: ['--home', runtimeLayout.controlHome, '--output', path.join(options.runtimeHome, 'backup-smoke'), '--dry-run'],
+    },
+    backupCommand: {
+      command: path.join(runtimeLayout.controlHome, 'bin', 'backup.sh'),
+      args: ['--home', runtimeLayout.controlHome, '--output', path.join(options.runtimeHome, 'backup-smoke'), '--force'],
+    },
+    restoreDryRunCommand: {
+      command: path.join(runtimeLayout.controlHome, 'bin', 'restore.sh'),
+      args: ['--home', runtimeLayout.controlHome, '--source', path.join(options.runtimeHome, 'backup-smoke'), '--force', '--dry-run'],
+    },
+    restoreCommand: {
+      command: path.join(runtimeLayout.controlHome, 'bin', 'restore.sh'),
+      args: ['--home', runtimeLayout.controlHome, '--source', path.join(options.runtimeHome, 'backup-smoke'), '--force'],
     },
     pidFilePath: path.join(runtimeLayout.runDir, 'router-product-service.pid'),
     stdoutLogPath: path.join(runtimeLayout.logDir, 'router-product-service.stdout.log'),
@@ -451,6 +469,8 @@ export function createUnixInstalledRuntimeSmokeEvidence({
     target: plan.target,
     runtimeHome: toPortableRelativePath(repoRoot, plan.runtimeHome),
     evidencePath: toPortableRelativePath(repoRoot, plan.evidencePath),
+    backupBundlePath: toPortableRelativePath(repoRoot, plan.backupBundlePath),
+    backupRestoreVerified: Boolean(ok),
     healthUrls: plan.healthUrls,
   };
 
@@ -521,6 +541,37 @@ export async function runUnixInstalledRuntimeSmoke({
       plan,
     });
     await waitForHealthUrls(plan.healthUrls);
+    runScriptCommand(plan.stopCommand.command, plan.stopCommand.args, {
+      cwd: plan.runtimeHome,
+      env,
+      label: 'unix installed runtime stop',
+      plan,
+    });
+    runScriptCommand(plan.backupDryRunCommand.command, plan.backupDryRunCommand.args, {
+      cwd: plan.runtimeHome,
+      env,
+      label: 'unix installed runtime backup dry-run',
+      plan,
+    });
+    runScriptCommand(plan.backupCommand.command, plan.backupCommand.args, {
+      cwd: plan.runtimeHome,
+      env,
+      label: 'unix installed runtime backup',
+      plan,
+    });
+    assertInstalledRuntimeBackupBundle(plan.backupBundlePath);
+    runScriptCommand(plan.restoreDryRunCommand.command, plan.restoreDryRunCommand.args, {
+      cwd: plan.runtimeHome,
+      env,
+      label: 'unix installed runtime restore dry-run',
+      plan,
+    });
+    runScriptCommand(plan.restoreCommand.command, plan.restoreCommand.args, {
+      cwd: plan.runtimeHome,
+      env,
+      label: 'unix installed runtime restore',
+      plan,
+    });
   } catch (error) {
     failure = error instanceof Error ? error : new Error(String(error));
   }

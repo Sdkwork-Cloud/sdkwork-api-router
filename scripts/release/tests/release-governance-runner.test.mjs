@@ -342,9 +342,13 @@ test('release governance runner exposes the expected fixed verification sequence
       'release-slo-governance-test',
       'release-slo-governance',
       'release-runtime-tooling-test',
+      'release-desktop-signing-test',
       'release-unix-installed-runtime-smoke-test',
       'release-windows-installed-runtime-smoke-test',
+      'release-linux-docker-compose-smoke-test',
+      'release-linux-helm-render-smoke-test',
       'release-materialize-external-deps-test',
+      'release-materialize-release-catalog-test',
       'release-window-snapshot-test',
       'release-window-snapshot-materializer-test',
       'release-sync-audit-materializer-test',
@@ -374,9 +378,13 @@ test('release governance runner exposes the expected fixed verification sequence
       'release-slo-governance-contracts-test',
       'release-slo-governance-test',
       'release-runtime-tooling-test',
+      'release-desktop-signing-test',
       'release-unix-installed-runtime-smoke-test',
       'release-windows-installed-runtime-smoke-test',
+      'release-linux-docker-compose-smoke-test',
+      'release-linux-helm-render-smoke-test',
       'release-materialize-external-deps-test',
+      'release-materialize-release-catalog-test',
       'release-window-snapshot-test',
       'release-window-snapshot-materializer-test',
       'release-sync-audit-materializer-test',
@@ -463,6 +471,14 @@ test('release governance runner exposes the expected fixed verification sequence
     ],
   );
   assert.deepEqual(
+    planArgsById.get('release-desktop-signing-test'),
+    [
+      '--test',
+      '--experimental-test-isolation=none',
+      'scripts/release/tests/run-desktop-release-signing.test.mjs',
+    ],
+  );
+  assert.deepEqual(
     planArgsById.get('release-unix-installed-runtime-smoke-test'),
     [
       '--test',
@@ -479,11 +495,35 @@ test('release governance runner exposes the expected fixed verification sequence
     ],
   );
   assert.deepEqual(
+    planArgsById.get('release-linux-docker-compose-smoke-test'),
+    [
+      '--test',
+      '--experimental-test-isolation=none',
+      'scripts/release/tests/run-linux-docker-compose-smoke.test.mjs',
+    ],
+  );
+  assert.deepEqual(
+    planArgsById.get('release-linux-helm-render-smoke-test'),
+    [
+      '--test',
+      '--experimental-test-isolation=none',
+      'scripts/release/tests/run-linux-helm-render-smoke.test.mjs',
+    ],
+  );
+  assert.deepEqual(
     planArgsById.get('release-materialize-external-deps-test'),
     [
       '--test',
       '--experimental-test-isolation=none',
       'scripts/release/tests/materialize-external-deps.test.mjs',
+    ],
+  );
+  assert.deepEqual(
+    planArgsById.get('release-materialize-release-catalog-test'),
+    [
+      '--test',
+      '--experimental-test-isolation=none',
+      'scripts/release/tests/materialize-release-catalog.test.mjs',
     ],
   );
   assert.deepEqual(
@@ -664,6 +704,14 @@ test('release governance runner aggregates passing tests and blocking live relea
       },
     ],
     [
+      'release-desktop-signing-test',
+      {
+        status: 0,
+        stdout: 'ok desktop signing test',
+        stderr: '',
+      },
+    ],
+    [
       'release-unix-installed-runtime-smoke-test',
       {
         status: 0,
@@ -680,10 +728,34 @@ test('release governance runner aggregates passing tests and blocking live relea
       },
     ],
     [
+      'release-linux-docker-compose-smoke-test',
+      {
+        status: 0,
+        stdout: 'ok linux docker compose smoke test',
+        stderr: '',
+      },
+    ],
+    [
+      'release-linux-helm-render-smoke-test',
+      {
+        status: 0,
+        stdout: 'ok linux helm render smoke test',
+        stderr: '',
+      },
+    ],
+    [
       'release-materialize-external-deps-test',
       {
         status: 0,
         stdout: 'ok materialize external deps test',
+        stderr: '',
+      },
+    ],
+    [
+      'release-materialize-release-catalog-test',
+      {
+        status: 0,
+        stdout: 'ok release catalog materializer test',
         stderr: '',
       },
     ],
@@ -801,9 +873,13 @@ test('release governance runner aggregates passing tests and blocking live relea
     'release-slo-governance-test',
     'release-slo-governance',
     'release-runtime-tooling-test',
+    'release-desktop-signing-test',
     'release-unix-installed-runtime-smoke-test',
     'release-windows-installed-runtime-smoke-test',
+    'release-linux-docker-compose-smoke-test',
+    'release-linux-helm-render-smoke-test',
     'release-materialize-external-deps-test',
+    'release-materialize-release-catalog-test',
     'release-window-snapshot-test',
     'release-window-snapshot-materializer-test',
     'release-sync-audit-materializer-test',
@@ -830,9 +906,13 @@ test('release governance runner aggregates passing tests and blocking live relea
       ['release-slo-governance-test', true, 0],
       ['release-slo-governance', true, 0],
       ['release-runtime-tooling-test', true, 0],
+      ['release-desktop-signing-test', true, 0],
       ['release-unix-installed-runtime-smoke-test', true, 0],
       ['release-windows-installed-runtime-smoke-test', true, 0],
+      ['release-linux-docker-compose-smoke-test', true, 0],
+      ['release-linux-helm-render-smoke-test', true, 0],
       ['release-materialize-external-deps-test', true, 0],
+      ['release-materialize-release-catalog-test', true, 0],
       ['release-window-snapshot-test', true, 0],
       ['release-window-snapshot-materializer-test', true, 0],
       ['release-sync-audit-materializer-test', true, 0],
@@ -886,6 +966,11 @@ test('release governance runner strips governed release env from node test subpr
     SDKWORK_UI_GIT_REF: 'main',
     SDKWORK_APPBASE_GIT_REF: 'main',
     SDKWORK_CRAW_CHAT_SDK_GIT_REF: 'main',
+    CARGO_BUILD_JOBS: '1',
+    CARGO_TARGET_DIR: 'D:/sdkwork-target/release-build',
+    CMAKE_GENERATOR: 'Visual Studio 17 2022',
+    HOST_CMAKE_GENERATOR: 'Visual Studio 17 2022',
+    SDKWORK_CC_DISABLE_BREPRO: '1',
     UNRELATED_SENTINEL: 'keep-me',
   };
 
@@ -926,6 +1011,11 @@ test('release governance runner strips governed release env from node test subpr
   assert.equal('SDKWORK_UI_GIT_REF' in testEnv, false);
   assert.equal('SDKWORK_APPBASE_GIT_REF' in testEnv, false);
   assert.equal('SDKWORK_CRAW_CHAT_SDK_GIT_REF' in testEnv, false);
+  assert.equal('CARGO_BUILD_JOBS' in testEnv, false);
+  assert.equal('CARGO_TARGET_DIR' in testEnv, false);
+  assert.equal('CMAKE_GENERATOR' in testEnv, false);
+  assert.equal('HOST_CMAKE_GENERATOR' in testEnv, false);
+  assert.equal('SDKWORK_CC_DISABLE_BREPRO' in testEnv, false);
 
   const liveEnv = envByPlanId.get('release-window-snapshot');
   assert.ok(liveEnv);
@@ -960,6 +1050,11 @@ test('release governance runner strips governed release env from node test subpr
   assert.equal(liveEnv.SDKWORK_UI_GIT_REF, 'main');
   assert.equal(liveEnv.SDKWORK_APPBASE_GIT_REF, 'main');
   assert.equal(liveEnv.SDKWORK_CRAW_CHAT_SDK_GIT_REF, 'main');
+  assert.equal(liveEnv.CARGO_BUILD_JOBS, '1');
+  assert.equal(liveEnv.CARGO_TARGET_DIR, 'D:/sdkwork-target/release-build');
+  assert.equal(liveEnv.CMAKE_GENERATOR, 'Visual Studio 17 2022');
+  assert.equal(liveEnv.HOST_CMAKE_GENERATOR, 'Visual Studio 17 2022');
+  assert.equal(liveEnv.SDKWORK_CC_DISABLE_BREPRO, '1');
 });
 
 test('release governance runner distinguishes blocked lanes from real failing lanes', async () => {
@@ -1043,6 +1138,14 @@ test('release governance runner distinguishes blocked lanes from real failing la
       },
     ],
     [
+      'release-desktop-signing-test',
+      {
+        status: 0,
+        stdout: 'ok desktop signing test',
+        stderr: '',
+      },
+    ],
+    [
       'release-unix-installed-runtime-smoke-test',
       {
         status: 0,
@@ -1059,10 +1162,34 @@ test('release governance runner distinguishes blocked lanes from real failing la
       },
     ],
     [
+      'release-linux-docker-compose-smoke-test',
+      {
+        status: 0,
+        stdout: 'ok linux docker compose smoke test',
+        stderr: '',
+      },
+    ],
+    [
+      'release-linux-helm-render-smoke-test',
+      {
+        status: 0,
+        stdout: 'ok linux helm render smoke test',
+        stderr: '',
+      },
+    ],
+    [
       'release-materialize-external-deps-test',
       {
         status: 0,
         stdout: 'ok materialize external deps test',
+        stderr: '',
+      },
+    ],
+    [
+      'release-materialize-release-catalog-test',
+      {
+        status: 0,
+        stdout: 'ok release catalog materializer test',
         stderr: '',
       },
     ],
@@ -1179,9 +1306,13 @@ test('release governance runner distinguishes blocked lanes from real failing la
     'release-slo-governance-contracts-test',
     'release-slo-governance-test',
     'release-runtime-tooling-test',
+    'release-desktop-signing-test',
     'release-unix-installed-runtime-smoke-test',
     'release-windows-installed-runtime-smoke-test',
+    'release-linux-docker-compose-smoke-test',
+    'release-linux-helm-render-smoke-test',
     'release-materialize-external-deps-test',
+    'release-materialize-release-catalog-test',
     'release-window-snapshot-test',
     'release-window-snapshot-materializer-test',
     'release-sync-audit-materializer-test',
@@ -1368,6 +1499,34 @@ test('release governance runner also falls back for runtime tooling checks when 
   assert.equal(result.status, 0);
 });
 
+test('release governance runner also falls back for desktop signing checks when node child execution is blocked', async () => {
+  const module = await import(
+    pathToFileURL(
+      path.join(repoRoot, 'scripts', 'release', 'run-release-governance-checks.mjs'),
+    ).href,
+  );
+
+  const plan = module.listReleaseGovernanceCheckPlans({
+    nodeExecutable: 'node',
+  });
+
+  const result = await module.runReleaseGovernanceCheckPlan({
+    plan: getPlanById(plan, 'release-desktop-signing-test'),
+    spawnSyncImpl() {
+      return {
+        status: 1,
+        stdout: '',
+        stderr: '',
+        error: new Error('spawnSync node EPERM'),
+      };
+    },
+  });
+
+  assert.equal(result.mode, 'fallback');
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 0);
+});
+
 test('release governance runner also falls back for unix installed runtime smoke checks when node child execution is blocked', async () => {
   const module = await import(
     pathToFileURL(
@@ -1409,6 +1568,90 @@ test('release governance runner also falls back for windows installed runtime sm
 
   const result = await module.runReleaseGovernanceCheckPlan({
     plan: getPlanById(plan, 'release-windows-installed-runtime-smoke-test'),
+    spawnSyncImpl() {
+      return {
+        status: 1,
+        stdout: '',
+        stderr: '',
+        error: new Error('spawnSync node EPERM'),
+      };
+    },
+  });
+
+  assert.equal(result.mode, 'fallback');
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 0);
+});
+
+test('release governance runner also falls back for linux docker compose smoke checks when node child execution is blocked', async () => {
+  const module = await import(
+    pathToFileURL(
+      path.join(repoRoot, 'scripts', 'release', 'run-release-governance-checks.mjs'),
+    ).href,
+  );
+
+  const plan = module.listReleaseGovernanceCheckPlans({
+    nodeExecutable: 'node',
+  });
+
+  const result = await module.runReleaseGovernanceCheckPlan({
+    plan: getPlanById(plan, 'release-linux-docker-compose-smoke-test'),
+    spawnSyncImpl() {
+      return {
+        status: 1,
+        stdout: '',
+        stderr: '',
+        error: new Error('spawnSync node EPERM'),
+      };
+    },
+  });
+
+  assert.equal(result.mode, 'fallback');
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 0);
+});
+
+test('release governance runner also falls back for linux helm render smoke checks when node child execution is blocked', async () => {
+  const module = await import(
+    pathToFileURL(
+      path.join(repoRoot, 'scripts', 'release', 'run-release-governance-checks.mjs'),
+    ).href,
+  );
+
+  const plan = module.listReleaseGovernanceCheckPlans({
+    nodeExecutable: 'node',
+  });
+
+  const result = await module.runReleaseGovernanceCheckPlan({
+    plan: getPlanById(plan, 'release-linux-helm-render-smoke-test'),
+    spawnSyncImpl() {
+      return {
+        status: 1,
+        stdout: '',
+        stderr: '',
+        error: new Error('spawnSync node EPERM'),
+      };
+    },
+  });
+
+  assert.equal(result.mode, 'fallback');
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 0);
+});
+
+test('release governance runner also falls back for release catalog materialization checks when node child execution is blocked', async () => {
+  const module = await import(
+    pathToFileURL(
+      path.join(repoRoot, 'scripts', 'release', 'run-release-governance-checks.mjs'),
+    ).href,
+  );
+
+  const plan = module.listReleaseGovernanceCheckPlans({
+    nodeExecutable: 'node',
+  });
+
+  const result = await module.runReleaseGovernanceCheckPlan({
+    plan: getPlanById(plan, 'release-materialize-release-catalog-test'),
     spawnSyncImpl() {
       return {
         status: 1,

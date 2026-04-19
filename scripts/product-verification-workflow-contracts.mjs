@@ -44,6 +44,11 @@ export async function assertProductVerificationWorkflowContracts({
   );
   assert.match(workflow, /README\.md/);
   assert.match(workflow, /README\.zh-CN\.md/);
+  assert.match(
+    workflow,
+    /package\.json/,
+    'product verification workflow must watch the root workspace package because it owns the published tauri:dev and server:dev product entrypoints',
+  );
   assert.match(workflow, /scripts\/check-router-product\.mjs/);
   assert.match(
     workflow,
@@ -92,6 +97,26 @@ export async function assertProductVerificationWorkflowContracts({
   );
   assert.match(
     workflow,
+    /scripts\/run-router-product\.mjs/,
+    'product verification workflow must watch the root packaged product launcher entrypoint',
+  );
+  assert.match(
+    workflow,
+    /scripts\/run-router-product\.test\.mjs/,
+    'product verification workflow must watch the root packaged product launcher contract test',
+  );
+  assert.match(
+    workflow,
+    /scripts\/run-router-product-service\.mjs/,
+    'product verification workflow must watch the shared product service launcher entrypoint',
+  );
+  assert.match(
+    workflow,
+    /scripts\/run-router-product-service\.test\.mjs/,
+    'product verification workflow must watch the shared product service launcher contract test',
+  );
+  assert.match(
+    workflow,
     /scripts\/release\/\*\*/,
     'product verification workflow must watch the shared release-packaging helper subtree',
   );
@@ -113,8 +138,8 @@ export async function assertProductVerificationWorkflowContracts({
   assert.match(workflow, /scripts\/product-verification-workflow\.test\.mjs/);
   assert.match(
     workflow,
-    /Run product governance node tests[\s\S]*?node --test scripts\/product-verification-workflow\.test\.mjs scripts\/check-router-product\.test\.mjs scripts\/browser-runtime-smoke\.test\.mjs scripts\/check-admin-browser-runtime\.test\.mjs scripts\/check-portal-browser-runtime\.test\.mjs scripts\/build-router-desktop-assets\.test\.mjs scripts\/check-router-docs-safety\.test\.mjs scripts\/check-router-frontend-budgets\.test\.mjs scripts\/dev\/tests\/pnpm-launch-lib\.test\.mjs scripts\/prepare-router-portal-desktop-runtime\.test\.mjs scripts\/release-flow-contract\.test\.mjs scripts\/release\/tests\/materialize-release-catalog\.test\.mjs scripts\/release\/tests\/release-workflow\.test\.mjs scripts\/release\/tests\/release-attestation-verify\.test\.mjs scripts\/release\/tests\/docs-product-contract\.test\.mjs apps\/sdkwork-router-portal\/tests\/product-entrypoint-scripts\.test\.mjs/,
-    'product verification workflow must run workflow, packaging, product, and shared pnpm helper tests before the main product gate',
+    /Run product governance node tests[\s\S]*?node --test scripts\/product-verification-workflow\.test\.mjs scripts\/check-router-product\.test\.mjs scripts\/browser-runtime-smoke\.test\.mjs scripts\/check-admin-browser-runtime\.test\.mjs scripts\/check-portal-browser-runtime\.test\.mjs scripts\/build-router-desktop-assets\.test\.mjs scripts\/check-router-docs-safety\.test\.mjs scripts\/check-router-frontend-budgets\.test\.mjs scripts\/run-router-product\.test\.mjs scripts\/run-router-product-service\.test\.mjs bin\/tests\/root-entrypoint-wrappers\.test\.mjs scripts\/dev\/tests\/pnpm-launch-lib\.test\.mjs scripts\/prepare-router-portal-desktop-runtime\.test\.mjs scripts\/release-flow-contract\.test\.mjs scripts\/release\/tests\/materialize-release-catalog\.test\.mjs scripts\/release\/tests\/release-workflow\.test\.mjs scripts\/release\/tests\/release-attestation-verify\.test\.mjs scripts\/release\/tests\/docs-product-contract\.test\.mjs apps\/sdkwork-router-portal\/tests\/product-entrypoint-scripts\.test\.mjs/,
+    'product verification workflow must run workflow, packaging, root product entrypoint, root wrapper, and shared pnpm helper tests before the main product gate',
   );
   assert.match(
     workflow,
@@ -150,5 +175,15 @@ export async function assertProductVerificationWorkflowContracts({
     workflow,
     /Build docs site[\s\S]*?pnpm --dir docs build/,
     'product verification workflow must build the public docs site before the node contract suite runs',
+  );
+  assert.match(
+    workflow,
+    /'\*\.sh'/,
+    'product verification workflow must watch root shell wrappers because they are user-facing compatibility entrypoints',
+  );
+  assert.match(
+    workflow,
+    /'\*\.ps1'/,
+    'product verification workflow must watch root PowerShell wrappers because they are user-facing compatibility entrypoints',
   );
 }

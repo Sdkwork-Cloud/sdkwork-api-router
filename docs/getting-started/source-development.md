@@ -56,6 +56,16 @@ Windows:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\start-dev.ps1
 ```
 
+If you want to enter the product-mode flows directly from the repository root, the workspace package also exposes:
+
+```bash
+pnpm tauri:dev
+pnpm server:dev
+```
+
+`pnpm tauri:dev` launches the portal desktop product path through the shared root entrypoint.
+`pnpm server:dev` launches the router product server path through the same workspace contract.
+
 Characteristics:
 
 - default mode is preview, so the built-in Pingora host becomes the primary browser entrypoint

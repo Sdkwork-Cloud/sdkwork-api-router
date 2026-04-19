@@ -13,6 +13,8 @@ The repository publishes exactly two official user-facing release products:
 - `sdkwork-router-portal-desktop`
   - the portal-first desktop shell with the bundled local product runtime
 
+`release-catalog.json` is published beside those two products as machine-readable release metadata for automation and audit. It is not an installable product.
+
 Everything else in this repository is either a source-development surface, an intermediate build output, or release-governance evidence.
 
 ## Production Entry Points
@@ -20,6 +22,7 @@ Everything else in this repository is either a source-development surface, an in
 Use these pages first when you are planning an online deployment:
 
 - [Production Deployment](./docs/getting-started/production-deployment.md)
+- [Online Release](./docs/getting-started/online-release.md)
 - [Install Layout](./docs/operations/install-layout.md)
 - [Service Management](./docs/operations/service-management.md)
 - [Docker And Helm Assets](./deploy/README.md)
@@ -28,6 +31,9 @@ For local development only, use:
 
 - [Quickstart](./docs/getting-started/quickstart.md)
 - [Source Development](./docs/getting-started/source-development.md)
+
+For repository ergonomics, root-level start/build/install/stop scripts are compatibility wrappers that delegate to `bin/*`.
+The managed operator source of truth stays under `bin/*`, including installed `current/bin/backup.*`, `current/bin/restore.*`, and `current/bin/validate-config.*` entrypoints.
 
 ## Runtime Surfaces
 
@@ -60,7 +66,7 @@ Effective precedence from lowest to highest:
 Operational notes:
 
 - `SDKWORK_CONFIG_DIR` and `SDKWORK_CONFIG_FILE` are discovery inputs.
-- `conf.d/*.yaml` overlays load after the primary file in lexical order.
+- `conf.d/*.{yaml,yml,json}` overlays load after the primary file in lexical order.
 - system installs default to PostgreSQL.
 - SQLite remains supported for local development and explicit portable validation flows.
 
@@ -97,7 +103,7 @@ Generate a production-grade native install:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\install.ps1 -Mode system
 ```
 
-Validate the generated production config before service registration:
+From `<product-root>`, validate the generated production config before service registration:
 
 ```bash
 ./current/bin/validate-config.sh --home ./current
@@ -109,8 +115,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\current\bin\validate-confi
 
 After installation, the installed runtime also exposes:
 
-- `<install-root>/current/bin/validate-config.sh`
-- `<install-root>\current\bin\validate-config.ps1`
+- `<product-root>/current/bin/validate-config.sh`
+- `<product-root>\current\bin\validate-config.ps1`
+- `<product-root>/current/bin/backup.sh`
+- `<product-root>\current\bin\backup.ps1`
+- `<product-root>/current/bin/restore.sh`
+- `<product-root>\current\bin\restore.ps1`
 
 Then continue with:
 
@@ -149,12 +159,17 @@ The local development contract is documented in:
 Release build/package guidance:
 
 - [Release Builds](./docs/getting-started/release-builds.md)
+- [Online Release](./docs/getting-started/online-release.md)
 
 Common verification baseline:
 
 ```bash
 node --test scripts/check-router-docs-safety.test.mjs
 node --test bin/tests/router-runtime-tooling.test.mjs
+node --test scripts/release/tests/release-workflow.test.mjs
+node --test scripts/release-governance-workflow.test.mjs
+node --test scripts/product-verification-workflow.test.mjs
+node --test scripts/rust-verification-workflow.test.mjs
 node --test scripts/release/tests/run-unix-installed-runtime-smoke.test.mjs scripts/release/tests/run-windows-installed-runtime-smoke.test.mjs scripts/release/tests/deployment-assets.test.mjs
 cargo test -p sdkwork-api-config --test config_loading
 cargo test -p router-product-service

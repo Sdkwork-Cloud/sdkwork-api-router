@@ -51,6 +51,7 @@ Portable layout:
 Notes:
 
 - `current/` is the control layer. It contains wrapper scripts and service descriptors.
+- `current/bin/` is the stable operator surface for `start.*`, `stop.*`, `validate-config.*`, `backup.*`, and `restore.*`.
 - `releases/<version>/` is the active immutable payload copied from the packaged server bundle.
 - `config/`, `data/`, `log/`, and `run/` stay writable and upgrade-safe.
 
@@ -108,7 +109,7 @@ Primary config discovery order:
 5. `config.yml`
 6. `config.json`
 
-`conf.d/*.yaml` is loaded after the primary file in lexical order.
+Supported overlays under `conf.d/*.{yaml,yml,json}` are loaded after the primary file in lexical order.
 
 ## Config Precedence
 
@@ -132,13 +133,17 @@ The generated `current/release-manifest.json` is the control-plane bridge betwee
 
 It records:
 
+- manifest schema and generation metadata: `layoutVersion`, `installedAt`
+- install topology and release selection: `installMode`, `productRoot`, `controlRoot`, `releasesRoot`, `releaseRoot`, `releaseVersion`
+- resolved target descriptor: `target`
+- installed service payload inventory: `installedBinaries`
 - active release version
 - active release root
 - resolved router binary path
 - resolved admin and portal site roots
-- the installed `deploy/` asset root inside the active release payload
-- the installed release payload `release-manifest.json` and `README.txt` paths
-- mutable config, data, log, and run roots
+- the installed bootstrap data and `deploy/` asset roots inside the active release payload: `bootstrapDataRoot`, `deploymentAssetRoot`
+- the installed release payload `release-manifest.json` and `README.txt` paths: `releasePayloadManifest`, `releasePayloadReadmeFile`
+- mutable config, data, log, and run roots plus the canonical config file path: `configRoot`, `configFile`, `mutableDataRoot`, `logRoot`, `runRoot`
 
 Operators should treat `current/release-manifest.json` as generated state. Do not hand-edit it during normal operation.
 

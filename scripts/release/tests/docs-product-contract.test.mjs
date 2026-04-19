@@ -34,6 +34,12 @@ test('official packaging docs describe only the server and portal desktop produc
   assert.match(buildAndPackaging, /sdkwork-api-router-product-server-<platform>-<arch>\.manifest\.json/i);
   assert.match(buildAndPackaging, /sdkwork-router-portal-desktop-<platform>-<arch>\.<ext>\.sha256\.txt/);
   assert.match(buildAndPackaging, /sdkwork-router-portal-desktop-<platform>-<arch>\.manifest\.json/);
+  assert.match(buildAndPackaging, /release-catalog\.json/);
+  assert.match(buildAndPackaging, /artifacts\/release\/release-catalog\.json/);
+  assert.match(buildAndPackaging, /generatedAt/);
+  assert.match(buildAndPackaging, /variantKind/);
+  assert.match(buildAndPackaging, /primaryFileSizeBytes/);
+  assert.match(buildAndPackaging, /checksumAlgorithm/);
   assert.doesNotMatch(buildAndPackaging, /pnpm --dir console/);
   assert.doesNotMatch(buildAndPackaging, /console\/dist/);
   assert.match(releaseBuilds, /sdkwork-api-router-product-server-<platform>-<arch>/i);
@@ -93,6 +99,8 @@ test('repository landing docs keep the official product line and installed valid
   for (const content of [readme, zhReadme]) {
     assert.match(content, /sdkwork-api-router-product-server/);
     assert.match(content, /sdkwork-router-portal-desktop/);
+    assert.match(content, /release-catalog\.json/);
+    assert.match(content, /metadata|元数据/);
     assert.match(content, /current\/bin\/validate-config\.sh --home/);
     assert.match(content, /current\\bin\\validate-config\.ps1 -Home/);
     assert.doesNotMatch(content, /<install-root>\/bin\/validate-config\.sh/);
@@ -137,6 +145,12 @@ test('localized product docs follow the same official packaging contract', () =>
   assert.match(zhBuildAndPackaging, /sdkwork-api-router-product-server-<platform>-<arch>\.manifest\.json/);
   assert.match(zhBuildAndPackaging, /sdkwork-router-portal-desktop-<platform>-<arch>\.<ext>\.sha256\.txt/);
   assert.match(zhBuildAndPackaging, /sdkwork-router-portal-desktop-<platform>-<arch>\.manifest\.json/);
+  assert.match(zhBuildAndPackaging, /release-catalog\.json/);
+  assert.match(zhBuildAndPackaging, /artifacts\/release\/release-catalog\.json/);
+  assert.match(zhBuildAndPackaging, /generatedAt/);
+  assert.match(zhBuildAndPackaging, /variantKind/);
+  assert.match(zhBuildAndPackaging, /primaryFileSizeBytes/);
+  assert.match(zhBuildAndPackaging, /checksumAlgorithm/);
   assert.doesNotMatch(zhBuildAndPackaging, /pnpm --dir console/);
   assert.match(zhReleaseBuilds, /sdkwork-api-router-product-server-<platform>-<arch>/);
   assert.match(zhReleaseBuilds, /sdkwork-api-router-product-server-<platform>-<arch>\.manifest\.json/);

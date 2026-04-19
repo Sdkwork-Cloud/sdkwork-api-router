@@ -21,7 +21,7 @@ They are discovery inputs. The runtime reads them first so it can locate the act
 
 System installs default to PostgreSQL. Portable server installs and local-development flows may still use SQLite.
 
-Runtime config reload keeps using the original process-start environment fallback snapshot. Editing `router.yaml` or `conf.d/*.yaml` while the service is running is supported for the reloadable fields listed below, but changing parent-shell environment variables after the process has already started is not observed.
+Runtime config reload keeps using the original process-start environment fallback snapshot. Editing `router.yaml` or files under `conf.d/*.{yaml,yml,json}` while the service is running is supported for the reloadable fields listed below, but changing parent-shell environment variables after the process has already started is not observed.
 
 All three standalone services use a durable node identity for shared runtime coordination. `gateway-service` and `admin-api-service` participate in extension-runtime rollout, while `gateway-service`, `admin-api-service`, and `portal-api-service` all participate in standalone config rollout. Set `SDKWORK_SERVICE_INSTANCE_ID` when you want that identity to be stable across restarts and easy to correlate in rollout status.
 
@@ -124,7 +124,7 @@ If no config file exists, the services still start with these values:
 - `gateway_bind`: `127.0.0.1:8080`
 - `admin_bind`: `127.0.0.1:8081`
 - `portal_bind`: `127.0.0.1:8082`
-- `web_bind`: `0.0.0.0:3001`
+- `web_bind`: `127.0.0.1:3001`
 - `database_url`: `sqlite://<config-root>/sdkwork-api-router.db`
 - `cache_backend`: `memory`
 - `cache_url`: unset
@@ -138,6 +138,8 @@ If no config file exists, the services still start with these values:
 - `runtime_snapshot_interval_secs`: `0`
 - `secret_backend`: `database_encrypted`
 - `secret_keyring_service`: `sdkwork-api-router`
+
+The loopback `web_bind` default applies to the native server product and raw standalone binaries when config, environment, and CLI overrides are absent. Desktop shared-access mode and container or Helm deployment assets opt into `0.0.0.0:3001` explicitly because those runtime surfaces are intended to accept remote traffic.
 
 ## File Schema
 

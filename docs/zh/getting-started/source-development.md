@@ -56,6 +56,16 @@ Windows：
 powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\start-dev.ps1
 ```
 
+如果你希望直接从仓库根目录进入产品模式开发，工作区还提供统一入口：
+
+```bash
+pnpm tauri:dev
+pnpm server:dev
+```
+
+`pnpm tauri:dev` 会通过统一根入口启动 portal desktop 产品路径。
+`pnpm server:dev` 会通过同一套工作区契约启动 router product server 路径。
+
 特点：
 
 - 默认模式是 preview，内建 Pingora Web Host 会成为主要统一浏览器入口

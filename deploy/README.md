@@ -19,9 +19,9 @@ For native `system` installs, OS-standard directories, service registration, and
 
 ## Runtime Contract
 
-These assets intentionally reuse the same production runtime contract:
+These assets intentionally reuse the same production runtime contract, with one container-specific difference:
 
-- public web bind: `0.0.0.0:3001`
+- public web bind: `0.0.0.0:3001` for Docker and Helm, while native server installs default to `127.0.0.1:3001` unless configured otherwise
 - internal gateway/admin/portal binds: `127.0.0.1:8080/8081/8082`
 - bundled bootstrap data under `/opt/sdkwork/data`
 - bundled admin and portal assets under `/opt/sdkwork/sites/*/dist`
@@ -42,7 +42,7 @@ docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/.env
 ```bash
 helm upgrade --install sdkwork-api-router deploy/helm/sdkwork-api-router \
   --set image.repository=ghcr.io/your-org/sdkwork-api-router \
-  --set image.tag=2026.04.15 \
+  --set image.tag=<release-tag> \
   --set secrets.databaseUrl='postgresql://sdkwork:change-me@postgresql:5432/sdkwork_api_router' \
   --set secrets.adminJwtSigningSecret='change-me-admin' \
   --set secrets.portalJwtSigningSecret='change-me-portal' \

@@ -5,6 +5,7 @@
 本页只负责正式发布相关的构建与打包产物生成。
 
 如果你要做线上部署、PostgreSQL 初始化、服务注册，或按操作系统标准目录进行 server 安装，请继续阅读[生产部署](/zh/getting-started/production-deployment)。
+如果你要查看 GitHub 托管发布流程本身、仓库变量、签名 hook 或发布后校验，请继续阅读[线上发布](/zh/getting-started/online-release)。
 
 ## 正式产品
 
@@ -125,10 +126,26 @@ desktop 运行时契约：
 - 访问模式切换：
   - 仅本机：`127.0.0.1:3001`
   - 局域网共享：`0.0.0.0:3001`
+- 局域网共享 bind 只是 desktop 的显式访问模式覆盖；native server 产品在未被配置文件、环境变量或 CLI 改写时仍默认 `127.0.0.1:3001`
 - 可变运行时状态落在操作系统标准的每用户 `config`、`data`、`log` 目录
 - 桌面壳把访问模式持久化到 `desktop-runtime.json`
 - 桌面壳会生成 sidecar 的标准 `router.yaml`
 - 正式发布目录不再暴露原始 Tauri bundle 树，而只暴露标准化的 `sdkwork-router-portal-desktop-*` 产品文件
+
+### Desktop 签名钩子
+
+正式 desktop 发布流在收集规范化安装包之前支持一个显式的签名阶段。
+
+- 当发布必须 fail-closed 时，设置 `SDKWORK_RELEASE_DESKTOP_SIGNING_REQUIRED=true`
+- 可使用以下签名钩子变量之一：
+  - `SDKWORK_RELEASE_DESKTOP_WINDOWS_SIGN_HOOK`
+  - `SDKWORK_RELEASE_DESKTOP_LINUX_SIGN_HOOK`
+  - `SDKWORK_RELEASE_DESKTOP_MACOS_SIGN_HOOK`
+  - `SDKWORK_RELEASE_DESKTOP_SIGN_HOOK` 作为通用兜底
+- 钩子命令支持占位符替换：`{app}`、`{platform}`、`{arch}`、`{target}`、`{file}`、`{evidence}`
+- release workflow 会把签名证据写入 `artifacts/release-governance/desktop-release-signing-<platform>-<arch>.json`
+
+仓库侧契约只保证安装包发现、签名钩子执行和证据落盘；具体的平台签名或 notarization 工具链由钩子命令自身负责。
 
 ## Server 打包契约
 
@@ -177,6 +194,18 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\install.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\install.ps1 -Mode system
 ```
 
+自定义 `<product-root>` 安装根目录：
+
+```bash
+./bin/install.sh --mode system --home <product-root>
+```
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\install.ps1 -Mode system -Home <product-root>
+```
+
+当需要把仓库侧的安装生成直接落到指定的 `<product-root>` 时，请使用 `--home` 或 `-Home`。生成完成后，请按照[生产部署](/zh/getting-started/production-deployment)中的方式，从已安装的 product root 执行校验和运维操作。
+
 `system` 模式是正式 server 安装路径，默认数据库契约为 PostgreSQL。
 
 ## Dry Run
@@ -185,12 +214,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\install.ps1 -Mode syst
 ./bin/build.sh --dry-run
 ./bin/install.sh --dry-run
 ./bin/install.sh --mode system --dry-run
+./bin/install.sh --mode system --home <product-root> --dry-run
 ```
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\build.ps1 --dry-run
-powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\install.ps1 --dry-run
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\build.ps1 -DryRun
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\install.ps1 -DryRun
 powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\install.ps1 -Mode system -DryRun
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\install.ps1 -Mode system -Home <product-root> -DryRun
 ```
 
 ## 验证
@@ -198,11 +229,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\install.ps1 -Mode syst
 ```bash
 node --test bin/tests/router-runtime-tooling.test.mjs
 node --test scripts/release/tests/release-workflow.test.mjs scripts/release/tests/run-unix-installed-runtime-smoke.test.mjs scripts/release/tests/run-windows-installed-runtime-smoke.test.mjs scripts/release/tests/deployment-assets.test.mjs
+node --test scripts/release-governance-workflow.test.mjs
+node --test scripts/product-verification-workflow.test.mjs
+node --test scripts/rust-verification-workflow.test.mjs
 node --test scripts/release-flow-contract.test.mjs scripts/prepare-router-portal-desktop-runtime.test.mjs apps/sdkwork-router-portal/tests/portal-desktop-api-base.test.mjs apps/sdkwork-router-portal/tests/portal-desktop-sidecar-runtime.test.mjs
 ```
 
 ## 下一步
 
 - [生产部署](/zh/getting-started/production-deployment)
+- [线上发布](/zh/getting-started/online-release)
 - [安装布局](/zh/operations/install-layout)
 - [服务管理](/zh/operations/service-management)

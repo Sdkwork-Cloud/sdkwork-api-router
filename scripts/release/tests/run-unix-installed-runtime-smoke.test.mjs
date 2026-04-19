@@ -140,6 +140,40 @@ test('unix installed runtime smoke script exposes a parseable CLI contract for r
     assert.deepEqual(plan.startCommand.args, ['--home', path.join(options.runtimeHome, 'current'), '--wait-seconds', '120']);
     assert.equal(plan.stopCommand.command, path.join(options.runtimeHome, 'current', 'bin', 'stop.sh'));
     assert.deepEqual(plan.stopCommand.args, ['--home', path.join(options.runtimeHome, 'current'), '--wait-seconds', '120']);
+    assert.equal(plan.backupBundlePath, path.join(options.runtimeHome, 'backup-smoke'));
+    assert.equal(plan.backupDryRunCommand.command, path.join(options.runtimeHome, 'current', 'bin', 'backup.sh'));
+    assert.deepEqual(plan.backupDryRunCommand.args, [
+      '--home',
+      path.join(options.runtimeHome, 'current'),
+      '--output',
+      path.join(options.runtimeHome, 'backup-smoke'),
+      '--dry-run',
+    ]);
+    assert.equal(plan.backupCommand.command, path.join(options.runtimeHome, 'current', 'bin', 'backup.sh'));
+    assert.deepEqual(plan.backupCommand.args, [
+      '--home',
+      path.join(options.runtimeHome, 'current'),
+      '--output',
+      path.join(options.runtimeHome, 'backup-smoke'),
+      '--force',
+    ]);
+    assert.equal(plan.restoreDryRunCommand.command, path.join(options.runtimeHome, 'current', 'bin', 'restore.sh'));
+    assert.deepEqual(plan.restoreDryRunCommand.args, [
+      '--home',
+      path.join(options.runtimeHome, 'current'),
+      '--source',
+      path.join(options.runtimeHome, 'backup-smoke'),
+      '--force',
+      '--dry-run',
+    ]);
+    assert.equal(plan.restoreCommand.command, path.join(options.runtimeHome, 'current', 'bin', 'restore.sh'));
+    assert.deepEqual(plan.restoreCommand.args, [
+      '--home',
+      path.join(options.runtimeHome, 'current'),
+      '--source',
+      path.join(options.runtimeHome, 'backup-smoke'),
+      '--force',
+    ]);
     assert.match(plan.routerEnvContents, /SDKWORK_WEB_BIND="127\.0\.0\.1:19483"/);
     assert.match(plan.routerEnvContents, /SDKWORK_GATEWAY_BIND="127\.0\.0\.1:19480"/);
     assert.match(plan.routerEnvContents, /SDKWORK_ADMIN_BIND="127\.0\.0\.1:19481"/);
@@ -156,6 +190,8 @@ test('unix installed runtime smoke script exposes a parseable CLI contract for r
     assert.deepEqual(successEvidence.healthUrls, plan.healthUrls);
     assert.equal(successEvidence.runtimeHome, path.relative(repoRoot, options.runtimeHome).replaceAll('\\', '/'));
     assert.equal(successEvidence.evidencePath, path.relative(repoRoot, options.evidencePath).replaceAll('\\', '/'));
+    assert.equal(successEvidence.backupBundlePath, path.relative(repoRoot, plan.backupBundlePath).replaceAll('\\', '/'));
+    assert.equal(successEvidence.backupRestoreVerified, true);
 
     const failureEvidence = module.createUnixInstalledRuntimeSmokeEvidence({
       plan,
@@ -164,6 +200,7 @@ test('unix installed runtime smoke script exposes a parseable CLI contract for r
     });
     assert.equal(failureEvidence.ok, false);
     assert.equal(failureEvidence.failure.message, 'health probe failed');
+    assert.equal(failureEvidence.backupRestoreVerified, false);
   } finally {
     rmSync(releaseOutputDir, { recursive: true, force: true });
   }

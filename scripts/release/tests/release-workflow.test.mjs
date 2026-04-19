@@ -47,6 +47,17 @@ function withNode24JavaScriptActionsEnv(workflowText) {
   );
 }
 
+function withWorkflowDispatchInputs(workflowText) {
+  if (/workflow_dispatch:\s*[\s\S]*?inputs:\s*[\s\S]*?release_tag:\s*[\s\S]*?git_ref:/m.test(workflowText)) {
+    return workflowText;
+  }
+
+  return workflowText.replace(
+    /workflow_dispatch:\s*(\r?\n)/,
+    `workflow_dispatch:\n    inputs:\n      release_tag:\n        description: Existing release tag to publish\n        required: true\n        type: string\n      git_ref:\n        description: Git ref to build; defaults to refs/tags/<release_tag>\n        required: false\n        type: string$1`,
+  );
+}
+
 function writeReleaseWorkflowContractFixture({
   workflowText,
   coverage = {
@@ -62,7 +73,9 @@ function writeReleaseWorkflowContractFixture({
 
   writeFileSync(
     path.join(fixtureRoot, '.github', 'workflows', 'release.yml'),
-    includeNode24JavaScriptActionsEnv ? withNode24JavaScriptActionsEnv(workflowText) : workflowText,
+    includeNode24JavaScriptActionsEnv
+      ? withNode24JavaScriptActionsEnv(withWorkflowDispatchInputs(workflowText))
+      : withWorkflowDispatchInputs(workflowText),
     'utf8',
   );
 
@@ -162,6 +175,14 @@ test('release workflow publishes only official server and portal desktop product
   const workflow = read('.github/workflows/release.yml');
 
   assert.match(workflow, /FORCE_JAVASCRIPT_ACTIONS_TO_NODE24:\s*'true'/);
+  assert.match(
+    workflow,
+    /workflow_dispatch:\s*[\s\S]*?inputs:\s*[\s\S]*?release_tag:\s*[\s\S]*?description:\s*Existing release tag to publish[\s\S]*?required:\s*true[\s\S]*?type:\s*string[\s\S]*?git_ref:\s*[\s\S]*?description:\s*Git ref to build; defaults to refs\/tags\/<release_tag>[\s\S]*?required:\s*false[\s\S]*?type:\s*string/,
+  );
+  assert.match(
+    workflow,
+    /Resolve release target[\s\S]*?if \[\[ \"\$\{GITHUB_EVENT_NAME\}\" == \"push\" \]\]; then[\s\S]*?release_tag=\"\$\{GITHUB_REF_NAME\}\"[\s\S]*?git_ref=\"\$\{GITHUB_REF\}\"[\s\S]*?else[\s\S]*?release_tag=\"\$\{\{\s*github\.event\.inputs\.release_tag\s*\}\}\"[\s\S]*?git_ref=\"\$\{\{\s*github\.event\.inputs\.git_ref\s*\}\}\"[\s\S]*?if \[\[ -z \"\$git_ref\" \]\]; then[\s\S]*?git_ref=\"refs\/tags\/\$release_tag\"/,
+  );
   assert.match(workflow, /pnpm\/action-setup@v5/);
   assert.match(workflow, /actions\/upload-artifact@v6/);
   assert.match(workflow, /actions\/download-artifact@v8/);
@@ -170,8 +191,15 @@ test('release workflow publishes only official server and portal desktop product
   assert.match(workflow, /native-release:/);
   assert.match(workflow, /publish:/);
   assert.match(workflow, /node scripts\/release\/run-desktop-release-build\.mjs --app portal --target \$\{\{ matrix\.target \}\}/);
-  assert.match(workflow, /native-release:[\s\S]*?Collect native release assets[\s\S]*?Run installed native runtime smoke on Windows/);
-  assert.match(workflow, /native-release:[\s\S]*?Collect native release assets[\s\S]*?Run installed native runtime smoke on Unix/);
+  assert.match(workflow, /node scripts\/release\/run-desktop-release-signing\.mjs --app portal --platform \$\{\{ matrix\.platform \}\} --arch \$\{\{ matrix\.arch \}\} --target \$\{\{ matrix\.target \}\} --evidence-path artifacts\/release-governance\/desktop-release-signing-\$\{\{ matrix\.platform \}\}-\$\{\{ matrix\.arch \}\}\.json/);
+  assert.match(
+    workflow,
+    /Run portal desktop signing hook[\s\S]*?env:[\s\S]*?SDKWORK_RELEASE_DESKTOP_SIGNING_REQUIRED:\s*\$\{\{\s*vars\.SDKWORK_RELEASE_DESKTOP_SIGNING_REQUIRED\s*\|\|\s*''\s*\}\}[\s\S]*?SDKWORK_RELEASE_DESKTOP_WINDOWS_SIGN_HOOK:\s*\$\{\{\s*secrets\.SDKWORK_RELEASE_DESKTOP_WINDOWS_SIGN_HOOK\s*\|\|\s*vars\.SDKWORK_RELEASE_DESKTOP_WINDOWS_SIGN_HOOK\s*\|\|\s*''\s*\}\}[\s\S]*?SDKWORK_RELEASE_DESKTOP_LINUX_SIGN_HOOK:\s*\$\{\{\s*secrets\.SDKWORK_RELEASE_DESKTOP_LINUX_SIGN_HOOK\s*\|\|\s*vars\.SDKWORK_RELEASE_DESKTOP_LINUX_SIGN_HOOK\s*\|\|\s*''\s*\}\}[\s\S]*?SDKWORK_RELEASE_DESKTOP_MACOS_SIGN_HOOK:\s*\$\{\{\s*secrets\.SDKWORK_RELEASE_DESKTOP_MACOS_SIGN_HOOK\s*\|\|\s*vars\.SDKWORK_RELEASE_DESKTOP_MACOS_SIGN_HOOK\s*\|\|\s*''\s*\}\}[\s\S]*?SDKWORK_RELEASE_DESKTOP_SIGN_HOOK:\s*\$\{\{\s*secrets\.SDKWORK_RELEASE_DESKTOP_SIGN_HOOK\s*\|\|\s*vars\.SDKWORK_RELEASE_DESKTOP_SIGN_HOOK\s*\|\|\s*''\s*\}\}/,
+  );
+  assert.match(workflow, /native-release:[\s\S]*?Build portal desktop release[\s\S]*?Run portal desktop signing hook[\s\S]*?Collect native release assets[\s\S]*?Run installed native runtime smoke on Windows/);
+  assert.match(workflow, /native-release:[\s\S]*?Build portal desktop release[\s\S]*?Run portal desktop signing hook[\s\S]*?Collect native release assets[\s\S]*?Run installed native runtime smoke on Unix/);
+  assert.match(workflow, /Upload desktop signing evidence/);
+  assert.match(workflow, /Generate desktop signing evidence attestation/);
   assert.match(workflow, /node scripts\/release\/materialize-release-catalog\.mjs --release-tag \$\{\{ needs\.prepare\.outputs\.release_tag \}\} --assets-root artifacts\/release --output artifacts\/release\/release-catalog\.json/);
   assert.match(workflow, /Generate release catalog attestation/);
   assert.match(workflow, /subject-path:\s*artifacts\/release\/release-catalog\.json/);
@@ -644,10 +672,23 @@ jobs:
       release_tag: \${{ steps.resolve.outputs.release_tag }}
       git_ref: \${{ steps.resolve.outputs.git_ref }}
     steps:
-      - id: resolve
+      - name: Resolve release target
+        id: resolve
+        shell: bash
         run: |
-          echo "release_tag=release-fixture" >> "$GITHUB_OUTPUT"
-          echo "git_ref=refs/tags/release-fixture" >> "$GITHUB_OUTPUT"
+          if [[ "\${GITHUB_EVENT_NAME}" == "push" ]]; then
+            release_tag="\${GITHUB_REF_NAME}"
+            git_ref="\${GITHUB_REF}"
+          else
+            release_tag="\${{ github.event.inputs.release_tag }}"
+            git_ref="\${{ github.event.inputs.git_ref }}"
+            if [[ -z "$git_ref" ]]; then
+              git_ref="refs/tags/$release_tag"
+            fi
+          fi
+
+          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+          echo "git_ref=$git_ref" >> "$GITHUB_OUTPUT"
 
   rust-dependency-audit:
     needs: prepare

@@ -18,8 +18,13 @@ test('repository exposes a cached package-group Rust verification workflow', () 
 
   assert.match(workflow, /pull_request:/);
   assert.match(workflow, /workflow_dispatch:/);
+  assert.match(workflow, /FORCE_JAVASCRIPT_ACTIONS_TO_NODE24:\s*'true'/);
   assert.match(workflow, /actions\/checkout@v5/);
   assert.match(workflow, /actions\/setup-node@v5/);
+  assert.match(
+    workflow,
+    /Setup Node\.js[\s\S]*?actions\/setup-node@v5[\s\S]*?node-version:\s*22[\s\S]*?package-manager-cache:\s*false/,
+  );
   assert.match(workflow, /dtolnay\/rust-toolchain@stable/);
   assert.match(workflow, /Swatinem\/rust-cache@v2/);
   assert.match(workflow, /group:\s*interface-openapi/);
@@ -62,5 +67,9 @@ test('repository exposes a cached package-group Rust verification workflow', () 
   assert.match(workflow, /runs-on:\s*windows-latest/);
   assert.match(workflow, /github\.event_name == 'workflow_dispatch'/);
   assert.match(workflow, /github\.event\.inputs\.group == 'workspace'/);
+  assert.match(
+    workflow,
+    /rust-verification-windows-workspace:[\s\S]*?Setup Node\.js[\s\S]*?actions\/setup-node@v5[\s\S]*?node-version:\s*22[\s\S]*?package-manager-cache:\s*false/,
+  );
   assert.match(workflow, /node scripts\/check-rust-verification-matrix\.mjs --group workspace/);
 });

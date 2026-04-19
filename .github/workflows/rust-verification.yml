@@ -26,6 +26,9 @@ on:
         required: false
         type: string
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   rust-verification:
     name: Rust verification (${{ matrix.group }})
@@ -54,6 +57,7 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version: 22
+          package-manager-cache: false
 
       - name: Install Rust toolchain
         if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.group == '' || github.event.inputs.group == matrix.group }}
@@ -87,6 +91,7 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version: 22
+          package-manager-cache: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable

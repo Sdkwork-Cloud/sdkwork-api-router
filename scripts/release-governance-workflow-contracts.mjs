@@ -17,8 +17,18 @@ export async function assertReleaseGovernanceWorkflowContracts({
 
   assert.match(workflow, /pull_request:/);
   assert.match(workflow, /workflow_dispatch:/);
+  assert.match(
+    workflow,
+    /FORCE_JAVASCRIPT_ACTIONS_TO_NODE24:\s*'true'/,
+    'release-governance workflow must force JavaScript actions onto the Node24 runtime',
+  );
   assert.match(workflow, /actions\/checkout@v5/);
   assert.match(workflow, /actions\/setup-node@v5/);
+  assert.match(
+    workflow,
+    /actions\/setup-node@v5[\s\S]*?node-version:\s*22[\s\S]*?package-manager-cache:\s*false/,
+    'release-governance workflow must disable setup-node package-manager auto-cache in its non-pnpm job',
+  );
   assert.match(workflow, /\.github\/workflows\/release-governance\.yml/, 'release-governance workflow must watch its own workflow file');
   assert.match(workflow, /scripts\/release\/\*\*/);
   assert.match(

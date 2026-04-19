@@ -25,6 +25,7 @@ const englishSidebar = [
     text: 'Getting Started',
     items: [
       { text: 'Production Deployment', link: '/getting-started/production-deployment' },
+      { text: 'Online Release', link: '/getting-started/online-release' },
       { text: 'Quickstart', link: '/getting-started/quickstart' },
       { text: 'Installation', link: '/getting-started/installation' },
       { text: 'Source Development', link: '/getting-started/source-development' },
@@ -84,6 +85,7 @@ const chineseSidebar = [
     text: '开始使用',
     items: [
       { text: '生产部署', link: '/zh/getting-started/production-deployment' },
+      { text: '线上发布', link: '/zh/getting-started/online-release' },
       { text: '快速开始', link: '/zh/getting-started/quickstart' },
       { text: '安装准备', link: '/zh/getting-started/installation' },
       { text: '源码运行', link: '/zh/getting-started/source-development' },

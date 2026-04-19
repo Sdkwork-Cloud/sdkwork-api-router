@@ -13,6 +13,7 @@ export const DOC_BOOTSTRAP_SCAN_ROOTS = [
   'docs/operations',
   'docs/zh/getting-started',
   'docs/zh/api-reference',
+  'docs/zh/operations',
 ];
 
 export const DOC_BOOTSTRAP_SCAN_FILES = [

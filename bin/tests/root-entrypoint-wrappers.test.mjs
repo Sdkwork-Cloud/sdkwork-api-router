@@ -17,6 +17,9 @@ test('root shell entrypoints stay thin compatibility wrappers over bin-managed s
     ['stop-dev.sh', 'bin/stop-dev.sh'],
     ['build.sh', 'bin/build.sh'],
     ['install.sh', 'bin/install.sh'],
+    ['backup.sh', 'bin/backup.sh'],
+    ['restore.sh', 'bin/restore.sh'],
+    ['validate-config.sh', 'bin/validate-config.sh'],
   ];
 
   for (const [rootScript, targetScript] of shellEntrypoints) {
@@ -36,6 +39,9 @@ test('root powershell entrypoints stay thin compatibility wrappers over bin-mana
     ['stop-dev.ps1', 'bin\\stop-dev.ps1'],
     ['build.ps1', 'bin\\build.ps1'],
     ['install.ps1', 'bin\\install.ps1'],
+    ['backup.ps1', 'bin\\backup.ps1'],
+    ['restore.ps1', 'bin\\restore.ps1'],
+    ['validate-config.ps1', 'bin\\validate-config.ps1'],
   ];
 
   for (const [rootScript, targetScript] of psEntrypoints) {

@@ -159,6 +159,56 @@ test('windows installed runtime smoke script exposes a parseable CLI contract fo
       '-WaitSeconds',
       '120',
     ]);
+    assert.equal(plan.backupBundlePath, path.join(options.runtimeHome, 'backup-smoke'));
+    assert.deepEqual(plan.backupDryRunCommand.args, [
+      '-NoProfile',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      path.join(options.runtimeHome, 'current', 'bin', 'backup.ps1'),
+      '-Home',
+      path.join(options.runtimeHome, 'current'),
+      '-OutputPath',
+      path.join(options.runtimeHome, 'backup-smoke'),
+      '-DryRun',
+    ]);
+    assert.deepEqual(plan.backupCommand.args, [
+      '-NoProfile',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      path.join(options.runtimeHome, 'current', 'bin', 'backup.ps1'),
+      '-Home',
+      path.join(options.runtimeHome, 'current'),
+      '-OutputPath',
+      path.join(options.runtimeHome, 'backup-smoke'),
+      '-Force',
+    ]);
+    assert.deepEqual(plan.restoreDryRunCommand.args, [
+      '-NoProfile',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      path.join(options.runtimeHome, 'current', 'bin', 'restore.ps1'),
+      '-Home',
+      path.join(options.runtimeHome, 'current'),
+      '-SourcePath',
+      path.join(options.runtimeHome, 'backup-smoke'),
+      '-Force',
+      '-DryRun',
+    ]);
+    assert.deepEqual(plan.restoreCommand.args, [
+      '-NoProfile',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      path.join(options.runtimeHome, 'current', 'bin', 'restore.ps1'),
+      '-Home',
+      path.join(options.runtimeHome, 'current'),
+      '-SourcePath',
+      path.join(options.runtimeHome, 'backup-smoke'),
+      '-Force',
+    ]);
     assert.match(plan.routerEnvContents, /SDKWORK_WEB_BIND="127\.0\.0\.1:29483"/);
     assert.match(plan.routerEnvContents, /SDKWORK_GATEWAY_BIND="127\.0\.0\.1:29480"/);
     assert.match(plan.routerEnvContents, /SDKWORK_ADMIN_BIND="127\.0\.0\.1:29481"/);
@@ -175,6 +225,8 @@ test('windows installed runtime smoke script exposes a parseable CLI contract fo
     assert.deepEqual(successEvidence.healthUrls, plan.healthUrls);
     assert.equal(successEvidence.runtimeHome, path.relative(repoRoot, options.runtimeHome).replaceAll('\\', '/'));
     assert.equal(successEvidence.evidencePath, path.relative(repoRoot, options.evidencePath).replaceAll('\\', '/'));
+    assert.equal(successEvidence.backupBundlePath, path.relative(repoRoot, plan.backupBundlePath).replaceAll('\\', '/'));
+    assert.equal(successEvidence.backupRestoreVerified, true);
 
     const failureEvidence = module.createWindowsInstalledRuntimeSmokeEvidence({
       plan,
@@ -183,6 +235,7 @@ test('windows installed runtime smoke script exposes a parseable CLI contract fo
     });
     assert.equal(failureEvidence.ok, false);
     assert.equal(failureEvidence.failure.message, 'powershell smoke failed');
+    assert.equal(failureEvidence.backupRestoreVerified, false);
   } finally {
     rmSync(releaseOutputDir, { recursive: true, force: true });
   }

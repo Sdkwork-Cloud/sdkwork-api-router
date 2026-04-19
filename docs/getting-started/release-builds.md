@@ -5,6 +5,7 @@ This page covers the official release products and the build commands that mater
 This page is for build and package generation only.
 
 If you need production deployment, PostgreSQL initialization, service registration, or OS-standard server installation, use [Production Deployment](/getting-started/production-deployment).
+If you need the GitHub-hosted release procedure, repository variables, signing hooks, or post-publish validation, use [Online Release](/getting-started/online-release).
 
 ## Official Products
 
@@ -125,9 +126,25 @@ Desktop runtime contract:
 - access-mode bind switch:
   - local-only: `127.0.0.1:3001`
   - shared network: `0.0.0.0:3001`
+- the shared-network bind is a desktop-only access-mode override; the native server product still defaults to `127.0.0.1:3001` unless config, environment, or CLI changes it
 - mutable runtime state lives in OS-standard app config, data, and log directories
 - the shell persists access mode in `desktop-runtime.json` and synthesizes canonical sidecar `router.yaml`
 - the public release directory does not expose raw Tauri bundle trees; it exposes only canonical `sdkwork-router-portal-desktop-*` product assets
+
+### Desktop Signing Hooks
+
+The official desktop release flow supports an explicit signing stage before the normalized installer assets are collected.
+
+- set `SDKWORK_RELEASE_DESKTOP_SIGNING_REQUIRED=true` when a release must fail closed if no signing hook is configured
+- use one of these hook variables:
+  - `SDKWORK_RELEASE_DESKTOP_WINDOWS_SIGN_HOOK`
+  - `SDKWORK_RELEASE_DESKTOP_LINUX_SIGN_HOOK`
+  - `SDKWORK_RELEASE_DESKTOP_MACOS_SIGN_HOOK`
+  - `SDKWORK_RELEASE_DESKTOP_SIGN_HOOK` as the generic fallback
+- hook commands receive placeholder expansion for `{app}`, `{platform}`, `{arch}`, `{target}`, `{file}`, and `{evidence}`
+- the release workflow writes signing evidence to `artifacts/release-governance/desktop-release-signing-<platform>-<arch>.json`
+
+The hook is responsible for invoking the platform-native signing or notarization toolchain. The repository contract only guarantees installer discovery, hook execution, and evidence emission.
 
 ## Server Packaging Contract
 
@@ -176,6 +193,18 @@ Production-oriented system install:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\install.ps1 -Mode system
 ```
 
+Custom system install rooted at `<product-root>`:
+
+```bash
+./bin/install.sh --mode system --home <product-root>
+```
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\install.ps1 -Mode system -Home <product-root>
+```
+
+Use `--home` or `-Home` when you want repository-driven install generation to materialize a product tree under a specific `<product-root>`. Validate and operate that generated install from the installed product root as described in [Production Deployment](/getting-started/production-deployment).
+
 `system` mode is the canonical server install path and defaults to PostgreSQL.
 
 ## Dry Run
@@ -184,12 +213,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\install.ps1 -Mode syst
 ./bin/build.sh --dry-run
 ./bin/install.sh --dry-run
 ./bin/install.sh --mode system --dry-run
+./bin/install.sh --mode system --home <product-root> --dry-run
 ```
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\build.ps1 --dry-run
-powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\install.ps1 --dry-run
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\build.ps1 -DryRun
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\install.ps1 -DryRun
 powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\install.ps1 -Mode system -DryRun
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\install.ps1 -Mode system -Home <product-root> -DryRun
 ```
 
 ## Verification
@@ -197,11 +228,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\install.ps1 -Mode syst
 ```bash
 node --test bin/tests/router-runtime-tooling.test.mjs
 node --test scripts/release/tests/release-workflow.test.mjs scripts/release/tests/run-unix-installed-runtime-smoke.test.mjs scripts/release/tests/run-windows-installed-runtime-smoke.test.mjs scripts/release/tests/deployment-assets.test.mjs
+node --test scripts/release-governance-workflow.test.mjs
+node --test scripts/product-verification-workflow.test.mjs
+node --test scripts/rust-verification-workflow.test.mjs
 node --test scripts/release-flow-contract.test.mjs scripts/prepare-router-portal-desktop-runtime.test.mjs apps/sdkwork-router-portal/tests/portal-desktop-api-base.test.mjs apps/sdkwork-router-portal/tests/portal-desktop-sidecar-runtime.test.mjs
 ```
 
 ## Next Steps
 
 - [Production Deployment](/getting-started/production-deployment)
+- [Online Release](/getting-started/online-release)
 - [Install Layout](/operations/install-layout)
 - [Service Management](/operations/service-management)

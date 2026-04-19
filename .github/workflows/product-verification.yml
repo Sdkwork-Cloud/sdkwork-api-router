@@ -7,6 +7,9 @@ on:
       - '.github/workflows/release.yml'
       - 'Cargo.toml'
       - 'Cargo.lock'
+      - '*.sh'
+      - '*.ps1'
+      - 'package.json'
       - 'README.md'
       - 'README.zh-CN.md'
       - 'apps/sdkwork-router-admin/**'
@@ -40,7 +43,10 @@ on:
       - 'scripts/product-verification-workflow.test.mjs'
       - 'scripts/release/**'
       - 'scripts/release-flow-contract.test.mjs'
+      - 'scripts/run-router-product.mjs'
+      - 'scripts/run-router-product.test.mjs'
       - 'scripts/run-router-product-service.mjs'
+      - 'scripts/run-router-product-service.test.mjs'
       - 'scripts/run-tauri-cli.mjs'
       - 'scripts/release/desktop-targets.mjs'
       - 'services/**'
@@ -101,7 +107,7 @@ jobs:
         run: pnpm --dir docs build
 
       - name: Run product governance node tests
-        run: node --test scripts/product-verification-workflow.test.mjs scripts/check-router-product.test.mjs scripts/browser-runtime-smoke.test.mjs scripts/check-admin-browser-runtime.test.mjs scripts/check-portal-browser-runtime.test.mjs scripts/build-router-desktop-assets.test.mjs scripts/check-router-docs-safety.test.mjs scripts/check-router-frontend-budgets.test.mjs scripts/dev/tests/pnpm-launch-lib.test.mjs scripts/prepare-router-portal-desktop-runtime.test.mjs scripts/release-flow-contract.test.mjs scripts/release/tests/materialize-release-catalog.test.mjs scripts/release/tests/release-workflow.test.mjs scripts/release/tests/release-attestation-verify.test.mjs scripts/release/tests/docs-product-contract.test.mjs apps/sdkwork-router-portal/tests/product-entrypoint-scripts.test.mjs
+        run: node --test scripts/product-verification-workflow.test.mjs scripts/check-router-product.test.mjs scripts/browser-runtime-smoke.test.mjs scripts/check-admin-browser-runtime.test.mjs scripts/check-portal-browser-runtime.test.mjs scripts/build-router-desktop-assets.test.mjs scripts/check-router-docs-safety.test.mjs scripts/check-router-frontend-budgets.test.mjs scripts/run-router-product.test.mjs scripts/run-router-product-service.test.mjs bin/tests/root-entrypoint-wrappers.test.mjs scripts/dev/tests/pnpm-launch-lib.test.mjs scripts/prepare-router-portal-desktop-runtime.test.mjs scripts/release-flow-contract.test.mjs scripts/release/tests/materialize-release-catalog.test.mjs scripts/release/tests/release-workflow.test.mjs scripts/release/tests/release-attestation-verify.test.mjs scripts/release/tests/docs-product-contract.test.mjs apps/sdkwork-router-portal/tests/product-entrypoint-scripts.test.mjs
 
       - name: Run product verification gate
         env:

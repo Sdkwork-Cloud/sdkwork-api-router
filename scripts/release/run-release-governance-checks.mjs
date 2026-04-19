@@ -11,6 +11,11 @@ import {
   resolveReleaseTelemetryExportProducerInput,
 } from './materialize-release-telemetry-export.mjs';
 import {
+  findReleaseCatalogVariant,
+  materializeReleaseCatalog,
+  readReleaseCatalogFile,
+} from './materialize-release-catalog.mjs';
+import {
   resolveReleaseWindowSnapshotProducerInput,
 } from './materialize-release-window-snapshot.mjs';
 import {
@@ -37,6 +42,18 @@ import {
   listReleaseGovernanceBundleArtifactSpecs,
 } from './materialize-release-governance-bundle.mjs';
 import {
+  createLinuxDockerComposeSmokeEvidence,
+  createLinuxDockerComposeSmokeOptions,
+  createLinuxDockerComposeSmokePlan,
+  createLinuxDockerRunFallbackResources,
+  resolveLinuxDockerComposeSmokeExecutionMode,
+} from './run-linux-docker-compose-smoke.mjs';
+import {
+  createLinuxHelmRenderSmokeEvidence,
+  createLinuxHelmRenderSmokeOptions,
+  createLinuxHelmRenderSmokePlan,
+} from './run-linux-helm-render-smoke.mjs';
+import {
   createUnixInstalledRuntimeSmokeEvidence,
   createUnixInstalledRuntimeSmokeOptions,
   createUnixInstalledRuntimeSmokePlan,
@@ -51,6 +68,7 @@ import {
   validateReleaseWindowSnapshotArtifact,
 } from './compute-release-window-snapshot.mjs';
 import { assertObservabilityContracts } from './observability-contracts.mjs';
+import { assertDesktopReleaseSigningContracts } from './desktop-release-signing-contracts.mjs';
 import { assertReleaseAttestationVerificationContracts } from './release-attestation-verification-contracts.mjs';
 import { assertReleaseSyncAuditContracts } from './release-sync-audit-contracts.mjs';
 import { assertReleaseWindowSnapshotContracts } from './release-window-snapshot-contracts.mjs';
@@ -96,6 +114,13 @@ const releaseGovernanceTestEnvPatterns = [
   /^SDKWORK_SLO_GOVERNANCE_EVIDENCE_/,
   /^SDKWORK_(API_ROUTER|CORE|UI|APPBASE|CRAW_CHAT_SDK)_GIT_REF$/,
 ];
+const releaseGovernanceTestEnvKeys = new Set([
+  'CARGO_BUILD_JOBS',
+  'CARGO_TARGET_DIR',
+  'CMAKE_GENERATOR',
+  'HOST_CMAKE_GENERATOR',
+  'SDKWORK_CC_DISABLE_BREPRO',
+]);
 
 function createSyntheticPrometheusHttpCounterSamples({
   service,
@@ -226,8 +251,36 @@ function createSyntheticReleaseCatalogFixture({
   const archiveFile = `${archiveBaseName}.tar.gz`;
   const checksumFile = `${archiveFile}.sha256.txt`;
   const manifestFile = `${archiveBaseName}.manifest.json`;
+  const manifest = {
+    type: 'product-server-archive',
+    productId: 'sdkwork-api-router-product-server',
+    platform,
+    arch,
+    archiveFile,
+    checksumFile,
+    embeddedManifestFile: 'release-manifest.json',
+    services: ['router-product-service'],
+    sites: ['admin', 'portal'],
+    bootstrapDataRoots: ['data'],
+    deploymentAssetRoots: ['deploy'],
+  };
 
   mkdirSync(bundleOutputDir, { recursive: true });
+  writeFileSync(
+    path.join(bundleOutputDir, archiveFile),
+    'synthetic release bundle\n',
+    'utf8',
+  );
+  writeFileSync(
+    path.join(bundleOutputDir, checksumFile),
+    `synthetic-sha256  ${archiveFile}\n`,
+    'utf8',
+  );
+  writeFileSync(
+    path.join(bundleOutputDir, manifestFile),
+    `${JSON.stringify(manifest, null, 2)}\n`,
+    'utf8',
+  );
   writeFileSync(
     path.join(releaseOutputDir, 'release-catalog.json'),
     `${JSON.stringify({
@@ -252,19 +305,7 @@ function createSyntheticReleaseCatalogFixture({
               checksumAlgorithm: 'sha256',
               manifestFile,
               sha256: 'synthetic-sha256',
-              manifest: {
-                type: 'product-server-archive',
-                productId: 'sdkwork-api-router-product-server',
-                platform,
-                arch,
-                archiveFile,
-                checksumFile,
-                embeddedManifestFile: 'release-manifest.json',
-                services: ['router-product-service'],
-                sites: ['admin', 'portal'],
-                bootstrapDataRoots: ['data'],
-                deploymentAssetRoots: ['deploy'],
-              },
+              manifest,
             },
           ],
         },
@@ -357,6 +398,95 @@ function createSyntheticWindowsInstalledRuntimeSmokeFallback() {
       options,
       plan,
       evidence,
+    };
+  } finally {
+    releaseCatalogFixture.cleanup();
+  }
+}
+
+function createSyntheticLinuxDockerComposeSmokeFallback({
+  hostPlatform = process.platform,
+} = {}) {
+  const options = createLinuxDockerComposeSmokeOptions({
+    repoRoot: rootDir,
+    platform: 'linux',
+    arch: 'x64',
+    bundlePath: 'artifacts/release/native/linux/x64/bundles/sdkwork-api-router-product-server-linux-x64.tar.gz',
+    evidencePath: 'artifacts/release-governance/docker-compose-smoke-linux-x64.json',
+  });
+  const plan = createLinuxDockerComposeSmokePlan({
+    repoRoot: rootDir,
+    hostPlatform,
+    ...options,
+  });
+  const evidence = createLinuxDockerComposeSmokeEvidence({
+    repoRoot: rootDir,
+    plan,
+    ok: true,
+  });
+
+  return {
+    options,
+    plan,
+    evidence,
+  };
+}
+
+function createSyntheticLinuxHelmRenderSmokeFallback() {
+  const options = createLinuxHelmRenderSmokeOptions({
+    repoRoot: rootDir,
+    platform: 'linux',
+    arch: 'x64',
+    bundlePath: 'artifacts/release/native/linux/x64/bundles/sdkwork-api-router-product-server-linux-x64.tar.gz',
+    evidencePath: 'artifacts/release-governance/helm-render-smoke-linux-x64.json',
+  });
+  const plan = createLinuxHelmRenderSmokePlan({
+    repoRoot: rootDir,
+    ...options,
+  });
+  const evidence = createLinuxHelmRenderSmokeEvidence({
+    repoRoot: rootDir,
+    plan,
+    ok: true,
+  });
+
+  return {
+    options,
+    plan,
+    evidence,
+  };
+}
+
+function createSyntheticReleaseCatalogMaterializationFallback() {
+  const releaseCatalogFixture = createSyntheticReleaseCatalogFixture({
+    platform: 'linux',
+    arch: 'x64',
+  });
+  const outputPath = path.join(
+    releaseCatalogFixture.releaseOutputDir,
+    'release-catalog.materialized.json',
+  );
+
+  try {
+    const result = materializeReleaseCatalog({
+      assetsRoot: releaseCatalogFixture.releaseOutputDir,
+      releaseTag: 'release-governance-fallback',
+      outputPath,
+    });
+    const catalog = readReleaseCatalogFile({
+      releaseCatalogPath: outputPath,
+    });
+    const variant = findReleaseCatalogVariant(catalog, {
+      productId: 'sdkwork-api-router-product-server',
+      variantKind: 'server-archive',
+      platform: 'linux',
+      arch: 'x64',
+    });
+
+    return {
+      result,
+      catalog,
+      variant,
     };
   } finally {
     releaseCatalogFixture.cleanup();
@@ -516,6 +646,15 @@ export function listReleaseGovernanceCheckPlans({
       ],
     },
     {
+      id: 'release-desktop-signing-test',
+      command: nodeExecutable,
+      args: [
+        '--test',
+        '--experimental-test-isolation=none',
+        'scripts/release/tests/run-desktop-release-signing.test.mjs',
+      ],
+    },
+    {
       id: 'release-unix-installed-runtime-smoke-test',
       command: nodeExecutable,
       args: [
@@ -534,12 +673,39 @@ export function listReleaseGovernanceCheckPlans({
       ],
     },
     {
+      id: 'release-linux-docker-compose-smoke-test',
+      command: nodeExecutable,
+      args: [
+        '--test',
+        '--experimental-test-isolation=none',
+        'scripts/release/tests/run-linux-docker-compose-smoke.test.mjs',
+      ],
+    },
+    {
+      id: 'release-linux-helm-render-smoke-test',
+      command: nodeExecutable,
+      args: [
+        '--test',
+        '--experimental-test-isolation=none',
+        'scripts/release/tests/run-linux-helm-render-smoke.test.mjs',
+      ],
+    },
+    {
       id: 'release-materialize-external-deps-test',
       command: nodeExecutable,
       args: [
         '--test',
         '--experimental-test-isolation=none',
         'scripts/release/tests/materialize-external-deps.test.mjs',
+      ],
+    },
+    {
+      id: 'release-materialize-release-catalog-test',
+      command: nodeExecutable,
+      args: [
+        '--test',
+        '--experimental-test-isolation=none',
+        'scripts/release/tests/materialize-release-catalog.test.mjs',
       ],
     },
     {
@@ -737,7 +903,10 @@ function resolveReleaseGovernanceChildEnv({
 
   const sanitizedEnv = { ...env };
   for (const key of Object.keys(sanitizedEnv)) {
-    if (releaseGovernanceTestEnvPatterns.some((pattern) => pattern.test(key))) {
+    if (
+      releaseGovernanceTestEnvKeys.has(key)
+      || releaseGovernanceTestEnvPatterns.some((pattern) => pattern.test(key))
+    ) {
       delete sanitizedEnv[key];
     }
   }
@@ -840,6 +1009,21 @@ async function runFallbackReleaseGovernanceCheck({
     };
   }
 
+  if (plan.id === 'release-desktop-signing-test') {
+    await assertDesktopReleaseSigningContracts({
+      repoRoot: rootDir,
+    });
+    return {
+      id: plan.id,
+      ok: true,
+      status: 0,
+      stdout: '',
+      stderr: '',
+      errorMessage: '',
+      mode: 'fallback',
+    };
+  }
+
   if (plan.id === 'release-unix-installed-runtime-smoke-test') {
     const { plan: smokePlan, evidence } = createSyntheticUnixInstalledRuntimeSmokeFallback();
 
@@ -884,6 +1068,73 @@ async function runFallbackReleaseGovernanceCheck({
     };
   }
 
+  if (plan.id === 'release-linux-docker-compose-smoke-test') {
+    const { plan: smokePlan, evidence } = createSyntheticLinuxDockerComposeSmokeFallback({
+      hostPlatform: process.platform,
+    });
+    const expectedExecutionMode = resolveLinuxDockerComposeSmokeExecutionMode({
+      hostPlatform: process.platform,
+    });
+    const expectedFallbackResources = createLinuxDockerRunFallbackResources({
+      composeProjectName: smokePlan.composeProjectName,
+    });
+
+    if (evidence.platform !== 'linux' || evidence.arch !== 'x64') {
+      throw new Error('linux docker compose smoke fallback must preserve the linux release target');
+    }
+
+    if (smokePlan.executionMode !== expectedExecutionMode) {
+      throw new Error('linux docker compose smoke fallback must preserve host execution mode selection');
+    }
+
+    if (!Array.isArray(smokePlan.healthUrls) || smokePlan.healthUrls.length !== 3) {
+      throw new Error('linux docker compose smoke fallback must expose three health probe urls');
+    }
+
+    if (JSON.stringify(smokePlan.fallbackResources) !== JSON.stringify(expectedFallbackResources)) {
+      throw new Error('linux docker compose smoke fallback must preserve docker-run fallback resources');
+    }
+
+    return {
+      id: plan.id,
+      ok: true,
+      status: 0,
+      stdout: '',
+      stderr: '',
+      errorMessage: '',
+      mode: 'fallback',
+    };
+  }
+
+  if (plan.id === 'release-linux-helm-render-smoke-test') {
+    const { plan: smokePlan, evidence } = createSyntheticLinuxHelmRenderSmokeFallback();
+
+    if (evidence.platform !== 'linux' || evidence.arch !== 'x64') {
+      throw new Error('linux helm render smoke fallback must preserve the linux release target');
+    }
+
+    if (
+      !Array.isArray(smokePlan.requiredTemplateKinds)
+      || smokePlan.requiredTemplateKinds.join(',') !== 'Secret,Service,Deployment,Ingress'
+    ) {
+      throw new Error('linux helm render smoke fallback must preserve required template kinds');
+    }
+
+    if (smokePlan.chartRelativePath !== 'deploy/helm/sdkwork-api-router') {
+      throw new Error('linux helm render smoke fallback must preserve the packaged chart path');
+    }
+
+    return {
+      id: plan.id,
+      ok: true,
+      status: 0,
+      stdout: '',
+      stderr: '',
+      errorMessage: '',
+      mode: 'fallback',
+    };
+  }
+
   if (plan.id === 'release-materialize-external-deps-test') {
     const specs = listExternalReleaseDependencySpecs();
     if (!Array.isArray(specs) || specs.length === 0) {
@@ -904,6 +1155,36 @@ async function runFallbackReleaseGovernanceCheck({
         .map((reference) => `${reference.sourceFile}:${reference.field}:${reference.name}`)
         .join(', ');
       throw new Error(`external release dependency coverage is incomplete: ${uncoveredDetails}`);
+    }
+
+    return {
+      id: plan.id,
+      ok: true,
+      status: 0,
+      stdout: '',
+      stderr: '',
+      errorMessage: '',
+      mode: 'fallback',
+    };
+  }
+
+  if (plan.id === 'release-materialize-release-catalog-test') {
+    const { result, catalog, variant } = createSyntheticReleaseCatalogMaterializationFallback();
+
+    if (result.releaseTag !== 'release-governance-fallback') {
+      throw new Error('release catalog fallback must preserve the governed release tag');
+    }
+
+    if (result.productCount !== 1 || result.variantCount !== 1) {
+      throw new Error('release catalog fallback must produce a single governed product variant');
+    }
+
+    if (catalog.type !== 'sdkwork-release-catalog') {
+      throw new Error('release catalog fallback must materialize the governed catalog document type');
+    }
+
+    if (!variant || variant.primaryFile !== 'sdkwork-api-router-product-server-linux-x64.tar.gz') {
+      throw new Error('release catalog fallback must preserve the linux server archive variant');
     }
 
     return {

@@ -4,6 +4,8 @@
 
 当你要发布线上 server、生成原生安装、使用 Docker Compose，或通过 Helm 进行部署时，请从这里开始。
 
+如果你要看 GitHub Actions 正式发布流程本身、仓库变量与 Secrets、desktop 签名 hook，或发布后 GitHub 校验，请改看[线上发布](/zh/getting-started/online-release)。
+
 ## 产品契约
 
 - 正式的 server 产品是 `sdkwork-api-router-product-server`
@@ -147,7 +149,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\install.ps1 -Mode syst
 
 - `router.yaml`
   - 运行时的标准主配置
-- `conf.d/*.yaml`
+- `conf.d/*.{yaml,yml,json}`
   - 可选的领域化覆盖配置
 - `router.env`
   - 配置发现信息，以及配置文件未定义字段的兜底值
@@ -161,7 +163,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\install.ps1 -Mode syst
 
 ## 在注册服务前先校验
 
-在安装目录中执行：
+在已安装的产品根目录中执行：
 
 ```bash
 ./current/bin/validate-config.sh --home ./current
@@ -174,11 +176,37 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\current\bin\validate-confi
 在源码仓库 checkout 中，也可以使用：
 
 ```bash
-node bin/router-ops.mjs validate-config --mode system --home <install-root>
+node bin/router-ops.mjs validate-config --mode system --home <product-root>
 ```
 
 ```powershell
-node .\bin\router-ops.mjs validate-config --mode system --home <install-root>
+node .\bin\router-ops.mjs validate-config --mode system --home <product-root>
+```
+
+## Backup And Restore
+
+鍦ㄥ凡瀹夎鐨勪骇鍝佹牴鐩綍涓墽琛岋細
+
+```bash
+./current/bin/backup.sh --home ./current --output ./backups/2026-04-19 --force
+./current/bin/restore.sh --home ./current --source ./backups/2026-04-19 --force
+```
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\current\bin\backup.ps1 -Home .\current -OutputPath .\backups\2026-04-19 -Force
+powershell -NoProfile -ExecutionPolicy Bypass -File .\current\bin\restore.ps1 -Home .\current -SourcePath .\backups\2026-04-19 -Force
+```
+
+鏀寔 dry-run锛?
+
+```bash
+./current/bin/backup.sh --home ./current --output ./backups/2026-04-19 --dry-run
+./current/bin/restore.sh --home ./current --source ./backups/2026-04-19 --force --dry-run
+```
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\current\bin\backup.ps1 -Home .\current -OutputPath .\backups\2026-04-19 -DryRun
+powershell -NoProfile -ExecutionPolicy Bypass -File .\current\bin\restore.ps1 -Home .\current -SourcePath .\backups\2026-04-19 -Force -DryRun
 ```
 
 校验内容包括：
@@ -217,7 +245,7 @@ docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/.env
 ```bash
 helm upgrade --install sdkwork-api-router deploy/helm/sdkwork-api-router \
   --set image.repository=ghcr.io/your-org/sdkwork-api-router \
-  --set image.tag=2026.04.18 \
+  --set image.tag=<release-tag> \
   --set secrets.databaseUrl='postgresql://sdkwork:change-me@postgresql:5432/sdkwork_api_router'
 ```
 

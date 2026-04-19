@@ -26,7 +26,17 @@ export async function assertReleaseWorkflowContracts({
   const workflow = read(repoRoot, path.join('.github', 'workflows', 'release.yml'));
 
   assert.match(workflow, /workflow_dispatch:/);
+  assert.match(
+    workflow,
+    /workflow_dispatch:\s*[\s\S]*?inputs:\s*[\s\S]*?release_tag:\s*[\s\S]*?description:\s*Existing release tag to publish[\s\S]*?required:\s*true[\s\S]*?type:\s*string[\s\S]*?git_ref:\s*[\s\S]*?description:\s*Git ref to build; defaults to refs\/tags\/<release_tag>[\s\S]*?required:\s*false[\s\S]*?type:\s*string/,
+    'release workflow must expose workflow_dispatch inputs for a required release_tag plus an optional git_ref that defaults to the release tag ref',
+  );
   assert.match(workflow, /push:\s*[\s\S]*tags:\s*[\s\S]*release-\*/);
+  assert.match(
+    workflow,
+    /Resolve release target[\s\S]*?if \[\[ \"\$\{GITHUB_EVENT_NAME\}\" == \"push\" \]\]; then[\s\S]*?release_tag=\"\$\{GITHUB_REF_NAME\}\"[\s\S]*?git_ref=\"\$\{GITHUB_REF\}\"[\s\S]*?else[\s\S]*?release_tag=\"\$\{\{\s*github\.event\.inputs\.release_tag\s*\}\}\"[\s\S]*?git_ref=\"\$\{\{\s*github\.event\.inputs\.git_ref\s*\}\}\"[\s\S]*?if \[\[ -z \"\$git_ref\" \]\]; then[\s\S]*?git_ref=\"refs\/tags\/\$release_tag\"/,
+    'release workflow must resolve release_tag and git_ref from either a pushed release-* tag or workflow_dispatch inputs, defaulting manual git_ref back to refs/tags/<release_tag>',
+  );
   assert.match(workflow, /permissions:\s*[\s\S]*contents:\s*write/);
   assert.match(workflow, /permissions:\s*[\s\S]*id-token:\s*write/);
   assert.match(workflow, /permissions:\s*[\s\S]*attestations:\s*write/);
@@ -122,8 +132,23 @@ export async function assertReleaseWorkflowContracts({
   );
   assert.match(
     workflow,
-    /native-release:[\s\S]*?Build portal desktop release[\s\S]*?Collect native release assets[\s\S]*?node scripts\/release\/package-release-assets\.mjs native --platform \$\{\{\s*matrix\.platform\s*\}\} --arch \$\{\{\s*matrix\.arch\s*\}\} --target \$\{\{\s*matrix\.target\s*\}\} --output-dir artifacts\/release[\s\S]*?Run installed native runtime smoke on Windows[\s\S]*?Run installed native runtime smoke on Unix/,
-    'native release job must package official assets before installed-runtime smoke so smoke verifies the packaged server bundle',
+    /native-release:[\s\S]*?Build portal desktop release[\s\S]*?Run portal desktop signing hook[\s\S]*?node scripts\/release\/run-desktop-release-signing\.mjs --app portal --platform \$\{\{\s*matrix\.platform\s*\}\} --arch \$\{\{\s*matrix\.arch\s*\}\} --target \$\{\{\s*matrix\.target\s*\}\} --evidence-path artifacts\/release-governance\/desktop-release-signing-\$\{\{\s*matrix\.platform\s*\}\}-\$\{\{\s*matrix\.arch\s*\}\}\.json[\s\S]*?Collect native release assets[\s\S]*?node scripts\/release\/package-release-assets\.mjs native --platform \$\{\{\s*matrix\.platform\s*\}\} --arch \$\{\{\s*matrix\.arch\s*\}\} --target \$\{\{\s*matrix\.target\s*\}\} --output-dir artifacts\/release[\s\S]*?Run installed native runtime smoke on Windows[\s\S]*?Run installed native runtime smoke on Unix/,
+    'native release job must execute the desktop signing hook before packaging official assets and before installed-runtime smoke verifies the packaged server bundle',
+  );
+  assert.match(
+    workflow,
+    /native-release:[\s\S]*?Run portal desktop signing hook[\s\S]*?env:[\s\S]*?SDKWORK_RELEASE_DESKTOP_SIGNING_REQUIRED:\s*\$\{\{\s*vars\.SDKWORK_RELEASE_DESKTOP_SIGNING_REQUIRED\s*\|\|\s*''\s*\}\}[\s\S]*?SDKWORK_RELEASE_DESKTOP_WINDOWS_SIGN_HOOK:\s*\$\{\{\s*secrets\.SDKWORK_RELEASE_DESKTOP_WINDOWS_SIGN_HOOK\s*\|\|\s*vars\.SDKWORK_RELEASE_DESKTOP_WINDOWS_SIGN_HOOK\s*\|\|\s*''\s*\}\}[\s\S]*?SDKWORK_RELEASE_DESKTOP_LINUX_SIGN_HOOK:\s*\$\{\{\s*secrets\.SDKWORK_RELEASE_DESKTOP_LINUX_SIGN_HOOK\s*\|\|\s*vars\.SDKWORK_RELEASE_DESKTOP_LINUX_SIGN_HOOK\s*\|\|\s*''\s*\}\}[\s\S]*?SDKWORK_RELEASE_DESKTOP_MACOS_SIGN_HOOK:\s*\$\{\{\s*secrets\.SDKWORK_RELEASE_DESKTOP_MACOS_SIGN_HOOK\s*\|\|\s*vars\.SDKWORK_RELEASE_DESKTOP_MACOS_SIGN_HOOK\s*\|\|\s*''\s*\}\}[\s\S]*?SDKWORK_RELEASE_DESKTOP_SIGN_HOOK:\s*\$\{\{\s*secrets\.SDKWORK_RELEASE_DESKTOP_SIGN_HOOK\s*\|\|\s*vars\.SDKWORK_RELEASE_DESKTOP_SIGN_HOOK\s*\|\|\s*''\s*\}\}/,
+    'native release job must pass signing-required policy plus platform and generic desktop signing hook configuration into the signing step',
+  );
+  assert.match(
+    workflow,
+    /native-release:[\s\S]*?Upload desktop signing evidence[\s\S]*?name:\s*release-governance-desktop-signing-\$\{\{\s*matrix\.platform\s*\}\}-\$\{\{\s*matrix\.arch\s*\}\}[\s\S]*?path:\s*artifacts\/release-governance\/desktop-release-signing-\$\{\{\s*matrix\.platform\s*\}\}-\$\{\{\s*matrix\.arch\s*\}\}\.json/,
+    'native release job must publish desktop signing evidence for every release lane',
+  );
+  assert.match(
+    workflow,
+    /native-release:[\s\S]*?Generate desktop signing evidence attestation[\s\S]*?subject-path:\s*artifacts\/release-governance\/desktop-release-signing-\$\{\{\s*matrix\.platform\s*\}\}-\$\{\{\s*matrix\.arch\s*\}\}\.json/,
+    'native release job must attest the desktop signing evidence artifact',
   );
   assert.doesNotMatch(
     workflow,

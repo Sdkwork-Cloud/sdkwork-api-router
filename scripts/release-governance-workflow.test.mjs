@@ -20,8 +20,13 @@ test('repository exposes a pull-request release governance workflow that watches
 
   assert.match(workflow, /pull_request:/);
   assert.match(workflow, /workflow_dispatch:/);
+  assert.match(workflow, /FORCE_JAVASCRIPT_ACTIONS_TO_NODE24:\s*'true'/);
   assert.match(workflow, /actions\/checkout@v5/);
   assert.match(workflow, /actions\/setup-node@v5/);
+  assert.match(
+    workflow,
+    /actions\/setup-node@v5[\s\S]*?node-version:\s*22[\s\S]*?package-manager-cache:\s*false/,
+  );
   assert.match(workflow, /\.github\/workflows\/release-governance\.yml/);
   assert.match(workflow, /scripts\/release\/\*\*/);
   assert.match(workflow, /scripts\/release-governance-workflow-contracts\.mjs/);
@@ -35,6 +40,31 @@ test('repository exposes a pull-request release governance workflow that watches
   assert.match(
     workflow,
     /run:\s*node scripts\/release\/run-release-governance-checks\.mjs --profile preflight --format json/,
+  );
+});
+
+test('release governance workflow contract helper rejects workflows that do not force JavaScript actions to Node24', async () => {
+  const contracts = await import(
+    pathToFileURL(
+      path.join(repoRoot, 'scripts', 'release-governance-workflow-contracts.mjs'),
+    ).href,
+  );
+
+  const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), 'sdkwork-release-governance-workflow-'));
+  mkdirSync(path.join(fixtureRoot, '.github', 'workflows'), { recursive: true });
+  const workflow = read('.github/workflows/release-governance.yml');
+
+  writeFileSync(
+    path.join(fixtureRoot, '.github', 'workflows', 'release-governance.yml'),
+    workflow.replace(/env:\r?\n\s+FORCE_JAVASCRIPT_ACTIONS_TO_NODE24:\s*'true'\r?\n\r?\n/, ''),
+    'utf8',
+  );
+
+  await assert.rejects(
+    contracts.assertReleaseGovernanceWorkflowContracts({
+      repoRoot: fixtureRoot,
+    }),
+    /node24/i,
   );
 });
 
@@ -64,6 +94,9 @@ on:
       - 'docs/release/**'
   workflow_dispatch:
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   release-governance:
     runs-on: ubuntu-latest
@@ -75,6 +108,7 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version: 22
+          package-manager-cache: false
 
       - name: Run release governance checks
         run: node scripts/release/run-release-governance-checks.mjs --profile preflight --format json
@@ -87,6 +121,31 @@ jobs:
       repoRoot: fixtureRoot,
     }),
     /contract module/i,
+  );
+});
+
+test('release governance workflow contract helper rejects workflows that do not disable setup-node package-manager auto-cache', async () => {
+  const contracts = await import(
+    pathToFileURL(
+      path.join(repoRoot, 'scripts', 'release-governance-workflow-contracts.mjs'),
+    ).href,
+  );
+
+  const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), 'sdkwork-release-governance-workflow-'));
+  mkdirSync(path.join(fixtureRoot, '.github', 'workflows'), { recursive: true });
+  const workflow = read('.github/workflows/release-governance.yml');
+
+  writeFileSync(
+    path.join(fixtureRoot, '.github', 'workflows', 'release-governance.yml'),
+    workflow.replace(/^\s*package-manager-cache:\s*false\r?\n/m, ''),
+    'utf8',
+  );
+
+  await assert.rejects(
+    contracts.assertReleaseGovernanceWorkflowContracts({
+      repoRoot: fixtureRoot,
+    }),
+    /package-manager(?:\s|-)?auto-cache|package-manager-cache/i,
   );
 });
 
@@ -117,6 +176,9 @@ on:
       - 'docs/release/**'
   workflow_dispatch:
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   release-governance:
     runs-on: ubuntu-latest
@@ -128,6 +190,7 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version: 22
+          package-manager-cache: false
 
       - name: Run release governance checks
         run: node scripts/release/run-release-governance-checks.mjs --profile preflight --format json
@@ -172,6 +235,9 @@ on:
       - 'docs/release/**'
   workflow_dispatch:
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   release-governance:
     runs-on: ubuntu-latest
@@ -183,6 +249,7 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version: 22
+          package-manager-cache: false
 
       - name: Run release governance checks
         run: node scripts/release/run-release-governance-checks.mjs --profile preflight --format json

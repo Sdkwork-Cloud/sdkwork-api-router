@@ -15,6 +15,7 @@ import {
   renderRuntimeEnvTemplate,
 } from '../../bin/lib/router-runtime-tooling.mjs';
 import {
+  assertInstalledRuntimeBackupBundle,
   assertInstalledPackagedBootstrapData,
   createInstalledRuntimeSmokeLayout,
   resolveInstalledBootstrapDataRoot,
@@ -435,6 +436,7 @@ export function createWindowsInstalledRuntimeSmokePlan({
     ...options,
     installPlan,
     controlHome: runtimeLayout.controlHome,
+    backupBundlePath: path.join(options.runtimeHome, 'backup-smoke'),
     routerEnvPath: path.join(runtimeLayout.configDir, 'router.env'),
     routerEnvContents: renderWindowsInstalledRuntimeSmokeEnvContents({
       runtimeHome: options.runtimeHome,
@@ -469,6 +471,67 @@ export function createWindowsInstalledRuntimeSmokePlan({
         String(DEFAULT_WAIT_SECONDS),
       ],
     },
+    backupDryRunCommand: {
+      command: 'powershell.exe',
+      args: [
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        path.join(runtimeLayout.controlHome, 'bin', 'backup.ps1'),
+        '-Home',
+        runtimeLayout.controlHome,
+        '-OutputPath',
+        path.join(options.runtimeHome, 'backup-smoke'),
+        '-DryRun',
+      ],
+    },
+    backupCommand: {
+      command: 'powershell.exe',
+      args: [
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        path.join(runtimeLayout.controlHome, 'bin', 'backup.ps1'),
+        '-Home',
+        runtimeLayout.controlHome,
+        '-OutputPath',
+        path.join(options.runtimeHome, 'backup-smoke'),
+        '-Force',
+      ],
+    },
+    restoreDryRunCommand: {
+      command: 'powershell.exe',
+      args: [
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        path.join(runtimeLayout.controlHome, 'bin', 'restore.ps1'),
+        '-Home',
+        runtimeLayout.controlHome,
+        '-SourcePath',
+        path.join(options.runtimeHome, 'backup-smoke'),
+        '-Force',
+        '-DryRun',
+      ],
+    },
+    restoreCommand: {
+      command: 'powershell.exe',
+      args: [
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        path.join(runtimeLayout.controlHome, 'bin', 'restore.ps1'),
+        '-Home',
+        runtimeLayout.controlHome,
+        '-SourcePath',
+        path.join(options.runtimeHome, 'backup-smoke'),
+        '-Force',
+      ],
+    },
     pidFilePath: path.join(runtimeLayout.runDir, 'router-product-service.pid'),
     stdoutLogPath: path.join(runtimeLayout.logDir, 'router-product-service.stdout.log'),
     stderrLogPath: path.join(runtimeLayout.logDir, 'router-product-service.stderr.log'),
@@ -497,6 +560,8 @@ export function createWindowsInstalledRuntimeSmokeEvidence({
     target: plan.target,
     runtimeHome: toPortableRelativePath(repoRoot, plan.runtimeHome),
     evidencePath: toPortableRelativePath(repoRoot, plan.evidencePath),
+    backupBundlePath: toPortableRelativePath(repoRoot, plan.backupBundlePath),
+    backupRestoreVerified: Boolean(ok),
     healthUrls: plan.healthUrls,
   };
 
@@ -574,6 +639,31 @@ export async function runWindowsInstalledRuntimeSmoke({
       cwd: repoRoot,
       env,
       label: 'installed runtime stop.ps1',
+      plan,
+    });
+    runScriptCommand(plan.backupDryRunCommand.command, plan.backupDryRunCommand.args, {
+      cwd: repoRoot,
+      env,
+      label: 'installed runtime backup.ps1 dry-run',
+      plan,
+    });
+    runScriptCommand(plan.backupCommand.command, plan.backupCommand.args, {
+      cwd: repoRoot,
+      env,
+      label: 'installed runtime backup.ps1',
+      plan,
+    });
+    assertInstalledRuntimeBackupBundle(plan.backupBundlePath);
+    runScriptCommand(plan.restoreDryRunCommand.command, plan.restoreDryRunCommand.args, {
+      cwd: repoRoot,
+      env,
+      label: 'installed runtime restore.ps1 dry-run',
+      plan,
+    });
+    runScriptCommand(plan.restoreCommand.command, plan.restoreCommand.args, {
+      cwd: repoRoot,
+      env,
+      label: 'installed runtime restore.ps1',
       plan,
     });
 

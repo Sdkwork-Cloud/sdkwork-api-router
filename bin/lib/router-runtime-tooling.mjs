@@ -41,7 +41,7 @@ export const RELEASE_BINARY_NAMES = [
 ];
 
 export const PROD_DEFAULTS = {
-  webBind: '0.0.0.0:3001',
+  webBind: '127.0.0.1:3001',
   gatewayBind: '127.0.0.1:8080',
   adminBind: '127.0.0.1:8081',
   portalBind: '127.0.0.1:8082',
@@ -913,6 +913,27 @@ export function createReleaseBuildPlan(options = {}) {
       windowsHide: runtimePlatform === 'win32',
     },
     {
+      label: 'desktop release signing',
+      command: nodeCommand,
+      args: [
+        path.join(repoRoot, 'scripts', 'release', 'run-desktop-release-signing.mjs'),
+        '--app',
+        'portal',
+        '--platform',
+        target.platform,
+        '--arch',
+        target.arch,
+        '--target',
+        target.targetTriple,
+        '--evidence-path',
+        path.join(repoRoot, 'artifacts', 'release-governance', `desktop-release-signing-${target.platform}-${target.arch}.json`),
+      ],
+      cwd: repoRoot,
+      env: buildEnv,
+      shell: false,
+      windowsHide: runtimePlatform === 'win32',
+    },
+    {
       label: 'native release package',
       command: nodeCommand,
       args: [
@@ -1686,9 +1707,13 @@ export function createInstallPlan({
   const runtimeScripts = [
     'start.sh',
     'stop.sh',
+    'backup.sh',
+    'restore.sh',
     'validate-config.sh',
     'start.ps1',
     'stop.ps1',
+    'backup.ps1',
+    'restore.ps1',
     'validate-config.ps1',
   ];
   for (const scriptName of runtimeScripts) {

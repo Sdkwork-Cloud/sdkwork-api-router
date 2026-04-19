@@ -56,6 +56,8 @@ Characteristics:
 | `bin/install.sh` / `bin/install.ps1` | release | install the built release runtime into a product root | `artifacts/install/sdkwork-api-router/` by default | exits when installation finishes |
 | `bin/start.sh` / `bin/start.ps1` | release | start the installed `router-product-service` runtime | product-root `config/`, `log/`, `run/`, plus `current/release-manifest.json` | `bin/stop.sh` / `bin/stop.ps1`, or service manager stop |
 | `bin/stop.sh` / `bin/stop.ps1` | release | stop the managed release runtime using the recorded PID | product-root `run/` PID file | exits after the process tree stops |
+| `bin/backup.sh` / `bin/backup.ps1` | release operations | create a managed runtime backup bundle from an installed current home | operator-selected backup directory plus the installed control manifest, config snapshot, and mutable data snapshot | exits when the backup completes |
+| `bin/restore.sh` / `bin/restore.ps1` | release operations | restore a managed runtime backup bundle into an installed current home | product-root `config/` and mutable data roots, plus PostgreSQL when a dump is present | exits when the restore completes |
 | `bin/start-dev.sh` / `bin/start-dev.ps1` | managed development | start a managed development runtime with writable local state | `artifacts/runtime/dev/` | `bin/stop-dev.sh` / `bin/stop-dev.ps1`, or `Ctrl+C` in foreground mode |
 | `bin/stop-dev.sh` / `bin/stop-dev.ps1` | managed development | stop the managed development runtime | `artifacts/runtime/dev/run/` PID file | exits after the process tree stops |
 | `node scripts/prepare-router-portal-desktop-runtime.mjs` | desktop packaging | stage the portal desktop sidecar payload | `bin/portal-rt/router-product/` | exits when staging completes |
@@ -198,7 +200,7 @@ This stage compiles and prepares:
 - the official portal desktop bundle
 - the native release assets under `artifacts/release/`
 
-### 2. Install the runtime home
+### 2. Install the product root
 
 Linux or macOS:
 
@@ -320,6 +322,7 @@ Runtime contract:
 - access mode controls the public bind:
   - local-only: `127.0.0.1:3001`
   - shared network: `0.0.0.0:3001`
+- this shared-network bind is desktop-only; native server installs still default to `127.0.0.1:3001` unless they are configured otherwise
 - mutable desktop runtime state lives in OS-standard app config, data, and log directories
 - `desktop-runtime.json` persists shell access mode
 - `router.yaml` is the canonical sidecar config file
@@ -335,8 +338,8 @@ Every managed script supports dry-run. Use it before changing a machine:
 
 Windows equivalents:
 
-- `powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\build.ps1 --dry-run`
-- `powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\install.ps1 --dry-run`
+- `powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\build.ps1 -DryRun`
+- `powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\install.ps1 -DryRun`
 - `powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\start-dev.ps1 -DryRun`
 - `powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\start.ps1 -DryRun`
 

@@ -196,7 +196,7 @@ if (-not $env:SDKWORK_BOOTSTRAP_DATA_DIR) {
     }
 }
 if (-not $env:SDKWORK_WEB_BIND) {
-    $env:SDKWORK_WEB_BIND = '0.0.0.0:3001'
+    $env:SDKWORK_WEB_BIND = '127.0.0.1:3001'
 }
 if (-not $env:SDKWORK_GATEWAY_BIND) {
     $env:SDKWORK_GATEWAY_BIND = '127.0.0.1:8080'

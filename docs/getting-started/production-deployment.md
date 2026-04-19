@@ -4,6 +4,8 @@ This is the canonical production deployment guide for SDKWork API Router.
 
 Use this page when you are publishing an online server deployment, preparing a native server install, using Docker Compose, or rolling out a Helm release.
 
+If you need the GitHub Actions release procedure itself, repository variables and secrets, desktop signing hooks, or post-publish GitHub validation, use [Online Release](/getting-started/online-release).
+
 ## Product Contract
 
 - the official server-side product is `sdkwork-api-router-product-server`
@@ -147,7 +149,7 @@ Edit the generated runtime config before first start:
 
 - `router.yaml`
   - canonical runtime config
-- `conf.d/*.yaml`
+- `conf.d/*.{yaml,yml,json}`
   - optional domain-specific overlays
 - `router.env`
   - discovery values and fallback values for fields the config file leaves unset
@@ -161,7 +163,7 @@ Recommended first edits:
 
 ## Validate Before Service Registration
 
-From the installed runtime home, run:
+From the installed product root, run:
 
 ```bash
 ./current/bin/validate-config.sh --home ./current
@@ -174,11 +176,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\current\bin\validate-confi
 From a repository checkout, the managed fallback remains:
 
 ```bash
-node bin/router-ops.mjs validate-config --mode system --home <install-root>
+node bin/router-ops.mjs validate-config --mode system --home <product-root>
 ```
 
 ```powershell
-node .\bin\router-ops.mjs validate-config --mode system --home <install-root>
+node .\bin\router-ops.mjs validate-config --mode system --home <product-root>
 ```
 
 Validation checks:
@@ -187,6 +189,40 @@ Validation checks:
 - config-file-over-environment precedence for business fields
 - production security posture
 - rejection of SQLite in `system` mode unless an explicit development override is enabled
+
+## Backup And Restore
+
+Run installed backup and restore operations from the installed product root:
+
+```bash
+./current/bin/backup.sh --home ./current --output ./backups/2026-04-19 --force
+./current/bin/restore.sh --home ./current --source ./backups/2026-04-19 --force
+```
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\current\bin\backup.ps1 -Home .\current -OutputPath .\backups\2026-04-19 -Force
+powershell -NoProfile -ExecutionPolicy Bypass -File .\current\bin\restore.ps1 -Home .\current -SourcePath .\backups\2026-04-19 -Force
+```
+
+Dry-run planning is also available:
+
+```bash
+./current/bin/backup.sh --home ./current --output ./backups/2026-04-19 --dry-run
+./current/bin/restore.sh --home ./current --source ./backups/2026-04-19 --force --dry-run
+```
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\current\bin\backup.ps1 -Home .\current -OutputPath .\backups\2026-04-19 -DryRun
+powershell -NoProfile -ExecutionPolicy Bypass -File .\current\bin\restore.ps1 -Home .\current -SourcePath .\backups\2026-04-19 -Force -DryRun
+```
+
+Operational contract:
+
+- stop the managed runtime before backup and before restore
+- the backup bundle contains `control/release-manifest.json`, a full config snapshot, a mutable data snapshot, and a PostgreSQL dump when the installed database URL is PostgreSQL
+- restore replaces the installed config and mutable data roots from that bundle, then replays the PostgreSQL dump against the database configured by the restored runtime config
+- `log/` and `run/` are operational state and are not restored from the backup bundle
+- PostgreSQL backups require `pg_dump` on `PATH`; PostgreSQL restores require `pg_restore` on `PATH`
 
 ## Register And Start Services
 
@@ -214,7 +250,7 @@ docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/.env
 ```bash
 helm upgrade --install sdkwork-api-router deploy/helm/sdkwork-api-router \
   --set image.repository=ghcr.io/your-org/sdkwork-api-router \
-  --set image.tag=2026.04.18 \
+  --set image.tag=<release-tag> \
   --set secrets.databaseUrl='postgresql://sdkwork:change-me@postgresql:5432/sdkwork_api_router'
 ```
 

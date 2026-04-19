@@ -2,7 +2,7 @@
 
 This page explains how to compile engineering outputs, prepare official release inputs, and package the two supported SDKWork products from a repository checkout.
 
-For the exact release artifacts published by GitHub Releases, use [Release Builds](/getting-started/release-builds). For production installation and deployment, use [Production Deployment](/getting-started/production-deployment).
+For the exact release artifacts published by GitHub Releases, use [Release Builds](/getting-started/release-builds). For the GitHub-hosted release procedure itself, use [Online Release](/getting-started/online-release). For production installation and deployment, use [Production Deployment](/getting-started/production-deployment).
 
 ## Official Products
 
@@ -64,6 +64,8 @@ The managed build output contract for the official server product is:
 
 The external server manifest describes the archive file, checksum file, and the embedded bundle contract. The server archive itself expands into a product root that already includes `bin/`, `sites/`, `data/`, `deploy/`, `README.txt`, and an embedded `release-manifest.json`.
 
+When the managed build output tree contains a complete official asset set, it also materializes the release-level metadata index at `artifacts/release/release-catalog.json`. That catalog aggregates the external manifests for the two official products into one machine-readable release index, carries `generatedAt` plus per-variant `variantKind`, `primaryFileSizeBytes`, and `checksumAlgorithm` fields, and remains release metadata rather than a third installable product.
+
 ## Build The Official Portal Desktop Product
 
 The official desktop product is portal-first. It packages `apps/sdkwork-router-portal` as a native shell and embeds a release-like `router-product-service` sidecar payload.
@@ -79,6 +81,16 @@ Run the desktop shell in development:
 ```bash
 pnpm --dir apps/sdkwork-router-portal tauri:dev
 ```
+
+If you want to enter the official product-mode development flows from the repository root, use:
+
+```bash
+pnpm tauri:dev
+pnpm server:dev
+```
+
+`pnpm tauri:dev` launches the portal desktop product path through the shared root entrypoint.
+`pnpm server:dev` launches the router product server path through the same workspace contract.
 
 Build the production desktop installer or bundle:
 
@@ -149,6 +161,8 @@ pnpm --dir docs typecheck
   - [Source Development](/getting-started/source-development)
 - official release assets:
   - [Release Builds](/getting-started/release-builds)
+- GitHub-hosted publication:
+  - [Online Release](/getting-started/online-release)
 - production install and deployment:
   - [Production Deployment](/getting-started/production-deployment)
 - workspace structure:

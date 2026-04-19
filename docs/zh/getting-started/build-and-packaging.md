@@ -2,7 +2,7 @@
 
 本页说明如何从仓库检出构建工程产物、准备正式发布输入，并打包 SDKWork 的两个正式产品。
 
-如果你要查看 GitHub Releases 对外发布的正式资产，请使用 [发布构建](/zh/getting-started/release-builds)。如果你要做生产安装和部署，请使用 [生产部署](/zh/getting-started/production-deployment)。
+如果你要查看 GitHub Releases 对外发布的正式资产，请使用 [发布构建](/zh/getting-started/release-builds)。如果你要查看 GitHub 托管发布流程本身，请使用 [线上发布](/zh/getting-started/online-release)。如果你要做生产安装和部署，请使用 [生产部署](/zh/getting-started/production-deployment)。
 
 ## 正式产品
 
@@ -64,6 +64,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\build.ps1
 
 外部 server manifest 会描述归档文件、校验文件以及内嵌 bundle 契约。解压 server 归档后，会得到一个已经包含 `bin/`、`sites/`、`data/`、`deploy/`、`README.txt` 以及内嵌 `release-manifest.json` 的产品根目录。
 
+当托管构建的输出树已经具备完整的正式资产集合时，还会在 `artifacts/release/release-catalog.json` 生成发布级元数据索引。这个 catalog 会把两个正式产品的外部 manifest 聚合成一个统一的机器可读 release 索引，并记录 `generatedAt` 以及每个 variant 的 `variantKind`、`primaryFileSizeBytes` 和 `checksumAlgorithm` 字段；它属于发布元数据，而不是第三个可安装产品。
+
 ## 构建正式 Portal Desktop 产品
 
 正式 desktop 产品采用 portal-first 标准。它以 `apps/sdkwork-router-portal` 作为原生外壳，并内置一份 release 风格的 `router-product-service` sidecar 载荷。
@@ -79,6 +81,16 @@ node scripts/prepare-router-portal-desktop-runtime.mjs
 ```bash
 pnpm --dir apps/sdkwork-router-portal tauri:dev
 ```
+
+如果你希望直接从仓库根目录进入正式产品开发流，可以使用：
+
+```bash
+pnpm tauri:dev
+pnpm server:dev
+```
+
+`pnpm tauri:dev` 会通过统一根入口启动 portal desktop 产品路径。
+`pnpm server:dev` 会通过同一套工作区契约启动 router product server 路径。
 
 构建正式 desktop 安装包：
 
@@ -149,6 +161,8 @@ pnpm --dir docs typecheck
   - [源码运行](/zh/getting-started/source-development)
 - 正式发布资产：
   - [发布构建](/zh/getting-started/release-builds)
+- GitHub 托管发布：
+  - [线上发布](/zh/getting-started/online-release)
 - 生产安装和部署：
   - [生产部署](/zh/getting-started/production-deployment)
 - 仓库结构：

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
@@ -8,6 +8,27 @@ const workspaceRoot = path.resolve(import.meta.dirname, '..');
 
 function readWorkspaceFile(relativePath) {
   return readFileSync(path.join(workspaceRoot, relativePath), 'utf8');
+}
+
+function listWorkspaceMarkdownFiles(relativeRoot) {
+  const absoluteRoot = path.join(workspaceRoot, relativeRoot);
+  if (!existsSync(absoluteRoot)) {
+    return [];
+  }
+
+  const results = [];
+  for (const entry of readdirSync(absoluteRoot, { withFileTypes: true })) {
+    const relativePath = path.posix.join(relativeRoot.replaceAll('\\', '/'), entry.name);
+    if (entry.isDirectory()) {
+      results.push(...listWorkspaceMarkdownFiles(relativePath));
+      continue;
+    }
+    if (entry.isFile() && relativePath.endsWith('.md')) {
+      results.push(relativePath);
+    }
+  }
+
+  return results;
 }
 
 test('router product docs stay free of retired fixed bootstrap credentials', async () => {
@@ -33,6 +54,7 @@ test('router docs safety scan only targets product-facing docs trees', async () 
     'docs/operations',
     'docs/zh/getting-started',
     'docs/zh/api-reference',
+    'docs/zh/operations',
   ]);
 
   assert.deepEqual(module.DOC_BOOTSTRAP_SCAN_FILES, [
@@ -62,6 +84,75 @@ test('router production docs publish a single deployment entrypoint with operati
   assert.match(vitepressConfig, /\/zh\/getting-started\/production-deployment/);
   assert.match(vitepressConfig, /\/zh\/operations\/install-layout/);
   assert.match(vitepressConfig, /\/zh\/operations\/service-management/);
+});
+
+test('product-facing docs publish a dedicated online release runbook in both locales', () => {
+  const requiredFiles = [
+    'docs/getting-started/online-release.md',
+    'docs/zh/getting-started/online-release.md',
+  ];
+
+  for (const relativePath of requiredFiles) {
+    assert.equal(existsSync(path.join(workspaceRoot, relativePath)), true, `missing ${relativePath}`);
+  }
+
+  const vitepressConfig = readWorkspaceFile('docs/.vitepress/config.mjs');
+  const readme = readWorkspaceFile('README.md');
+  const readmeZh = readWorkspaceFile('README.zh-CN.md');
+  const releaseBuilds = readWorkspaceFile('docs/getting-started/release-builds.md');
+  const releaseBuildsZh = readWorkspaceFile('docs/zh/getting-started/release-builds.md');
+  const productionDeployment = readWorkspaceFile('docs/getting-started/production-deployment.md');
+  const productionDeploymentZh = readWorkspaceFile('docs/zh/getting-started/production-deployment.md');
+
+  assert.match(vitepressConfig, /\/getting-started\/online-release/);
+  assert.match(vitepressConfig, /\/zh\/getting-started\/online-release/);
+  assert.match(readme, /\(\.\/docs\/getting-started\/online-release\.md\)/);
+  assert.match(readmeZh, /\(\.\/docs\/zh\/getting-started\/online-release\.md\)/);
+  assert.match(releaseBuilds, /\/getting-started\/online-release/);
+  assert.match(releaseBuildsZh, /\/zh\/getting-started\/online-release/);
+  assert.match(productionDeployment, /\/getting-started\/online-release/);
+  assert.match(productionDeploymentZh, /\/zh\/getting-started\/online-release/);
+});
+
+test('release-facing docs route GitHub-hosted publication details through the online release runbook in both locales', () => {
+  const packaging = readWorkspaceFile('docs/getting-started/build-and-packaging.md');
+  const packagingZh = readWorkspaceFile('docs/zh/getting-started/build-and-packaging.md');
+  const onlineRelease = readWorkspaceFile('docs/getting-started/online-release.md');
+  const onlineReleaseZh = readWorkspaceFile('docs/zh/getting-started/online-release.md');
+
+  assert.match(packaging, /\/getting-started\/online-release/);
+  assert.match(packagingZh, /\/zh\/getting-started\/online-release/);
+
+  for (const content of [onlineRelease, onlineReleaseZh]) {
+    assert.match(content, /workflow_dispatch/);
+    assert.match(content, /SDKWORK_CORE_GIT_REF/);
+    assert.match(content, /SDKWORK_RELEASE_DESKTOP_SIGNING_REQUIRED/);
+    assert.match(content, /release-catalog\.json/);
+  }
+});
+
+test('online release runbooks publish repository-owned attestation verification commands in both locales', () => {
+  const onlineRelease = readWorkspaceFile('docs/getting-started/online-release.md');
+  const onlineReleaseZh = readWorkspaceFile('docs/zh/getting-started/online-release.md');
+
+  for (const content of [onlineRelease, onlineReleaseZh]) {
+    assert.match(content, /verify-release-attestations\.mjs/);
+    assert.match(content, /--format text/);
+    assert.match(content, /--repo Sdkwork-Cloud\/sdkwork-api-router/);
+  }
+});
+
+test('online release runbooks publish workflow-contract preflight checks for the governed release lanes in both locales', () => {
+  const onlineRelease = readWorkspaceFile('docs/getting-started/online-release.md');
+  const onlineReleaseZh = readWorkspaceFile('docs/zh/getting-started/online-release.md');
+
+  for (const content of [onlineRelease, onlineReleaseZh]) {
+    assert.match(content, /scripts\/release\/tests\/release-workflow\.test\.mjs/);
+    assert.match(content, /scripts\/release-governance-workflow\.test\.mjs/);
+    assert.match(content, /scripts\/product-verification-workflow\.test\.mjs/);
+    assert.match(content, /scripts\/rust-verification-workflow\.test\.mjs/);
+    assert.match(content, /scripts\/check-router-docs-safety\.test\.mjs/);
+  }
 });
 
 test('vitepress docs config explicitly handles promql code fences without build warnings', () => {
@@ -94,6 +185,54 @@ test('README and getting-started docs align to config-file-first production guid
   assert.match(releaseBuilds, /Production Deployment/);
   assert.match(deployReadme, /Docker and Helm asset-specific/i);
   assert.doesNotMatch(deployReadme, /system install/i);
+});
+
+test('product-facing config docs advertise yaml, yml, and json config overlays instead of yaml-only fragments', () => {
+  const readme = readWorkspaceFile('README.md');
+  const readmeZh = readWorkspaceFile('README.zh-CN.md');
+  const configuration = readWorkspaceFile('docs/operations/configuration.md');
+  const configurationZh = readWorkspaceFile('docs/zh/operations/configuration.md');
+  const installLayout = readWorkspaceFile('docs/operations/install-layout.md');
+  const installLayoutZh = readWorkspaceFile('docs/zh/operations/install-layout.md');
+  const productionDeployment = readWorkspaceFile('docs/getting-started/production-deployment.md');
+  const productionDeploymentZh = readWorkspaceFile('docs/zh/getting-started/production-deployment.md');
+
+  for (const content of [
+    readme,
+    readmeZh,
+    configuration,
+    configurationZh,
+    installLayout,
+    installLayoutZh,
+    productionDeployment,
+    productionDeploymentZh,
+  ]) {
+    assert.match(content, /conf\.d\/\*\.\{yaml,yml,json\}/);
+    assert.doesNotMatch(content, /conf\.d\/\*\.yaml/);
+  }
+});
+
+test('install-layout docs publish the generated release-manifest control contract in both locales', () => {
+  const installLayout = readWorkspaceFile('docs/operations/install-layout.md');
+  const installLayoutZh = readWorkspaceFile('docs/zh/operations/install-layout.md');
+
+  for (const content of [installLayout, installLayoutZh]) {
+    assert.match(content, /current\/release-manifest\.json/);
+    assert.match(content, /layoutVersion/);
+    assert.match(content, /installMode/);
+    assert.match(content, /productRoot/);
+    assert.match(content, /controlRoot/);
+    assert.match(content, /releasesRoot/);
+    assert.match(content, /target/);
+    assert.match(content, /installedBinaries/);
+    assert.match(content, /configFile/);
+    assert.match(content, /bootstrapDataRoot/);
+    assert.match(content, /deploymentAssetRoot/);
+    assert.match(content, /releasePayloadManifest/);
+    assert.match(content, /releasePayloadReadmeFile/);
+    assert.match(content, /mutableDataRoot/);
+    assert.match(content, /installedAt/);
+  }
 });
 
 test('installation docs clone the current sdkwork-api-router repository in both locales', () => {
@@ -154,6 +293,249 @@ test('production deployment docs expose installed validate-config entrypoints in
   assert.match(readme, /validate-config\.ps1/);
   assert.match(readmeZh, /validate-config\.sh/);
   assert.match(readmeZh, /validate-config\.ps1/);
+});
+
+test('production deployment docs expose installed backup and restore entrypoints in both locales', () => {
+  const deploy = readWorkspaceFile('docs/getting-started/production-deployment.md');
+  const deployZh = readWorkspaceFile('docs/zh/getting-started/production-deployment.md');
+
+  assert.match(deploy, /current\/bin\/backup\.sh --home \.\/current --output/);
+  assert.match(deploy, /current\\bin\\backup\.ps1 -Home \.\\current -OutputPath/);
+  assert.match(deploy, /current\/bin\/restore\.sh --home \.\/current --source .* --force/);
+  assert.match(deploy, /current\\bin\\restore\.ps1 -Home \.\\current -SourcePath .* -Force/);
+  assert.match(deployZh, /current\/bin\/backup\.sh --home \.\/current --output/);
+  assert.match(deployZh, /current\\bin\\backup\.ps1 -Home \.\\current -OutputPath/);
+  assert.match(deployZh, /current\/bin\/restore\.sh --home \.\/current --source .* --force/);
+  assert.match(deployZh, /current\\bin\\restore\.ps1 -Home \.\\current -SourcePath .* -Force/);
+});
+
+test('service-management docs lock the current-home validation contract and windows-service production path in both locales', () => {
+  const serviceManagement = readWorkspaceFile('docs/operations/service-management.md');
+  const serviceManagementZh = readWorkspaceFile('docs/zh/operations/service-management.md');
+  const scriptLifecycle = readWorkspaceFile('docs/getting-started/script-lifecycle.md');
+  const scriptLifecycleZh = readWorkspaceFile('docs/zh/getting-started/script-lifecycle.md');
+
+  for (const content of [serviceManagement, serviceManagementZh]) {
+    assert.match(content, /validate-config\.sh --home \.\/current/);
+    assert.match(content, /validate-config\.ps1 -Home \.\\current/);
+    assert.match(content, /router-ops\.mjs validate-config --mode system --home <product-root>/);
+    assert.match(content, /windows-task.*compatibility asset|windows-task.*兼容性资产/);
+    assert.match(content, /current\/service\/windows-service\//);
+    assert.match(content, /start\.sh --foreground --home <product-root>\/current/);
+    assert.match(content, /start\.ps1 -Foreground -Home <product-root>\\current/);
+  }
+
+  for (const content of [scriptLifecycle, scriptLifecycleZh]) {
+    assert.match(content, /current\/service\/windows-service\//);
+    assert.match(content, /start\.sh --foreground --home <product-root>\/current/);
+    assert.match(content, /start\.ps1 -Foreground -Home <product-root>\\current/);
+    assert.doesNotMatch(content, /current\/service\/windows-task\//);
+  }
+});
+
+test('windows-task only appears as a compatibility note inside service-management docs', () => {
+  const productFacingFiles = [
+    'README.md',
+    'README.zh-CN.md',
+    ...listWorkspaceMarkdownFiles('docs/getting-started'),
+    ...listWorkspaceMarkdownFiles('docs/operations'),
+    ...listWorkspaceMarkdownFiles('docs/zh/getting-started'),
+    ...listWorkspaceMarkdownFiles('docs/zh/operations'),
+  ];
+  const allowedFiles = new Set([
+    'docs/operations/service-management.md',
+    'docs/zh/operations/service-management.md',
+  ]);
+
+  for (const relativePath of productFacingFiles) {
+    const content = readWorkspaceFile(relativePath);
+    if (allowedFiles.has(relativePath)) {
+      assert.match(content, /windows-task/);
+      assert.match(content, /compatibility asset|兼容性资产/);
+      continue;
+    }
+
+    assert.doesNotMatch(content, /windows-task/);
+  }
+});
+
+test('product-facing runtime docs standardize on <product-root> terminology for installed server roots', () => {
+  const readme = readWorkspaceFile('README.md');
+  const readmeZh = readWorkspaceFile('README.zh-CN.md');
+  const productionDeployment = readWorkspaceFile('docs/getting-started/production-deployment.md');
+  const productionDeploymentZh = readWorkspaceFile('docs/zh/getting-started/production-deployment.md');
+  const configuration = readWorkspaceFile('docs/operations/configuration.md');
+  const configurationZh = readWorkspaceFile('docs/zh/operations/configuration.md');
+
+  for (const content of [
+    readme,
+    readmeZh,
+    productionDeployment,
+    productionDeploymentZh,
+    configuration,
+    configurationZh,
+  ]) {
+    assert.match(content, /<product-root>/);
+  }
+
+  assert.doesNotMatch(readme, /<install-root>/);
+  assert.doesNotMatch(readmeZh, /<install-root>/);
+  assert.doesNotMatch(productionDeployment, /<install-root>/);
+  assert.doesNotMatch(productionDeploymentZh, /<install-root>/);
+});
+
+test('installed validate-config snippets explicitly state they run from <product-root> in both locales', () => {
+  const readme = readWorkspaceFile('README.md');
+  const readmeZh = readWorkspaceFile('README.zh-CN.md');
+  const productionDeployment = readWorkspaceFile('docs/getting-started/production-deployment.md');
+  const productionDeploymentZh = readWorkspaceFile('docs/zh/getting-started/production-deployment.md');
+
+  assert.match(readme, /From `<product-root>`, validate the generated production config before service registration:/);
+  assert.match(readmeZh, /从 `<product-root>` 执行生成后的生产配置校验：/);
+  assert.match(productionDeployment, /From the installed product root, run:/);
+  assert.match(productionDeploymentZh, /在已安装的产品根目录中执行：/);
+});
+
+test('release-builds docs expose custom <product-root> install generation in both locales', () => {
+  const releaseBuilds = readWorkspaceFile('docs/getting-started/release-builds.md');
+  const releaseBuildsZh = readWorkspaceFile('docs/zh/getting-started/release-builds.md');
+
+  for (const content of [releaseBuilds, releaseBuildsZh]) {
+    assert.match(content, /install\.sh --mode system --home <product-root>/);
+    assert.match(content, /install\.ps1 -Mode system -Home <product-root>/);
+    assert.match(content, /install\.sh --mode system --home <product-root> --dry-run/);
+    assert.match(content, /install\.ps1 -Mode system -Home <product-root> -DryRun/);
+  }
+});
+
+test('product-facing PowerShell dry-run examples prefer native -DryRun switches for wrapper scripts', () => {
+  const releaseBuilds = readWorkspaceFile('docs/getting-started/release-builds.md');
+  const releaseBuildsZh = readWorkspaceFile('docs/zh/getting-started/release-builds.md');
+  const scriptLifecycle = readWorkspaceFile('docs/getting-started/script-lifecycle.md');
+  const scriptLifecycleZh = readWorkspaceFile('docs/zh/getting-started/script-lifecycle.md');
+
+  for (const content of [releaseBuilds, releaseBuildsZh, scriptLifecycle, scriptLifecycleZh]) {
+    assert.match(content, /build\.ps1 -DryRun/);
+    assert.match(content, /install\.ps1 -DryRun/);
+    assert.doesNotMatch(content, /build\.ps1 --dry-run/);
+    assert.doesNotMatch(content, /install\.ps1 --dry-run/);
+  }
+});
+
+test('script-lifecycle release install step uses product-root wording instead of runtime-home wording', () => {
+  const scriptLifecycle = readWorkspaceFile('docs/getting-started/script-lifecycle.md');
+  const scriptLifecycleZh = readWorkspaceFile('docs/zh/getting-started/script-lifecycle.md');
+
+  assert.match(scriptLifecycle, /### 2\. Install the product root/);
+  assert.doesNotMatch(scriptLifecycle, /### 2\. Install the runtime home/);
+  assert.match(scriptLifecycleZh, /### 2\. 安装产品根目录/);
+  assert.doesNotMatch(scriptLifecycleZh, /### 2\. 安装运行时目录/);
+});
+
+test('README and source-development docs publish root product dev entrypoints in both locales', () => {
+  const readme = readWorkspaceFile('README.md');
+  const readmeZh = readWorkspaceFile('README.zh-CN.md');
+  const sourceDevelopment = readWorkspaceFile('docs/getting-started/source-development.md');
+  const sourceDevelopmentZh = readWorkspaceFile('docs/zh/getting-started/source-development.md');
+
+  assert.match(readme, /pnpm tauri:dev/);
+  assert.match(readme, /pnpm server:dev/);
+  assert.match(readmeZh, /pnpm tauri:dev/);
+  assert.match(readmeZh, /pnpm server:dev/);
+  assert.match(sourceDevelopment, /pnpm tauri:dev/);
+  assert.match(sourceDevelopment, /pnpm server:dev/);
+  assert.match(sourceDevelopmentZh, /pnpm tauri:dev/);
+  assert.match(sourceDevelopmentZh, /pnpm server:dev/);
+});
+
+test('repository README publishes release-catalog as metadata beside the two official products in both locales', () => {
+  const readme = readWorkspaceFile('README.md');
+  const readmeZh = readWorkspaceFile('README.zh-CN.md');
+
+  for (const content of [readme, readmeZh]) {
+    assert.match(content, /release-catalog\.json/);
+    assert.match(content, /metadata|元数据/);
+  }
+
+  assert.doesNotMatch(readme, /third (installable )?product/i);
+  assert.doesNotMatch(readmeZh, /第三个可安装产品/);
+});
+
+test('localized README routes production links to localized docs pages', () => {
+  const readmeZh = readWorkspaceFile('README.zh-CN.md');
+
+  assert.match(readmeZh, /\(\.\/docs\/zh\/getting-started\/production-deployment\.md\)/);
+  assert.match(readmeZh, /\(\.\/docs\/zh\/operations\/install-layout\.md\)/);
+  assert.match(readmeZh, /\(\.\/docs\/zh\/operations\/service-management\.md\)/);
+});
+
+test('quickstart docs expose root product dev shortcuts in both locales', () => {
+  const quickstart = readWorkspaceFile('docs/getting-started/quickstart.md');
+  const quickstartZh = readWorkspaceFile('docs/zh/getting-started/quickstart.md');
+
+  assert.match(quickstart, /pnpm tauri:dev/);
+  assert.match(quickstart, /pnpm server:dev/);
+  assert.match(quickstartZh, /pnpm tauri:dev/);
+  assert.match(quickstartZh, /pnpm server:dev/);
+});
+
+test('build-and-packaging docs expose root product dev shortcuts in both locales', () => {
+  const packaging = readWorkspaceFile('docs/getting-started/build-and-packaging.md');
+  const packagingZh = readWorkspaceFile('docs/zh/getting-started/build-and-packaging.md');
+
+  assert.match(packaging, /pnpm tauri:dev/);
+  assert.match(packaging, /pnpm server:dev/);
+  assert.match(packagingZh, /pnpm tauri:dev/);
+  assert.match(packagingZh, /pnpm server:dev/);
+});
+
+test('build-and-packaging docs publish release-catalog metadata alongside the two official products in both locales', () => {
+  const packaging = readWorkspaceFile('docs/getting-started/build-and-packaging.md');
+  const packagingZh = readWorkspaceFile('docs/zh/getting-started/build-and-packaging.md');
+
+  for (const content of [packaging, packagingZh]) {
+    assert.match(content, /artifacts\/release\/release-catalog\.json/);
+    assert.match(content, /generatedAt/);
+    assert.match(content, /variantKind/);
+    assert.match(content, /primaryFileSizeBytes/);
+    assert.match(content, /checksumAlgorithm/);
+  }
+});
+
+test('README and release-builds verification baselines include the governed workflow contract suite', () => {
+  const readme = readWorkspaceFile('README.md');
+  const readmeZh = readWorkspaceFile('README.zh-CN.md');
+  const releaseBuilds = readWorkspaceFile('docs/getting-started/release-builds.md');
+  const releaseBuildsZh = readWorkspaceFile('docs/zh/getting-started/release-builds.md');
+
+  for (const content of [readme, readmeZh, releaseBuilds, releaseBuildsZh]) {
+    assert.match(content, /scripts\/release\/tests\/release-workflow\.test\.mjs/);
+    assert.match(content, /scripts\/release-governance-workflow\.test\.mjs/);
+    assert.match(content, /scripts\/product-verification-workflow\.test\.mjs/);
+    assert.match(content, /scripts\/rust-verification-workflow\.test\.mjs/);
+  }
+});
+
+test('deployment docs use a release-tag placeholder instead of pinned dated image tags', () => {
+  const deployReadme = readWorkspaceFile('deploy/README.md');
+  const productionDeployment = readWorkspaceFile('docs/getting-started/production-deployment.md');
+  const productionDeploymentZh = readWorkspaceFile('docs/zh/getting-started/production-deployment.md');
+
+  assert.match(deployReadme, /image\.tag=<release-tag>/);
+  assert.match(productionDeployment, /image\.tag=<release-tag>/);
+  assert.match(productionDeploymentZh, /image\.tag=<release-tag>/);
+  assert.doesNotMatch(deployReadme, /image\.tag=20\d{2}\.\d{2}\.\d{2}/);
+  assert.doesNotMatch(productionDeployment, /image\.tag=20\d{2}\.\d{2}\.\d{2}/);
+  assert.doesNotMatch(productionDeploymentZh, /image\.tag=20\d{2}\.\d{2}\.\d{2}/);
+});
+
+test('runtime-mode docs align with the Windows Service management contract', () => {
+  const runtimeModes = readWorkspaceFile('docs/getting-started/runtime-modes.md');
+  const runtimeModesZh = readWorkspaceFile('docs/zh/getting-started/runtime-modes.md');
+
+  assert.match(runtimeModes, /Windows Service/);
+  assert.doesNotMatch(runtimeModes, /Task Scheduler/);
+  assert.match(runtimeModesZh, /Windows Service/);
 });
 
 test('gateway api reference publishes capability-first navigation in both locales', () => {

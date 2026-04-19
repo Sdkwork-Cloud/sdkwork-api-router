@@ -153,7 +153,7 @@ Choose managed development mode when:
 Choose managed release mode when:
 
 - you are packaging or deploying a server runtime
-- you need systemd, launchd, or Windows Task Scheduler integration
+- you need systemd, launchd, or Windows Service integration
 
 ## Where To Go Next
 

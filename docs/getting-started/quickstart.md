@@ -24,6 +24,16 @@ Windows:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\start-dev.ps1
 ```
 
+If you want to jump straight into the product-mode flows from the repository root, use:
+
+```bash
+pnpm tauri:dev
+pnpm server:dev
+```
+
+`pnpm tauri:dev` starts the portal desktop product path.
+`pnpm server:dev` starts the router product server path.
+
 Default managed development URLs:
 
 - admin: `http://127.0.0.1:9983/admin/`

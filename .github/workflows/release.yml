@@ -390,6 +390,30 @@ jobs:
         shell: bash
         run: node scripts/release/run-desktop-release-build.mjs --app portal --target ${{ matrix.target }}
 
+      - name: Run portal desktop signing hook
+        shell: bash
+        env:
+          SDKWORK_RELEASE_DESKTOP_SIGNING_REQUIRED: ${{ vars.SDKWORK_RELEASE_DESKTOP_SIGNING_REQUIRED || '' }}
+          SDKWORK_RELEASE_DESKTOP_WINDOWS_SIGN_HOOK: ${{ secrets.SDKWORK_RELEASE_DESKTOP_WINDOWS_SIGN_HOOK || vars.SDKWORK_RELEASE_DESKTOP_WINDOWS_SIGN_HOOK || '' }}
+          SDKWORK_RELEASE_DESKTOP_LINUX_SIGN_HOOK: ${{ secrets.SDKWORK_RELEASE_DESKTOP_LINUX_SIGN_HOOK || vars.SDKWORK_RELEASE_DESKTOP_LINUX_SIGN_HOOK || '' }}
+          SDKWORK_RELEASE_DESKTOP_MACOS_SIGN_HOOK: ${{ secrets.SDKWORK_RELEASE_DESKTOP_MACOS_SIGN_HOOK || vars.SDKWORK_RELEASE_DESKTOP_MACOS_SIGN_HOOK || '' }}
+          SDKWORK_RELEASE_DESKTOP_SIGN_HOOK: ${{ secrets.SDKWORK_RELEASE_DESKTOP_SIGN_HOOK || vars.SDKWORK_RELEASE_DESKTOP_SIGN_HOOK || '' }}
+        run: node scripts/release/run-desktop-release-signing.mjs --app portal --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --target ${{ matrix.target }} --evidence-path artifacts/release-governance/desktop-release-signing-${{ matrix.platform }}-${{ matrix.arch }}.json
+
+      - name: Upload desktop signing evidence
+        if: ${{ always() && hashFiles(format('artifacts/release-governance/desktop-release-signing-{0}-{1}.json', matrix.platform, matrix.arch)) != '' }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-governance-desktop-signing-${{ matrix.platform }}-${{ matrix.arch }}
+          path: artifacts/release-governance/desktop-release-signing-${{ matrix.platform }}-${{ matrix.arch }}.json
+          if-no-files-found: error
+
+      - name: Generate desktop signing evidence attestation
+        if: ${{ (!github.event.repository.private || vars.SDKWORK_RELEASE_ARTIFACT_ATTESTATIONS_ENABLED == 'true') && hashFiles(format('artifacts/release-governance/desktop-release-signing-{0}-{1}.json', matrix.platform, matrix.arch)) != '' }}
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: artifacts/release-governance/desktop-release-signing-${{ matrix.platform }}-${{ matrix.arch }}.json
+
       - name: Collect native release assets
         shell: bash
         run: node scripts/release/package-release-assets.mjs native --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --target ${{ matrix.target }} --output-dir artifacts/release

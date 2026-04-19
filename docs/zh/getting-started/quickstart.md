@@ -24,6 +24,16 @@ Windows：
 powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\start-dev.ps1
 ```
 
+如果你想从仓库根目录直接进入产品模式开发，可以使用：
+
+```bash
+pnpm tauri:dev
+pnpm server:dev
+```
+
+`pnpm tauri:dev` 会启动 portal desktop 产品路径。
+`pnpm server:dev` 会启动 router product server 路径。
+
 默认开发入口：
 
 - admin：`http://127.0.0.1:9983/admin/`

@@ -2457,6 +2457,7 @@ dependencies = [
  "sdkwork-api-config",
  "sdkwork-api-observability",
  "sdkwork-api-product-runtime",
+ "serde",
  "serde_json",
  "tokio",
 ]

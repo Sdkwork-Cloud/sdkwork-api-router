@@ -682,6 +682,20 @@ test('createReleaseBuildPlan builds the official server and portal desktop relea
     plan.steps.some((step) => step.label === 'admin desktop release build'),
     false,
   );
+  assert.equal(plan.steps.at(-2).label, 'desktop release signing');
+  assert.deepEqual(plan.steps.at(-2).args, [
+    path.join(repoRoot, 'scripts', 'release', 'run-desktop-release-signing.mjs'),
+    '--app',
+    'portal',
+    '--platform',
+    'linux',
+    '--arch',
+    'x64',
+    '--target',
+    'x86_64-unknown-linux-gnu',
+    '--evidence-path',
+    path.join(repoRoot, 'artifacts', 'release-governance', 'desktop-release-signing-linux-x64.json'),
+  ]);
   assert.equal(plan.steps.at(-1).label, 'native release package');
   assert.deepEqual(plan.steps.at(-1).args, [
     path.join(repoRoot, 'scripts', 'release', 'package-release-assets.mjs'),
@@ -717,8 +731,9 @@ test('createReleaseBuildPlan appends packaged release verification steps after n
     'verify-release plans must always build the governed docs site even when includeDocs is false',
   );
   assert.deepEqual(
-    linuxPlan.steps.slice(-5).map((step) => step.label),
+    linuxPlan.steps.slice(-6).map((step) => step.label),
     [
+      'desktop release signing',
       'native release package',
       'unix installed runtime smoke',
       'linux docker compose smoke',
@@ -1186,8 +1201,12 @@ test('createInstallPlan separates stable current control assets from versioned r
     assert.equal(plan.directories.includes(path.join(installRoot, 'log')), true);
     assert.equal(plan.directories.includes(path.join(installRoot, 'run')), true);
     assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('current', 'bin', 'start.sh'))), true);
+    assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('current', 'bin', 'backup.sh'))), true);
+    assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('current', 'bin', 'restore.sh'))), true);
     assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('current', 'bin', 'validate-config.sh'))), true);
     assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('current', 'bin', 'stop.ps1'))), true);
+    assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('current', 'bin', 'backup.ps1'))), true);
+    assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('current', 'bin', 'restore.ps1'))), true);
     assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('current', 'bin', 'validate-config.ps1'))), true);
     assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('current', 'service', 'launchd', 'com.sdkwork.api-router.plist'))), true);
     assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('current', 'service', 'systemd', 'sdkwork-api-router.service'))), true);
@@ -1313,7 +1332,7 @@ test('createInstallPlan system mode emits linux standard program, config, and st
     );
     assert.ok(routerConfigFile, 'expected system install plan to render router.yaml');
     assert.equal(routerConfigFile.type, 'text');
-    assert.match(routerConfigFile.contents, /web_bind: "0\.0\.0\.0:3001"/);
+  assert.match(routerConfigFile.contents, /web_bind: "127\.0\.0\.1:3001"/);
   });
 });
 
@@ -1687,7 +1706,7 @@ test('renderRuntimeEnvTemplate defaults release runtime to writable local data a
   assert.match(envFile, /SDKWORK_CONFIG_DIR="\/opt\/sdkwork-api-router\/config"/);
   assert.match(envFile, /SDKWORK_CONFIG_FILE="\/opt\/sdkwork-api-router\/config\/router\.yaml"/);
   assert.match(envFile, /SDKWORK_DATABASE_URL="sqlite:\/\/\/opt\/sdkwork-api-router\/data\/sdkwork-api-router\.db"/);
-  assert.match(envFile, /SDKWORK_WEB_BIND="0\.0\.0\.0:3001"/);
+  assert.match(envFile, /SDKWORK_WEB_BIND="127\.0\.0\.1:3001"/);
   assert.match(envFile, /SDKWORK_GATEWAY_BIND="127\.0\.0\.1:8080"/);
   assert.match(envFile, /SDKWORK_ADMIN_BIND="127\.0\.0\.1:8081"/);
   assert.match(envFile, /SDKWORK_PORTAL_BIND="127\.0\.0\.1:8082"/);
@@ -1717,12 +1736,12 @@ test('production start scripts default to product server-mode binds instead of m
   const startPs1 = readFileSync(path.join(repoRoot, 'bin', 'start.ps1'), 'utf8');
   const startSh = readFileSync(path.join(repoRoot, 'bin', 'start.sh'), 'utf8');
 
-  assert.match(startPs1, /\$env:SDKWORK_WEB_BIND = '0\.0\.0\.0:3001'/);
+  assert.match(startPs1, /\$env:SDKWORK_WEB_BIND = '127\.0\.0\.1:3001'/);
   assert.match(startPs1, /\$env:SDKWORK_GATEWAY_BIND = '127\.0\.0\.1:8080'/);
   assert.match(startPs1, /\$env:SDKWORK_ADMIN_BIND = '127\.0\.0\.1:8081'/);
   assert.match(startPs1, /\$env:SDKWORK_PORTAL_BIND = '127\.0\.0\.1:8082'/);
 
-  assert.match(startSh, /^SDKWORK_WEB_BIND=\$\{SDKWORK_WEB_BIND:-"0\.0\.0\.0:3001"\}$/m);
+  assert.match(startSh, /^SDKWORK_WEB_BIND=\$\{SDKWORK_WEB_BIND:-"127\.0\.0\.1:3001"\}$/m);
   assert.match(startSh, /^SDKWORK_GATEWAY_BIND=\$\{SDKWORK_GATEWAY_BIND:-"127\.0\.0\.1:8080"\}$/m);
   assert.match(startSh, /^SDKWORK_ADMIN_BIND=\$\{SDKWORK_ADMIN_BIND:-"127\.0\.0\.1:8081"\}$/m);
   assert.match(startSh, /^SDKWORK_PORTAL_BIND=\$\{SDKWORK_PORTAL_BIND:-"127\.0\.0\.1:8082"\}$/m);
@@ -3004,7 +3023,7 @@ test('start.ps1 dry-run accepts a missing relative -Home path without double-nes
 
     assert.equal(plan.mode, 'dry-run');
     assert.equal(plan.plan_format, 'json');
-    assert.equal(plan.public_web_bind, '0.0.0.0:3001');
+    assert.equal(plan.public_web_bind, '127.0.0.1:3001');
     assert.equal(plan.config_dir, `${runtimeHomePortable}/config`);
     assert.equal(plan.database_url, `sqlite://${runtimeHomePortable}/var/data/sdkwork-api-router.db`);
   } finally {
