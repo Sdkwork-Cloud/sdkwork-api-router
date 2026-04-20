@@ -57,13 +57,48 @@ Options:
 `;
 }
 
-export function serviceEnv(settings, baseEnv = process.env) {
+function escapeYamlDoubleQuotedScalar(value) {
+  return String(value)
+    .replaceAll('\\', '\\\\')
+    .replaceAll('"', '\\"');
+}
+
+export function renderSourceDevRouterConfig(settings) {
+  const lines = [
+    '# Generated source-dev router config.',
+    `gateway_bind: "${escapeYamlDoubleQuotedScalar(settings.gatewayBind)}"`,
+    `admin_bind: "${escapeYamlDoubleQuotedScalar(settings.adminBind)}"`,
+    `portal_bind: "${escapeYamlDoubleQuotedScalar(settings.portalBind)}"`,
+  ];
+
+  if (settings.databaseUrl) {
+    lines.push(`database_url: "${escapeYamlDoubleQuotedScalar(settings.databaseUrl)}"`);
+  }
+
+  lines.push('');
+  return lines.join('\n');
+}
+
+export function serviceEnv(settings, baseEnv = process.env, {
+  sourceConfigDir = '',
+  sourceConfigFile = '',
+} = {}) {
   const env = {
     ...baseEnv,
     SDKWORK_GATEWAY_BIND: settings.gatewayBind,
     SDKWORK_ADMIN_BIND: settings.adminBind,
     SDKWORK_PORTAL_BIND: settings.portalBind,
   };
+
+  delete env.SDKWORK_CONFIG_DIR;
+  delete env.SDKWORK_CONFIG_FILE;
+
+  if (sourceConfigDir) {
+    env.SDKWORK_CONFIG_DIR = sourceConfigDir;
+  }
+  if (sourceConfigFile) {
+    env.SDKWORK_CONFIG_FILE = sourceConfigFile;
+  }
 
   if (settings.databaseUrl) {
     env.SDKWORK_DATABASE_URL = settings.databaseUrl;

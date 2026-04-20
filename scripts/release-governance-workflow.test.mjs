@@ -6,9 +6,25 @@ import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 
 const repoRoot = path.resolve(import.meta.dirname, '..');
+const releaseGovernanceWorkflowWatchCatalog = await import(
+  pathToFileURL(
+    path.join(repoRoot, 'scripts', 'release-governance-workflow-watch-catalog.mjs'),
+  ).href,
+);
+const releaseGovernanceWorkflowStepContractCatalog = await import(
+  pathToFileURL(
+    path.join(repoRoot, 'scripts', 'release-governance-workflow-step-contract-catalog.mjs'),
+  ).href,
+);
+const DEFAULT_RELEASE_GOVERNANCE_WORKFLOW_WATCH_PATHS = releaseGovernanceWorkflowWatchCatalog.listReleaseGovernanceWorkflowWatchPaths();
+const DEFAULT_RELEASE_GOVERNANCE_WORKFLOW_STEP_CONTRACTS = releaseGovernanceWorkflowStepContractCatalog.listReleaseGovernanceWorkflowStepContracts();
 
 function read(relativePath) {
   return readFileSync(path.join(repoRoot, relativePath), 'utf8');
+}
+
+function escapeRegexLiteral(value) {
+  return String(value).replace(/[|\\{}()[\]^$+*?.]/g, '\\$&');
 }
 
 test('repository exposes a pull-request release governance workflow that watches its contract surface', () => {
@@ -18,32 +34,25 @@ test('repository exposes a pull-request release governance workflow that watches
 
   const workflow = read('.github/workflows/release-governance.yml');
 
-  assert.match(workflow, /pull_request:/);
-  assert.match(workflow, /workflow_dispatch:/);
-  assert.match(workflow, /FORCE_JAVASCRIPT_ACTIONS_TO_NODE24:\s*'true'/);
-  assert.match(workflow, /actions\/checkout@v5/);
-  assert.match(workflow, /actions\/setup-node@v5/);
-  assert.match(
+  assert.match(workflow, /permissions:\s*contents:\s*read/);
+  assert.doesNotMatch(
     workflow,
-    /actions\/setup-node@v5[\s\S]*?node-version:\s*22[\s\S]*?package-manager-cache:\s*false/,
+    /^\s+(?:contents|id-token|attestations|artifact-metadata|packages):\s*write$/m,
   );
-  assert.match(workflow, /\.github\/workflows\/release-governance\.yml/);
-  assert.match(workflow, /scripts\/release\/\*\*/);
-  assert.match(workflow, /scripts\/release-governance-workflow-contracts\.mjs/);
-  assert.match(workflow, /scripts\/release-governance-workflow\.test\.mjs/);
-  assert.match(workflow, /docs\/架构\/135-可观测性与SLO治理设计-2026-04-07\.md/);
-  assert.match(workflow, /docs\/架构\/143-全局架构对齐与收口计划-2026-04-08\.md/);
-  assert.match(
-    workflow,
-    /run:\s*node --test --experimental-test-isolation=none scripts\/release\/tests\/release-governance-runner\.test\.mjs/,
-  );
-  assert.match(
-    workflow,
-    /run:\s*node scripts\/release\/run-release-governance-checks\.mjs --profile preflight --format json/,
-  );
+  for (const contract of DEFAULT_RELEASE_GOVERNANCE_WORKFLOW_STEP_CONTRACTS) {
+    assert.match(workflow, new RegExp(contract.patternSource));
+  }
+  for (const watchedPath of DEFAULT_RELEASE_GOVERNANCE_WORKFLOW_WATCH_PATHS) {
+    assert.match(workflow, new RegExp(escapeRegexLiteral(watchedPath)));
+  }
 });
 
 test('release governance workflow contract helper rejects workflows that do not force JavaScript actions to Node24', async () => {
+  const contractSource = read('scripts/release-governance-workflow-contracts.mjs');
+  assert.match(contractSource, /release-governance-node-test-catalog\.mjs/);
+  assert.match(contractSource, /release-governance-workflow-watch-catalog\.mjs/);
+  assert.match(contractSource, /release-governance-workflow-step-contract-catalog\.mjs/);
+
   const contracts = await import(
     pathToFileURL(
       path.join(repoRoot, 'scripts', 'release-governance-workflow-contracts.mjs'),
@@ -68,6 +77,31 @@ test('release governance workflow contract helper rejects workflows that do not 
   );
 });
 
+test('release governance workflow contract helper rejects workflows that omit the explicit read-only token permissions', async () => {
+  const contracts = await import(
+    pathToFileURL(
+      path.join(repoRoot, 'scripts', 'release-governance-workflow-contracts.mjs'),
+    ).href,
+  );
+
+  const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), 'sdkwork-release-governance-workflow-'));
+  mkdirSync(path.join(fixtureRoot, '.github', 'workflows'), { recursive: true });
+  const workflow = read('.github/workflows/release-governance.yml');
+
+  writeFileSync(
+    path.join(fixtureRoot, '.github', 'workflows', 'release-governance.yml'),
+    workflow.replace(/permissions:\r?\n\s+contents:\s*read\r?\n\r?\n/, ''),
+    'utf8',
+  );
+
+  await assert.rejects(
+    contracts.assertReleaseGovernanceWorkflowContracts({
+      repoRoot: fixtureRoot,
+    }),
+    /read-only GITHUB_TOKEN baseline|permissions/i,
+  );
+});
+
 test('release governance workflow contract helper rejects workflows that do not watch the contract module', async () => {
   const contracts = await import(
     pathToFileURL(
@@ -89,10 +123,19 @@ on:
       - '.github/workflows/release.yml'
       - '.github/workflows/release-governance.yml'
       - 'scripts/release/**'
+      - 'scripts/strict-contract-catalog.mjs'
+      - 'scripts/strict-contract-catalog.test.mjs'
+      - 'scripts/release-governance-node-test-catalog.mjs'
+      - 'scripts/release-governance-node-test-catalog.test.mjs'
+      - 'scripts/run-release-governance-node-tests.mjs'
+      - 'scripts/run-release-governance-node-tests.test.mjs'
       - 'scripts/release-governance-workflow.test.mjs'
       - 'bin/**'
       - 'docs/release/**'
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
@@ -109,6 +152,9 @@ jobs:
         with:
           node-version: 22
           package-manager-cache: false
+
+      - name: Run release governance node tests
+        run: node scripts/run-release-governance-node-tests.mjs
 
       - name: Run release governance checks
         run: node scripts/release/run-release-governance-checks.mjs --profile preflight --format json
@@ -170,11 +216,24 @@ on:
       - '.github/workflows/release.yml'
       - '.github/workflows/release-governance.yml'
       - 'scripts/release/**'
+      - 'scripts/strict-contract-catalog.mjs'
+      - 'scripts/strict-contract-catalog.test.mjs'
+      - 'scripts/release-governance-node-test-catalog.mjs'
+      - 'scripts/release-governance-node-test-catalog.test.mjs'
       - 'scripts/release-governance-workflow-contracts.mjs'
+      - 'scripts/release-governance-workflow-step-contract-catalog.mjs'
+      - 'scripts/release-governance-workflow-step-contract-catalog.test.mjs'
+      - 'scripts/release-governance-workflow-watch-catalog.mjs'
+      - 'scripts/release-governance-workflow-watch-catalog.test.mjs'
       - 'scripts/release-governance-workflow.test.mjs'
+      - 'scripts/run-release-governance-node-tests.mjs'
+      - 'scripts/run-release-governance-node-tests.test.mjs'
       - 'bin/**'
       - 'docs/release/**'
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
@@ -191,6 +250,9 @@ jobs:
         with:
           node-version: 22
           package-manager-cache: false
+
+      - name: Run release governance node tests
+        run: node scripts/run-release-governance-node-tests.mjs
 
       - name: Run release governance checks
         run: node scripts/release/run-release-governance-checks.mjs --profile preflight --format json
@@ -206,7 +268,7 @@ jobs:
   );
 });
 
-test('release governance workflow contract helper rejects workflows that do not execute the runner self-test directly', async () => {
+test('release governance workflow contract helper rejects workflows that inline raw node test lists instead of the repository runner', async () => {
   const contracts = await import(
     pathToFileURL(
       path.join(repoRoot, 'scripts', 'release-governance-workflow-contracts.mjs'),
@@ -215,6 +277,7 @@ test('release governance workflow contract helper rejects workflows that do not 
 
   const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), 'sdkwork-release-governance-workflow-'));
   mkdirSync(path.join(fixtureRoot, '.github', 'workflows'), { recursive: true });
+  mkdirSync(path.join(fixtureRoot, 'scripts'), { recursive: true });
 
   writeFileSync(
     path.join(fixtureRoot, '.github', 'workflows', 'release-governance.yml'),
@@ -227,13 +290,24 @@ on:
       - '.github/workflows/release.yml'
       - '.github/workflows/release-governance.yml'
       - 'scripts/release/**'
+      - 'scripts/strict-contract-catalog.mjs'
+      - 'scripts/strict-contract-catalog.test.mjs'
+      - 'scripts/release-governance-node-test-catalog.mjs'
+      - 'scripts/release-governance-node-test-catalog.test.mjs'
       - 'scripts/release-governance-workflow-contracts.mjs'
+      - 'scripts/release-governance-workflow-watch-catalog.mjs'
+      - 'scripts/release-governance-workflow-watch-catalog.test.mjs'
       - 'scripts/release-governance-workflow.test.mjs'
+      - 'scripts/run-release-governance-node-tests.mjs'
+      - 'scripts/run-release-governance-node-tests.test.mjs'
       - 'bin/**'
       - 'docs/架构/135-可观测性与SLO治理设计-2026-04-07.md'
       - 'docs/架构/143-全局架构对齐与收口计划-2026-04-08.md'
       - 'docs/release/**'
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
@@ -251,8 +325,36 @@ jobs:
           node-version: 22
           package-manager-cache: false
 
+      - name: Run release governance node tests
+        run: node --test --experimental-test-isolation=none scripts/release-governance-workflow.test.mjs scripts/release/tests/release-governance-runner.test.mjs
+
       - name: Run release governance checks
         run: node scripts/release/run-release-governance-checks.mjs --profile preflight --format json
+`,
+    'utf8',
+  );
+  writeFileSync(
+    path.join(fixtureRoot, 'scripts', 'run-release-governance-node-tests.mjs'),
+    `
+export function listReleaseGovernanceNodeTests() {
+  return [
+    'scripts/release-governance-workflow.test.mjs',
+    'scripts/run-release-governance-node-tests.test.mjs',
+    'scripts/release/tests/release-governance-plan-catalog.test.mjs',
+    'scripts/release/tests/release-governance-runner.test.mjs',
+  ];
+}
+
+export function createReleaseGovernanceNodeTestPlan() {
+  return {
+    command: 'node',
+    args: ['--test', '--experimental-test-isolation=none', ...listReleaseGovernanceNodeTests()],
+  };
+}
+
+export function runReleaseGovernanceNodeTests() {
+  return { status: 0 };
+}
 `,
     'utf8',
   );
@@ -261,6 +363,63 @@ jobs:
     contracts.assertReleaseGovernanceWorkflowContracts({
       repoRoot: fixtureRoot,
     }),
-    /runner self-test/i,
+    /repository-owned runner|run-release-governance-node-tests/i,
+  );
+});
+
+test('release governance workflow contract helper rejects runners that omit the governed node test isolation mode', async () => {
+  const contracts = await import(
+    pathToFileURL(
+      path.join(repoRoot, 'scripts', 'release-governance-workflow-contracts.mjs'),
+    ).href,
+  );
+
+  const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), 'sdkwork-release-governance-workflow-'));
+  mkdirSync(path.join(fixtureRoot, '.github', 'workflows'), { recursive: true });
+  mkdirSync(path.join(fixtureRoot, 'scripts'), { recursive: true });
+
+  writeFileSync(
+    path.join(fixtureRoot, '.github', 'workflows', 'release-governance.yml'),
+    read('.github/workflows/release-governance.yml'),
+    'utf8',
+  );
+  writeFileSync(
+    path.join(fixtureRoot, 'scripts', 'run-release-governance-node-tests.mjs'),
+    `
+export function listReleaseGovernanceNodeTests() {
+  return [
+    'scripts/release-governance-node-test-catalog.test.mjs',
+    'scripts/release-governance-workflow-step-contract-catalog.test.mjs',
+    'scripts/release-governance-workflow-watch-catalog.test.mjs',
+    'scripts/release-governance-workflow.test.mjs',
+    'scripts/run-release-governance-node-tests.test.mjs',
+    'scripts/strict-contract-catalog.test.mjs',
+    'scripts/release/tests/installed-runtime-smoke-lib.test.mjs',
+    'scripts/release/tests/release-cli-format-catalog.test.mjs',
+    'scripts/release/tests/release-governance-plan-catalog.test.mjs',
+    'scripts/release/tests/release-governance-runner.test.mjs',
+    'scripts/release/tests/materialize-third-party-governance.test.mjs',
+  ];
+}
+
+export function createReleaseGovernanceNodeTestPlan() {
+  return {
+    command: 'node',
+    args: ['--test', ...listReleaseGovernanceNodeTests()],
+  };
+}
+
+export function runReleaseGovernanceNodeTests() {
+  return { status: 0 };
+}
+`,
+    'utf8',
+  );
+
+  await assert.rejects(
+    contracts.assertReleaseGovernanceWorkflowContracts({
+      repoRoot: fixtureRoot,
+    }),
+    /test isolation|experimental-test-isolation/i,
   );
 });

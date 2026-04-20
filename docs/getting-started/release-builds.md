@@ -111,6 +111,13 @@ The portal desktop bundle is a native shell plus a bundled release-like runtime 
 
 The public release contract is intentionally narrower than the raw Tauri bundle tree. The release packager copies exactly one platform-native installer into the official desktop release directory, renames it to the canonical product filename, writes a SHA-256 checksum file, and emits a manifest that records the embedded sidecar payload contract. That installer manifest exposes the embedded runtime paths through `embeddedRuntime.routerBinary`, `embeddedRuntime.adminSiteDir`, `embeddedRuntime.portalSiteDir`, `embeddedRuntime.bootstrapDataDir`, `embeddedRuntime.releaseManifestFile`, and `embeddedRuntime.readmeFile`.
 
+The desktop installer manifest is also the machine-readable installer contract for automation. It records:
+
+- `platform`, `arch`, and `target`
+- `artifactKind`, `installerFile`, and `checksumFile`
+- `sourceBundlePath` for the original Tauri-produced installer inside the raw bundle tree
+- the `embeddedRuntime.*` paths listed above
+
 The staged payload contains:
 
 - `router-product/bin/router-product-service`
@@ -156,14 +163,23 @@ The server product is published as a normalized archive set instead of a raw bui
 
 The external manifest records the archive identity plus the embedded bundle contract. Inside the archive, `release-manifest.json` continues to describe the unpacked product payload used by install and runtime tooling.
 
+The server archive manifest is the machine-readable install contract for governed bundle consumers. It records:
+
+- `platform`, `arch`, `target`, `releaseVersion`, `archiveFile`, and `checksumFile`
+- `embeddedManifestFile` for the bundled `release-manifest.json`
+- `installers` for the bundle-root `install.sh` and `install.ps1` entrypoints
+- `services`, `sites`, `bootstrapDataRoots`, and `deploymentAssetRoots` so operators and packaging automation can verify the archive payload shape without unpacking the entire bundle tree
+
 ## Release Catalog Contract
 
 `release-catalog.json` is the release-level index for the official SKU set. It does not replace the per-asset manifests. It aggregates them and is the only published metadata asset that sits beside the two installable products.
 
 The catalog records:
 
+- the top-level `version` and `type`, where the current catalog type is `sdkwork-release-catalog`
 - the release tag
 - the `generatedAt` timestamp for the catalog snapshot
+- `productCount` and `variantCount`
 - the official product ids
 - per-platform and per-arch variants, including `variantKind`
 - the primary asset filename, `primaryFileSizeBytes`, checksum filename, `checksumAlgorithm`, manifest filename, and parsed SHA-256 value
@@ -171,7 +187,29 @@ The catalog records:
 
 ## Native Server Install Generation
 
-Repository-driven native install generation still uses the managed install entrypoints:
+For production installs from the governed server archive, extract the bundle and run the bundle-root installer entrypoint:
+
+```bash
+./install.sh --mode system
+```
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Mode system
+```
+
+Portable and custom-home bundle installs use the same root-level entrypoints:
+
+```bash
+./install.sh --dry-run
+./install.sh --mode system --home <product-root> --dry-run
+```
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -DryRun
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Mode system -Home <product-root> -DryRun
+```
+
+Repository-driven native install generation remains available from a source checkout through the managed `bin/install.*` wrappers:
 
 Portable install:
 
@@ -203,7 +241,7 @@ Custom system install rooted at `<product-root>`:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\install.ps1 -Mode system -Home <product-root>
 ```
 
-Use `--home` or `-Home` when you want repository-driven install generation to materialize a product tree under a specific `<product-root>`. Validate and operate that generated install from the installed product root as described in [Production Deployment](/getting-started/production-deployment).
+Use `--home` or `-Home` when you want repository-driven install generation to materialize a product tree under a specific `<product-root>`. Validate and operate that generated install from the installed product root as described in [Production Deployment](/getting-started/production-deployment). For official published bundles, prefer the bundle-root `install.sh` and `install.ps1` entrypoints above.
 
 `system` mode is the canonical server install path and defaults to PostgreSQL.
 

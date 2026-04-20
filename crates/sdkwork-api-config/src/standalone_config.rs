@@ -279,6 +279,31 @@ impl StandaloneConfig {
             return Ok(());
         }
 
+        let placeholder_fields = [
+            ("database_url", self.database_url.as_str()),
+            (
+                "admin_jwt_signing_secret",
+                self.admin_jwt_signing_secret.as_str(),
+            ),
+            (
+                "portal_jwt_signing_secret",
+                self.portal_jwt_signing_secret.as_str(),
+            ),
+            ("credential_master_key", self.credential_master_key.as_str()),
+            ("metrics_bearer_token", self.metrics_bearer_token.as_str()),
+        ]
+        .into_iter()
+        .filter_map(|(field, value)| placeholder_like_value(value).then_some(field))
+        .collect::<Vec<_>>();
+
+        if !placeholder_fields.is_empty() {
+            anyhow::bail!(
+                "refusing startup while placeholder configuration values remain configured for {}; replace them with real values or set {}=true for explicit development-only override",
+                placeholder_fields.join(", "),
+                SDKWORK_ALLOW_INSECURE_DEV_DEFAULTS,
+            );
+        }
+
         let externally_bound_services = [
             ("gateway_bind", self.gateway_bind.as_str()),
             ("admin_bind", self.admin_bind.as_str()),

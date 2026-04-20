@@ -193,6 +193,19 @@ test('frontend launchers repair installs in place without deleting node_modules 
   }
 });
 
+test('frontend pnpm launchers pin child process cwd to the target app root instead of relying on --dir alone', () => {
+  const startAdmin = readFileSync(path.join(repoRoot, 'scripts', 'dev', 'start-admin.mjs'), 'utf8');
+  const startPortal = readFileSync(path.join(repoRoot, 'scripts', 'dev', 'start-portal.mjs'), 'utf8');
+  const startWeb = readFileSync(path.join(repoRoot, 'scripts', 'dev', 'start-web.mjs'), 'utf8');
+
+  assert.match(startAdmin, /pnpmSpawnOptions\(\{[\s\S]*cwd:\s*adminRoot[\s\S]*\}\)/s);
+  assert.match(startPortal, /pnpmSpawnOptions\(\{[\s\S]*cwd:\s*portalRoot[\s\S]*\}\)/s);
+  assert.match(startWeb, /pnpmSpawnOptions\(\{[\s\S]*env[\s\S]*stdio:\s*'pipe'[\s\S]*cwd[\s\S]*\}\)/s);
+  assert.doesNotMatch(startAdmin, /\[\s*['"]--dir['"],\s*adminRoot,\s*['"](install|build|preview|tauri:dev|dev)['"]\s*\]/);
+  assert.doesNotMatch(startPortal, /\[\s*['"]--dir['"],\s*portalRoot,\s*['"](install|build|preview|tauri:dev|dev)['"]\s*\]/);
+  assert.doesNotMatch(startWeb, /\[\s*['"]--dir['"],\s*appRoot,\s*['"](install|build)['"]\s*\]/);
+});
+
 test('strictFrontendInstallsEnabled only enables strict mode for explicit truthy env values', () => {
   assert.equal(strictFrontendInstallsEnabled({}), false);
   assert.equal(strictFrontendInstallsEnabled({ SDKWORK_STRICT_FRONTEND_INSTALLS: '' }), false);

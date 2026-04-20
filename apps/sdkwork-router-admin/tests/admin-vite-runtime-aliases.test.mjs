@@ -46,3 +46,21 @@ test('admin vite config resolves sdkwork ui entrypoints from workspace source in
   assert.match(viteConfig, /find:\s*\/\^@sdkwork\\\/ui-pc-react\\\/components\\\/ui\\\/feedback\$\//);
   assert.match(viteConfig, /replacement:\s*resolveSdkworkUiSourcePath\('components\/ui\/feedback\/index\.ts'\)/);
 });
+
+test('admin vite config pins source-linked style and icon runtime packages to governed readable roots', () => {
+  const viteConfig = read('vite.config.ts');
+
+  assert.match(viteConfig, /const clsxPackageRoot = normalizeAliasPath\(resolveReadablePackageRoot\(/);
+  assert.match(viteConfig, /const tailwindMergePackageRoot = normalizeAliasPath\(resolveReadablePackageRoot\(/);
+  assert.match(viteConfig, /const lucideReactPackageRoot = normalizeAliasPath\(resolveReadablePackageRoot\(/);
+  assert.match(viteConfig, /const lucideReactIconsRoot = `\$\{normalizeAliasPath\(path\.join\(lucideReactPackageRoot, 'dist', 'esm', 'icons'\)\)\}\/`;/);
+  assert.match(viteConfig, /dedupe:\s*\[[\s\S]*'lucide-react'[\s\S]*'zustand'[\s\S]*\]/);
+  assert.match(viteConfig, /find:\s*\/\^clsx\$\//);
+  assert.match(viteConfig, /replacement:\s*clsxPackageRoot/);
+  assert.match(viteConfig, /find:\s*\/\^tailwind-merge\$\//);
+  assert.match(viteConfig, /replacement:\s*tailwindMergePackageRoot/);
+  assert.match(viteConfig, /find:\s*\/\^lucide-react\$\//);
+  assert.match(viteConfig, /replacement:\s*lucideReactPackageRoot/);
+  assert.match(viteConfig, /find:\s*\/\^lucide-react\\\/dist\\\/esm\\\/icons\\\/\//);
+  assert.match(viteConfig, /replacement:\s*lucideReactIconsRoot/);
+});

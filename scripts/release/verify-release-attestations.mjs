@@ -6,13 +6,17 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
+import { createStrictKeyedCatalog } from '../strict-contract-catalog.mjs';
+import { assertSupportedReleaseCliFormat } from './release-cli-format-catalog.mjs';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, '..', '..');
 
 const DEFAULT_REPOSITORY_SLUG = 'Sdkwork-Cloud/sdkwork-api-router';
 
-const RELEASE_ATTESTATION_SUBJECT_SPECS = Object.freeze([
+const releaseAttestationSubjectSpecCatalog = createStrictKeyedCatalog({
+  entries: [
   Object.freeze({
     id: 'release-window-snapshot',
     type: 'file',
@@ -44,6 +48,24 @@ const RELEASE_ATTESTATION_SUBJECT_SPECS = Object.freeze([
     description: 'governed SLO evidence',
   }),
   Object.freeze({
+    id: 'third-party-sbom',
+    type: 'file',
+    relativePath: path.join('docs', 'release', 'third-party-sbom-latest.spdx.json'),
+    description: 'governed third-party SBOM',
+  }),
+  Object.freeze({
+    id: 'third-party-notices',
+    type: 'file',
+    relativePath: path.join('docs', 'release', 'third-party-notices-latest.json'),
+    description: 'governed third-party notices',
+  }),
+  Object.freeze({
+    id: 'release-governance-bundle',
+    type: 'tree',
+    relativeDirectory: path.join('artifacts', 'release-governance-bundle'),
+    description: 'release governance bundle payloads',
+  }),
+  Object.freeze({
     id: 'unix-installed-runtime-smoke',
     type: 'pattern',
     relativeDirectory: path.join('artifacts', 'release-governance'),
@@ -58,6 +80,40 @@ const RELEASE_ATTESTATION_SUBJECT_SPECS = Object.freeze([
     description: 'Windows installed runtime smoke evidence',
   }),
   Object.freeze({
+    id: 'desktop-release-signing',
+    type: 'pattern',
+    relativeDirectory: path.join('artifacts', 'release-governance'),
+    fileNamePattern: /^desktop-release-signing-.*\.json$/u,
+    description: 'Desktop signing evidence',
+  }),
+  Object.freeze({
+    id: 'docker-compose-smoke',
+    type: 'pattern',
+    relativeDirectory: path.join('artifacts', 'release-governance'),
+    fileNamePattern: /^docker-compose-smoke-.*\.json$/u,
+    description: 'Docker Compose smoke evidence',
+  }),
+  Object.freeze({
+    id: 'helm-render-smoke',
+    type: 'pattern',
+    relativeDirectory: path.join('artifacts', 'release-governance'),
+    fileNamePattern: /^helm-render-smoke-.*\.json$/u,
+    description: 'Helm render smoke evidence',
+  }),
+  Object.freeze({
+    id: 'ghcr-image-publish',
+    type: 'pattern',
+    relativeDirectory: path.join('artifacts', 'release-governance'),
+    fileNamePattern: /^ghcr-image-publish-.*\.json$/u,
+    description: 'GHCR image publish metadata',
+  }),
+  Object.freeze({
+    id: 'ghcr-image-manifest-publish',
+    type: 'file',
+    relativePath: path.join('artifacts', 'release-governance', 'ghcr-image-manifest-publish.json'),
+    description: 'GHCR multi-architecture image manifest publish metadata',
+  }),
+  Object.freeze({
     id: 'release-catalog',
     type: 'file',
     relativePath: path.join('artifacts', 'release', 'release-catalog.json'),
@@ -69,7 +125,11 @@ const RELEASE_ATTESTATION_SUBJECT_SPECS = Object.freeze([
     relativeDirectory: path.join('artifacts', 'release', 'native'),
     description: 'packaged native release assets',
   }),
-]);
+  ],
+  getKey: (spec) => spec.id,
+  duplicateKeyMessagePrefix: 'duplicate release attestation subject spec',
+  missingKeyMessagePrefix: 'missing release attestation subject spec',
+});
 
 function toPortableRelativePath(repoRoot, targetPath) {
   return (path.relative(repoRoot, targetPath) || '.').replaceAll('\\', '/');
@@ -241,7 +301,15 @@ function classifyGhExecutionBlock(errorMessage = '') {
 }
 
 export function listReleaseAttestationSubjectSpecs() {
-  return RELEASE_ATTESTATION_SUBJECT_SPECS.map((spec) => ({ ...spec }));
+  return releaseAttestationSubjectSpecCatalog.list();
+}
+
+export function findReleaseAttestationSubjectSpec(subjectId) {
+  return releaseAttestationSubjectSpecCatalog.find(subjectId);
+}
+
+export function listReleaseAttestationSubjectSpecsByIds(subjectIds = []) {
+  return releaseAttestationSubjectSpecCatalog.listByKeys(subjectIds);
 }
 
 export function resolveReleaseAttestationRepositorySlug({
@@ -264,7 +332,7 @@ export function resolveReleaseAttestationVerificationSubjects({
   const subjects = [];
   const missingSubjectSpecs = [];
 
-  for (const spec of RELEASE_ATTESTATION_SUBJECT_SPECS) {
+  for (const spec of listReleaseAttestationSubjectSpecs()) {
     if (spec.type === 'file') {
       const subjectPath = path.resolve(repoRoot, spec.relativePath);
       if (!existsSync(subjectPath)) {
@@ -434,9 +502,7 @@ function parseArgs(argv = process.argv.slice(2)) {
     throw new Error(`unknown argument: ${token}`);
   }
 
-  if (!['text', 'json'].includes(format)) {
-    throw new Error(`unsupported format: ${format}`);
-  }
+  assertSupportedReleaseCliFormat(format);
 
   return {
     format,

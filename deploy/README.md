@@ -13,7 +13,7 @@ For native `system` installs, OS-standard directories, service registration, and
 - `docker/`
   - `Dockerfile`: Linux product-runtime image build
   - `docker-compose.yml`: quick PostgreSQL-backed single-host deployment
-  - `.env.example`: required runtime secrets and database placeholders
+  - `.env.example`: required runtime secrets and fail-closed database placeholders
 - `helm/sdkwork-api-router/`
   - Kubernetes chart for externally managed PostgreSQL deployments
 
@@ -37,15 +37,19 @@ docker build -f deploy/docker/Dockerfile -t sdkwork-api-router:local .
 docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/.env up -d
 ```
 
+Replace every `replace-with-*` value in `deploy/docker/.env` before first startup. The packaged runtime rejects placeholder database credentials and secret material during startup.
+
 ## Quick Helm Deployment
 
 ```bash
 helm upgrade --install sdkwork-api-router deploy/helm/sdkwork-api-router \
-  --set image.repository=ghcr.io/your-org/sdkwork-api-router \
+  --set image.repository=ghcr.io/<owner>/sdkwork-api-router \
   --set image.tag=<release-tag> \
-  --set secrets.databaseUrl='postgresql://sdkwork:change-me@postgresql:5432/sdkwork_api_router' \
-  --set secrets.adminJwtSigningSecret='change-me-admin' \
-  --set secrets.portalJwtSigningSecret='change-me-portal' \
-  --set secrets.credentialMasterKey='change-me-master-key' \
-  --set secrets.metricsBearerToken='change-me-metrics-token'
+  --set secrets.databaseUrl='postgresql://sdkwork:replace-with-db-password@postgresql:5432/sdkwork_api_router' \
+  --set secrets.adminJwtSigningSecret='replace-with-admin-jwt-secret' \
+  --set secrets.portalJwtSigningSecret='replace-with-portal-jwt-secret' \
+  --set secrets.credentialMasterKey='replace-with-credential-master-key' \
+  --set secrets.metricsBearerToken='replace-with-metrics-token'
 ```
+
+Official release workflow output also includes the hosted Linux OCI image `ghcr.io/<owner>/sdkwork-api-router:<release-tag>` for Helm and other registry-based deployments.

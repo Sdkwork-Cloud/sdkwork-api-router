@@ -225,3 +225,33 @@ test('managed Windows workspace roots fall back to the host temp directory on no
   assert.doesNotMatch(managedWindowsTargetDir.replaceAll('\\', '/'), /^\/sdkwork-target(?:\/|$)/);
   assert.doesNotMatch(managedWindowsTempDir.replaceAll('\\', '/'), /^\/sdkwork-temp(?:\/|$)/);
 });
+
+test('check-rust-verification-matrix exposes strict verification-group lookup helpers', async () => {
+  const module = await import(
+    pathToFileURL(path.join(workspaceRoot, 'scripts', 'check-rust-verification-matrix.mjs')).href,
+  );
+
+  assert.equal(typeof module.listRustVerificationGroups, 'function');
+  assert.equal(typeof module.findRustVerificationGroup, 'function');
+  assert.equal(typeof module.listRustVerificationGroupsByIds, 'function');
+
+  assert.equal(
+    module.findRustVerificationGroup('dependency-audit'),
+    'dependency-audit',
+  );
+  assert.deepEqual(
+    module.listRustVerificationGroupsByIds([
+      'interface-openapi',
+      'workspace',
+    ]),
+    [
+      'interface-openapi',
+      'workspace',
+    ],
+  );
+
+  assert.throws(
+    () => module.findRustVerificationGroup('missing-verification-group'),
+    /missing rust verification group.*missing-verification-group/i,
+  );
+});

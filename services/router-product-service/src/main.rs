@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 use std::env;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
+use std::time::UNIX_EPOCH;
 
 use anyhow::Context;
 use clap::{Parser, ValueEnum};
@@ -29,6 +30,9 @@ const SDKWORK_PORTAL_PROXY_TARGET: &str = "SDKWORK_PORTAL_PROXY_TARGET";
 const SDKWORK_GATEWAY_PROXY_TARGET: &str = "SDKWORK_GATEWAY_PROXY_TARGET";
 const SDKWORK_ADMIN_SITE_DIR: &str = "SDKWORK_ADMIN_SITE_DIR";
 const SDKWORK_PORTAL_SITE_DIR: &str = "SDKWORK_PORTAL_SITE_DIR";
+const INSTALLED_RUNTIME_NAME: &str = "sdkwork-api-router";
+const INSTALLED_RUNTIME_LAYOUT_VERSION: u32 = 2;
+const ROUTER_PRODUCT_SERVICE_BINARY_STEM: &str = "router-product-service";
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
 enum PlanFormat {
@@ -85,15 +89,21 @@ struct RouterProductServiceCli {
     #[arg(
         long = "backup-output",
         value_name = "DIR",
-        conflicts_with = "restore_source"
+        conflicts_with_all = ["restore_source", "support_bundle_output"]
     )]
     backup_output: Option<PathBuf>,
     #[arg(
         long = "restore-source",
         value_name = "DIR",
-        conflicts_with = "backup_output"
+        conflicts_with_all = ["backup_output", "support_bundle_output"]
     )]
     restore_source: Option<PathBuf>,
+    #[arg(
+        long = "support-bundle-output",
+        value_name = "DIR",
+        conflicts_with_all = ["backup_output", "restore_source"]
+    )]
+    support_bundle_output: Option<PathBuf>,
     #[arg(long = "force", default_value_t = false)]
     force: bool,
     #[arg(long = "plan-format", value_enum, default_value_t = PlanFormat::Text)]
@@ -121,6 +131,7 @@ struct ProductServiceSettings {
     portal_site_dir: Option<PathBuf>,
     backup_output: Option<PathBuf>,
     restore_source: Option<PathBuf>,
+    support_bundle_output: Option<PathBuf>,
     force: bool,
     plan_format: PlanFormat,
     dry_run: bool,
@@ -132,6 +143,8 @@ impl ProductServiceSettings {
             Some(RuntimeOperationKind::Backup)
         } else if self.restore_source.is_some() {
             Some(RuntimeOperationKind::Restore)
+        } else if self.support_bundle_output.is_some() {
+            Some(RuntimeOperationKind::SupportBundle)
         } else {
             None
         }
@@ -186,8 +199,12 @@ where
 {
     let env_values = collect_env_values(env_pairs);
 
-    if (cli.backup_output.is_some() || cli.restore_source.is_some()) && cli.runtime_home.is_none() {
-        anyhow::bail!("backup and restore operations require --runtime-home");
+    if (cli.backup_output.is_some()
+        || cli.restore_source.is_some()
+        || cli.support_bundle_output.is_some())
+        && cli.runtime_home.is_none()
+    {
+        anyhow::bail!("runtime operations require --runtime-home");
     }
 
     Ok(ProductServiceSettings {
@@ -262,6 +279,7 @@ where
         ),
         backup_output: cli.backup_output.clone(),
         restore_source: cli.restore_source.clone(),
+        support_bundle_output: cli.support_bundle_output.clone(),
         force: cli.force,
         plan_format: cli.plan_format,
         dry_run: cli.dry_run,
@@ -290,6 +308,7 @@ fn resolve_runtime_context(
                 manifest_path.display()
             )
         })?;
+    validate_installed_runtime_manifest(&runtime_home, &manifest_path, &manifest)?;
 
     Ok(Some(InstalledRuntimeContext {
         runtime_home,
@@ -435,42 +454,63 @@ fn resolve_database_operation_contract(
     database_url: &str,
     operation: RuntimeOperationKind,
 ) -> DatabaseOperationContract {
-    let normalized = database_url.trim().to_ascii_lowercase();
-    if normalized.starts_with("postgres://") || normalized.starts_with("postgresql://") {
+    let kind = resolve_database_kind(database_url);
+    if kind == "postgresql" {
         return DatabaseOperationContract {
-            kind: "postgresql".to_owned(),
+            kind,
             strategy: match operation {
                 RuntimeOperationKind::Backup => "pg_dump-custom".to_owned(),
                 RuntimeOperationKind::Restore => "pg_restore-custom".to_owned(),
+                RuntimeOperationKind::SupportBundle => "metadata-redacted".to_owned(),
             },
-            dump_file: Some("database/postgresql.dump".to_owned()),
-            supported: true,
+            dump_file: if matches!(operation, RuntimeOperationKind::SupportBundle) {
+                None
+            } else {
+                Some("database/postgresql.dump".to_owned())
+            },
+            supported: !matches!(operation, RuntimeOperationKind::SupportBundle),
         };
     }
 
-    if normalized.starts_with("sqlite:") {
+    if kind == "sqlite" {
         return DatabaseOperationContract {
-            kind: "sqlite".to_owned(),
-            strategy: "filesystem-snapshot".to_owned(),
+            kind,
+            strategy: match operation {
+                RuntimeOperationKind::SupportBundle => "metadata-redacted".to_owned(),
+                _ => "filesystem-snapshot".to_owned(),
+            },
             dump_file: None,
-            supported: true,
+            supported: !matches!(operation, RuntimeOperationKind::SupportBundle),
         };
     }
 
-    let kind = normalized
-        .split(':')
-        .next()
-        .filter(|value| !value.is_empty())
-        .unwrap_or("unknown");
     DatabaseOperationContract {
-        kind: kind.to_owned(),
+        kind,
         strategy: match operation {
             RuntimeOperationKind::Backup => "manual-provider-backup".to_owned(),
             RuntimeOperationKind::Restore => "manual-provider-restore".to_owned(),
+            RuntimeOperationKind::SupportBundle => "metadata-redacted".to_owned(),
         },
         dump_file: None,
         supported: false,
     }
+}
+
+fn resolve_database_kind(database_url: &str) -> String {
+    let normalized = database_url.trim().to_ascii_lowercase();
+    if normalized.starts_with("postgres://") || normalized.starts_with("postgresql://") {
+        return "postgresql".to_owned();
+    }
+    if normalized.starts_with("sqlite:") {
+        return "sqlite".to_owned();
+    }
+
+    normalized
+        .split(':')
+        .next()
+        .filter(|value| !value.is_empty())
+        .unwrap_or("unknown")
+        .to_owned()
 }
 
 fn execute_runtime_operation(
@@ -490,6 +530,9 @@ fn execute_runtime_operation(
         RuntimeOperationKind::Backup => execute_backup_operation(settings, config, runtime_context),
         RuntimeOperationKind::Restore => {
             execute_restore_operation(settings, config, runtime_context)
+        }
+        RuntimeOperationKind::SupportBundle => {
+            execute_support_bundle_operation(settings, config, runtime_context)
         }
     }
 }
@@ -513,7 +556,7 @@ fn execute_backup_operation(
     let run_root = required_manifest_path(&runtime_context.manifest.run_root, "runRoot")?;
 
     ensure_runtime_stopped(&run_root)?;
-    ensure_backup_output_path_is_safe(
+    ensure_output_path_is_safe(
         &backup_output,
         [
             config_root.as_path(),
@@ -560,7 +603,7 @@ fn execute_backup_operation(
     }
 
     let bundle_manifest = BackupBundleManifest {
-        format_version: 1,
+        format_version: 2,
         created_at: chrono_like_timestamp()?,
         runtime_home: runtime_context.runtime_home.clone(),
         install_mode: runtime_context.manifest.install_mode.clone(),
@@ -571,6 +614,11 @@ fn execute_backup_operation(
         mutable_data_root: mutable_data_root.clone(),
         log_root: log_root.clone(),
         run_root: run_root.clone(),
+        bundle: BackupBundleContentsContract {
+            control_manifest_file: "control/release-manifest.json".to_owned(),
+            config_snapshot_root: "config".to_owned(),
+            mutable_data_snapshot_root: "data".to_owned(),
+        },
         database: BackupDatabaseContract {
             kind: database_contract.kind.clone(),
             strategy: database_contract.strategy.clone(),
@@ -604,11 +652,40 @@ fn execute_restore_operation(
         .context("restore requires --restore-source")?;
     let restore_source = absolutize_path(restore_source)?;
     let bundle_manifest = read_backup_bundle_manifest(&restore_source)?;
-    let control_manifest_path = restore_source.join("control").join("release-manifest.json");
+    let control_manifest_path = resolve_backup_bundle_member_path(
+        &restore_source,
+        &bundle_manifest.bundle.control_manifest_file,
+        "bundle.controlManifestFile",
+    )?;
     if !control_manifest_path.is_file() {
         anyhow::bail!(
-            "restore source {} is missing control/release-manifest.json",
-            restore_source.display()
+            "restore source {} is missing {}",
+            restore_source.display(),
+            control_manifest_path.display()
+        );
+    }
+    let config_snapshot_root = resolve_backup_bundle_member_path(
+        &restore_source,
+        &bundle_manifest.bundle.config_snapshot_root,
+        "bundle.configSnapshotRoot",
+    )?;
+    if !config_snapshot_root.is_dir() {
+        anyhow::bail!(
+            "restore source {} is missing config snapshot {}",
+            restore_source.display(),
+            config_snapshot_root.display()
+        );
+    }
+    let data_snapshot_root = resolve_backup_bundle_member_path(
+        &restore_source,
+        &bundle_manifest.bundle.mutable_data_snapshot_root,
+        "bundle.mutableDataSnapshotRoot",
+    )?;
+    if !data_snapshot_root.is_dir() {
+        anyhow::bail!(
+            "restore source {} is missing mutable data snapshot {}",
+            restore_source.display(),
+            data_snapshot_root.display()
         );
     }
 
@@ -620,8 +697,8 @@ fn execute_restore_operation(
     let run_root = required_manifest_path(&runtime_context.manifest.run_root, "runRoot")?;
     ensure_runtime_stopped(&run_root)?;
 
-    replace_dir_from_snapshot(&restore_source.join("config"), &config_root, true)?;
-    replace_dir_from_snapshot(&restore_source.join("data"), &mutable_data_root, true)?;
+    replace_dir_from_snapshot(&config_snapshot_root, &config_root, true)?;
+    replace_dir_from_snapshot(&data_snapshot_root, &mutable_data_root, true)?;
 
     if bundle_manifest.database.kind == "postgresql" {
         let dump_file = restore_source.join(
@@ -657,10 +734,955 @@ fn execute_restore_operation(
     Ok(())
 }
 
+fn execute_support_bundle_operation(
+    settings: &ProductServiceSettings,
+    config: &StandaloneConfig,
+    runtime_context: &InstalledRuntimeContext,
+) -> anyhow::Result<()> {
+    let support_bundle_output = settings
+        .support_bundle_output
+        .as_deref()
+        .context("support-bundle requires --support-bundle-output")?;
+    let support_bundle_output = absolutize_path(support_bundle_output)?;
+    let config_root = required_manifest_path(&runtime_context.manifest.config_root, "configRoot")?;
+    let log_root = required_manifest_path(&runtime_context.manifest.log_root, "logRoot")?;
+    let run_root = required_manifest_path(&runtime_context.manifest.run_root, "runRoot")?;
+
+    ensure_output_path_is_safe(
+        &support_bundle_output,
+        [
+            config_root.as_path(),
+            log_root.as_path(),
+            run_root.as_path(),
+        ],
+    )?;
+    prepare_output_directory(&support_bundle_output, settings.force)?;
+
+    let path_contract = standard_support_bundle_path_contract();
+    let control_manifest_path = support_bundle_output.join(&path_contract.control_manifest_file);
+    fs::create_dir_all(
+        control_manifest_path
+            .parent()
+            .context("support bundle control manifest path is missing parent directory")?,
+    )?;
+    copy_file(&runtime_context.manifest_path, &control_manifest_path)?;
+
+    write_support_bundle_directory_snapshot(
+        &config_root,
+        &support_bundle_output.join(&path_contract.config_snapshot_root),
+        SupportBundleSnapshotKind::Config,
+    )?;
+    write_support_bundle_directory_snapshot(
+        &log_root,
+        &support_bundle_output.join(&path_contract.logs_snapshot_root),
+        SupportBundleSnapshotKind::Logs,
+    )?;
+    write_support_bundle_directory_snapshot(
+        &run_root,
+        &support_bundle_output.join(&path_contract.runtime_snapshot_root),
+        SupportBundleSnapshotKind::RuntimeState,
+    )?;
+    write_json_file(
+        &support_bundle_output.join(&path_contract.process_state_file),
+        &collect_support_bundle_process_state(&run_root)?,
+    )?;
+
+    let bundle_manifest = SupportBundleManifest {
+        format_version: 2,
+        created_at: chrono_like_timestamp()?,
+        runtime_home: runtime_context.runtime_home.clone(),
+        install_mode: runtime_context.manifest.install_mode.clone(),
+        release_version: runtime_context.manifest.release_version.clone(),
+        product_root: runtime_context.manifest.product_root.clone(),
+        config_root,
+        config_file: runtime_context.manifest.config_file.clone(),
+        log_root,
+        run_root,
+        database: SupportBundleDatabaseContract {
+            kind: resolve_database_kind(&config.database_url),
+            strategy: "metadata-redacted".to_owned(),
+        },
+        bundle: SupportBundleContentsContract {
+            includes_redacted_config: true,
+            includes_logs: true,
+            includes_runtime_state: true,
+        },
+        paths: path_contract,
+    };
+    write_json_file(
+        &support_bundle_output.join("support-bundle-manifest.json"),
+        &bundle_manifest,
+    )?;
+
+    println!(
+        "router-product-service support bundle completed at {}",
+        support_bundle_output.display()
+    );
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SupportBundleSnapshotKind {
+    Config,
+    Logs,
+    RuntimeState,
+}
+
+impl SupportBundleSnapshotKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Config => "config",
+            Self::Logs => "logs",
+            Self::RuntimeState => "runtime-state",
+        }
+    }
+
+    fn copies_text_files(self) -> bool {
+        !matches!(self, Self::RuntimeState)
+    }
+}
+
+fn write_support_bundle_directory_snapshot(
+    source_root: &Path,
+    destination_root: &Path,
+    snapshot_kind: SupportBundleSnapshotKind,
+) -> anyhow::Result<()> {
+    fs::create_dir_all(destination_root)?;
+
+    let mut inventory = SupportBundleDirectoryInventory {
+        snapshot_kind: snapshot_kind.as_str().to_owned(),
+        source_root: source_root.to_path_buf(),
+        exists: source_root.is_dir(),
+        entries: Vec::new(),
+    };
+
+    if source_root.is_dir() {
+        collect_support_bundle_directory_entries(
+            source_root,
+            source_root,
+            destination_root,
+            snapshot_kind,
+            &mut inventory.entries,
+        )?;
+    }
+
+    write_json_file(&destination_root.join("inventory.json"), &inventory)
+}
+
+fn collect_support_bundle_directory_entries(
+    source_root: &Path,
+    current_source: &Path,
+    destination_root: &Path,
+    snapshot_kind: SupportBundleSnapshotKind,
+    entries: &mut Vec<SupportBundleDirectoryEntry>,
+) -> anyhow::Result<()> {
+    let mut directory_entries = fs::read_dir(current_source)?
+        .collect::<Result<Vec<_>, _>>()
+        .with_context(|| format!("failed to enumerate {}", current_source.display()))?;
+    directory_entries.sort_by(|left, right| left.path().cmp(&right.path()));
+
+    for entry in directory_entries {
+        let source_path = entry.path();
+        let relative_path = source_path
+            .strip_prefix(source_root)
+            .expect("snapshot entry must stay inside source root")
+            .to_path_buf();
+        let relative_path_string = path_to_portable_string(&relative_path);
+        let destination_path = destination_root.join(&relative_path);
+        let metadata = entry
+            .metadata()
+            .with_context(|| format!("failed to read metadata for {}", source_path.display()))?;
+        let modified_unix_seconds = metadata
+            .modified()
+            .ok()
+            .and_then(system_time_to_unix_seconds);
+        let file_type = entry.file_type().with_context(|| {
+            format!("failed to resolve entry type for {}", source_path.display())
+        })?;
+
+        if file_type.is_dir() {
+            fs::create_dir_all(&destination_path)?;
+            entries.push(SupportBundleDirectoryEntry {
+                relative_path: relative_path_string,
+                entry_kind: "directory".to_owned(),
+                size_bytes: None,
+                modified_unix_seconds,
+                redacted_copy: false,
+                omitted_reason: None,
+            });
+            collect_support_bundle_directory_entries(
+                source_root,
+                &source_path,
+                destination_root,
+                snapshot_kind,
+                entries,
+            )?;
+            continue;
+        }
+
+        if file_type.is_file() {
+            let (redacted_copy, omitted_reason) = maybe_copy_support_bundle_file(
+                &source_path,
+                &destination_path,
+                &metadata,
+                snapshot_kind,
+            )?;
+            entries.push(SupportBundleDirectoryEntry {
+                relative_path: relative_path_string,
+                entry_kind: "file".to_owned(),
+                size_bytes: Some(metadata.len()),
+                modified_unix_seconds,
+                redacted_copy,
+                omitted_reason,
+            });
+            continue;
+        }
+
+        entries.push(SupportBundleDirectoryEntry {
+            relative_path: relative_path_string,
+            entry_kind: "other".to_owned(),
+            size_bytes: None,
+            modified_unix_seconds,
+            redacted_copy: false,
+            omitted_reason: Some("unsupported-non-file-entry".to_owned()),
+        });
+    }
+
+    Ok(())
+}
+
+fn maybe_copy_support_bundle_file(
+    source_path: &Path,
+    destination_path: &Path,
+    metadata: &fs::Metadata,
+    snapshot_kind: SupportBundleSnapshotKind,
+) -> anyhow::Result<(bool, Option<String>)> {
+    const MAX_TEXT_BYTES: u64 = 2 * 1024 * 1024;
+
+    if !snapshot_kind.copies_text_files() {
+        return Ok((false, Some("inventory-only".to_owned())));
+    }
+
+    if snapshot_kind == SupportBundleSnapshotKind::Config
+        && should_omit_support_bundle_sensitive_config_file(source_path)
+    {
+        return Ok((false, Some("sensitive-file-omitted".to_owned())));
+    }
+
+    if metadata.len() > MAX_TEXT_BYTES {
+        return Ok((false, Some("file-too-large".to_owned())));
+    }
+
+    let contents = match fs::read_to_string(source_path) {
+        Ok(contents) => contents,
+        Err(_) => return Ok((false, Some("non-utf8-or-binary".to_owned()))),
+    };
+
+    let redacted_contents = redact_support_bundle_text(&contents);
+    let parent = destination_path
+        .parent()
+        .context("support-bundle destination file is missing parent directory")?;
+    fs::create_dir_all(parent)?;
+    fs::write(destination_path, redacted_contents)
+        .with_context(|| format!("failed to write {}", destination_path.display()))?;
+    Ok((true, None))
+}
+
+fn should_omit_support_bundle_sensitive_config_file(path: &Path) -> bool {
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+
+    matches!(
+        extension.as_str(),
+        "pem" | "key" | "p12" | "pfx" | "der" | "crt" | "cer" | "db" | "sqlite" | "sqlite3"
+    ) || file_name.contains("secret")
+        || file_name.contains("credential")
+        || file_name.contains("keystore")
+        || file_name.contains("keyring")
+}
+
+fn redact_support_bundle_text(contents: &str) -> String {
+    let mut lines = contents
+        .lines()
+        .map(redact_support_bundle_line)
+        .collect::<Vec<_>>()
+        .join("\n");
+    if contents.ends_with('\n') {
+        lines.push('\n');
+    }
+    lines
+}
+
+fn redact_support_bundle_line(line: &str) -> String {
+    if let Some(redacted) = redact_support_bundle_header_line(line) {
+        return redacted;
+    }
+    if let Some(redacted) = redact_support_bundle_key_value_line(line) {
+        return redacted;
+    }
+    redact_connection_url_in_line(line)
+}
+
+fn redact_support_bundle_header_line(line: &str) -> Option<String> {
+    let trimmed = line.trim_start();
+    let normalized = trimmed.to_ascii_lowercase();
+    for header_name in [
+        "authorization:",
+        "proxy-authorization:",
+        "x-api-key:",
+        "api-key:",
+        "set-cookie:",
+    ] {
+        if normalized.starts_with(header_name) {
+            let indent = &line[..line.len() - trimmed.len()];
+            let header = &trimmed[..header_name.len()];
+            return Some(format!("{indent}{header} ***REDACTED***"));
+        }
+    }
+
+    None
+}
+
+fn redact_support_bundle_key_value_line(line: &str) -> Option<String> {
+    let trimmed = line.trim_start();
+    if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with("//") {
+        return None;
+    }
+
+    let indent = &line[..line.len() - trimmed.len()];
+
+    if let Some(separator_index) = trimmed.find('=') {
+        let key = trimmed[..separator_index].trim();
+        if support_bundle_key_is_sensitive(key) {
+            let prefix = &trimmed[..separator_index + 1];
+            return Some(format!("{indent}{prefix}***REDACTED***"));
+        }
+    }
+
+    if let Some(separator_index) = trimmed.find(':') {
+        let raw_key = trimmed[..separator_index]
+            .trim()
+            .trim_start_matches('-')
+            .trim()
+            .trim_matches('"')
+            .trim_matches('\'');
+        if support_bundle_key_is_sensitive(raw_key) {
+            let prefix = &trimmed[..separator_index + 1];
+            let suffix = if trimmed.trim_end().ends_with(',') {
+                ","
+            } else {
+                ""
+            };
+            return Some(format!("{indent}{prefix} \"***REDACTED***\"{suffix}"));
+        }
+    }
+
+    None
+}
+
+fn support_bundle_key_is_sensitive(key: &str) -> bool {
+    let normalized = key
+        .trim()
+        .to_ascii_lowercase()
+        .replace(['-', '.', ' '], "_");
+
+    normalized == "database_url"
+        || normalized == "cache_url"
+        || normalized.contains("password")
+        || normalized.contains("secret")
+        || normalized.contains("token")
+        || normalized.contains("api_key")
+        || normalized.ends_with("_key")
+        || normalized.contains("master_key")
+}
+
+fn redact_connection_url_in_line(line: &str) -> String {
+    for scheme in [
+        "postgresql://",
+        "postgres://",
+        "mysql://",
+        "redis://",
+        "amqp://",
+    ] {
+        let normalized = line.to_ascii_lowercase();
+        let Some(start_index) = normalized.find(scheme) else {
+            continue;
+        };
+
+        let suffix = &line[start_index..];
+        let end_offset = suffix
+            .find(|character: char| {
+                character.is_whitespace() || matches!(character, '"' | '\'' | ',' | ')' | ']')
+            })
+            .unwrap_or(suffix.len());
+        let candidate = &line[start_index..start_index + end_offset];
+        let Some(redacted_candidate) = redact_connection_url_candidate(candidate) else {
+            continue;
+        };
+
+        return format!(
+            "{}{}{}",
+            &line[..start_index],
+            redacted_candidate,
+            &line[start_index + end_offset..]
+        );
+    }
+
+    line.to_owned()
+}
+
+fn redact_connection_url_candidate(candidate: &str) -> Option<String> {
+    let scheme_index = candidate.find("://")?;
+    let after_scheme_index = scheme_index + 3;
+    let remainder = &candidate[after_scheme_index..];
+    let at_index = remainder.find('@')?;
+
+    Some(format!(
+        "{}***REDACTED***@{}",
+        &candidate[..after_scheme_index],
+        &remainder[at_index + 1..]
+    ))
+}
+
+fn collect_support_bundle_process_state(
+    run_root: &Path,
+) -> anyhow::Result<SupportBundleProcessState> {
+    let pid_file = run_root.join("router-product-service.pid");
+    let state_file = run_root.join("router-product-service.state");
+
+    let mut pid = None;
+    let mut running = false;
+    let mut process_fingerprint = None;
+
+    if pid_file.is_file() {
+        let pid_contents = fs::read_to_string(&pid_file)
+            .with_context(|| format!("failed to read {}", pid_file.display()))?;
+        if let Ok(parsed_pid) = pid_contents.trim().parse::<u32>() {
+            pid = Some(parsed_pid);
+            running = process_is_running(parsed_pid)?;
+            if running {
+                process_fingerprint = process_start_fingerprint(parsed_pid)?;
+            }
+        }
+    }
+
+    Ok(SupportBundleProcessState {
+        pid_file: "router-product-service.pid".to_owned(),
+        state_file: state_file
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("router-product-service.state")
+            .to_owned(),
+        pid,
+        running,
+        process_fingerprint,
+    })
+}
+
+fn standard_support_bundle_path_contract() -> SupportBundlePathContract {
+    SupportBundlePathContract {
+        control_manifest_file: "control/release-manifest.json".to_owned(),
+        config_snapshot_root: "config".to_owned(),
+        config_inventory_file: "config/inventory.json".to_owned(),
+        logs_snapshot_root: "logs".to_owned(),
+        logs_inventory_file: "logs/inventory.json".to_owned(),
+        runtime_snapshot_root: "runtime".to_owned(),
+        runtime_inventory_file: "runtime/inventory.json".to_owned(),
+        process_state_file: "runtime/process-state.json".to_owned(),
+    }
+}
+
+fn process_start_fingerprint(pid: u32) -> anyhow::Result<Option<String>> {
+    let output = if cfg!(windows) {
+        Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                &format!(
+                    "(Get-Process -Id {pid} -ErrorAction SilentlyContinue).StartTime.ToUniversalTime().ToString('o')"
+                ),
+            ])
+            .output()
+            .context("failed to probe process fingerprint via powershell.exe")?
+    } else {
+        Command::new("ps")
+            .args(["-o", "lstart=", "-p", &pid.to_string()])
+            .output()
+            .context("failed to probe process fingerprint via ps")?
+    };
+
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    let fingerprint = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if fingerprint.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(fingerprint))
+    }
+}
+
+fn system_time_to_unix_seconds(value: std::time::SystemTime) -> Option<u64> {
+    value
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_secs())
+}
+
+fn path_to_portable_string(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
 fn required_manifest_path(value: &Option<PathBuf>, field_name: &str) -> anyhow::Result<PathBuf> {
     value
         .clone()
         .with_context(|| format!("installed runtime manifest is missing {field_name}"))
+}
+
+fn validate_installed_runtime_manifest(
+    runtime_home: &Path,
+    manifest_path: &Path,
+    manifest: &InstalledRuntimeManifest,
+) -> anyhow::Result<()> {
+    let missing_generated_metadata = collect_missing_installed_runtime_generated_metadata(manifest);
+    if !missing_generated_metadata.is_empty() {
+        anyhow::bail!(
+            "installed runtime manifest is missing required generated metadata fields {}: {}",
+            missing_generated_metadata.join(", "),
+            manifest_path.display()
+        );
+    }
+
+    let runtime = manifest
+        .runtime
+        .as_deref()
+        .map(str::trim)
+        .context("installed runtime manifest is missing runtime")?;
+    if runtime != INSTALLED_RUNTIME_NAME {
+        anyhow::bail!(
+            "installed runtime manifest runtime must equal {}: {}",
+            INSTALLED_RUNTIME_NAME,
+            manifest_path.display()
+        );
+    }
+
+    if manifest.layout_version != Some(INSTALLED_RUNTIME_LAYOUT_VERSION) {
+        anyhow::bail!(
+            "installed runtime manifest layoutVersion must equal {}: {}",
+            INSTALLED_RUNTIME_LAYOUT_VERSION,
+            manifest_path.display()
+        );
+    }
+
+    let release_version = required_manifest_string(
+        manifest.release_version.as_deref(),
+        "releaseVersion",
+        manifest_path,
+    )?;
+    let _target = required_manifest_string(manifest.target.as_deref(), "target", manifest_path)?;
+    let _installed_at = required_manifest_string(
+        manifest.installed_at.as_deref(),
+        "installedAt",
+        manifest_path,
+    )?;
+    let installed_binaries = required_manifest_string_list(
+        manifest.installed_binaries.as_ref(),
+        "installedBinaries",
+        manifest_path,
+    )?;
+    if !installed_binaries
+        .iter()
+        .any(|binary_name| binary_name == ROUTER_PRODUCT_SERVICE_BINARY_STEM)
+    {
+        anyhow::bail!(
+            "installed runtime manifest installedBinaries must include {}: {}",
+            ROUTER_PRODUCT_SERVICE_BINARY_STEM,
+            manifest_path.display()
+        );
+    }
+
+    let product_root = resolve_manifest_contract_path(
+        manifest.product_root.as_ref(),
+        "productRoot",
+        manifest_path,
+        runtime_home.parent().unwrap_or(runtime_home),
+    )?;
+    let control_root = resolve_manifest_contract_path(
+        manifest.control_root.as_ref(),
+        "controlRoot",
+        manifest_path,
+        &product_root,
+    )?;
+    let releases_root = resolve_manifest_contract_path(
+        manifest.releases_root.as_ref(),
+        "releasesRoot",
+        manifest_path,
+        &product_root,
+    )?;
+    let release_root = resolve_manifest_contract_path(
+        manifest.release_root.as_ref(),
+        "releaseRoot",
+        manifest_path,
+        &product_root,
+    )?;
+    let bootstrap_data_root = resolve_manifest_contract_path(
+        manifest.bootstrap_data_root.as_ref(),
+        "bootstrapDataRoot",
+        manifest_path,
+        &product_root,
+    )?;
+    let deployment_asset_root = resolve_manifest_contract_path(
+        manifest.deployment_asset_root.as_ref(),
+        "deploymentAssetRoot",
+        manifest_path,
+        &product_root,
+    )?;
+    let release_payload_manifest = resolve_manifest_contract_path(
+        manifest.release_payload_manifest.as_ref(),
+        "releasePayloadManifest",
+        manifest_path,
+        &product_root,
+    )?;
+    let release_payload_readme_file = resolve_manifest_contract_path(
+        manifest.release_payload_readme_file.as_ref(),
+        "releasePayloadReadmeFile",
+        manifest_path,
+        &product_root,
+    )?;
+    let admin_site_dist_dir = resolve_manifest_contract_path(
+        manifest.admin_site_dist_dir.as_ref(),
+        "adminSiteDistDir",
+        manifest_path,
+        &product_root,
+    )?;
+    let portal_site_dist_dir = resolve_manifest_contract_path(
+        manifest.portal_site_dist_dir.as_ref(),
+        "portalSiteDistDir",
+        manifest_path,
+        &product_root,
+    )?;
+    let router_binary = resolve_manifest_contract_path(
+        manifest.router_binary.as_ref(),
+        "routerBinary",
+        manifest_path,
+        &product_root,
+    )?;
+
+    for required_path in [
+        &product_root,
+        &control_root,
+        &releases_root,
+        &release_root,
+        &bootstrap_data_root,
+        &deployment_asset_root,
+        &release_payload_manifest,
+        &release_payload_readme_file,
+        &admin_site_dist_dir,
+        &portal_site_dist_dir,
+        &router_binary,
+    ] {
+        if !required_path.exists() {
+            anyhow::bail!(
+                "installed runtime manifest declares a missing path: {}",
+                required_path.display()
+            );
+        }
+    }
+
+    let manifest_control_root = manifest_path
+        .parent()
+        .context("installed runtime manifest path is missing parent directory")?;
+    if !same_existing_path(&control_root, manifest_control_root)? {
+        anyhow::bail!(
+            "installed runtime manifest controlRoot does not match the manifest location: {}",
+            manifest_path.display()
+        );
+    }
+    if !same_existing_path(&control_root, runtime_home)? {
+        anyhow::bail!(
+            "installed runtime manifest controlRoot does not match the resolved runtime home: {}",
+            manifest_path.display()
+        );
+    }
+
+    assert_manifest_contract_path_within_root(
+        manifest_path,
+        "controlRoot",
+        &control_root,
+        &product_root,
+        "current",
+    )?;
+    assert_manifest_contract_path_within_root(
+        manifest_path,
+        "releasesRoot",
+        &releases_root,
+        &product_root,
+        "releases",
+    )?;
+    assert_manifest_contract_path_within_root(
+        manifest_path,
+        "releaseRoot",
+        &release_root,
+        &releases_root,
+        &release_version,
+    )?;
+    assert_manifest_contract_path_within_root(
+        manifest_path,
+        "bootstrapDataRoot",
+        &bootstrap_data_root,
+        &release_root,
+        "data",
+    )?;
+    assert_manifest_contract_path_within_root(
+        manifest_path,
+        "deploymentAssetRoot",
+        &deployment_asset_root,
+        &release_root,
+        "deploy",
+    )?;
+    assert_manifest_contract_path_within_root(
+        manifest_path,
+        "releasePayloadManifest",
+        &release_payload_manifest,
+        &release_root,
+        "release-manifest.json",
+    )?;
+    assert_manifest_contract_path_within_root(
+        manifest_path,
+        "releasePayloadReadmeFile",
+        &release_payload_readme_file,
+        &release_root,
+        "README.txt",
+    )?;
+    assert_manifest_contract_path_within_root(
+        manifest_path,
+        "adminSiteDistDir",
+        &admin_site_dist_dir,
+        &release_root,
+        "sites/admin/dist",
+    )?;
+    assert_manifest_contract_path_within_root(
+        manifest_path,
+        "portalSiteDistDir",
+        &portal_site_dist_dir,
+        &release_root,
+        "sites/portal/dist",
+    )?;
+
+    let router_binary_relative_path =
+        relative_existing_path_within_root(&router_binary, &release_root)?;
+    let router_binary_matches_contract = match router_binary_relative_path.as_deref() {
+        Some("bin/router-product-service") => true,
+        Some(relative_path) if relative_path.starts_with("bin/router-product-service.") => {
+            relative_path["bin/router-product-service.".len()..]
+                .chars()
+                .all(|character| {
+                    character.is_ascii_alphanumeric() || character == '-' || character == '_'
+                })
+        }
+        _ => false,
+    };
+    if !router_binary_matches_contract {
+        anyhow::bail!(
+            "installed runtime manifest routerBinary must resolve within the active release payload layout under bin/router-product-service*: {}",
+            manifest_path.display()
+        );
+    }
+
+    Ok(())
+}
+
+fn collect_missing_installed_runtime_generated_metadata(
+    manifest: &InstalledRuntimeManifest,
+) -> Vec<&'static str> {
+    let mut missing_fields = Vec::new();
+
+    if manifest
+        .runtime
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default()
+        .is_empty()
+    {
+        missing_fields.push("runtime");
+    }
+    if manifest.layout_version.is_none() {
+        missing_fields.push("layoutVersion");
+    }
+    if manifest
+        .release_version
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default()
+        .is_empty()
+    {
+        missing_fields.push("releaseVersion");
+    }
+    if manifest
+        .target
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default()
+        .is_empty()
+    {
+        missing_fields.push("target");
+    }
+    let has_installed_binaries = manifest
+        .installed_binaries
+        .as_ref()
+        .map(|values| values.iter().any(|value| !value.trim().is_empty()))
+        .unwrap_or(false);
+    if !has_installed_binaries {
+        missing_fields.push("installedBinaries");
+    }
+    if manifest
+        .installed_at
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default()
+        .is_empty()
+    {
+        missing_fields.push("installedAt");
+    }
+
+    missing_fields
+}
+
+fn required_manifest_string(
+    value: Option<&str>,
+    field_name: &str,
+    manifest_path: &Path,
+) -> anyhow::Result<String> {
+    let normalized_value = value.map(str::trim).unwrap_or_default();
+    if normalized_value.is_empty() {
+        anyhow::bail!(
+            "installed runtime manifest is missing {}: {}",
+            field_name,
+            manifest_path.display()
+        );
+    }
+
+    Ok(normalized_value.to_owned())
+}
+
+fn required_manifest_string_list(
+    value: Option<&Vec<String>>,
+    field_name: &str,
+    manifest_path: &Path,
+) -> anyhow::Result<Vec<String>> {
+    let Some(values) = value else {
+        anyhow::bail!(
+            "installed runtime manifest is missing {}: {}",
+            field_name,
+            manifest_path.display()
+        );
+    };
+
+    let normalized_values = values
+        .iter()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    if normalized_values.is_empty() {
+        anyhow::bail!(
+            "installed runtime manifest is missing {}: {}",
+            field_name,
+            manifest_path.display()
+        );
+    }
+
+    Ok(normalized_values)
+}
+
+fn resolve_manifest_contract_path(
+    value: Option<&PathBuf>,
+    field_name: &str,
+    manifest_path: &Path,
+    base_root: &Path,
+) -> anyhow::Result<PathBuf> {
+    let Some(candidate) = value else {
+        anyhow::bail!(
+            "installed runtime manifest is missing {}: {}",
+            field_name,
+            manifest_path.display()
+        );
+    };
+    if candidate.as_os_str().is_empty() {
+        anyhow::bail!(
+            "installed runtime manifest is missing {}: {}",
+            field_name,
+            manifest_path.display()
+        );
+    }
+
+    if candidate.is_absolute() {
+        Ok(candidate.clone())
+    } else {
+        Ok(base_root.join(candidate))
+    }
+}
+
+fn assert_manifest_contract_path_within_root(
+    manifest_path: &Path,
+    field_name: &str,
+    field_path: &Path,
+    root_path: &Path,
+    expected_relative_path: &str,
+) -> anyhow::Result<()> {
+    let actual_relative_path = relative_existing_path_within_root(field_path, root_path)?;
+    if actual_relative_path.as_deref() != Some(expected_relative_path) {
+        anyhow::bail!(
+            "installed runtime manifest {} must resolve within the active release payload layout at {}: {}",
+            field_name,
+            expected_relative_path,
+            manifest_path.display()
+        );
+    }
+
+    Ok(())
+}
+
+fn relative_existing_path_within_root(
+    target_path: &Path,
+    root_path: &Path,
+) -> anyhow::Result<Option<String>> {
+    let canonical_target_path = canonicalize_existing_path(target_path)?;
+    let canonical_root_path = canonicalize_existing_path(root_path)?;
+    let Ok(relative_path) = canonical_target_path.strip_prefix(&canonical_root_path) else {
+        return Ok(None);
+    };
+
+    Ok(Some(normalize_relative_contract_path(relative_path)))
+}
+
+fn canonicalize_existing_path(path: &Path) -> anyhow::Result<PathBuf> {
+    fs::canonicalize(path).with_context(|| format!("failed to canonicalize {}", path.display()))
+}
+
+fn same_existing_path(left_path: &Path, right_path: &Path) -> anyhow::Result<bool> {
+    Ok(canonicalize_existing_path(left_path)? == canonicalize_existing_path(right_path)?)
+}
+
+fn normalize_relative_contract_path(path: &Path) -> String {
+    let portable = path_to_portable_string(path);
+    let normalized = portable.trim_start_matches("./").trim_matches('/');
+    if normalized.is_empty() {
+        ".".to_owned()
+    } else {
+        normalized.to_owned()
+    }
 }
 
 fn ensure_runtime_stopped(run_root: &Path) -> anyhow::Result<()> {
@@ -711,15 +1733,15 @@ fn process_is_running(pid: u32) -> anyhow::Result<bool> {
     Ok(status.success())
 }
 
-fn ensure_backup_output_path_is_safe<'a>(
-    backup_output: &Path,
+fn ensure_output_path_is_safe<'a>(
+    output_dir: &Path,
     protected_roots: impl IntoIterator<Item = &'a Path>,
 ) -> anyhow::Result<()> {
     for protected_root in protected_roots {
-        if backup_output.starts_with(protected_root) {
+        if output_dir.starts_with(protected_root) {
             anyhow::bail!(
-                "backup output {} must be outside {}",
-                backup_output.display(),
+                "output directory {} must be outside {}",
+                output_dir.display(),
                 protected_root.display()
             );
         }
@@ -732,7 +1754,7 @@ fn prepare_output_directory(output_dir: &Path, force: bool) -> anyhow::Result<()
     if output_dir.exists() {
         if !force {
             anyhow::bail!(
-                "backup output {} already exists; rerun with --force to replace it",
+                "output directory {} already exists; rerun with --force to replace it",
                 output_dir.display()
             );
         }
@@ -829,8 +1851,55 @@ fn read_backup_bundle_manifest(source_root: &Path) -> anyhow::Result<BackupBundl
     let manifest_path = source_root.join("backup-manifest.json");
     let contents = fs::read_to_string(&manifest_path)
         .with_context(|| format!("failed to read {}", manifest_path.display()))?;
-    serde_json::from_str(&contents)
-        .with_context(|| format!("failed to parse {}", manifest_path.display()))
+    let manifest: BackupBundleManifest = serde_json::from_str(&contents)
+        .with_context(|| format!("failed to parse {}", manifest_path.display()))?;
+    if manifest.format_version != 2 {
+        anyhow::bail!(
+            "backup bundle manifest {} has unsupported formatVersion {}",
+            manifest_path.display(),
+            manifest.format_version
+        );
+    }
+
+    Ok(manifest)
+}
+
+fn resolve_backup_bundle_member_path(
+    source_root: &Path,
+    relative_path: &str,
+    field_name: &str,
+) -> anyhow::Result<PathBuf> {
+    if relative_path.trim().is_empty() {
+        anyhow::bail!("backup bundle manifest is missing {}", field_name);
+    }
+
+    let candidate = Path::new(relative_path);
+    if candidate.is_absolute() {
+        anyhow::bail!(
+            "backup bundle manifest {} must be relative to the bundle root",
+            field_name
+        );
+    }
+
+    let mut normalized_relative_path = PathBuf::new();
+    for component in candidate.components() {
+        match component {
+            Component::CurDir => {}
+            Component::Normal(segment) => normalized_relative_path.push(segment),
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                anyhow::bail!(
+                    "backup bundle manifest {} must stay within the bundle root",
+                    field_name
+                );
+            }
+        }
+    }
+
+    if normalized_relative_path.as_os_str().is_empty() {
+        anyhow::bail!("backup bundle manifest is missing {}", field_name);
+    }
+
+    Ok(source_root.join(normalized_relative_path))
 }
 
 fn dump_postgresql_database(database_url: &str, dump_file: &Path) -> anyhow::Result<()> {
@@ -1068,6 +2137,7 @@ fn validate_runtime_config_for_install_mode(
 enum RuntimeOperationKind {
     Backup,
     Restore,
+    SupportBundle,
 }
 
 impl RuntimeOperationKind {
@@ -1075,6 +2145,7 @@ impl RuntimeOperationKind {
         match self {
             Self::Backup => "backup-dry-run",
             Self::Restore => "restore-dry-run",
+            Self::SupportBundle => "support-bundle-dry-run",
         }
     }
 
@@ -1082,6 +2153,7 @@ impl RuntimeOperationKind {
         match self {
             Self::Backup => "backup",
             Self::Restore => "restore",
+            Self::SupportBundle => "support-bundle",
         }
     }
 }
@@ -1089,12 +2161,16 @@ impl RuntimeOperationKind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct InstalledRuntimeManifest {
+    runtime: Option<String>,
+    layout_version: Option<u32>,
     install_mode: Option<String>,
     product_root: Option<PathBuf>,
     control_root: Option<PathBuf>,
     release_version: Option<String>,
     releases_root: Option<PathBuf>,
     release_root: Option<PathBuf>,
+    target: Option<String>,
+    installed_binaries: Option<Vec<String>>,
     bootstrap_data_root: Option<PathBuf>,
     deployment_asset_root: Option<PathBuf>,
     release_payload_manifest: Option<PathBuf>,
@@ -1107,6 +2183,7 @@ struct InstalledRuntimeManifest {
     mutable_data_root: Option<PathBuf>,
     log_root: Option<PathBuf>,
     run_root: Option<PathBuf>,
+    installed_at: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1130,7 +2207,16 @@ struct BackupBundleManifest {
     mutable_data_root: PathBuf,
     log_root: PathBuf,
     run_root: PathBuf,
+    bundle: BackupBundleContentsContract,
     database: BackupDatabaseContract,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BackupBundleContentsContract {
+    control_manifest_file: String,
+    config_snapshot_root: String,
+    mutable_data_snapshot_root: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1139,6 +2225,82 @@ struct BackupDatabaseContract {
     kind: String,
     strategy: String,
     dump_file: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SupportBundleManifest {
+    format_version: u32,
+    created_at: String,
+    runtime_home: PathBuf,
+    install_mode: Option<String>,
+    release_version: Option<String>,
+    product_root: Option<PathBuf>,
+    config_root: PathBuf,
+    config_file: Option<PathBuf>,
+    log_root: PathBuf,
+    run_root: PathBuf,
+    database: SupportBundleDatabaseContract,
+    bundle: SupportBundleContentsContract,
+    paths: SupportBundlePathContract,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SupportBundleDatabaseContract {
+    kind: String,
+    strategy: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SupportBundleContentsContract {
+    includes_redacted_config: bool,
+    includes_logs: bool,
+    includes_runtime_state: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SupportBundlePathContract {
+    control_manifest_file: String,
+    config_snapshot_root: String,
+    config_inventory_file: String,
+    logs_snapshot_root: String,
+    logs_inventory_file: String,
+    runtime_snapshot_root: String,
+    runtime_inventory_file: String,
+    process_state_file: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SupportBundleDirectoryInventory {
+    snapshot_kind: String,
+    source_root: PathBuf,
+    exists: bool,
+    entries: Vec<SupportBundleDirectoryEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SupportBundleDirectoryEntry {
+    relative_path: String,
+    entry_kind: String,
+    size_bytes: Option<u64>,
+    modified_unix_seconds: Option<u64>,
+    redacted_copy: bool,
+    omitted_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SupportBundleProcessState {
+    pid_file: String,
+    state_file: String,
+    pid: Option<u32>,
+    running: bool,
+    process_fingerprint: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1361,6 +2523,7 @@ fn render_service_plan_text(
         let path_label = match operation {
             RuntimeOperationKind::Backup => "backup_output",
             RuntimeOperationKind::Restore => "restore_source",
+            RuntimeOperationKind::SupportBundle => "support_bundle_output",
         };
         let path_value = match operation {
             RuntimeOperationKind::Backup => settings
@@ -1373,12 +2536,17 @@ fn render_service_plan_text(
                 .as_deref()
                 .map(path_to_string)
                 .context("restore requires --restore-source")?,
+            RuntimeOperationKind::SupportBundle => settings
+                .support_bundle_output
+                .as_deref()
+                .map(path_to_string)
+                .context("support-bundle requires --support-bundle-output")?,
         };
         let runtime_home = settings
             .runtime_home
             .as_deref()
             .map(path_to_string)
-            .context("backup and restore require --runtime-home")?;
+            .with_context(|| format!("{} requires --runtime-home", operation.display_name()))?;
 
         let mut lines = vec![
             format!(
@@ -1392,6 +2560,11 @@ fn render_service_plan_text(
         ];
         if let Some(dump_file) = database_contract.dump_file {
             lines.push(format!("database.dump_file={dump_file}"));
+        }
+        if operation == RuntimeOperationKind::SupportBundle {
+            lines.push("bundle.includes_redacted_config=true".to_owned());
+            lines.push("bundle.includes_logs=true".to_owned());
+            lines.push("bundle.includes_runtime_state=true".to_owned());
         }
         lines.push(String::new());
         return Ok(lines.join("\n"));
@@ -1470,12 +2643,17 @@ fn render_service_plan_json(
                 .as_deref()
                 .map(path_to_string)
                 .context("restore requires --restore-source")?,
+            RuntimeOperationKind::SupportBundle => settings
+                .support_bundle_output
+                .as_deref()
+                .map(path_to_string)
+                .context("support-bundle requires --support-bundle-output")?,
         };
         let runtime_home = settings
             .runtime_home
             .as_deref()
             .map(path_to_string)
-            .context("backup and restore require --runtime-home")?;
+            .with_context(|| format!("{} requires --runtime-home", operation.display_name()))?;
 
         let mut payload = json!({
             "mode": operation.dry_run_mode(),
@@ -1490,6 +2668,14 @@ fn render_service_plan_json(
         match operation {
             RuntimeOperationKind::Backup => payload["backup_output"] = json!(operation_path),
             RuntimeOperationKind::Restore => payload["restore_source"] = json!(operation_path),
+            RuntimeOperationKind::SupportBundle => {
+                payload["support_bundle_output"] = json!(operation_path);
+                payload["bundle"] = json!({
+                    "includes_redacted_config": true,
+                    "includes_logs": true,
+                    "includes_runtime_state": true,
+                });
+            }
         }
 
         return Ok(serde_json::to_string_pretty(&payload)
@@ -1564,10 +2750,14 @@ mod tests {
     use serde_json::Value;
 
     use super::{
-        build_loader_cli_overrides, render_service_plan, resolve_default_site_dirs_for_paths,
-        resolve_effective_public_web_bind, resolve_service_settings,
-        validate_runtime_config_for_install_mode, PlanFormat, ProductRuntimeRole,
-        ProductServiceSettings, RouterProductServiceCli, StandaloneConfig, StandaloneConfigLoader,
+        build_loader_cli_overrides, execute_backup_operation, execute_restore_operation,
+        execute_support_bundle_operation, render_service_plan, resolve_default_site_dirs_for_paths,
+        resolve_effective_public_web_bind, resolve_runtime_context, resolve_service_settings,
+        validate_runtime_config_for_install_mode, InstalledRuntimeContext,
+        InstalledRuntimeManifest, PlanFormat, ProductRuntimeRole, ProductServiceSettings,
+        RouterProductServiceCli, StandaloneConfig, StandaloneConfigLoader,
+        INSTALLED_RUNTIME_LAYOUT_VERSION, INSTALLED_RUNTIME_NAME,
+        ROUTER_PRODUCT_SERVICE_BINARY_STEM,
     };
 
     fn unique_temp_dir(name: &str) -> PathBuf {
@@ -1733,6 +2923,33 @@ mod tests {
         );
         assert_eq!(restore_settings.backup_output, None);
         assert!(restore_settings.force);
+
+        let support_bundle_cli = RouterProductServiceCli::try_parse_from([
+            "router-product-service",
+            "--config-dir",
+            "D:/router/config",
+            "--runtime-home",
+            "D:/router/current",
+            "--support-bundle-output",
+            "D:/router/support/2026-04-19",
+            "--force",
+            "--dry-run",
+            "--plan-format",
+            "json",
+        ])
+        .expect("support-bundle cli should parse");
+
+        let support_bundle_settings =
+            resolve_service_settings(&support_bundle_cli, Vec::<(String, String)>::new())
+                .expect("support-bundle settings should resolve");
+
+        assert_eq!(
+            support_bundle_settings.support_bundle_output,
+            Some(PathBuf::from("D:/router/support/2026-04-19"))
+        );
+        assert_eq!(support_bundle_settings.backup_output, None);
+        assert_eq!(support_bundle_settings.restore_source, None);
+        assert!(support_bundle_settings.force);
     }
 
     #[test]
@@ -1809,21 +3026,45 @@ database_url: "sqlite://router.db"
     }
 
     #[test]
-    fn system_install_mode_allows_postgres_placeholders_for_validation() {
-        validate_runtime_config_for_install_mode(
+    fn system_install_mode_rejects_postgres_placeholders_for_validation() {
+        let error = validate_runtime_config_for_install_mode(
             &StandaloneConfig {
-                database_url: "postgresql://sdkwork:change-me@127.0.0.1:5432/sdkwork_api_router"
+                database_url:
+                    "postgresql://sdkwork:replace-with-db-password@127.0.0.1:5432/sdkwork_api_router"
                     .to_owned(),
-                admin_jwt_signing_secret: "rotated-admin-jwt-secret".to_owned(),
-                portal_jwt_signing_secret: "rotated-portal-jwt-secret".to_owned(),
-                credential_master_key: "rotated-credential-master-key".to_owned(),
-                metrics_bearer_token: "rotated-metrics-bearer-token".to_owned(),
+                admin_jwt_signing_secret: "replace-with-admin-jwt-secret".to_owned(),
+                portal_jwt_signing_secret: "replace-with-portal-jwt-secret".to_owned(),
+                credential_master_key: "replace-with-credential-master-key".to_owned(),
+                metrics_bearer_token: "replace-with-metrics-token".to_owned(),
                 ..StandaloneConfig::default()
             },
             "0.0.0.0:3001",
             Some("system"),
         )
-        .expect("system installs should accept PostgreSQL validation placeholders");
+        .expect_err("system installs must reject placeholder PostgreSQL validation values");
+
+        assert!(error.to_string().contains("placeholder"));
+        assert!(error.to_string().contains("database_url"));
+    }
+
+    #[test]
+    fn system_install_mode_allows_postgres_placeholders_with_explicit_dev_override() {
+        validate_runtime_config_for_install_mode(
+            &StandaloneConfig {
+                database_url:
+                    "postgresql://sdkwork:replace-with-db-password@127.0.0.1:5432/sdkwork_api_router"
+                        .to_owned(),
+                admin_jwt_signing_secret: "replace-with-admin-jwt-secret".to_owned(),
+                portal_jwt_signing_secret: "replace-with-portal-jwt-secret".to_owned(),
+                credential_master_key: "replace-with-credential-master-key".to_owned(),
+                metrics_bearer_token: "replace-with-metrics-token".to_owned(),
+                allow_insecure_dev_defaults: true,
+                ..StandaloneConfig::default()
+            },
+            "0.0.0.0:3001",
+            Some("system"),
+        )
+        .expect("explicit development override should allow placeholder validation inputs");
     }
 
     #[test]
@@ -1848,6 +3089,154 @@ database_url: "sqlite://router.db"
         } else {
             format!("sqlite:///{normalized}")
         }
+    }
+
+    fn router_product_service_binary_name() -> &'static str {
+        if cfg!(windows) {
+            "router-product-service.exe"
+        } else {
+            "router-product-service"
+        }
+    }
+
+    fn create_valid_installed_runtime_manifest_fixture(
+        name: &str,
+    ) -> (PathBuf, PathBuf, InstalledRuntimeManifest) {
+        let product_root = unique_temp_dir(name);
+        let runtime_home = product_root.join("current");
+        let release_root = product_root.join("releases").join("1.2.3");
+        let config_root = product_root.join("config");
+        let data_root = product_root.join("data");
+        let log_root = product_root.join("log");
+        let run_root = product_root.join("run");
+        let bootstrap_data_root = release_root.join("data");
+        let deployment_asset_root = release_root.join("deploy");
+        let release_payload_manifest = release_root.join("release-manifest.json");
+        let release_payload_readme_file = release_root.join("README.txt");
+        let admin_site_dist_dir = release_root.join("sites").join("admin").join("dist");
+        let portal_site_dist_dir = release_root.join("sites").join("portal").join("dist");
+        let router_binary = release_root
+            .join("bin")
+            .join(router_product_service_binary_name());
+
+        fs::create_dir_all(&runtime_home).expect("runtime home should exist");
+        fs::create_dir_all(&config_root).expect("config root should exist");
+        fs::create_dir_all(&data_root).expect("data root should exist");
+        fs::create_dir_all(&log_root).expect("log root should exist");
+        fs::create_dir_all(&run_root).expect("run root should exist");
+        fs::create_dir_all(&bootstrap_data_root).expect("bootstrap data root should exist");
+        fs::create_dir_all(&deployment_asset_root).expect("deployment asset root should exist");
+        fs::create_dir_all(&admin_site_dist_dir).expect("admin site dir should exist");
+        fs::create_dir_all(&portal_site_dist_dir).expect("portal site dir should exist");
+        fs::create_dir_all(
+            router_binary
+                .parent()
+                .expect("router binary should have parent directory"),
+        )
+        .expect("router binary directory should exist");
+
+        fs::write(config_root.join("router.yaml"), "portal_title: fixture\n")
+            .expect("router.yaml should be written");
+        fs::write(&release_payload_manifest, "{}\n")
+            .expect("release payload manifest should be written");
+        fs::write(&release_payload_readme_file, "release readme\n")
+            .expect("release payload readme should be written");
+        fs::write(
+            admin_site_dist_dir.join("index.html"),
+            "<html>admin</html>\n",
+        )
+        .expect("admin index should be written");
+        fs::write(
+            portal_site_dist_dir.join("index.html"),
+            "<html>portal</html>\n",
+        )
+        .expect("portal index should be written");
+        fs::write(&router_binary, "#!/usr/bin/env sh\nexit 0\n")
+            .expect("router binary fixture should be written");
+
+        let manifest = InstalledRuntimeManifest {
+            runtime: Some(INSTALLED_RUNTIME_NAME.to_owned()),
+            layout_version: Some(INSTALLED_RUNTIME_LAYOUT_VERSION),
+            install_mode: Some("portable".to_owned()),
+            product_root: Some(product_root.clone()),
+            control_root: Some(runtime_home.clone()),
+            release_version: Some("1.2.3".to_owned()),
+            releases_root: Some(product_root.join("releases")),
+            release_root: Some(release_root),
+            target: Some("x86_64-unknown-linux-gnu".to_owned()),
+            installed_binaries: Some(vec![ROUTER_PRODUCT_SERVICE_BINARY_STEM.to_owned()]),
+            bootstrap_data_root: Some(bootstrap_data_root),
+            deployment_asset_root: Some(deployment_asset_root),
+            release_payload_manifest: Some(release_payload_manifest),
+            release_payload_readme_file: Some(release_payload_readme_file),
+            admin_site_dist_dir: Some(admin_site_dist_dir),
+            portal_site_dist_dir: Some(portal_site_dist_dir),
+            router_binary: Some(router_binary),
+            config_root: Some(config_root.clone()),
+            config_file: Some(config_root.join("router.yaml")),
+            mutable_data_root: Some(data_root),
+            log_root: Some(log_root),
+            run_root: Some(run_root),
+            installed_at: Some("2026-04-20T00:00:00.000Z".to_owned()),
+            ..InstalledRuntimeManifest::default()
+        };
+
+        (product_root, runtime_home, manifest)
+    }
+
+    #[test]
+    fn resolve_runtime_context_rejects_installed_runtime_manifests_missing_generated_contract_metadata(
+    ) {
+        let (product_root, runtime_home, mut manifest) =
+            create_valid_installed_runtime_manifest_fixture("runtime-context-metadata");
+        let manifest_path = runtime_home.join("release-manifest.json");
+        manifest.runtime = None;
+        manifest.layout_version = None;
+
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&manifest).expect("manifest should serialize"),
+        )
+        .expect("release manifest should be written");
+
+        let error = resolve_runtime_context(Some(product_root.as_path()))
+            .expect_err("runtime context should reject incomplete manifest metadata");
+
+        assert!(error.to_string().contains("runtime"));
+        assert!(error.to_string().contains("layoutVersion"));
+        assert!(error.to_string().contains("installed runtime manifest"));
+
+        fs::remove_dir_all(product_root).expect("fixture should be removed");
+    }
+
+    #[test]
+    fn resolve_runtime_context_rejects_installed_runtime_manifests_with_release_payload_drift() {
+        let (product_root, runtime_home, mut manifest) =
+            create_valid_installed_runtime_manifest_fixture("runtime-context-drift");
+        let manifest_path = runtime_home.join("release-manifest.json");
+
+        manifest.admin_site_dist_dir = Some(product_root.join("broken-admin-site"));
+        fs::create_dir_all(
+            manifest
+                .admin_site_dist_dir
+                .as_ref()
+                .expect("broken admin site dir should exist"),
+        )
+        .expect("broken admin site dir should be created");
+
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&manifest).expect("manifest should serialize"),
+        )
+        .expect("release manifest should be written");
+
+        let error = resolve_runtime_context(Some(product_root.as_path()))
+            .expect_err("runtime context should reject release payload drift");
+
+        assert!(error.to_string().contains("adminSiteDistDir"));
+        assert!(error.to_string().contains("release payload"));
+
+        fs::remove_dir_all(product_root).expect("fixture should be removed");
     }
 
     #[test]
@@ -2008,6 +3397,414 @@ database_url: "sqlite://router.db"
         assert_eq!(parsed["database"]["kind"], "postgresql");
         assert_eq!(parsed["database"]["strategy"], "pg_restore-custom");
         assert_eq!(parsed["database"]["dump_file"], "database/postgresql.dump");
+    }
+
+    #[test]
+    fn execute_backup_operation_writes_self_describing_backup_bundle_manifest() {
+        let product_root = unique_temp_dir("backup-bundle-manifest");
+        let runtime_home = product_root.join("current");
+        let config_root = product_root.join("config");
+        let data_root = product_root.join("data");
+        let log_root = product_root.join("log");
+        let run_root = product_root.join("run");
+        let backup_output = product_root.join("backup");
+
+        fs::create_dir_all(&runtime_home).expect("runtime home should exist");
+        fs::create_dir_all(&config_root).expect("config root should exist");
+        fs::create_dir_all(&data_root).expect("data root should exist");
+        fs::create_dir_all(&log_root).expect("log root should exist");
+        fs::create_dir_all(&run_root).expect("run root should exist");
+        fs::write(config_root.join("router.yaml"), "portal_title: backup\n")
+            .expect("router config should exist");
+        fs::write(data_root.join("state.json"), "{\"hello\":\"world\"}\n")
+            .expect("mutable data should exist");
+
+        let manifest = InstalledRuntimeManifest {
+            install_mode: Some("system".to_owned()),
+            product_root: Some(product_root.clone()),
+            control_root: Some(runtime_home.clone()),
+            release_version: Some("0.1.0".to_owned()),
+            config_root: Some(config_root.clone()),
+            config_file: Some(config_root.join("router.yaml")),
+            mutable_data_root: Some(data_root.clone()),
+            log_root: Some(log_root.clone()),
+            run_root: Some(run_root.clone()),
+            ..InstalledRuntimeManifest::default()
+        };
+        let manifest_path = runtime_home.join("release-manifest.json");
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&manifest).expect("manifest should serialize"),
+        )
+        .expect("release manifest should be written");
+        let runtime_context = InstalledRuntimeContext {
+            runtime_home: runtime_home.clone(),
+            manifest_path,
+            manifest,
+        };
+
+        let settings = ProductServiceSettings {
+            runtime_home: Some(runtime_home),
+            backup_output: Some(backup_output.clone()),
+            force: true,
+            ..ProductServiceSettings::default()
+        };
+        let config = StandaloneConfig {
+            database_url: sqlite_url_for(data_root.join("router.db")),
+            ..StandaloneConfig::default()
+        };
+
+        execute_backup_operation(&settings, &config, &runtime_context)
+            .expect("backup operation should export");
+
+        let backup_manifest: Value = serde_json::from_str(
+            &fs::read_to_string(backup_output.join("backup-manifest.json"))
+                .expect("backup manifest should exist"),
+        )
+        .expect("backup manifest should parse");
+
+        assert_eq!(backup_manifest["formatVersion"], 2);
+        assert_eq!(
+            backup_manifest["bundle"]["controlManifestFile"],
+            "control/release-manifest.json"
+        );
+        assert_eq!(backup_manifest["bundle"]["configSnapshotRoot"], "config");
+        assert_eq!(backup_manifest["bundle"]["mutableDataSnapshotRoot"], "data");
+    }
+
+    #[test]
+    fn execute_restore_operation_uses_manifest_declared_backup_bundle_paths() {
+        let product_root = unique_temp_dir("restore-bundle-manifest");
+        let runtime_home = product_root.join("current");
+        let config_root = product_root.join("config");
+        let data_root = product_root.join("data");
+        let log_root = product_root.join("log");
+        let run_root = product_root.join("run");
+        let restore_source = product_root.join("backup-source");
+
+        fs::create_dir_all(&runtime_home).expect("runtime home should exist");
+        fs::create_dir_all(&config_root).expect("config root should exist");
+        fs::create_dir_all(&data_root).expect("data root should exist");
+        fs::create_dir_all(&log_root).expect("log root should exist");
+        fs::create_dir_all(&run_root).expect("run root should exist");
+        fs::write(config_root.join("router.yaml"), "portal_title: stale\n")
+            .expect("stale router config should exist");
+        fs::write(data_root.join("state.json"), "{\"version\":\"stale\"}\n")
+            .expect("stale mutable data should exist");
+
+        let manifest = InstalledRuntimeManifest {
+            install_mode: Some("system".to_owned()),
+            product_root: Some(product_root.clone()),
+            control_root: Some(runtime_home.clone()),
+            release_version: Some("0.1.0".to_owned()),
+            config_root: Some(config_root.clone()),
+            config_file: Some(config_root.join("router.yaml")),
+            mutable_data_root: Some(data_root.clone()),
+            log_root: Some(log_root.clone()),
+            run_root: Some(run_root.clone()),
+            ..InstalledRuntimeManifest::default()
+        };
+        let manifest_path = runtime_home.join("release-manifest.json");
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&manifest).expect("manifest should serialize"),
+        )
+        .expect("release manifest should be written");
+        let runtime_context = InstalledRuntimeContext {
+            runtime_home: runtime_home.clone(),
+            manifest_path,
+            manifest,
+        };
+
+        let control_manifest_relative = PathBuf::from("bundle-state/control/runtime-manifest.json");
+        let config_snapshot_relative = PathBuf::from("bundle-state/config-snapshot");
+        let data_snapshot_relative = PathBuf::from("bundle-state/data-snapshot");
+        let control_manifest_path = restore_source.join(&control_manifest_relative);
+        let config_snapshot_root = restore_source.join(&config_snapshot_relative);
+        let data_snapshot_root = restore_source.join(&data_snapshot_relative);
+        fs::create_dir_all(
+            control_manifest_path
+                .parent()
+                .expect("control manifest should have parent"),
+        )
+        .expect("control manifest parent should exist");
+        fs::create_dir_all(&config_snapshot_root).expect("config snapshot should exist");
+        fs::create_dir_all(&data_snapshot_root).expect("data snapshot should exist");
+        fs::write(&control_manifest_path, "{}\n").expect("control manifest should exist");
+        fs::write(
+            config_snapshot_root.join("router.yaml"),
+            "portal_title: restored\n",
+        )
+        .expect("restored router config should exist");
+        fs::write(
+            data_snapshot_root.join("state.json"),
+            "{\"version\":\"restored\"}\n",
+        )
+        .expect("restored mutable data should exist");
+        fs::write(
+            restore_source.join("backup-manifest.json"),
+            serde_json::to_string_pretty(&serde_json::json!({
+                "formatVersion": 2,
+                "createdAt": "2026-04-20T00:00:00Z",
+                "runtimeHome": runtime_home,
+                "installMode": "system",
+                "releaseVersion": "0.1.0",
+                "productRoot": product_root,
+                "configRoot": config_root,
+                "configFile": config_root.join("router.yaml"),
+                "mutableDataRoot": data_root,
+                "logRoot": log_root,
+                "runRoot": run_root,
+                "bundle": {
+                    "controlManifestFile": control_manifest_relative,
+                    "configSnapshotRoot": config_snapshot_relative,
+                    "mutableDataSnapshotRoot": data_snapshot_relative,
+                },
+                "database": {
+                    "kind": "sqlite",
+                    "strategy": "filesystem-snapshot",
+                    "dumpFile": null,
+                },
+            }))
+            .expect("backup manifest should serialize"),
+        )
+        .expect("backup manifest should be written");
+
+        let settings = ProductServiceSettings {
+            runtime_home: Some(runtime_home),
+            restore_source: Some(restore_source),
+            force: true,
+            ..ProductServiceSettings::default()
+        };
+        let config = StandaloneConfig {
+            database_url: sqlite_url_for(data_root.join("router.db")),
+            ..StandaloneConfig::default()
+        };
+
+        execute_restore_operation(&settings, &config, &runtime_context)
+            .expect("restore operation should consume the manifest-declared bundle paths");
+
+        assert_eq!(
+            fs::read_to_string(config_root.join("router.yaml"))
+                .expect("restored router config should exist"),
+            "portal_title: restored\n"
+        );
+        assert_eq!(
+            fs::read_to_string(data_root.join("state.json"))
+                .expect("restored mutable data should exist"),
+            "{\"version\":\"restored\"}\n"
+        );
+    }
+
+    #[test]
+    fn render_service_plan_supports_json_support_bundle_contract() {
+        let settings = ProductServiceSettings {
+            config_dir: Some("D:/router/config".to_owned()),
+            runtime_home: Some(PathBuf::from("D:/router/current")),
+            support_bundle_output: Some(PathBuf::from("D:/router/support/2026-04-19")),
+            plan_format: PlanFormat::Json,
+            dry_run: true,
+            force: true,
+            ..ProductServiceSettings::default()
+        };
+        let config = StandaloneConfig {
+            database_url: "postgresql://sdkwork:secret@127.0.0.1:5432/sdkwork_api_router"
+                .to_owned(),
+            ..StandaloneConfig::default()
+        };
+
+        let plan =
+            render_service_plan(&settings, &config).expect("support-bundle plan should render");
+        let parsed: Value =
+            serde_json::from_str(&plan).expect("support-bundle plan should be valid json");
+
+        assert_eq!(parsed["mode"], "support-bundle-dry-run");
+        assert_eq!(parsed["plan_format"], "json");
+        assert_eq!(parsed["runtime_home"], "D:/router/current");
+        assert_eq!(
+            parsed["support_bundle_output"],
+            "D:/router/support/2026-04-19"
+        );
+        assert_eq!(parsed["database"]["kind"], "postgresql");
+        assert_eq!(parsed["database"]["strategy"], "metadata-redacted");
+        assert_eq!(parsed["bundle"]["includes_logs"], true);
+        assert_eq!(parsed["bundle"]["includes_runtime_state"], true);
+        assert_eq!(parsed["bundle"]["includes_redacted_config"], true);
+    }
+
+    #[test]
+    fn execute_support_bundle_operation_creates_redacted_operator_bundle() {
+        let product_root = unique_temp_dir("support-bundle");
+        let runtime_home = product_root.join("current");
+        let config_root = product_root.join("config");
+        let log_root = product_root.join("log");
+        let run_root = product_root.join("run");
+        let output_root = product_root.join("support");
+
+        fs::create_dir_all(&runtime_home).expect("runtime home should exist");
+        fs::create_dir_all(&config_root).expect("config root should exist");
+        fs::create_dir_all(&log_root).expect("log root should exist");
+        fs::create_dir_all(&run_root).expect("run root should exist");
+
+        fs::write(
+            config_root.join("router.yaml"),
+            r#"
+database_url: "postgresql://sdkwork:secret@127.0.0.1:5432/sdkwork_api_router"
+metrics_bearer_token: "very-secret-token"
+"#,
+        )
+        .expect("router.yaml should be written");
+        fs::write(
+            config_root.join("router.env"),
+            "SDKWORK_DATABASE_URL=postgresql://sdkwork:secret@127.0.0.1:5432/sdkwork_api_router\nSDKWORK_ADMIN_JWT_SIGNING_SECRET=super-secret\n",
+        )
+        .expect("router.env should be written");
+        fs::write(
+            config_root.join("secrets.json"),
+            "{\"key\":\"keep-me-out\"}\n",
+        )
+        .expect("secrets.json should be written");
+        fs::write(
+            log_root.join("router.log"),
+            "authorization: Bearer abc123\nconnected to postgresql://sdkwork:secret@127.0.0.1:5432/sdkwork_api_router\n",
+        )
+        .expect("router.log should be written");
+        fs::write(run_root.join("router-product-service.pid"), "999999\n")
+            .expect("pid file should be written");
+        fs::write(
+            run_root.join("router-product-service.state"),
+            "SDKWORK_ROUTER_MANAGED_PID=\"999999\"\n",
+        )
+        .expect("state file should be written");
+
+        let manifest = InstalledRuntimeManifest {
+            install_mode: Some("system".to_owned()),
+            product_root: Some(product_root.clone()),
+            control_root: Some(runtime_home.clone()),
+            release_version: Some("0.1.0".to_owned()),
+            config_root: Some(config_root.clone()),
+            config_file: Some(config_root.join("router.yaml")),
+            log_root: Some(log_root.clone()),
+            run_root: Some(run_root.clone()),
+            ..InstalledRuntimeManifest::default()
+        };
+        let manifest_path = runtime_home.join("release-manifest.json");
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&manifest).expect("manifest should serialize"),
+        )
+        .expect("release manifest should be written");
+        let runtime_context = InstalledRuntimeContext {
+            runtime_home: runtime_home.clone(),
+            manifest_path,
+            manifest,
+        };
+
+        let settings = ProductServiceSettings {
+            runtime_home: Some(runtime_home),
+            support_bundle_output: Some(output_root.clone()),
+            force: true,
+            ..ProductServiceSettings::default()
+        };
+        let config = StandaloneConfig {
+            database_url: "postgresql://sdkwork:secret@127.0.0.1:5432/sdkwork_api_router"
+                .to_owned(),
+            ..StandaloneConfig::default()
+        };
+
+        execute_support_bundle_operation(&settings, &config, &runtime_context)
+            .expect("support bundle should export");
+
+        assert!(output_root
+            .join("control")
+            .join("release-manifest.json")
+            .is_file());
+        assert!(output_root.join("config").join("inventory.json").is_file());
+        assert!(output_root.join("logs").join("inventory.json").is_file());
+        assert!(output_root.join("runtime").join("inventory.json").is_file());
+        assert!(output_root
+            .join("runtime")
+            .join("process-state.json")
+            .is_file());
+        assert!(output_root.join("support-bundle-manifest.json").is_file());
+
+        let support_bundle_manifest: Value = serde_json::from_str(
+            &fs::read_to_string(output_root.join("support-bundle-manifest.json"))
+                .expect("support bundle manifest should exist"),
+        )
+        .expect("support bundle manifest should parse");
+        assert_eq!(support_bundle_manifest["formatVersion"], 2);
+        assert_eq!(
+            support_bundle_manifest["paths"]["controlManifestFile"],
+            "control/release-manifest.json"
+        );
+        assert_eq!(
+            support_bundle_manifest["paths"]["configSnapshotRoot"],
+            "config"
+        );
+        assert_eq!(
+            support_bundle_manifest["paths"]["configInventoryFile"],
+            "config/inventory.json"
+        );
+        assert_eq!(support_bundle_manifest["paths"]["logsSnapshotRoot"], "logs");
+        assert_eq!(
+            support_bundle_manifest["paths"]["logsInventoryFile"],
+            "logs/inventory.json"
+        );
+        assert_eq!(
+            support_bundle_manifest["paths"]["runtimeSnapshotRoot"],
+            "runtime"
+        );
+        assert_eq!(
+            support_bundle_manifest["paths"]["runtimeInventoryFile"],
+            "runtime/inventory.json"
+        );
+        assert_eq!(
+            support_bundle_manifest["paths"]["processStateFile"],
+            "runtime/process-state.json"
+        );
+        assert!(support_bundle_manifest.get("inventories").is_none());
+
+        let redacted_router_yaml =
+            fs::read_to_string(output_root.join("config").join("router.yaml"))
+                .expect("redacted router.yaml should exist");
+        assert!(redacted_router_yaml.contains("***REDACTED***"));
+        assert!(!redacted_router_yaml.contains("very-secret-token"));
+        assert!(!redacted_router_yaml.contains("postgresql://sdkwork:secret@"));
+
+        let redacted_router_env = fs::read_to_string(output_root.join("config").join("router.env"))
+            .expect("redacted router.env should exist");
+        assert!(redacted_router_env.contains("***REDACTED***"));
+        assert!(!redacted_router_env.contains("super-secret"));
+
+        assert!(!output_root.join("config").join("secrets.json").exists());
+
+        let redacted_log = fs::read_to_string(output_root.join("logs").join("router.log"))
+            .expect("redacted router.log should exist");
+        assert!(redacted_log.contains("***REDACTED***"));
+        assert!(!redacted_log.contains("abc123"));
+        assert!(!redacted_log.contains("postgresql://sdkwork:secret@"));
+
+        let config_inventory: Value = serde_json::from_str(
+            &fs::read_to_string(output_root.join("config").join("inventory.json"))
+                .expect("config inventory should exist"),
+        )
+        .expect("config inventory should parse");
+        assert_eq!(config_inventory["exists"], true);
+        assert!(config_inventory["entries"]
+            .as_array()
+            .expect("config entries should be an array")
+            .iter()
+            .any(|entry| entry["relativePath"] == "secrets.json"
+                && entry["omittedReason"] == "sensitive-file-omitted"));
+
+        let process_state: Value = serde_json::from_str(
+            &fs::read_to_string(output_root.join("runtime").join("process-state.json"))
+                .expect("process state should exist"),
+        )
+        .expect("process state should parse");
+        assert_eq!(process_state["pid"], 999999);
+        assert_eq!(process_state["running"], false);
     }
 
     #[test]

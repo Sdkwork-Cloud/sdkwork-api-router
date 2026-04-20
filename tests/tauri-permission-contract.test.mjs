@@ -221,13 +221,18 @@ test('server mode stays outside the Tauri desktop permission surface', () => {
   });
 
   assert.equal(plan.length, 1);
-  assert.equal(plan[0].label, 'portal product server');
+  assert.equal(plan[0].label, 'server development workspace');
+  const renderedArgs = plan[0].args.join(' ');
   assert.ok(
-    plan[0].args.includes('server:start'),
-    'server mode should boot the server entrypoint instead of tauri:dev',
+    renderedArgs.includes('start-workspace.mjs'),
+    'server mode should boot the workspace server development entrypoint instead of tauri:dev',
   );
   assert.ok(
-    !plan[0].args.includes('tauri:dev'),
+    renderedArgs.includes('--proxy-dev'),
+    'server mode should enable the full proxy-dev workspace contract',
+  );
+  assert.ok(
+    !renderedArgs.includes('tauri:dev'),
     'server mode must not depend on Tauri capability files or desktop IPC',
   );
 });

@@ -32,7 +32,9 @@ pnpm server:dev
 ```
 
 `pnpm tauri:dev` starts the portal desktop product path.
-`pnpm server:dev` starts the router product server path.
+`pnpm server:dev` starts the full server development workspace: backend APIs, the admin dev server, the portal dev server, and the unified Pingora web host.
+
+If you need the standalone integrated `router-product-service` CLI instead of the dev workspace, use `pnpm --dir apps/sdkwork-router-portal server:start`.
 
 Default managed development URLs:
 

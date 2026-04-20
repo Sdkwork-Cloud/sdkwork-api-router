@@ -64,7 +64,12 @@ pnpm server:dev
 ```
 
 `pnpm tauri:dev` launches the portal desktop product path through the shared root entrypoint.
-`pnpm server:dev` launches the router product server path through the same workspace contract.
+`pnpm server:dev` launches the full server development workspace through the same root entrypoint.
+That server workspace uses proxy-dev mode, so backend APIs, the admin Vite server, the portal Vite server, and the unified Pingora web host all start together.
+
+Portal desktop source builds now wait longer before the supervised sidecar is marked unhealthy, which reduces false negatives on slower Windows development hosts. If you still need a larger warm-up budget, set `SDKWORK_ROUTER_RUNTIME_HEALTH_TIMEOUT_MS=<milliseconds>` before `pnpm tauri:dev`. When startup really fails, the desktop runtime error now prints the resolved router binary path, `router.yaml`, stdout/stderr log files, and the exact health probe URLs.
+
+If you need the standalone integrated `router-product-service` CLI instead of the dev workspace contract, use `pnpm --dir apps/sdkwork-router-portal server:start`.
 
 Characteristics:
 

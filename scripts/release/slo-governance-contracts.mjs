@@ -24,11 +24,21 @@ export async function assertSloGovernanceContracts({
 
   const module = await import(pathToFileURL(modulePath).href);
   assert.equal(typeof module.listSloGovernanceTargets, 'function');
+  assert.equal(typeof module.findSloGovernanceTarget, 'function');
+  assert.equal(typeof module.listSloGovernanceTargetsByIds, 'function');
+  assert.equal(typeof module.listSloGovernanceBurnRateWindows, 'function');
+  assert.equal(typeof module.findSloGovernanceBurnRateWindow, 'function');
+  assert.equal(typeof module.listSloGovernanceBurnRateWindowsByIds, 'function');
   assert.equal(typeof module.evaluateSloGovernanceEvidence, 'function');
   assert.equal(typeof module.collectSloGovernanceResult, 'function');
 
   const targets = module.listSloGovernanceTargets();
+  const burnRateWindows = module.listSloGovernanceBurnRateWindows();
   assert.equal(targets.length, 14);
+  assert.deepEqual(
+    burnRateWindows.map((window) => window.window),
+    ['1h', '6h'],
+  );
   assert.deepEqual(
     [...new Set(targets.map((target) => target.plane))].sort(),
     ['commercial-plane', 'control-plane', 'data-plane'],

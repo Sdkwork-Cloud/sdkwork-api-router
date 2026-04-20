@@ -6,6 +6,7 @@ It does not apply to `sdkwork-router-portal-desktop`. The desktop product is a p
 
 Release workflow `installed-runtime smoke` verifies the same packaged server bundle that native install tooling consumes.
 In other words, the service-manager contract is validated only against the official `packaged server bundle`, not against raw workspace build outputs.
+Initial installation is expected to happen through the bundle-root `install.sh` or `install.ps1` entrypoint after extracting that archive.
 
 ## Supported Managers
 
@@ -19,27 +20,29 @@ In other words, the service-manager contract is validated only against the offic
 
 From the product root:
 
-- current control home: `./current/`
+- current control directory: `./current/`
 - validation entrypoint: `./current/bin/validate-config.sh`
 - foreground start entrypoint: `./current/bin/start.sh`
 - stop entrypoint: `./current/bin/stop.sh`
+- support export entrypoint: `./current/bin/support-bundle.sh`
 
-PowerShell equivalents live beside the shell entrypoints under `current/bin/`.
+PowerShell equivalents live beside the shell entrypoints under `current/bin/`, including `.\current\bin\support-bundle.ps1`.
+Those installed entrypoints are materialized from the packaged server bundle's embedded `control/bin/` subtree. Repository-local `bin/*` tooling remains a source-checkout fallback only.
 
 ## Pre-Start Validation
 
-Before registering or restarting a production service, run the installed validation entrypoint against the current control home.
+Before registering or restarting a production service, run the installed validation entrypoint against the product root.
 
 Linux or macOS:
 
 ```bash
-./current/bin/validate-config.sh --home ./current
+./current/bin/validate-config.sh --home <product-root>
 ```
 
 Windows PowerShell:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\current\bin\validate-config.ps1 -Home .\current
+powershell -NoProfile -ExecutionPolicy Bypass -File .\current\bin\validate-config.ps1 -Home <product-root>
 ```
 
 From a repository checkout, the source-side fallback remains:
@@ -54,10 +57,10 @@ node .\bin\router-ops.mjs validate-config --mode system --home <product-root>
 
 ## Foreground Runtime Contract
 
-Service managers must execute the runtime in foreground mode from the current control home:
+Service managers must execute the runtime in foreground mode while targeting the installed product root:
 
-- `./current/bin/start.sh --foreground --home <product-root>/current`
-- `powershell -NoProfile -ExecutionPolicy Bypass -File .\current\bin\start.ps1 -Foreground -Home <product-root>\current`
+- `./current/bin/start.sh --foreground --home <product-root>`
+- `powershell -NoProfile -ExecutionPolicy Bypass -File .\current\bin\start.ps1 -Foreground -Home <product-root>`
 
 The generated service assets already follow this contract.
 
@@ -117,4 +120,5 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\current\service\windows-se
 - Treat the versioned payload under `releases/<version>/` as content copied from the official packaged server bundle.
 - Review `router.yaml` and `router.env` before each upgrade.
 - Re-run `validate-config` after every config change.
+- Export `support-bundle.*` before escalation when you need a release-safe operator diagnostics bundle.
 - Treat `start.* --dry-run` and the product-service `--dry-run` plan output as preflight checks, not as a replacement for service registration.

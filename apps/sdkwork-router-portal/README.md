@@ -217,6 +217,12 @@ Desktop runtime files:
 - `router.yaml`
   - canonical sidecar runtime config
 
+Desktop runtime startup policy:
+
+- source/debug startup now uses a longer default health timeout before the supervised sidecar is treated as failed
+- set `SDKWORK_ROUTER_RUNTIME_HEALTH_TIMEOUT_MS=<milliseconds>` when a slower development host needs more warm-up time
+- startup failures print the resolved router binary path, `router.yaml`, stdout/stderr log locations, and the exact health probe URLs that did not become ready
+
 The shell launches the sidecar with `--config-dir <config-dir>` and strips inherited `SDKWORK_*` environment variables so config-file values remain authoritative after discovery.
 
 ### Server Mode

@@ -173,6 +173,55 @@ test('release telemetry snapshot materializer derives a governed snapshot from a
   assert.equal(written.targets['routing-simulation-p95-latency'].value, 420);
 });
 
+test('release telemetry snapshot materializer exposes strict direct Prometheus target lookup helpers', async () => {
+  const module = await import(
+    pathToFileURL(
+      path.join(repoRoot, 'scripts', 'release', 'materialize-release-telemetry-snapshot.mjs'),
+    ).href,
+  );
+
+  assert.equal(typeof module.listDirectPrometheusTargetSpecs, 'function');
+  assert.equal(typeof module.findDirectPrometheusTargetSpec, 'function');
+  assert.equal(typeof module.listDirectPrometheusTargetSpecsByIds, 'function');
+
+  assert.deepEqual(
+    module.listDirectPrometheusTargetSpecs().map((spec) => spec.targetId),
+    [
+      'gateway-availability',
+      'admin-api-availability',
+      'portal-api-availability',
+    ],
+  );
+
+  const adminSpec = module.findDirectPrometheusTargetSpec('admin-api-availability');
+  assert.deepEqual(adminSpec, {
+    targetId: 'admin-api-availability',
+    prometheusKey: 'admin',
+  });
+
+  adminSpec.prometheusKey = 'mutated-locally';
+  assert.equal(
+    module.findDirectPrometheusTargetSpec('admin-api-availability').prometheusKey,
+    'admin',
+  );
+
+  assert.deepEqual(
+    module.listDirectPrometheusTargetSpecsByIds([
+      'gateway-availability',
+      'portal-api-availability',
+    ]).map((spec) => spec.targetId),
+    [
+      'gateway-availability',
+      'portal-api-availability',
+    ],
+  );
+
+  assert.throws(
+    () => module.findDirectPrometheusTargetSpec('missing-direct-prometheus-target'),
+    /missing direct prometheus target spec.*missing-direct-prometheus-target/i,
+  );
+});
+
 test('release telemetry snapshot materializer accepts Prometheus label values containing route template braces', async () => {
   const module = await import(
     pathToFileURL(

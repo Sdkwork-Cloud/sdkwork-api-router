@@ -27,13 +27,15 @@ Use these pages first when you are planning an online deployment:
 - [Service Management](./docs/operations/service-management.md)
 - [Docker And Helm Assets](./deploy/README.md)
 
+For installed server products, the stable `current/bin/` operator surface is materialized from the official server bundle's embedded `control/bin/` tree rather than copied from a source checkout.
+
 For local development only, use:
 
 - [Quickstart](./docs/getting-started/quickstart.md)
 - [Source Development](./docs/getting-started/source-development.md)
 
 For repository ergonomics, root-level start/build/install/stop scripts are compatibility wrappers that delegate to `bin/*`.
-The managed operator source of truth stays under `bin/*`, including installed `current/bin/backup.*`, `current/bin/restore.*`, and `current/bin/validate-config.*` entrypoints.
+The managed operator source of truth stays under `bin/*`, including installed `current/bin/backup.*`, `current/bin/restore.*`, `current/bin/support-bundle.*`, and `current/bin/validate-config.*` entrypoints.
 
 ## Runtime Surfaces
 
@@ -93,24 +95,24 @@ Build release artifacts:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\build.ps1
 ```
 
-Generate a production-grade native install:
+From an extracted official server bundle root, generate a production-grade native install:
 
 ```bash
-./bin/install.sh --mode system
+./install.sh --mode system
 ```
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\install.ps1 -Mode system
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Mode system
 ```
 
 From `<product-root>`, validate the generated production config before service registration:
 
 ```bash
-./current/bin/validate-config.sh --home ./current
+./current/bin/validate-config.sh --home <product-root>
 ```
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\current\bin\validate-config.ps1 -Home .\current
+powershell -NoProfile -ExecutionPolicy Bypass -File .\current\bin\validate-config.ps1 -Home <product-root>
 ```
 
 After installation, the installed runtime also exposes:
@@ -121,6 +123,8 @@ After installation, the installed runtime also exposes:
 - `<product-root>\current\bin\backup.ps1`
 - `<product-root>/current/bin/restore.sh`
 - `<product-root>\current\bin\restore.ps1`
+- `<product-root>/current/bin/support-bundle.sh`
+- `<product-root>\current\bin\support-bundle.ps1`
 
 Then continue with:
 
@@ -147,7 +151,11 @@ pnpm server:dev
 ```
 
 `pnpm tauri:dev` launches the portal desktop product path through the packaged product entrypoint.
-`pnpm server:dev` launches the router product server path through the same root-level workspace contract.
+`pnpm server:dev` launches the full server development workspace: backend APIs, the admin dev server, the portal dev server, and the unified Pingora web host.
+
+For portal desktop source builds, the supervised `router-product-service` sidecar now gets a longer debug warm-up window before startup is treated as unhealthy. If a slower Windows machine still needs more time, set `SDKWORK_ROUTER_RUNTIME_HEALTH_TIMEOUT_MS=<milliseconds>` before `pnpm tauri:dev`. Startup failures now report the router binary path, runtime config file, stdout/stderr log files, and the exact health probe URLs that were checked.
+
+Use `pnpm --dir apps/sdkwork-router-portal server:start` when you need the standalone integrated `router-product-service` CLI for deployment-oriented server runtime flags.
 
 ## Desktop IPC Permissions
 

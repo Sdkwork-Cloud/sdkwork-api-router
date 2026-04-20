@@ -23,7 +23,7 @@ COPY bin/ ./bin/
 COPY sites/ ./sites/
 COPY data/ ./data/
 
-RUN mkdir -p config var/data var/log var/run \
+RUN mkdir -p config data log run \
     && chown -R sdkwork:sdkwork /opt/sdkwork /var/lib/sdkwork \
     && chmod 755 /opt/sdkwork/bin/router-product-service
 

@@ -62,7 +62,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\build.ps1
 - `artifacts/release/native/<platform>/<arch>/bundles/sdkwork-api-router-product-server-<platform>-<arch>.tar.gz.sha256.txt`
 - `artifacts/release/native/<platform>/<arch>/bundles/sdkwork-api-router-product-server-<platform>-<arch>.manifest.json`
 
-外部 server manifest 会描述归档文件、校验文件以及内嵌 bundle 契约。解压 server 归档后，会得到一个已经包含 `bin/`、`sites/`、`data/`、`deploy/`、`README.txt` 以及内嵌 `release-manifest.json` 的产品根目录。
+外部 server manifest 会描述归档文件、校验文件、内嵌 bundle 契约、受治理的 `releaseVersion` 以及 bundle 根目录安装入口。解压 server 归档后，会得到一个已经包含 `install.sh`、`install.ps1`、`bin/`、`sites/`、`data/`、`deploy/`、`README.txt` 以及内嵌 `release-manifest.json` 的产品根目录。
+这份官方 server bundle 还会内嵌 `control/bin/` 和 `control/bin/lib/`；bundle 根目录原生安装工具会从这棵受治理的控制树物化出安装后的 `current/bin/` operator surface，而不是依赖仓库本地辅助脚本。
 
 当托管构建的输出树已经具备完整的正式资产集合时，还会在 `artifacts/release/release-catalog.json` 生成发布级元数据索引。这个 catalog 会把两个正式产品的外部 manifest 聚合成一个统一的机器可读 release 索引，并记录 `generatedAt` 以及每个 variant 的 `variantKind`、`primaryFileSizeBytes` 和 `checksumAlgorithm` 字段；它属于发布元数据，而不是第三个可安装产品。
 
@@ -90,7 +91,10 @@ pnpm server:dev
 ```
 
 `pnpm tauri:dev` 会通过统一根入口启动 portal desktop 产品路径。
-`pnpm server:dev` 会通过同一套工作区契约启动 router product server 路径。
+`pnpm server:dev` 会通过同一套根入口启动完整的 server 开发工作区。
+这个根级 `server:dev` 仅用于开发，会同时启动 backend API、admin Vite server、portal Vite server，以及统一的 Pingora web host。
+
+如果你需要独立的一体化 `router-product-service` CLI 或面向部署的 server 运行时参数，请使用 `pnpm --dir apps/sdkwork-router-portal server:start`。
 
 构建正式 desktop 安装包：
 

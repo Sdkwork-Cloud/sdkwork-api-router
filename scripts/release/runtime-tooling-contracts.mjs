@@ -114,7 +114,7 @@ export async function assertRuntimeToolingContracts({
     platform: 'linux',
   });
   assert.match(systemEnvTemplate, /SDKWORK_CONFIG_FILE="\/etc\/sdkwork-api-router\/router\.yaml"/);
-  assert.match(systemEnvTemplate, /postgresql:\/\/sdkwork:change-me@127\.0\.0\.1:5432\/sdkwork_api_router/);
+  assert.match(systemEnvTemplate, /postgresql:\/\/sdkwork:replace-with-db-password@127\.0\.0\.1:5432\/sdkwork_api_router/);
 
   const runtimeToolingTests = read(repoRoot, 'bin/tests/router-runtime-tooling.test.mjs');
   assert.match(runtimeToolingTests, /function canSpawnUnixShellFromNode\(\)/);

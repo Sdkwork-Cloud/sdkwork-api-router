@@ -6,6 +6,9 @@ function requireValue(argv, index, flag) {
   return value;
 }
 
+const DEFAULT_ADMIN_SITE_TARGET = '127.0.0.1:5173';
+const DEFAULT_PORTAL_SITE_TARGET = '127.0.0.1:5174';
+
 function resolveLoopbackUrl(bind, pathSuffix) {
   const [hostPart, port = '80'] = bind.split(/:(?=[^:]+$)/);
   const host = !hostPart || hostPart === '0.0.0.0' || hostPart === '[::]' || hostPart === '::'
@@ -22,6 +25,8 @@ export function parseWorkspaceArgs(argv) {
     adminBind: '127.0.0.1:9981',
     portalBind: '127.0.0.1:9982',
     webBind: '0.0.0.0:9983',
+    adminSiteTarget: DEFAULT_ADMIN_SITE_TARGET,
+    portalSiteTarget: DEFAULT_PORTAL_SITE_TARGET,
     install: false,
     preview: false,
     proxyDev: false,
@@ -58,6 +63,14 @@ export function parseWorkspaceArgs(argv) {
         settings.webBind = requireValue(argv, index, arg);
         index += 1;
         break;
+      case '--admin-site-target':
+        settings.adminSiteTarget = requireValue(argv, index, arg);
+        index += 1;
+        break;
+      case '--portal-site-target':
+        settings.portalSiteTarget = requireValue(argv, index, arg);
+        index += 1;
+        break;
       case '--install':
         settings.install = true;
         break;
@@ -85,7 +98,18 @@ export function parseWorkspaceArgs(argv) {
   return settings;
 }
 
+function portFromTarget(target, flagName) {
+  const port = Number.parseInt(String(target ?? '').split(/:(?=[^:]+$)/).at(-1) ?? '', 10);
+  if (!Number.isInteger(port) || port <= 0) {
+    throw new Error(`${flagName} must be a host:port value`);
+  }
+
+  return String(port);
+}
+
 export function buildWorkspaceCommandPlan(settings) {
+  const adminSiteTarget = settings.adminSiteTarget ?? DEFAULT_ADMIN_SITE_TARGET;
+  const portalSiteTarget = settings.portalSiteTarget ?? DEFAULT_PORTAL_SITE_TARGET;
   const backendArgs = ['scripts/dev/start-stack.mjs'];
   if (settings.databaseUrl) {
     backendArgs.push('--database-url', settings.databaseUrl);
@@ -106,6 +130,8 @@ export function buildWorkspaceCommandPlan(settings) {
   const portalArgs = ['scripts/dev/start-portal.mjs'];
   const desktopArgs = ['scripts/dev/start-portal.mjs'];
   const webArgs = ['scripts/dev/start-web.mjs'];
+  adminArgs.push('--port', portFromTarget(adminSiteTarget, '--admin-site-target'));
+  portalArgs.push('--port', portFromTarget(portalSiteTarget, '--portal-site-target'));
   webArgs.push(
     '--bind',
     settings.webBind,
@@ -131,9 +157,9 @@ export function buildWorkspaceCommandPlan(settings) {
   if (settings.proxyDev) {
     webArgs.push(
       '--admin-site-target',
-      '127.0.0.1:5173',
+      adminSiteTarget,
       '--portal-site-target',
-      '127.0.0.1:5174',
+      portalSiteTarget,
       '--proxy-dev',
     );
   }
@@ -187,6 +213,8 @@ export function buildWorkspaceCommandPlan(settings) {
 }
 
 export function workspaceAccessLines(settings) {
+  const adminSiteTarget = settings.adminSiteTarget ?? DEFAULT_ADMIN_SITE_TARGET;
+  const portalSiteTarget = settings.portalSiteTarget ?? DEFAULT_PORTAL_SITE_TARGET;
   const unifiedAccessEnabled = settings.preview || settings.proxyDev || settings.tauri;
   const lines = [
     `[start-workspace] Mode: ${settings.preview ? 'preview' : settings.proxyDev ? 'proxy-dev' : settings.tauri ? 'tauri' : 'browser'}`,
@@ -202,8 +230,8 @@ export function workspaceAccessLines(settings) {
     lines.push(`[start-workspace]   Gateway API Health: ${resolveLoopbackUrl(settings.webBind, '/api/v1/health')}`);
   } else {
     lines.push('[start-workspace] Frontend Access');
-    lines.push('[start-workspace]   Admin App: http://127.0.0.1:5173/admin/');
-    lines.push('[start-workspace]   Portal App: http://127.0.0.1:5174/portal/');
+    lines.push(`[start-workspace]   Admin App: ${resolveLoopbackUrl(adminSiteTarget, '/admin/')}`);
+    lines.push(`[start-workspace]   Portal App: ${resolveLoopbackUrl(portalSiteTarget, '/portal/')}`);
   }
 
   lines.push('[start-workspace] Direct Service Access');
@@ -232,6 +260,8 @@ Options:
   --admin-bind <bind>    SDKWORK_ADMIN_BIND override
   --portal-bind <bind>   SDKWORK_PORTAL_BIND override
   --web-bind <bind>      SDKWORK_WEB_BIND override for the Pingora public host
+  --admin-site-target <bind>   Optional admin Vite upstream bind used in browser/proxy-dev mode
+  --portal-site-target <bind>  Optional portal Vite upstream bind used in browser/proxy-dev mode
   --install              Run pnpm install before starting the frontend apps
   --preview              Build admin and portal, then serve them through the Pingora web host
   --proxy-dev            Start admin and portal Vite dev servers, then proxy them through the Pingora web host

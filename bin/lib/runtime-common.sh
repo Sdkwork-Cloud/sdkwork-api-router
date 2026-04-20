@@ -84,11 +84,6 @@ router_resolve_absolute_path() {
   esac
 }
 
-router_default_install_home() {
-  REPO_ROOT="$1"
-  printf '%s/artifacts/install/sdkwork-api-router/current' "$REPO_ROOT"
-}
-
 router_normalize_install_mode() {
   MODE="$(printf '%s' "${1:-portable}" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
   case "$MODE" in
@@ -101,24 +96,35 @@ router_normalize_install_mode() {
   esac
 }
 
-router_release_manifest_path() {
-  printf '%s/release-manifest.json' "$1"
+# BEGIN GENERATED INSTALLED RUNTIME LAYOUT
+router_installed_product_root_from_home() {
+  RUNTIME_HOME="$1"
+  if [ "$(basename -- "$RUNTIME_HOME")" = 'current' ]; then
+    dirname -- "$RUNTIME_HOME"
+    return 0
+  fi
+
+  printf '%s' "$RUNTIME_HOME"
 }
 
-router_release_manifest_string() {
-  MANIFEST_FILE="$1"
-  KEY="$2"
-  if [ ! -f "$MANIFEST_FILE" ]; then
-    return 1
-  fi
+router_default_install_home() {
+  REPO_ROOT="$1"
+  printf '%s/artifacts/install/sdkwork-api-router/current' "$REPO_ROOT"
+}
 
-  VALUE=$(sed -n "s/^[[:space:]]*\"$KEY\"[[:space:]]*:[[:space:]]*\"\\(.*\\)\"[[:space:]]*,\{0,1\}[[:space:]]*$/\\1/p" "$MANIFEST_FILE" | head -n 1)
-  if [ -z "$VALUE" ]; then
-    return 1
-  fi
+router_default_system_product_root() {
+  case "$(router_runtime_platform_name)" in
+    darwin)
+      printf '%s' '/usr/local/lib/sdkwork-api-router'
+      ;;
+    *)
+      printf '%s' '/opt/sdkwork-api-router'
+      ;;
+  esac
+}
 
-  VALUE=$(printf '%s' "$VALUE" | sed 's/\\"/"/g; s/\\\\/\\/g')
-  printf '%s' "$VALUE"
+router_release_manifest_path() {
+  printf '%s/release-manifest.json' "$1"
 }
 
 router_default_system_config_root() {
@@ -173,7 +179,8 @@ router_default_config_root() {
     return 0
   fi
 
-  printf '%s/config' "$RUNTIME_HOME"
+  PRODUCT_ROOT="$(router_installed_product_root_from_home "$RUNTIME_HOME")"
+  printf '%s/config' "$PRODUCT_ROOT"
 }
 
 router_default_data_root() {
@@ -184,7 +191,8 @@ router_default_data_root() {
     return 0
   fi
 
-  printf '%s/var/data' "$RUNTIME_HOME"
+  PRODUCT_ROOT="$(router_installed_product_root_from_home "$RUNTIME_HOME")"
+  printf '%s/data' "$PRODUCT_ROOT"
 }
 
 router_default_log_root() {
@@ -195,7 +203,8 @@ router_default_log_root() {
     return 0
   fi
 
-  printf '%s/var/log' "$RUNTIME_HOME"
+  PRODUCT_ROOT="$(router_installed_product_root_from_home "$RUNTIME_HOME")"
+  printf '%s/log' "$PRODUCT_ROOT"
 }
 
 router_default_run_root() {
@@ -206,14 +215,32 @@ router_default_run_root() {
     return 0
   fi
 
-  printf '%s/var/run' "$RUNTIME_HOME"
+  PRODUCT_ROOT="$(router_installed_product_root_from_home "$RUNTIME_HOME")"
+  printf '%s/run' "$PRODUCT_ROOT"
+}
+# END GENERATED INSTALLED RUNTIME LAYOUT
+
+router_release_manifest_string() {
+  MANIFEST_FILE="$1"
+  KEY="$2"
+  if [ ! -f "$MANIFEST_FILE" ]; then
+    return 1
+  fi
+
+  VALUE=$(sed -n "s/^[[:space:]]*\"$KEY\"[[:space:]]*:[[:space:]]*\"\\(.*\\)\"[[:space:]]*,\{0,1\}[[:space:]]*$/\\1/p" "$MANIFEST_FILE" | head -n 1)
+  if [ -z "$VALUE" ]; then
+    return 1
+  fi
+
+  VALUE=$(printf '%s' "$VALUE" | sed 's/\\"/"/g; s/\\\\/\\/g')
+  printf '%s' "$VALUE"
 }
 
 router_default_database_url() {
   DATA_ROOT="$1"
   INSTALL_MODE="$(router_normalize_install_mode "${2:-portable}")"
   if [ "$INSTALL_MODE" = 'system' ]; then
-    printf '%s' 'postgresql://sdkwork:change-me@127.0.0.1:5432/sdkwork_api_router'
+    printf '%s' 'postgresql://sdkwork:replace-with-db-password@127.0.0.1:5432/sdkwork_api_router'
     return 0
   fi
 

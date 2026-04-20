@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
 import {
   findReadableModuleResolution,
   probeReadableFile,
+  resolveReadableFallbackModulePath,
   resolveReadablePackageEntry,
   resolveReadablePackageRoot,
 } from '../vite-runtime-lib.mjs';
@@ -239,6 +241,236 @@ test('findReadableModuleResolution falls back to a donor app when the current ap
   });
 });
 
+test('resolveReadableFallbackModulePath promotes bare donor package resolutions to their ESM import entry', () => {
+  const donorResolvedPath = path.join(
+    portalRoot,
+    'node_modules',
+    'clsx',
+    'dist',
+    'clsx.js',
+  );
+  const donorPackageRoot = path.join(portalRoot, 'node_modules', 'clsx');
+  const donorImportEntry = path.join(donorPackageRoot, 'dist', 'clsx.mjs');
+
+  const fallbackPath = resolveReadableFallbackModulePath({
+    specifier: 'clsx',
+    resolution: {
+      candidateRoot: portalRoot,
+      resolvedPath: donorResolvedPath,
+    },
+    resolveReadablePackageRootImpl({ appRoot, donorRoots, packageName }) {
+      assert.equal(appRoot, portalRoot);
+      assert.deepEqual(donorRoots, []);
+      assert.equal(packageName, 'clsx');
+      return donorPackageRoot;
+    },
+    readPackageJsonImpl(packageRoot) {
+      assert.equal(packageRoot, donorPackageRoot);
+      return {
+        exports: {
+          '.': {
+            import: './dist/clsx.mjs',
+            require: './dist/clsx.js',
+          },
+        },
+        module: './dist/clsx.mjs',
+        main: './dist/clsx.js',
+      };
+    },
+  });
+
+  assert.equal(fallbackPath, donorImportEntry);
+});
+
+test('resolveReadableFallbackModulePath falls back to the module field when package exports are absent', () => {
+  const donorResolvedPath = path.join(
+    portalRoot,
+    'node_modules',
+    '@radix-ui',
+    'react-slot',
+    'dist',
+    'index.js',
+  );
+  const donorPackageRoot = path.join(
+    portalRoot,
+    'node_modules',
+    '@radix-ui',
+    'react-slot',
+  );
+
+  const fallbackPath = resolveReadableFallbackModulePath({
+    specifier: '@radix-ui/react-slot',
+    resolution: {
+      candidateRoot: portalRoot,
+      resolvedPath: donorResolvedPath,
+    },
+    resolveReadablePackageRootImpl() {
+      return donorPackageRoot;
+    },
+    readPackageJsonImpl() {
+      return {
+        module: './dist/index.mjs',
+        main: './dist/index.js',
+      };
+    },
+  });
+
+  assert.equal(
+    fallbackPath,
+    path.join(donorPackageRoot, 'dist', 'index.mjs'),
+  );
+});
+
+test('resolveReadableFallbackModulePath promotes governed package subpath resolutions to their ESM import entry', () => {
+  const donorResolvedPath = path.join(
+    portalRoot,
+    'node_modules',
+    '@floating-ui',
+    'utils',
+    'dist',
+    'floating-ui.utils.dom.umd.js',
+  );
+  const donorPackageRoot = path.join(
+    portalRoot,
+    'node_modules',
+    '@floating-ui',
+    'utils',
+  );
+
+  const fallbackPath = resolveReadableFallbackModulePath({
+    specifier: '@floating-ui/utils/dom',
+    resolution: {
+      candidateRoot: portalRoot,
+      resolvedPath: donorResolvedPath,
+    },
+    resolveReadablePackageRootImpl({ appRoot, donorRoots, packageName }) {
+      assert.equal(appRoot, portalRoot);
+      assert.deepEqual(donorRoots, []);
+      assert.equal(packageName, '@floating-ui/utils');
+      return donorPackageRoot;
+    },
+    readPackageJsonImpl(packageRoot) {
+      assert.equal(packageRoot, donorPackageRoot);
+      return {
+        exports: {
+          './dom': {
+            import: {
+              types: './dist/floating-ui.utils.dom.d.mts',
+              default: './dist/floating-ui.utils.dom.mjs',
+            },
+            types: './dist/floating-ui.utils.dom.d.ts',
+            module: './dist/floating-ui.utils.dom.esm.js',
+            default: './dist/floating-ui.utils.dom.umd.js',
+          },
+        },
+      };
+    },
+  });
+
+  assert.equal(
+    fallbackPath,
+    path.join(donorPackageRoot, 'dist', 'floating-ui.utils.dom.mjs'),
+  );
+});
+
+test('resolveReadableFallbackModulePath promotes package subpath entries that publish their own package.json import target', () => {
+  const donorResolvedPath = path.join(
+    portalRoot,
+    'node_modules',
+    'react-remove-scroll-bar',
+    'dist',
+    'es5',
+    'constants.js',
+  );
+  const donorPackageRoot = path.join(
+    portalRoot,
+    'node_modules',
+    'react-remove-scroll-bar',
+  );
+  const donorSubpackageRoot = path.join(donorPackageRoot, 'constants');
+
+  const fallbackPath = resolveReadableFallbackModulePath({
+    specifier: 'react-remove-scroll-bar/constants',
+    resolution: {
+      candidateRoot: portalRoot,
+      resolvedPath: donorResolvedPath,
+    },
+    resolveReadablePackageRootImpl({ appRoot, donorRoots, packageName }) {
+      assert.equal(appRoot, portalRoot);
+      assert.deepEqual(donorRoots, []);
+
+      if (packageName === 'react-remove-scroll-bar/constants') {
+        return donorSubpackageRoot;
+      }
+      if (packageName === 'react-remove-scroll-bar') {
+        return donorPackageRoot;
+      }
+
+      throw new Error(`unexpected package lookup: ${packageName}`);
+    },
+    readPackageJsonImpl(packageRoot) {
+      if (packageRoot === donorSubpackageRoot) {
+        return {
+          module: '../dist/es2015/constants.js',
+          main: '../dist/es5/constants.js',
+        };
+      }
+
+      if (packageRoot === donorPackageRoot) {
+        return {
+          module: 'dist/es2015/index.js',
+          main: 'dist/es5/index.js',
+        };
+      }
+
+      throw new Error(`unexpected package root: ${packageRoot}`);
+    },
+  });
+
+  assert.equal(
+    fallbackPath,
+    path.join(donorPackageRoot, 'dist', 'es2015', 'constants.js'),
+  );
+});
+
+test('resolveReadableFallbackModulePath preserves resolved files for package subpath imports without a matching export entry', () => {
+  const donorResolvedPath = path.join(
+    portalRoot,
+    'node_modules',
+    'lucide-react',
+    'dist',
+    'esm',
+    'icons',
+    'search.js',
+  );
+
+  const fallbackPath = resolveReadableFallbackModulePath({
+    specifier: 'lucide-react/dist/esm/icons/search.js',
+    resolution: {
+      candidateRoot: portalRoot,
+      resolvedPath: donorResolvedPath,
+    },
+    resolveReadablePackageRootImpl({ appRoot, donorRoots, packageName }) {
+      assert.equal(appRoot, portalRoot);
+      assert.deepEqual(donorRoots, []);
+      assert.equal(packageName, 'lucide-react');
+      return path.join(portalRoot, 'node_modules', 'lucide-react');
+    },
+    readPackageJsonImpl() {
+      return {
+        exports: {
+          '.': {
+            import: './dist/esm/lucide-react.js',
+            default: './dist/cjs/lucide-react.js',
+          },
+        },
+      };
+    },
+  });
+
+  assert.equal(fallbackPath, donorResolvedPath);
+});
+
 test('probeReadableFile returns false when open fails even if the path exists', () => {
   assert.equal(probeReadableFile('/workspace/apps/admin/node_modules/vite/bin/vite.js', {
     fileExists() {
@@ -271,4 +503,13 @@ test('probeReadableFile returns true when open succeeds', () => {
   }), true);
 
   assert.equal(closedHandle, 42);
+});
+
+test('shared vite runtime declaration exposes the readable fallback helper for TypeScript consumers', () => {
+  const declaration = readFileSync(
+    path.resolve(import.meta.dirname, '..', 'vite-runtime-lib.d.mts'),
+    'utf8',
+  );
+
+  assert.match(declaration, /export function resolveReadableFallbackModulePath\(options:/);
 });

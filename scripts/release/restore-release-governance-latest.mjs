@@ -22,6 +22,10 @@ import {
   validateSloGovernanceEvidenceShape,
 } from './materialize-slo-governance-evidence.mjs';
 import {
+  validateThirdPartyNoticesArtifact,
+  validateThirdPartySbomArtifact,
+} from './materialize-third-party-governance.mjs';
+import {
   validateReleaseSyncAuditArtifact,
 } from './verify-release-sync.mjs';
 
@@ -116,6 +120,16 @@ function validateGovernanceArtifact(spec, payload) {
     return;
   }
 
+  if (spec.id === 'third-party-sbom') {
+    validateThirdPartySbomArtifact(payload);
+    return;
+  }
+
+  if (spec.id === 'third-party-notices') {
+    validateThirdPartyNoticesArtifact(payload);
+    return;
+  }
+
   throw new Error(`unsupported release governance artifact spec: ${spec.id}`);
 }
 
@@ -150,6 +164,18 @@ export function listReleaseGovernanceLatestArtifactSpecs() {
       optionKey: 'sloPath',
       relativePath: path.join('docs', 'release', 'slo-governance-latest.json'),
       description: 'governed SLO evidence',
+    },
+    {
+      id: 'third-party-sbom',
+      optionKey: 'thirdPartySbomPath',
+      relativePath: path.join('docs', 'release', 'third-party-sbom-latest.spdx.json'),
+      description: 'governed third-party SBOM',
+    },
+    {
+      id: 'third-party-notices',
+      optionKey: 'thirdPartyNoticesPath',
+      relativePath: path.join('docs', 'release', 'third-party-notices-latest.json'),
+      description: 'governed third-party notices',
     },
   ].map((spec) => ({
     ...spec,
@@ -323,6 +349,16 @@ function parseArgs(argv = process.argv.slice(2)) {
     }
     if (token === '--slo') {
       options.sloPath = String(argv[index + 1] ?? '').trim();
+      index += 1;
+      continue;
+    }
+    if (token === '--third-party-sbom') {
+      options.thirdPartySbomPath = String(argv[index + 1] ?? '').trim();
+      index += 1;
+      continue;
+    }
+    if (token === '--third-party-notices') {
+      options.thirdPartyNoticesPath = String(argv[index + 1] ?? '').trim();
       index += 1;
       continue;
     }

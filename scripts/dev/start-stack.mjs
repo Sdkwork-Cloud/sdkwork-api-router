@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import {
   databaseDisplayValue,
   parseStackArgs,
+  renderSourceDevRouterConfig,
   serviceEnv,
   stackHelpText,
 } from './backend-launch-lib.mjs';
@@ -18,6 +19,8 @@ import {
 function cargoExecutable() {
   return process.platform === 'win32' ? 'cargo.exe' : 'cargo';
 }
+
+const repoRoot = path.resolve(import.meta.dirname, '..', '..');
 
 function resolveBackendLaunchSpec(packageName, env) {
   const usePrebuiltBinaries =
@@ -38,8 +41,40 @@ function resolveBackendLaunchSpec(packageName, env) {
   };
 }
 
-function startService(packageName, settings, children, onFailure) {
-  const env = serviceEnv(settings);
+function sourceConfigRunLabel(now = new Date(), pid = process.pid) {
+  const iso = now.toISOString().replaceAll(':', '').replaceAll('.', '').replace('T', '-');
+  return `${iso}-${pid}`;
+}
+
+function createSourceDevConfigPlan(settings, {
+  repositoryRoot = repoRoot,
+  now = new Date(),
+  pid = process.pid,
+} = {}) {
+  const runRoot = path.join(
+    repositoryRoot,
+    'artifacts',
+    'runtime',
+    'source-workspace',
+    sourceConfigRunLabel(now, pid),
+  );
+  const configDir = path.join(runRoot, 'config');
+  const configFile = path.join(configDir, 'router.yaml');
+  mkdirSync(configDir, { recursive: true });
+  writeFileSync(configFile, renderSourceDevRouterConfig(settings), 'utf8');
+
+  return {
+    runRoot,
+    configDir,
+    configFile,
+  };
+}
+
+function startService(packageName, settings, sourceConfig, children, onFailure) {
+  const env = serviceEnv(settings, process.env, {
+    sourceConfigDir: sourceConfig.configDir,
+    sourceConfigFile: sourceConfig.configFile,
+  });
   const launchSpec = resolveBackendLaunchSpec(packageName, env);
   const command = [launchSpec.command, ...launchSpec.args].join(' ');
   console.log(`[start-stack] ${command}`);
@@ -70,12 +105,15 @@ if (settings.help) {
   console.log(stackHelpText());
   process.exit(0);
 }
+const sourceConfig = createSourceDevConfigPlan(settings);
 
 console.log('[start-stack] shared configuration');
 console.log(`  SDKWORK_DATABASE_URL=${databaseDisplayValue(settings)}`);
 console.log(`  SDKWORK_ADMIN_BIND=${settings.adminBind}`);
 console.log(`  SDKWORK_GATEWAY_BIND=${settings.gatewayBind}`);
 console.log(`  SDKWORK_PORTAL_BIND=${settings.portalBind}`);
+console.log(`  SDKWORK_CONFIG_DIR=${sourceConfig.configDir}`);
+console.log(`  SDKWORK_CONFIG_FILE=${sourceConfig.configFile}`);
 
 const children = [];
 let exited = false;
@@ -100,9 +138,9 @@ function stopOnFailure(reason, exitCode) {
   void controller.shutdown(reason, exitCode);
 }
 
-startService('admin-api-service', settings, children, stopOnFailure);
-startService('gateway-service', settings, children, stopOnFailure);
-startService('portal-api-service', settings, children, stopOnFailure);
+startService('admin-api-service', settings, sourceConfig, children, stopOnFailure);
+startService('gateway-service', settings, sourceConfig, children, stopOnFailure);
+startService('portal-api-service', settings, sourceConfig, children, stopOnFailure);
 
 if (settings.dryRun) {
   process.exit(0);

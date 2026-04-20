@@ -274,9 +274,22 @@ test('release target helpers and desktop release runner resolve explicit target 
   assert.equal(typeof runner.shouldPassExplicitDesktopReleaseTarget, 'function');
   assert.equal(typeof packager.resolveNativeBuildRoot, 'function');
   assert.equal(typeof packager.resolveNativeBuildRootCandidates, 'function');
+  assert.equal(typeof packager.listNativeDesktopAppSpecs, 'function');
+  assert.equal(typeof packager.findNativeDesktopAppSpec, 'function');
+  assert.equal(typeof packager.listNativeDesktopAppSpecsByIds, 'function');
   assert.equal(typeof packager.listNativeServiceBinaryNames, 'function');
+  assert.equal(typeof packager.findNativeServiceBinaryName, 'function');
+  assert.equal(typeof packager.listNativeServiceBinaryNamesByIds, 'function');
   assert.equal(typeof packager.listNativeDesktopAppIds, 'function');
+  assert.equal(typeof packager.listNativeProductServerSiteAssetRoots, 'function');
+  assert.equal(typeof packager.findNativeProductServerSiteAssetRoot, 'function');
+  assert.equal(typeof packager.listNativeProductServerSiteAssetRootsByIds, 'function');
   assert.equal(typeof packager.listNativeProductServerBootstrapDataRoots, 'function');
+  assert.equal(typeof packager.findNativeProductServerBootstrapDataRoot, 'function');
+  assert.equal(typeof packager.listNativeProductServerBootstrapDataRootsByIds, 'function');
+  assert.equal(typeof packager.listNativeProductServerDeploymentAssetRoots, 'function');
+  assert.equal(typeof packager.findNativeProductServerDeploymentAssetRoot, 'function');
+  assert.equal(typeof packager.listNativeProductServerDeploymentAssetRootsByIds, 'function');
   assert.equal(typeof packager.buildNativePortalDesktopArtifactBaseName, 'function');
   assert.equal(typeof packager.createNativePortalDesktopReleaseAssetSpec, 'function');
   assert.equal(typeof packager.buildNativeProductServerArchiveBaseName, 'function');
@@ -480,11 +493,112 @@ test('release target helpers and desktop release runner resolve explicit target 
     packager.listNativeServiceBinaryNames().join(','),
     /router-product-service/,
   );
+  assert.deepEqual(
+    packager.listNativeDesktopAppSpecs().map(({ id, releaseEnabled }) => ({
+      id,
+      releaseEnabled,
+    })),
+    [
+      {
+        id: 'admin',
+        releaseEnabled: false,
+      },
+      {
+        id: 'portal',
+        releaseEnabled: true,
+      },
+    ],
+  );
+  assert.deepEqual(
+    packager.findNativeDesktopAppSpec('portal'),
+    {
+      id: 'portal',
+      appDir: path.join(rootDir, 'apps', 'sdkwork-router-portal'),
+      targetDirName: 'sdkwork-router-portal-tauri',
+      releaseEnabled: true,
+    },
+  );
+  assert.deepEqual(
+    packager.listNativeDesktopAppSpecsByIds([
+      'portal',
+    ]),
+    [
+      {
+        id: 'portal',
+        appDir: path.join(rootDir, 'apps', 'sdkwork-router-portal'),
+        targetDirName: 'sdkwork-router-portal-tauri',
+        releaseEnabled: true,
+      },
+    ],
+  );
+  assert.equal(
+    packager.findNativeServiceBinaryName('router-product-service'),
+    'router-product-service',
+  );
+  assert.deepEqual(
+    packager.listNativeServiceBinaryNamesByIds([
+      'admin-api-service',
+      'router-product-service',
+    ]),
+    [
+      'admin-api-service',
+      'router-product-service',
+    ],
+  );
   assert.deepEqual(packager.listNativeDesktopAppIds(), ['portal']);
+  assert.deepEqual(
+    packager.listNativeProductServerSiteAssetRoots(),
+    {
+      admin: path.join(rootDir, 'apps', 'sdkwork-router-admin', 'dist'),
+      portal: path.join(rootDir, 'apps', 'sdkwork-router-portal', 'dist'),
+    },
+  );
+  assert.equal(
+    packager.findNativeProductServerSiteAssetRoot('portal'),
+    path.join(rootDir, 'apps', 'sdkwork-router-portal', 'dist'),
+  );
+  assert.deepEqual(
+    packager.listNativeProductServerSiteAssetRootsByIds([
+      'portal',
+    ]),
+    {
+      portal: path.join(rootDir, 'apps', 'sdkwork-router-portal', 'dist'),
+    },
+  );
   assert.deepEqual(
     packager.listNativeProductServerBootstrapDataRoots(),
     {
       data: path.join(rootDir, 'data'),
+    },
+  );
+  assert.equal(
+    packager.findNativeProductServerBootstrapDataRoot('data'),
+    path.join(rootDir, 'data'),
+  );
+  assert.deepEqual(
+    packager.listNativeProductServerBootstrapDataRootsByIds([
+      'data',
+    ]),
+    {
+      data: path.join(rootDir, 'data'),
+    },
+  );
+  assert.deepEqual(
+    packager.listNativeProductServerDeploymentAssetRoots(),
+    {
+      deploy: path.join(rootDir, 'deploy'),
+    },
+  );
+  assert.equal(
+    packager.findNativeProductServerDeploymentAssetRoot('deploy'),
+    path.join(rootDir, 'deploy'),
+  );
+  assert.deepEqual(
+    packager.listNativeProductServerDeploymentAssetRootsByIds([
+      'deploy',
+    ]),
+    {
+      deploy: path.join(rootDir, 'deploy'),
     },
   );
   assert.equal(
@@ -843,12 +957,17 @@ test('native product-server packager writes one canonical archive, checksum, rel
     assert.deepEqual(JSON.parse(readFileSync(manifestPath, 'utf8')), {
       type: 'product-server-archive',
       productId: 'sdkwork-api-router-product-server',
+      releaseVersion: '0.1.0',
       platform: 'linux',
       arch: 'x64',
       target: 'x86_64-unknown-linux-gnu',
       archiveFile: 'sdkwork-api-router-product-server-linux-x64.tar.gz',
       checksumFile: 'sdkwork-api-router-product-server-linux-x64.tar.gz.sha256.txt',
       embeddedManifestFile: 'release-manifest.json',
+      installers: {
+        shell: 'install.sh',
+        powershell: 'install.ps1',
+      },
       services: packager.listNativeServiceBinaryNames(),
       sites: ['admin', 'portal'],
       bootstrapDataRoots: ['data'],
@@ -870,9 +989,14 @@ test('native product-server packager writes one canonical archive, checksum, rel
     assert.deepEqual(embeddedManifest, {
       type: 'product-server-bundle',
       productId: 'sdkwork-api-router-product-server',
+      releaseVersion: '0.1.0',
       platform: 'linux',
       arch: 'x64',
       target: 'x86_64-unknown-linux-gnu',
+      installers: {
+        shell: 'install.sh',
+        powershell: 'install.ps1',
+      },
       services: packager.listNativeServiceBinaryNames(),
       sites: ['admin', 'portal'],
       bootstrapDataRoots: ['data'],

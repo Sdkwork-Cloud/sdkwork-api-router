@@ -3,6 +3,7 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
+  chmodSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -17,48 +18,51 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 import {
+  normalizeDesktopPlatform,
   normalizeDesktopArch,
+  resolveDesktopOfficialInstallerRule,
   resolveDesktopReleaseTarget,
 } from './desktop-targets.mjs';
+import { resolveProductReleaseVersion } from '../../bin/lib/router-runtime-tooling.mjs';
 import { materializeReleaseCatalog } from './materialize-release-catalog.mjs';
-import { resolveManagedWindowsTauriTargetDir } from '../run-tauri-cli.mjs';
-import { resolveWorkspaceTargetDir } from '../workspace-target-dir.mjs';
+import {
+  findNativeDesktopReleaseProductSpecByAppId,
+  findNativeReleaseProductSpec,
+} from './native-release-product-catalog.mjs';
+import {
+  materializeNativeDesktopBuildRootCandidates,
+  materializeNativeServiceReleaseRootCandidates,
+} from './native-build-root-catalog.mjs';
+import {
+  findNativePortalDesktopEmbeddedRuntimeLayoutSpec,
+  findNativeProductServerBundleRuntimeLayoutSpec,
+} from './native-runtime-layout-catalog.mjs';
+import {
+  renderProductServerBundleInstallPowerShellScript,
+  renderProductServerBundleInstallShellScript,
+} from './product-server-bundle-installer-generation.mjs';
+import { createStrictKeyedCatalog } from '../strict-contract-catalog.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, '..', '..');
 
-const DESKTOP_APP_DIRS = {
-  admin: path.join(rootDir, 'apps', 'sdkwork-router-admin'),
-  portal: path.join(rootDir, 'apps', 'sdkwork-router-portal'),
-};
+const NATIVE_DESKTOP_APP_SPECS = [
+  Object.freeze({
+    id: 'admin',
+    appDir: path.join(rootDir, 'apps', 'sdkwork-router-admin'),
+    targetDirName: 'sdkwork-router-admin-tauri',
+    releaseEnabled: false,
+  }),
+  Object.freeze({
+    id: 'portal',
+    appDir: path.join(rootDir, 'apps', 'sdkwork-router-portal'),
+    targetDirName: 'sdkwork-router-portal-tauri',
+    releaseEnabled: true,
+  }),
+];
 
-const DESKTOP_APP_TARGET_DIR_NAMES = {
-  admin: 'sdkwork-router-admin-tauri',
-  portal: 'sdkwork-router-portal-tauri',
-};
-
-const NATIVE_RELEASE_DESKTOP_APP_IDS = ['portal'];
-
-const DESKTOP_RELEASE_ARTIFACT_RULES = {
-  windows: {
-    artifactKind: 'nsis',
-    expectedBundleDirectory: 'nsis',
-    expectedFileSuffix: '.exe',
-  },
-  linux: {
-    artifactKind: 'deb',
-    expectedBundleDirectory: 'deb',
-    expectedFileSuffix: '.deb',
-  },
-  macos: {
-    artifactKind: 'dmg',
-    expectedBundleDirectory: 'dmg',
-    expectedFileSuffix: '.dmg',
-  },
-};
-
-const SERVICE_BINARY_NAMES = [
+const NATIVE_SERVICE_BINARY_NAMES = [
   'admin-api-service',
   'gateway-service',
   'portal-api-service',
@@ -66,39 +70,134 @@ const SERVICE_BINARY_NAMES = [
   'router-product-service',
 ];
 
-const productServerSiteAssetRoots = {
-  admin: path.join(rootDir, 'apps', 'sdkwork-router-admin', 'dist'),
-  portal: path.join(rootDir, 'apps', 'sdkwork-router-portal', 'dist'),
-};
+const NATIVE_PRODUCT_SERVER_SITE_ASSET_ROOT_SPECS = [
+  Object.freeze({
+    id: 'admin',
+    rootPath: path.join(rootDir, 'apps', 'sdkwork-router-admin', 'dist'),
+  }),
+  Object.freeze({
+    id: 'portal',
+    rootPath: path.join(rootDir, 'apps', 'sdkwork-router-portal', 'dist'),
+  }),
+];
 
-const productServerBootstrapDataRoots = {
-  data: path.join(rootDir, 'data'),
-};
+const NATIVE_PRODUCT_SERVER_BOOTSTRAP_DATA_ROOT_SPECS = [
+  Object.freeze({
+    id: 'data',
+    rootPath: path.join(rootDir, 'data'),
+  }),
+];
 
-const productServerDeploymentAssetRoots = {
-  deploy: path.join(rootDir, 'deploy'),
-};
+const NATIVE_PRODUCT_SERVER_DEPLOYMENT_ASSET_ROOT_SPECS = [
+  Object.freeze({
+    id: 'deploy',
+    rootPath: path.join(rootDir, 'deploy'),
+  }),
+];
+
+const NATIVE_PRODUCT_SERVER_CONTROL_SCRIPT_NAMES = [
+  'start.sh',
+  'stop.sh',
+  'backup.sh',
+  'restore.sh',
+  'support-bundle.sh',
+  'validate-config.sh',
+  'start.ps1',
+  'stop.ps1',
+  'backup.ps1',
+  'restore.ps1',
+  'support-bundle.ps1',
+  'validate-config.ps1',
+];
+
+const NATIVE_PRODUCT_SERVER_CONTROL_LIB_NAMES = [
+  'runtime-common.sh',
+  'runtime-common.ps1',
+];
+
+function cloneNativeProductServerAssetRootSpec(spec) {
+  return {
+    ...spec,
+  };
+}
+
+function cloneNativeDesktopAppSpec(spec) {
+  return {
+    ...spec,
+  };
+}
+
+const nativeDesktopAppSpecCatalog = createStrictKeyedCatalog({
+  entries: NATIVE_DESKTOP_APP_SPECS,
+  getKey: (spec) => spec.id,
+  clone: cloneNativeDesktopAppSpec,
+  duplicateKeyMessagePrefix: 'duplicate native desktop app spec',
+  missingKeyMessagePrefix: 'missing native desktop app spec',
+});
+
+const nativeServiceBinaryNameCatalog = createStrictKeyedCatalog({
+  entries: NATIVE_SERVICE_BINARY_NAMES,
+  getKey: (binaryName) => binaryName,
+  duplicateKeyMessagePrefix: 'duplicate native service binary name',
+  missingKeyMessagePrefix: 'missing native service binary name',
+});
+
+const nativeProductServerSiteAssetRootCatalog = createStrictKeyedCatalog({
+  entries: NATIVE_PRODUCT_SERVER_SITE_ASSET_ROOT_SPECS,
+  getKey: (spec) => spec.id,
+  clone: cloneNativeProductServerAssetRootSpec,
+  duplicateKeyMessagePrefix: 'duplicate native product server site asset root',
+  missingKeyMessagePrefix: 'missing native product server site asset root',
+});
+
+const nativeProductServerBootstrapDataRootCatalog = createStrictKeyedCatalog({
+  entries: NATIVE_PRODUCT_SERVER_BOOTSTRAP_DATA_ROOT_SPECS,
+  getKey: (spec) => spec.id,
+  clone: cloneNativeProductServerAssetRootSpec,
+  duplicateKeyMessagePrefix: 'duplicate native product server bootstrap data root',
+  missingKeyMessagePrefix: 'missing native product server bootstrap data root',
+});
+
+const nativeProductServerDeploymentAssetRootCatalog = createStrictKeyedCatalog({
+  entries: NATIVE_PRODUCT_SERVER_DEPLOYMENT_ASSET_ROOT_SPECS,
+  getKey: (spec) => spec.id,
+  clone: cloneNativeProductServerAssetRootSpec,
+  duplicateKeyMessagePrefix: 'duplicate native product server deployment asset root',
+  missingKeyMessagePrefix: 'missing native product server deployment asset root',
+});
+
+const nativeProductServerControlScriptNameCatalog = createStrictKeyedCatalog({
+  entries: NATIVE_PRODUCT_SERVER_CONTROL_SCRIPT_NAMES,
+  getKey: (fileName) => fileName,
+  duplicateKeyMessagePrefix: 'duplicate native product server control script name',
+  missingKeyMessagePrefix: 'missing native product server control script name',
+});
+
+const nativeProductServerControlLibNameCatalog = createStrictKeyedCatalog({
+  entries: NATIVE_PRODUCT_SERVER_CONTROL_LIB_NAMES,
+  getKey: (fileName) => fileName,
+  duplicateKeyMessagePrefix: 'duplicate native product server control lib name',
+  missingKeyMessagePrefix: 'missing native product server control lib name',
+});
+
+function buildNativeProductServerAssetRootMap(specs = []) {
+  return Object.fromEntries(
+    specs.map((spec) => [spec.id, spec.rootPath]),
+  );
+}
 
 export function normalizePlatformId(platform = process.platform) {
-  if (platform === 'win32' || platform === 'windows') {
-    return 'windows';
-  }
-  if (platform === 'darwin' || platform === 'macos') {
-    return 'macos';
-  }
-  if (platform === 'linux') {
-    return 'linux';
-  }
-
-  throw new Error(`Unsupported release platform: ${platform}`);
+  return normalizeDesktopPlatform(platform);
 }
 
 export function shouldIncludeDesktopBundleFile(platformId, relativePath) {
   const normalizedPlatform = normalizePlatformId(platformId);
-  const artifactRule = DESKTOP_RELEASE_ARTIFACT_RULES[normalizedPlatform];
+  const artifactRule = resolveDesktopOfficialInstallerRule({
+    platform: normalizedPlatform,
+  });
   const normalizedPath = relativePath.replaceAll('\\', '/');
   const [topLevelDirectory] = normalizedPath.split('/');
-  if (!artifactRule || topLevelDirectory !== artifactRule.expectedBundleDirectory) {
+  if (topLevelDirectory !== artifactRule.expectedBundleDirectory) {
     return false;
   }
 
@@ -107,10 +206,7 @@ export function shouldIncludeDesktopBundleFile(platformId, relativePath) {
 }
 
 export function resolveNativeBuildRoot({ appId, targetTriple = '' } = {}) {
-  const appDir = DESKTOP_APP_DIRS[appId];
-  if (!appDir) {
-    throw new Error(`Unsupported desktop application id: ${appId}`);
-  }
+  const appDir = resolveNativeDesktopAppSpecOrThrow(appId).appDir;
 
   const normalizedTargetTriple = String(targetTriple ?? '').trim();
   const targetSegments = normalizedTargetTriple.length > 0
@@ -133,90 +229,133 @@ export function resolveNativeBuildRootCandidates({
   env = process.env,
   platform = process.platform,
 } = {}) {
-  const roots = [];
-  const normalizedTargetTriple = String(targetTriple ?? '').trim();
-  const appDir = DESKTOP_APP_DIRS[appId];
-  const workspaceTargetDirName = DESKTOP_APP_TARGET_DIR_NAMES[appId];
-  if (!appDir || !workspaceTargetDirName) {
-    throw new Error(`Unsupported desktop application id: ${appId}`);
-  }
-
-  const appTargetRoot = path.join(appDir, 'target');
-  if (normalizedTargetTriple.length > 0) {
-    roots.push(path.join(appTargetRoot, normalizedTargetTriple, 'release', 'bundle'));
-  }
-  roots.push(path.join(appTargetRoot, 'release', 'bundle'));
-
-  const repositoryTargetRoot = resolveWorkspaceTargetDir({
-    workspaceRoot: rootDir,
+  const appSpec = resolveNativeDesktopAppSpecOrThrow(appId);
+  return materializeNativeDesktopBuildRootCandidates({
+    appDir: appSpec.appDir,
+    workspaceTargetDirName: appSpec.targetDirName,
+    targetTriple,
     env,
     platform,
+    workspaceRoot: rootDir,
   });
-  if (normalizedTargetTriple.length > 0) {
-    roots.push(path.join(repositoryTargetRoot, normalizedTargetTriple, 'release', 'bundle'));
-  }
-  roots.push(path.join(repositoryTargetRoot, 'release', 'bundle'));
-
-  if (normalizePlatformId(platform) === 'windows') {
-    const managedWindowsTauriTargetDir = resolveManagedWindowsTauriTargetDir({
-      cwd: appDir,
-      env,
-      platform: 'win32',
-    });
-    if (managedWindowsTauriTargetDir) {
-      if (normalizedTargetTriple.length > 0) {
-        roots.push(path.join(managedWindowsTauriTargetDir, normalizedTargetTriple, 'release', 'bundle'));
-      }
-      roots.push(path.join(managedWindowsTauriTargetDir, 'release', 'bundle'));
-    }
-  }
-
-  const workspaceTargetRoot = path.join(rootDir, 'target', workspaceTargetDirName);
-  if (normalizedTargetTriple.length > 0) {
-    roots.push(path.join(workspaceTargetRoot, normalizedTargetTriple, 'release', 'bundle'));
-  }
-  roots.push(path.join(workspaceTargetRoot, 'release', 'bundle'));
-
-  roots.push(resolveNativeBuildRoot({
-    appId,
-    targetTriple,
-  }));
-
-  if (normalizedTargetTriple.length > 0) {
-    roots.push(resolveNativeBuildRoot({ appId }));
-  }
-
-  return [...new Set(roots)];
 }
 
 export function listNativeServiceBinaryNames() {
-  return [...SERVICE_BINARY_NAMES];
+  return nativeServiceBinaryNameCatalog.list();
+}
+
+export function findNativeServiceBinaryName(binaryName) {
+  return nativeServiceBinaryNameCatalog.find(binaryName);
+}
+
+export function listNativeServiceBinaryNamesByIds(binaryNames = []) {
+  return nativeServiceBinaryNameCatalog.listByKeys(binaryNames);
 }
 
 export function listNativeDesktopAppIds() {
-  return [...NATIVE_RELEASE_DESKTOP_APP_IDS];
+  return listNativeDesktopAppSpecs()
+    .filter((spec) => spec.releaseEnabled)
+    .map((spec) => spec.id);
+}
+
+export function listNativeDesktopAppSpecs() {
+  return nativeDesktopAppSpecCatalog.list();
+}
+
+export function findNativeDesktopAppSpec(appId) {
+  return nativeDesktopAppSpecCatalog.find(appId);
+}
+
+export function listNativeDesktopAppSpecsByIds(appIds = []) {
+  return nativeDesktopAppSpecCatalog.listByKeys(appIds);
+}
+
+export function listNativeProductServerSiteAssetRoots() {
+  return buildNativeProductServerAssetRootMap(
+    nativeProductServerSiteAssetRootCatalog.list(),
+  );
+}
+
+export function findNativeProductServerSiteAssetRoot(rootId) {
+  return nativeProductServerSiteAssetRootCatalog.find(rootId).rootPath;
+}
+
+export function listNativeProductServerSiteAssetRootsByIds(rootIds = []) {
+  return buildNativeProductServerAssetRootMap(
+    nativeProductServerSiteAssetRootCatalog.listByKeys(rootIds),
+  );
 }
 
 export function listNativeProductServerBootstrapDataRoots() {
-  return { ...productServerBootstrapDataRoots };
+  return buildNativeProductServerAssetRootMap(
+    nativeProductServerBootstrapDataRootCatalog.list(),
+  );
+}
+
+export function findNativeProductServerBootstrapDataRoot(rootId) {
+  return nativeProductServerBootstrapDataRootCatalog.find(rootId).rootPath;
+}
+
+export function listNativeProductServerBootstrapDataRootsByIds(rootIds = []) {
+  return buildNativeProductServerAssetRootMap(
+    nativeProductServerBootstrapDataRootCatalog.listByKeys(rootIds),
+  );
 }
 
 export function listNativeProductServerDeploymentAssetRoots() {
-  return { ...productServerDeploymentAssetRoots };
+  return buildNativeProductServerAssetRootMap(
+    nativeProductServerDeploymentAssetRootCatalog.list(),
+  );
+}
+
+export function findNativeProductServerDeploymentAssetRoot(rootId) {
+  return nativeProductServerDeploymentAssetRootCatalog.find(rootId).rootPath;
+}
+
+export function listNativeProductServerDeploymentAssetRootsByIds(rootIds = []) {
+  return buildNativeProductServerAssetRootMap(
+    nativeProductServerDeploymentAssetRootCatalog.listByKeys(rootIds),
+  );
+}
+
+export function listNativeProductServerControlScriptNames() {
+  return nativeProductServerControlScriptNameCatalog.list();
+}
+
+export function findNativeProductServerControlScriptName(fileName) {
+  return nativeProductServerControlScriptNameCatalog.find(fileName);
+}
+
+export function listNativeProductServerControlScriptNamesByIds(fileNames = []) {
+  return nativeProductServerControlScriptNameCatalog.listByKeys(fileNames);
+}
+
+export function listNativeProductServerControlLibNames() {
+  return nativeProductServerControlLibNameCatalog.list();
+}
+
+export function findNativeProductServerControlLibName(fileName) {
+  return nativeProductServerControlLibNameCatalog.find(fileName);
+}
+
+export function listNativeProductServerControlLibNamesByIds(fileNames = []) {
+  return nativeProductServerControlLibNameCatalog.listByKeys(fileNames);
 }
 
 export function buildNativeProductServerArchiveBaseName({ platformId, archId } = {}) {
-  return `sdkwork-api-router-product-server-${platformId}-${archId}`;
+  const productSpec = findNativeReleaseProductSpec('product-server');
+  return `${productSpec.baseNamePrefix}-${platformId}-${archId}`;
 }
 
 export function createNativeProductServerReleaseAssetSpec({ platformId, archId } = {}) {
+  const productSpec = findNativeReleaseProductSpec('product-server');
   const baseName = buildNativeProductServerArchiveBaseName({
     platformId,
     archId,
   });
-  const fileName = `${baseName}.tar.gz`;
+  const fileName = `${baseName}${productSpec.archiveFileExtension}`;
   return {
-    productId: 'sdkwork-api-router-product-server',
+    productId: productSpec.productId,
     fileName,
     checksumFileName: `${fileName}.sha256.txt`,
     manifestFileName: `${baseName}.manifest.json`,
@@ -224,16 +363,17 @@ export function createNativeProductServerReleaseAssetSpec({ platformId, archId }
 }
 
 export function buildNativePortalDesktopArtifactBaseName({ platformId, archId } = {}) {
-  return `sdkwork-router-portal-desktop-${platformId}-${archId}`;
+  const productSpec = findNativeDesktopReleaseProductSpecByAppId('portal');
+  return `${productSpec.baseNamePrefix}-${platformId}-${archId}`;
 }
 
 export function createNativePortalDesktopReleaseAssetSpec({ platformId, archId } = {}) {
+  const productSpec = findNativeDesktopReleaseProductSpecByAppId('portal');
   const normalizedPlatformId = normalizePlatformId(platformId);
   const normalizedArchId = normalizeDesktopArch(archId);
-  const artifactRule = DESKTOP_RELEASE_ARTIFACT_RULES[normalizedPlatformId];
-  if (!artifactRule) {
-    throw new Error(`Unsupported desktop release platform: ${platformId}`);
-  }
+  const artifactRule = resolveDesktopOfficialInstallerRule({
+    platform: normalizedPlatformId,
+  });
 
   const baseName = buildNativePortalDesktopArtifactBaseName({
     platformId: normalizedPlatformId,
@@ -242,7 +382,7 @@ export function createNativePortalDesktopReleaseAssetSpec({ platformId, archId }
   const fileName = `${baseName}${artifactRule.expectedFileSuffix}`;
 
   return {
-    appId: 'portal',
+    appId: productSpec.appId,
     artifactKind: artifactRule.artifactKind,
     fileName,
     checksumFileName: `${fileName}.sha256.txt`,
@@ -284,76 +424,24 @@ export function resolveAvailableNativeBuildRoot({
   return firstExistingRoot;
 }
 
-function normalizeNodePlatform(platform = process.platform) {
-  if (platform === 'windows') {
-    return 'win32';
-  }
-  if (platform === 'macos') {
-    return 'darwin';
-  }
-
-  return platform;
-}
-
-function buildWorkspaceServiceReleaseRoot({
-  targetTriple = '',
-  env = process.env,
-  platform = process.platform,
-} = {}) {
-  const normalizedTargetTriple = String(targetTriple ?? '').trim();
-  const targetSegments = normalizedTargetTriple.length > 0
-    ? [normalizedTargetTriple]
-    : [];
-
-  return path.join(
-    resolveWorkspaceTargetDir({
-      workspaceRoot: rootDir,
-      env,
-      platform: normalizeNodePlatform(platform),
-    }),
-    ...targetSegments,
-    'release',
-  );
-}
-
 export function resolveServiceReleaseRootCandidates({
   targetTriple = '',
   env = process.env,
   platform = process.platform,
 } = {}) {
-  const candidates = [];
-  const normalizedTargetTriple = String(targetTriple ?? '').trim();
-
-  candidates.push(
-    buildWorkspaceServiceReleaseRoot({
-      targetTriple,
-      env,
-      platform,
-    }),
-  );
-  if (normalizedTargetTriple.length > 0) {
-    candidates.push(
-      buildWorkspaceServiceReleaseRoot({
-        env,
-        platform,
-      }),
-    );
-  }
-
-  const repositoryTargetRoot = path.join(rootDir, 'target');
-  if (normalizedTargetTriple.length > 0) {
-    candidates.push(path.join(repositoryTargetRoot, normalizedTargetTriple, 'release'));
-  }
-  candidates.push(path.join(repositoryTargetRoot, 'release'));
-
-  return [...new Set(candidates)];
+  return materializeNativeServiceReleaseRootCandidates({
+    targetTriple,
+    env,
+    platform,
+    workspaceRoot: rootDir,
+  });
 }
 
 export function resolveAvailableServiceReleaseRoot({
   targetTriple = '',
   env = process.env,
   platform = process.platform,
-  serviceBinaryNames = SERVICE_BINARY_NAMES,
+  serviceBinaryNames = listNativeServiceBinaryNames(),
   serviceReleaseRoots,
   exists = existsSync,
 } = {}) {
@@ -383,15 +471,19 @@ export function resolveAvailableServiceReleaseRoot({
     }
   }
 
-  return firstExistingRoot || candidates[0] || buildWorkspaceServiceReleaseRoot({
-    targetTriple,
-    env,
-    platform,
-  });
+  return firstExistingRoot || candidates[0] || '';
 }
 
 function resolveServiceReleaseRoot(options = {}) {
   return resolveAvailableServiceReleaseRoot(options);
+}
+
+function resolveNativeDesktopAppSpecOrThrow(appId) {
+  try {
+    return findNativeDesktopAppSpec(appId);
+  } catch {
+    throw new Error(`Unsupported desktop application id: ${appId}`);
+  }
 }
 
 function parseArgs(argv) {
@@ -539,14 +631,64 @@ function withExecutable(binaryName, platformId) {
   return platformId === 'windows' ? `${binaryName}.exe` : binaryName;
 }
 
-function createPortalDesktopEmbeddedRuntimeManifest({ platformId } = {}) {
+function splitRelativeRuntimePath(relativePath) {
+  return String(relativePath ?? '')
+    .split('/')
+    .filter((segment) => segment.length > 0);
+}
+
+function resolveArchiveTargetPath(archiveRoot, relativePath) {
+  return path.join(archiveRoot, ...splitRelativeRuntimePath(relativePath));
+}
+
+function resolveRuntimeLayoutMappedPath(entryMap, entryId, entryKind) {
+  const relativePath = entryMap[entryId];
+  if (!relativePath) {
+    throw new Error(`Missing runtime layout ${entryKind}: ${entryId}`);
+  }
+
+  return relativePath;
+}
+
+function normalizeWindowsRelativePath(relativePath) {
+  return relativePath.replaceAll('/', '\\');
+}
+
+function resolveBundleInstallerMetadata(runtimeLayout = {}) {
   return {
-    routerBinary: `router-product/bin/${withExecutable('router-product-service', platformId)}`,
-    adminSiteDir: 'router-product/sites/admin/dist',
-    portalSiteDir: 'router-product/sites/portal/dist',
-    bootstrapDataDir: 'router-product/data',
-    releaseManifestFile: 'router-product/release-manifest.json',
-    readmeFile: 'router-product/README.txt',
+    shell: String(runtimeLayout?.bundleInstallers?.shell ?? 'install.sh').trim() || 'install.sh',
+    powershell: String(runtimeLayout?.bundleInstallers?.powershell ?? 'install.ps1').trim() || 'install.ps1',
+  };
+}
+
+function createPortalDesktopEmbeddedRuntimeManifest({ platformId } = {}) {
+  const runtimeLayout = findNativePortalDesktopEmbeddedRuntimeLayoutSpec();
+  const adminSiteDir = resolveRuntimeLayoutMappedPath(
+    runtimeLayout.siteTargetDirs,
+    'admin',
+    'site target dir',
+  );
+  const portalSiteDir = resolveRuntimeLayoutMappedPath(
+    runtimeLayout.siteTargetDirs,
+    'portal',
+    'site target dir',
+  );
+  const bootstrapDataDir = resolveRuntimeLayoutMappedPath(
+    runtimeLayout.bootstrapDataRootDirs,
+    'data',
+    'bootstrap data root dir',
+  );
+
+  return {
+    routerBinary: path.posix.join(
+      runtimeLayout.serviceBinaryDir,
+      withExecutable(runtimeLayout.serviceBinaryName, platformId),
+    ),
+    adminSiteDir,
+    portalSiteDir,
+    bootstrapDataDir,
+    releaseManifestFile: runtimeLayout.releaseManifestFile,
+    readmeFile: runtimeLayout.readmeFile,
   };
 }
 
@@ -557,7 +699,7 @@ function copyServiceBinaries({
   writeChecksums = false,
   resolveServiceRoot = resolveServiceReleaseRoot,
   serviceReleaseRoots,
-  serviceBinaryNames = SERVICE_BINARY_NAMES,
+  serviceBinaryNames = listNativeServiceBinaryNames(),
 }) {
   const serviceReleaseRoot = resolveServiceRoot({
     targetTriple,
@@ -594,7 +736,8 @@ export function packageDesktopBundles({
 } = {}) {
   const packagedAssets = [];
 
-  for (const appId of NATIVE_RELEASE_DESKTOP_APP_IDS) {
+  for (const appId of listNativeDesktopAppIds()) {
+    const releaseProductSpec = findNativeDesktopReleaseProductSpecByAppId(appId);
     const releaseAssetSpec = createNativePortalDesktopReleaseAssetSpec({
       platformId,
       archId,
@@ -634,7 +777,13 @@ export function packageDesktopBundles({
       );
     }
 
-    const appOutputDir = path.join(outputDir, 'native', platformId, archId, 'desktop', appId);
+    const appOutputDir = path.join(
+      outputDir,
+      'native',
+      platformId,
+      archId,
+      ...releaseProductSpec.outputPathSegments,
+    );
     rmSync(appOutputDir, { recursive: true, force: true });
     ensureDirectory(appOutputDir);
 
@@ -645,8 +794,8 @@ export function packageDesktopBundles({
     writeJsonFile(
       path.join(appOutputDir, releaseAssetSpec.manifestFileName),
       {
-        type: 'portal-desktop-installer',
-        productId: 'sdkwork-router-portal-desktop',
+        type: releaseProductSpec.manifestType,
+        productId: releaseProductSpec.productId,
         appId,
         platform: platformId,
         arch: archId,
@@ -674,30 +823,69 @@ export function packageDesktopBundles({
   return packagedAssets;
 }
 
-function writeProductServerBundleReadme({ archiveRoot, platformId, archId, targetTriple }) {
+function writeProductServerBundleReadme({
+  archiveRoot,
+  releaseVersion,
+  platformId,
+  archId,
+  targetTriple,
+  runtimeLayout = findNativeProductServerBundleRuntimeLayoutSpec(),
+}) {
+  const adminSiteDir = resolveRuntimeLayoutMappedPath(
+    runtimeLayout.siteTargetDirs,
+    'admin',
+    'site target dir',
+  );
+  const portalSiteDir = resolveRuntimeLayoutMappedPath(
+    runtimeLayout.siteTargetDirs,
+    'portal',
+    'site target dir',
+  );
+  const bootstrapDataDir = resolveRuntimeLayoutMappedPath(
+    runtimeLayout.bootstrapDataRootDirs,
+    'data',
+    'bootstrap data root dir',
+  );
+  const deploymentAssetDir = resolveRuntimeLayoutMappedPath(
+    runtimeLayout.deploymentAssetRootDirs,
+    'deploy',
+    'deployment asset root dir',
+  );
+  const routerBinary = path.posix.join(
+    runtimeLayout.serviceBinaryDir,
+    withExecutable(runtimeLayout.serviceBinaryName, platformId),
+  );
+  const installers = resolveBundleInstallerMetadata(runtimeLayout);
+
   writeFileSync(
-    path.join(archiveRoot, 'README.txt'),
+    resolveArchiveTargetPath(archiveRoot, runtimeLayout.readmeFile),
     [
       'SDKWork API Router Product Server Bundle',
       '',
+      `release-version: ${releaseVersion}`,
       `platform: ${platformId}`,
       `arch: ${archId}`,
       `target: ${targetTriple}`,
       '',
       'Contents:',
-      '- bin/: standalone services plus router-product-service',
-      '- sites/admin/dist/: admin web assets',
-      '- sites/portal/dist/: portal web assets',
-      '- data/: bootstrap data packs for first-start initialization',
-      '- deploy/: docker, compose, and helm deployment assets',
+      `- ${runtimeLayout.serviceBinaryDir}/: standalone services plus ${runtimeLayout.serviceBinaryName}`,
+      `- ${runtimeLayout.controlScriptDir}/: installed current/bin operator control scripts and helpers`,
+      `- ${adminSiteDir}/: admin web assets`,
+      `- ${portalSiteDir}/: portal web assets`,
+      `- ${bootstrapDataDir}/: bootstrap data packs for first-start initialization`,
+      `- ${deploymentAssetDir}/: docker, compose, and helm deployment assets`,
+      '',
+      'Install after extracting the archive:',
+      `  ./${installers.shell} --mode system`,
+      `  powershell -NoProfile -ExecutionPolicy Bypass -File .\\${normalizeWindowsRelativePath(installers.powershell)} -Mode system`,
       '',
       'Example startup:',
       platformId === 'windows'
-        ? '  set SDKWORK_BOOTSTRAP_DATA_DIR=data && set SDKWORK_ADMIN_SITE_DIR=sites\\admin\\dist && set SDKWORK_PORTAL_SITE_DIR=sites\\portal\\dist && bin\\router-product-service.exe'
-        : '  SDKWORK_BOOTSTRAP_DATA_DIR=data SDKWORK_ADMIN_SITE_DIR=sites/admin/dist SDKWORK_PORTAL_SITE_DIR=sites/portal/dist ./bin/router-product-service',
+        ? `  set SDKWORK_BOOTSTRAP_DATA_DIR=${normalizeWindowsRelativePath(bootstrapDataDir)} && set SDKWORK_ADMIN_SITE_DIR=${normalizeWindowsRelativePath(adminSiteDir)} && set SDKWORK_PORTAL_SITE_DIR=${normalizeWindowsRelativePath(portalSiteDir)} && ${normalizeWindowsRelativePath(routerBinary)}`
+        : `  SDKWORK_BOOTSTRAP_DATA_DIR=${bootstrapDataDir} SDKWORK_ADMIN_SITE_DIR=${adminSiteDir} SDKWORK_PORTAL_SITE_DIR=${portalSiteDir} ./${routerBinary}`,
       '',
       'Container image builds reuse the Linux product-server bundle with:',
-      '  docker build -f deploy/docker/Dockerfile -t sdkwork-api-router:<tag> .',
+      `  docker build -f ${path.posix.join(deploymentAssetDir, 'docker', 'Dockerfile')} -t sdkwork-api-router:<tag> .`,
       '',
       'Override SDKWORK_CONFIG_DIR, SDKWORK_CONFIG_FILE, SDKWORK_DATABASE_URL, and role/upstream flags as needed.',
       '',
@@ -713,12 +901,16 @@ export function packageProductServerBundle({
   outputDir,
   resolveServiceRoot = resolveServiceReleaseRoot,
   resolveServiceRootCandidates,
-  serviceBinaryNames = SERVICE_BINARY_NAMES,
-  siteAssetRoots = productServerSiteAssetRoots,
-  bootstrapDataRoots = productServerBootstrapDataRoots,
-  deploymentAssetRoots = productServerDeploymentAssetRoots,
+  serviceBinaryNames = listNativeServiceBinaryNames(),
+  siteAssetRoots = listNativeProductServerSiteAssetRoots(),
+  bootstrapDataRoots = listNativeProductServerBootstrapDataRoots(),
+  deploymentAssetRoots = listNativeProductServerDeploymentAssetRoots(),
   runTar = runTarCommand,
 } = {}) {
+  const releaseProductSpec = findNativeReleaseProductSpec('product-server');
+  const runtimeLayout = findNativeProductServerBundleRuntimeLayoutSpec();
+  const installers = resolveBundleInstallerMetadata(runtimeLayout);
+  const releaseVersion = resolveProductReleaseVersion(rootDir);
   for (const [label, sourceDir] of Object.entries(siteAssetRoots)) {
     if (!existsSync(sourceDir)) {
       throw new Error(
@@ -749,7 +941,13 @@ export function packageProductServerBundle({
     platformId,
     archId,
   });
-  const bundleOutputDir = path.join(outputDir, 'native', platformId, archId, 'bundles');
+  const bundleOutputDir = path.join(
+    outputDir,
+    'native',
+    platformId,
+    archId,
+    ...releaseProductSpec.outputPathSegments,
+  );
   const serviceReleaseRoots = typeof resolveServiceRootCandidates === 'function'
     ? resolveServiceRootCandidates({
         targetTriple,
@@ -766,46 +964,111 @@ export function packageProductServerBundle({
     copyServiceBinaries({
       platformId,
       targetTriple,
-      targetDir: path.join(archiveRoot, 'bin'),
+      targetDir: resolveArchiveTargetPath(archiveRoot, runtimeLayout.serviceBinaryDir),
       resolveServiceRoot,
       serviceReleaseRoots,
       serviceBinaryNames,
     });
 
+    copyNamedFiles({
+      sourceDir: path.join(rootDir, 'bin'),
+      targetDir: resolveArchiveTargetPath(archiveRoot, runtimeLayout.controlScriptDir),
+      fileNames: listNativeProductServerControlScriptNames(),
+      executableExtensions: ['.sh'],
+    });
+
+    copyNamedFiles({
+      sourceDir: path.join(rootDir, 'bin', 'lib'),
+      targetDir: resolveArchiveTargetPath(
+        archiveRoot,
+        path.posix.join(runtimeLayout.controlScriptDir, 'lib'),
+      ),
+      fileNames: listNativeProductServerControlLibNames(),
+      executableExtensions: ['.sh'],
+    });
+
     for (const [label, sourceDir] of Object.entries(siteAssetRoots)) {
-      const targetDir = path.join(archiveRoot, 'sites', label, 'dist');
+      const targetDir = resolveArchiveTargetPath(
+        archiveRoot,
+        resolveRuntimeLayoutMappedPath(runtimeLayout.siteTargetDirs, label, 'site target dir'),
+      );
       ensureDirectory(path.dirname(targetDir));
       cpSync(sourceDir, targetDir, { recursive: true });
     }
 
     for (const [label, sourceDir] of Object.entries(bootstrapDataRoots)) {
-      const targetDir = path.join(archiveRoot, label);
+      const targetDir = resolveArchiveTargetPath(
+        archiveRoot,
+        resolveRuntimeLayoutMappedPath(
+          runtimeLayout.bootstrapDataRootDirs,
+          label,
+          'bootstrap data root dir',
+        ),
+      );
       ensureDirectory(path.dirname(targetDir));
       cpSync(sourceDir, targetDir, { recursive: true });
     }
 
     for (const [label, sourceDir] of Object.entries(deploymentAssetRoots)) {
-      const targetDir = path.join(archiveRoot, label);
+      const targetDir = resolveArchiveTargetPath(
+        archiveRoot,
+        resolveRuntimeLayoutMappedPath(
+          runtimeLayout.deploymentAssetRootDirs,
+          label,
+          'deployment asset root dir',
+        ),
+      );
       ensureDirectory(path.dirname(targetDir));
       cpSync(sourceDir, targetDir, { recursive: true });
     }
 
+    writeFileSync(
+      resolveArchiveTargetPath(archiveRoot, installers.shell),
+      renderProductServerBundleInstallShellScript({
+        releaseVersion,
+        runtimeLayout,
+        platformId,
+        archId,
+        targetTriple,
+        serviceBinaryNames,
+      }),
+      'utf8',
+    );
+    chmodSync(resolveArchiveTargetPath(archiveRoot, installers.shell), 0o755);
+
+    writeFileSync(
+      resolveArchiveTargetPath(archiveRoot, installers.powershell),
+      renderProductServerBundleInstallPowerShellScript({
+        releaseVersion,
+        runtimeLayout,
+        platformId,
+        archId,
+        targetTriple,
+        serviceBinaryNames,
+      }),
+      'utf8',
+    );
+
     writeProductServerBundleReadme({
       archiveRoot,
+      releaseVersion,
       platformId,
       archId,
       targetTriple,
+      runtimeLayout,
     });
 
     writeFileSync(
-      path.join(archiveRoot, 'release-manifest.json'),
+      resolveArchiveTargetPath(archiveRoot, runtimeLayout.releaseManifestFile),
       JSON.stringify(
         {
-          type: 'product-server-bundle',
+          type: releaseProductSpec.embeddedManifestType,
           productId: releaseAssetSpec.productId,
+          releaseVersion,
           platform: platformId,
           arch: archId,
           target: targetTriple,
+          installers,
           services: [...serviceBinaryNames],
           sites: Object.keys(siteAssetRoots),
           bootstrapDataRoots: Object.keys(bootstrapDataRoots),
@@ -826,14 +1089,16 @@ export function packageProductServerBundle({
     writeJsonFile(
       path.join(bundleOutputDir, releaseAssetSpec.manifestFileName),
       {
-        type: 'product-server-archive',
+        type: releaseProductSpec.archiveManifestType,
         productId: releaseAssetSpec.productId,
+        releaseVersion,
         platform: platformId,
         arch: archId,
         target: targetTriple,
         archiveFile: releaseAssetSpec.fileName,
         checksumFile: releaseAssetSpec.checksumFileName,
-        embeddedManifestFile: 'release-manifest.json',
+        embeddedManifestFile: runtimeLayout.releaseManifestFile,
+        installers,
         services: [...serviceBinaryNames],
         sites: Object.keys(siteAssetRoots),
         bootstrapDataRoots: Object.keys(bootstrapDataRoots),
@@ -852,6 +1117,29 @@ export function packageProductServerBundle({
     };
   } finally {
     rmSync(stagingRoot, { recursive: true, force: true });
+  }
+}
+
+function copyNamedFiles({
+  sourceDir,
+  targetDir,
+  fileNames = [],
+  executableExtensions = [],
+} = {}) {
+  ensureDirectory(targetDir);
+
+  for (const fileName of fileNames) {
+    const sourcePath = path.join(sourceDir, fileName);
+    if (!existsSync(sourcePath)) {
+      throw new Error(`Missing packaged control asset source: ${sourcePath}`);
+    }
+
+    const targetPath = path.join(targetDir, fileName);
+    cpSync(sourcePath, targetPath);
+
+    if (executableExtensions.some((extension) => fileName.endsWith(extension))) {
+      chmodSync(targetPath, 0o755);
+    }
   }
 }
 

@@ -6,6 +6,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
+import { createStrictKeyedCatalog } from './strict-contract-catalog.mjs';
 import { withSupportedWindowsCmakeGenerator } from './run-tauri-cli.mjs';
 import { withManagedWorkspaceTargetDir, withManagedWorkspaceTempDir } from './workspace-target-dir.mjs';
 import {
@@ -16,7 +17,26 @@ import {
 } from './dev/pnpm-launch-lib.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-export const PRODUCT_FRONTEND_REQUIRED_PACKAGES = ['vite', 'typescript', 'jiti'];
+const productFrontendRequiredPackageCatalog = createStrictKeyedCatalog({
+  entries: ['vite', 'typescript', 'jiti'],
+  getKey: (packageName) => packageName,
+  duplicateKeyMessagePrefix: 'duplicate product frontend required package',
+  missingKeyMessagePrefix: 'missing product frontend required package',
+});
+
+export const PRODUCT_FRONTEND_REQUIRED_PACKAGES = productFrontendRequiredPackageCatalog.list();
+
+export function listProductFrontendRequiredPackages() {
+  return productFrontendRequiredPackageCatalog.list();
+}
+
+export function findProductFrontendRequiredPackage(packageName) {
+  return productFrontendRequiredPackageCatalog.find(packageName);
+}
+
+export function listProductFrontendRequiredPackagesByNames(packageNames = []) {
+  return productFrontendRequiredPackageCatalog.listByKeys(packageNames);
+}
 
 export function pnpmCommand(platform = process.platform) {
   return pnpmExecutable(platform);
@@ -88,12 +108,18 @@ export function createProductCheckPlan({
     execPath: nodeCommand,
   });
   const cargoArgs = [...rustRunner.args, 'check'];
+  const portalDesktopRuntimeRustTestArgs = [...rustRunner.args, 'test'];
 
   if (env.SDKWORK_ROUTER_VERBOSE_CARGO !== '1') {
     cargoArgs.push('--quiet');
+    portalDesktopRuntimeRustTestArgs.push('--quiet');
   }
 
   cargoArgs.push('-p', 'router-product-service');
+  portalDesktopRuntimeRustTestArgs.push(
+    '--manifest-path',
+    path.join(portalAppDir, 'src-tauri', 'Cargo.toml'),
+  );
   const tscCliScript = path.join(workspaceRoot, 'scripts', 'dev', 'run-tsc-cli.mjs');
 
   return [
@@ -149,6 +175,24 @@ export function createProductCheckPlan({
       cwd: workspaceRoot,
       env: baseEnv,
       shell: false,
+      windowsHide: platform === 'win32',
+    },
+    {
+      label: 'server development workspace smoke',
+      command: nodeCommand,
+      args: [path.join(workspaceRoot, 'scripts', 'check-server-dev-workspace.mjs')],
+      cwd: workspaceRoot,
+      env: baseEnv,
+      shell: false,
+      windowsHide: platform === 'win32',
+    },
+    {
+      label: 'portal desktop runtime rust tests',
+      command: rustRunner.command,
+      args: portalDesktopRuntimeRustTestArgs,
+      cwd: workspaceRoot,
+      env: baseEnv,
+      shell: rustRunner.shell,
       windowsHide: platform === 'win32',
     },
     {
@@ -258,7 +302,7 @@ async function main() {
   ]) {
     ensureFrontendDependenciesReady({
       appRoot,
-      requiredPackages: PRODUCT_FRONTEND_REQUIRED_PACKAGES,
+      requiredPackages: listProductFrontendRequiredPackages(),
       requiredBinCommands: ['vite', 'tsc'],
       verifyInstalled: () => checkFrontendViteConfig({
         appRoot,

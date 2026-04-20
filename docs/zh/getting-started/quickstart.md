@@ -32,7 +32,9 @@ pnpm server:dev
 ```
 
 `pnpm tauri:dev` 会启动 portal desktop 产品路径。
-`pnpm server:dev` 会启动 router product server 路径。
+`pnpm server:dev` 会启动完整的 server 开发工作区，包括 backend API、admin dev server、portal dev server，以及统一的 Pingora web host。
+
+如果你需要独立的一体化 `router-product-service` CLI，而不是开发工作区入口，请使用 `pnpm --dir apps/sdkwork-router-portal server:start`。
 
 默认开发入口：
 

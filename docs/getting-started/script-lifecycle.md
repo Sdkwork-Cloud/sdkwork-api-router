@@ -29,7 +29,7 @@ Characteristics:
 - run directly from the source tree
 - mostly stay in the foreground
 - ideal for iterative debugging and narrow workflows
-- do not maintain a managed runtime home with PID files and log rotation
+- do not maintain a managed runtime directory with PID files and log rotation
 
 ### `bin/*`
 
@@ -43,10 +43,19 @@ Use them when:
 
 Characteristics:
 
-- create and reuse runtime homes
+- create and reuse managed runtime directories
 - write PID files, logs, and environment files
 - support dry-run, foreground, and service-manager usage
 - print unified URLs, direct service URLs, and bootstrap identity guidance after successful startup
+
+Installed product roots expose the stable release operator surface under `current/bin/*`.
+Repository-local `bin/*` entrypoints remain source-checkout wrappers that forward to the same installed contract with `--home <product-root>`.
+The canonical installed release entrypoints are:
+
+- `./current/bin/start.sh`
+- `powershell -NoProfile -ExecutionPolicy Bypass -File .\current\bin\start.ps1`
+- `./current/bin/stop.sh`
+- `powershell -NoProfile -ExecutionPolicy Bypass -File .\current\bin\stop.ps1`
 
 ## Script Catalog
 
@@ -56,8 +65,8 @@ Characteristics:
 | `bin/install.sh` / `bin/install.ps1` | release | install the built release runtime into a product root | `artifacts/install/sdkwork-api-router/` by default | exits when installation finishes |
 | `bin/start.sh` / `bin/start.ps1` | release | start the installed `router-product-service` runtime | product-root `config/`, `log/`, `run/`, plus `current/release-manifest.json` | `bin/stop.sh` / `bin/stop.ps1`, or service manager stop |
 | `bin/stop.sh` / `bin/stop.ps1` | release | stop the managed release runtime using the recorded PID | product-root `run/` PID file | exits after the process tree stops |
-| `bin/backup.sh` / `bin/backup.ps1` | release operations | create a managed runtime backup bundle from an installed current home | operator-selected backup directory plus the installed control manifest, config snapshot, and mutable data snapshot | exits when the backup completes |
-| `bin/restore.sh` / `bin/restore.ps1` | release operations | restore a managed runtime backup bundle into an installed current home | product-root `config/` and mutable data roots, plus PostgreSQL when a dump is present | exits when the restore completes |
+| `bin/backup.sh` / `bin/backup.ps1` | release operations | create a managed runtime backup bundle from an installed product root | operator-selected backup directory plus the installed control manifest, config snapshot, and mutable data snapshot | exits when the backup completes |
+| `bin/restore.sh` / `bin/restore.ps1` | release operations | restore a managed runtime backup bundle into an installed product root | product-root `config/` and mutable data roots, plus PostgreSQL when a dump is present | exits when the restore completes |
 | `bin/start-dev.sh` / `bin/start-dev.ps1` | managed development | start a managed development runtime with writable local state | `artifacts/runtime/dev/` | `bin/stop-dev.sh` / `bin/stop-dev.ps1`, or `Ctrl+C` in foreground mode |
 | `bin/stop-dev.sh` / `bin/stop-dev.ps1` | managed development | stop the managed development runtime | `artifacts/runtime/dev/run/` PID file | exits after the process tree stops |
 | `node scripts/prepare-router-portal-desktop-runtime.mjs` | desktop packaging | stage the portal desktop sidecar payload | `bin/portal-rt/router-product/` | exits when staging completes |
@@ -254,13 +263,13 @@ Use `router.env` only for config discovery and fallback values that the config f
 Linux or macOS:
 
 ```bash
-./bin/start.sh --home artifacts/install/sdkwork-api-router/current
+./bin/start.sh --home artifacts/install/sdkwork-api-router
 ```
 
 Windows:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\start.ps1 -Home .\artifacts\install\sdkwork-api-router\current
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\start.ps1 -Home .\artifacts\install\sdkwork-api-router
 ```
 
 The release startup scripts:
@@ -271,18 +280,23 @@ The release startup scripts:
 - wait for unified health checks to pass
 - print the same formatted startup summary style as the dev scripts
 
+From an installed product root, the equivalent direct operator entrypoints are:
+
+- `./current/bin/start.sh --home <product-root>`
+- `powershell -NoProfile -ExecutionPolicy Bypass -File .\current\bin\start.ps1 -Home <product-root>`
+
 ### 5. Stop the release runtime
 
 Linux or macOS:
 
 ```bash
-./bin/stop.sh --home artifacts/install/sdkwork-api-router/current
+./bin/stop.sh --home artifacts/install/sdkwork-api-router
 ```
 
 Windows:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\stop.ps1 -Home .\artifacts\install\sdkwork-api-router\current
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\stop.ps1 -Home .\artifacts\install\sdkwork-api-router
 ```
 
 ### 6. Optional: register a service manager entry
@@ -301,8 +315,8 @@ From the product root:
 
 For service-manager scenarios, use foreground mode:
 
-- `bin/start.sh --foreground --home <product-root>/current`
-- `bin/start.ps1 -Foreground -Home <product-root>\current`
+- `./current/bin/start.sh --foreground --home <product-root>`
+- `powershell -NoProfile -ExecutionPolicy Bypass -File .\current\bin\start.ps1 -Foreground -Home <product-root>`
 
 ## Portal Desktop Lifecycle
 
@@ -347,7 +361,7 @@ Windows equivalents:
 
 - `bin/start-dev.*` is a source-tree helper. It does not require `bin/build.*` or `bin/install.*`.
 - `bin/start.*` is a release-runtime helper. It assumes the install home already exists.
-- `bin/stop-dev.*` and `bin/stop.*` only manage processes started through the corresponding managed runtime home and PID file.
+- `bin/stop-dev.*` and `bin/stop.*` only manage processes started through the corresponding managed runtime directory and PID file.
 - the gateway does not use a seeded username and password. Its primary user-facing auth is a portal-issued API key.
 - if you need the source Vite dev servers for frontend iteration, use raw `scripts/dev/*` or `bin/start-dev.* --browser`.
 - if you need one browser-accessible entrypoint for demos, QA, or release-style validation, prefer preview mode or the release runtime.

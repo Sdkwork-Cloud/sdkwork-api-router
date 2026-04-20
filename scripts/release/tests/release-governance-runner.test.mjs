@@ -315,12 +315,20 @@ test('release governance runner exposes the expected fixed verification sequence
       path.join(repoRoot, 'scripts', 'release', 'run-release-governance-checks.mjs'),
     ).href,
   );
+  const catalogModule = await import(
+    pathToFileURL(
+      path.join(repoRoot, 'scripts', 'release', 'release-governance-plan-catalog.mjs'),
+    ).href,
+  );
 
   assert.equal(typeof module.listReleaseGovernanceCheckPlans, 'function');
   assert.equal(typeof module.resolveNodeRunner, 'function');
   assert.equal(typeof module.runReleaseGovernanceCheckPlan, 'function');
   assert.equal(typeof module.runReleaseGovernanceChecks, 'function');
   assert.equal(typeof module.parseArgs, 'function');
+  assert.equal(typeof catalogModule.listReleaseGovernanceCheckDefinitions, 'function');
+  assert.equal(typeof catalogModule.listReleaseGovernancePreflightExcludedPlanIds, 'function');
+  assert.equal(typeof catalogModule.createReleaseGovernanceCheckPlans, 'function');
   assert.deepEqual(module.parseArgs(['--profile', 'preflight', '--format', 'json']), {
     format: 'json',
     profile: 'preflight',
@@ -329,283 +337,23 @@ test('release governance runner exposes the expected fixed verification sequence
   const plans = module.listReleaseGovernanceCheckPlans({
     nodeExecutable: 'node',
   });
-
   assert.deepEqual(
-    plans.map((plan) => plan.id),
-    [
-      'release-sync-audit-test',
-      'release-workflow-test',
-      'release-governance-workflow-test',
-      'release-attestation-verify-test',
-      'release-observability-test',
-      'release-slo-governance-contracts-test',
-      'release-slo-governance-test',
-      'release-slo-governance',
-      'release-runtime-tooling-test',
-      'release-desktop-signing-test',
-      'release-unix-installed-runtime-smoke-test',
-      'release-windows-installed-runtime-smoke-test',
-      'release-linux-docker-compose-smoke-test',
-      'release-linux-helm-render-smoke-test',
-      'release-materialize-external-deps-test',
-      'release-materialize-release-catalog-test',
-      'release-window-snapshot-test',
-      'release-window-snapshot-materializer-test',
-      'release-sync-audit-materializer-test',
-      'release-governance-bundle-test',
-      'restore-release-governance-latest-test',
-      'release-telemetry-export-test',
-      'release-telemetry-snapshot-test',
-      'release-slo-evidence-materializer-test',
-      'release-window-snapshot',
-      'release-sync-audit',
-    ],
+    plans,
+    catalogModule.createReleaseGovernanceCheckPlans({
+      nodeExecutable: 'node',
+    }),
   );
 
   const preflightPlans = module.listReleaseGovernanceCheckPlans({
     nodeExecutable: 'node',
     profile: 'preflight',
   });
-
   assert.deepEqual(
-    preflightPlans.map((plan) => plan.id),
-    [
-      'release-sync-audit-test',
-      'release-workflow-test',
-      'release-governance-workflow-test',
-      'release-attestation-verify-test',
-      'release-observability-test',
-      'release-slo-governance-contracts-test',
-      'release-slo-governance-test',
-      'release-runtime-tooling-test',
-      'release-desktop-signing-test',
-      'release-unix-installed-runtime-smoke-test',
-      'release-windows-installed-runtime-smoke-test',
-      'release-linux-docker-compose-smoke-test',
-      'release-linux-helm-render-smoke-test',
-      'release-materialize-external-deps-test',
-      'release-materialize-release-catalog-test',
-      'release-window-snapshot-test',
-      'release-window-snapshot-materializer-test',
-      'release-sync-audit-materializer-test',
-      'release-governance-bundle-test',
-      'restore-release-governance-latest-test',
-      'release-telemetry-export-test',
-      'release-telemetry-snapshot-test',
-      'release-slo-evidence-materializer-test',
-    ],
-  );
-
-  const planArgsById = new Map(plans.map((plan) => [plan.id, plan.args]));
-
-  assert.deepEqual(
-    planArgsById.get('release-sync-audit-test'),
-    [
-      '--test',
-      '--experimental-test-isolation=none',
-      'scripts/release/tests/release-sync-audit.test.mjs',
-    ],
-  );
-  assert.deepEqual(
-    planArgsById.get('release-workflow-test'),
-    [
-      '--test',
-      '--experimental-test-isolation=none',
-      'scripts/release/tests/release-workflow.test.mjs',
-    ],
-  );
-  assert.deepEqual(
-    planArgsById.get('release-governance-workflow-test'),
-    [
-      '--test',
-      '--experimental-test-isolation=none',
-      'scripts/release-governance-workflow.test.mjs',
-    ],
-  );
-  assert.deepEqual(
-    planArgsById.get('release-attestation-verify-test'),
-    [
-      '--test',
-      '--experimental-test-isolation=none',
-      'scripts/release/tests/release-attestation-verify.test.mjs',
-    ],
-  );
-  assert.deepEqual(
-    planArgsById.get('release-observability-test'),
-    [
-      '--test',
-      '--experimental-test-isolation=none',
-      'scripts/release/tests/release-observability-contracts.test.mjs',
-    ],
-  );
-  assert.deepEqual(
-    planArgsById.get('release-slo-governance-contracts-test'),
-    [
-      '--test',
-      '--experimental-test-isolation=none',
-      'scripts/release/tests/release-slo-governance-contracts.test.mjs',
-    ],
-  );
-  assert.deepEqual(
-    planArgsById.get('release-slo-governance-test'),
-    [
-      '--test',
-      '--experimental-test-isolation=none',
-      'scripts/release/tests/release-slo-governance.test.mjs',
-    ],
-  );
-  assert.deepEqual(
-    planArgsById.get('release-slo-governance'),
-    [
-      'scripts/release/slo-governance.mjs',
-      '--format',
-      'json',
-    ],
-  );
-  assert.deepEqual(
-    planArgsById.get('release-runtime-tooling-test'),
-    [
-      '--test',
-      '--experimental-test-isolation=none',
-      'bin/tests/router-runtime-tooling.test.mjs',
-    ],
-  );
-  assert.deepEqual(
-    planArgsById.get('release-desktop-signing-test'),
-    [
-      '--test',
-      '--experimental-test-isolation=none',
-      'scripts/release/tests/run-desktop-release-signing.test.mjs',
-    ],
-  );
-  assert.deepEqual(
-    planArgsById.get('release-unix-installed-runtime-smoke-test'),
-    [
-      '--test',
-      '--experimental-test-isolation=none',
-      'scripts/release/tests/run-unix-installed-runtime-smoke.test.mjs',
-    ],
-  );
-  assert.deepEqual(
-    planArgsById.get('release-windows-installed-runtime-smoke-test'),
-    [
-      '--test',
-      '--experimental-test-isolation=none',
-      'scripts/release/tests/run-windows-installed-runtime-smoke.test.mjs',
-    ],
-  );
-  assert.deepEqual(
-    planArgsById.get('release-linux-docker-compose-smoke-test'),
-    [
-      '--test',
-      '--experimental-test-isolation=none',
-      'scripts/release/tests/run-linux-docker-compose-smoke.test.mjs',
-    ],
-  );
-  assert.deepEqual(
-    planArgsById.get('release-linux-helm-render-smoke-test'),
-    [
-      '--test',
-      '--experimental-test-isolation=none',
-      'scripts/release/tests/run-linux-helm-render-smoke.test.mjs',
-    ],
-  );
-  assert.deepEqual(
-    planArgsById.get('release-materialize-external-deps-test'),
-    [
-      '--test',
-      '--experimental-test-isolation=none',
-      'scripts/release/tests/materialize-external-deps.test.mjs',
-    ],
-  );
-  assert.deepEqual(
-    planArgsById.get('release-materialize-release-catalog-test'),
-    [
-      '--test',
-      '--experimental-test-isolation=none',
-      'scripts/release/tests/materialize-release-catalog.test.mjs',
-    ],
-  );
-  assert.deepEqual(
-    planArgsById.get('release-window-snapshot-test'),
-    [
-      '--test',
-      '--experimental-test-isolation=none',
-      'scripts/release/tests/release-window-snapshot.test.mjs',
-    ],
-  );
-  assert.deepEqual(
-    planArgsById.get('release-window-snapshot-materializer-test'),
-    [
-      '--test',
-      '--experimental-test-isolation=none',
-      'scripts/release/tests/materialize-release-window-snapshot.test.mjs',
-    ],
-  );
-  assert.deepEqual(
-    planArgsById.get('release-sync-audit-materializer-test'),
-    [
-      '--test',
-      '--experimental-test-isolation=none',
-      'scripts/release/tests/materialize-release-sync-audit.test.mjs',
-    ],
-  );
-  assert.deepEqual(
-    planArgsById.get('release-governance-bundle-test'),
-    [
-      '--test',
-      '--experimental-test-isolation=none',
-      'scripts/release/tests/materialize-release-governance-bundle.test.mjs',
-    ],
-  );
-  assert.deepEqual(
-    planArgsById.get('restore-release-governance-latest-test'),
-    [
-      '--test',
-      '--experimental-test-isolation=none',
-      'scripts/release/tests/restore-release-governance-latest.test.mjs',
-    ],
-  );
-  assert.deepEqual(
-    planArgsById.get('release-telemetry-export-test'),
-    [
-      '--test',
-      '--experimental-test-isolation=none',
-      'scripts/release/tests/materialize-release-telemetry-export.test.mjs',
-    ],
-  );
-  assert.deepEqual(
-    planArgsById.get('release-telemetry-snapshot-test'),
-    [
-      '--test',
-      '--experimental-test-isolation=none',
-      'scripts/release/tests/materialize-release-telemetry-snapshot.test.mjs',
-    ],
-  );
-  assert.deepEqual(
-    planArgsById.get('release-slo-evidence-materializer-test'),
-    [
-      '--test',
-      '--experimental-test-isolation=none',
-      'scripts/release/tests/materialize-slo-governance-evidence.test.mjs',
-    ],
-  );
-  assert.deepEqual(
-    planArgsById.get('release-window-snapshot'),
-    [
-      'scripts/release/compute-release-window-snapshot.mjs',
-      '--format',
-      'json',
-      '--live',
-    ],
-  );
-  assert.deepEqual(
-    planArgsById.get('release-sync-audit'),
-    [
-      'scripts/release/verify-release-sync.mjs',
-      '--format',
-      'json',
-    ],
+    preflightPlans,
+    catalogModule.createReleaseGovernanceCheckPlans({
+      nodeExecutable: 'node',
+      profile: 'preflight',
+    }),
   );
 
   const windowsRunner = module.resolveNodeRunner({
@@ -644,6 +392,14 @@ test('release governance runner aggregates passing tests and blocking live relea
       {
         status: 0,
         stdout: 'ok workflow test',
+        stderr: '',
+      },
+    ],
+    [
+      'release-workflow-publish-catalog-test',
+      {
+        status: 0,
+        stdout: 'ok release workflow publish catalog test',
         stderr: '',
       },
     ],
@@ -728,6 +484,14 @@ test('release governance runner aggregates passing tests and blocking live relea
       },
     ],
     [
+      'release-installed-runtime-contract-test',
+      {
+        status: 0,
+        stdout: 'ok installed runtime contract test',
+        stderr: '',
+      },
+    ],
+    [
       'release-linux-docker-compose-smoke-test',
       {
         status: 0,
@@ -756,6 +520,30 @@ test('release governance runner aggregates passing tests and blocking live relea
       {
         status: 0,
         stdout: 'ok release catalog materializer test',
+        stderr: '',
+      },
+    ],
+    [
+      'release-third-party-governance-test',
+      {
+        status: 0,
+        stdout: 'ok third-party governance materializer test',
+        stderr: '',
+      },
+    ],
+    [
+      'release-publish-ghcr-image-test',
+      {
+        status: 0,
+        stdout: 'ok publish ghcr image test',
+        stderr: '',
+      },
+    ],
+    [
+      'release-publish-ghcr-manifest-test',
+      {
+        status: 0,
+        stdout: 'ok publish ghcr manifest test',
         stderr: '',
       },
     ],
@@ -866,6 +654,7 @@ test('release governance runner aggregates passing tests and blocking live relea
   assert.deepEqual(summary.passingIds, [
     'release-sync-audit-test',
     'release-workflow-test',
+    'release-workflow-publish-catalog-test',
     'release-governance-workflow-test',
     'release-attestation-verify-test',
     'release-observability-test',
@@ -876,10 +665,14 @@ test('release governance runner aggregates passing tests and blocking live relea
     'release-desktop-signing-test',
     'release-unix-installed-runtime-smoke-test',
     'release-windows-installed-runtime-smoke-test',
+    'release-installed-runtime-contract-test',
     'release-linux-docker-compose-smoke-test',
     'release-linux-helm-render-smoke-test',
     'release-materialize-external-deps-test',
     'release-materialize-release-catalog-test',
+    'release-third-party-governance-test',
+    'release-publish-ghcr-image-test',
+    'release-publish-ghcr-manifest-test',
     'release-window-snapshot-test',
     'release-window-snapshot-materializer-test',
     'release-sync-audit-materializer-test',
@@ -899,6 +692,7 @@ test('release governance runner aggregates passing tests and blocking live relea
     [
       ['release-sync-audit-test', true, 0],
       ['release-workflow-test', true, 0],
+      ['release-workflow-publish-catalog-test', true, 0],
       ['release-governance-workflow-test', true, 0],
       ['release-attestation-verify-test', true, 0],
       ['release-observability-test', true, 0],
@@ -909,10 +703,14 @@ test('release governance runner aggregates passing tests and blocking live relea
       ['release-desktop-signing-test', true, 0],
       ['release-unix-installed-runtime-smoke-test', true, 0],
       ['release-windows-installed-runtime-smoke-test', true, 0],
+      ['release-installed-runtime-contract-test', true, 0],
       ['release-linux-docker-compose-smoke-test', true, 0],
       ['release-linux-helm-render-smoke-test', true, 0],
       ['release-materialize-external-deps-test', true, 0],
       ['release-materialize-release-catalog-test', true, 0],
+      ['release-third-party-governance-test', true, 0],
+      ['release-publish-ghcr-image-test', true, 0],
+      ['release-publish-ghcr-manifest-test', true, 0],
       ['release-window-snapshot-test', true, 0],
       ['release-window-snapshot-materializer-test', true, 0],
       ['release-sync-audit-materializer-test', true, 0],
@@ -1082,6 +880,14 @@ test('release governance runner distinguishes blocked lanes from real failing la
       },
     ],
     [
+      'release-workflow-publish-catalog-test',
+      {
+        status: 0,
+        stdout: 'ok release workflow publish catalog test',
+        stderr: '',
+      },
+    ],
+    [
       'release-governance-workflow-test',
       {
         status: 0,
@@ -1162,6 +968,14 @@ test('release governance runner distinguishes blocked lanes from real failing la
       },
     ],
     [
+      'release-installed-runtime-contract-test',
+      {
+        status: 0,
+        stdout: 'ok installed runtime contract test',
+        stderr: '',
+      },
+    ],
+    [
       'release-linux-docker-compose-smoke-test',
       {
         status: 0,
@@ -1190,6 +1004,30 @@ test('release governance runner distinguishes blocked lanes from real failing la
       {
         status: 0,
         stdout: 'ok release catalog materializer test',
+        stderr: '',
+      },
+    ],
+    [
+      'release-third-party-governance-test',
+      {
+        status: 0,
+        stdout: 'ok third-party governance materializer test',
+        stderr: '',
+      },
+    ],
+    [
+      'release-publish-ghcr-image-test',
+      {
+        status: 0,
+        stdout: 'ok publish ghcr image test',
+        stderr: '',
+      },
+    ],
+    [
+      'release-publish-ghcr-manifest-test',
+      {
+        status: 0,
+        stdout: 'ok publish ghcr manifest test',
         stderr: '',
       },
     ],
@@ -1300,6 +1138,7 @@ test('release governance runner distinguishes blocked lanes from real failing la
   assert.deepEqual(summary.passingIds, [
     'release-sync-audit-test',
     'release-workflow-test',
+    'release-workflow-publish-catalog-test',
     'release-governance-workflow-test',
     'release-attestation-verify-test',
     'release-observability-test',
@@ -1309,10 +1148,14 @@ test('release governance runner distinguishes blocked lanes from real failing la
     'release-desktop-signing-test',
     'release-unix-installed-runtime-smoke-test',
     'release-windows-installed-runtime-smoke-test',
+    'release-installed-runtime-contract-test',
     'release-linux-docker-compose-smoke-test',
     'release-linux-helm-render-smoke-test',
     'release-materialize-external-deps-test',
     'release-materialize-release-catalog-test',
+    'release-third-party-governance-test',
+    'release-publish-ghcr-image-test',
+    'release-publish-ghcr-manifest-test',
     'release-window-snapshot-test',
     'release-window-snapshot-materializer-test',
     'release-sync-audit-materializer-test',
@@ -1372,6 +1215,34 @@ test('release governance runner also falls back for release governance workflow 
 
   const result = await module.runReleaseGovernanceCheckPlan({
     plan: getPlanById(plan, 'release-governance-workflow-test'),
+    spawnSyncImpl() {
+      return {
+        status: 1,
+        stdout: '',
+        stderr: '',
+        error: new Error('spawnSync node EPERM'),
+      };
+    },
+  });
+
+  assert.equal(result.mode, 'fallback');
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 0);
+});
+
+test('release governance runner also falls back for release workflow publish catalog checks when node child execution is blocked', async () => {
+  const module = await import(
+    pathToFileURL(
+      path.join(repoRoot, 'scripts', 'release', 'run-release-governance-checks.mjs'),
+    ).href,
+  );
+
+  const plan = module.listReleaseGovernanceCheckPlans({
+    nodeExecutable: 'node',
+  });
+
+  const result = await module.runReleaseGovernanceCheckPlan({
+    plan: getPlanById(plan, 'release-workflow-publish-catalog-test'),
     spawnSyncImpl() {
       return {
         status: 1,
@@ -1583,6 +1454,34 @@ test('release governance runner also falls back for windows installed runtime sm
   assert.equal(result.status, 0);
 });
 
+test('release governance runner also falls back for installed runtime contract checks when node child execution is blocked', async () => {
+  const module = await import(
+    pathToFileURL(
+      path.join(repoRoot, 'scripts', 'release', 'run-release-governance-checks.mjs'),
+    ).href,
+  );
+
+  const plan = module.listReleaseGovernanceCheckPlans({
+    nodeExecutable: 'node',
+  });
+
+  const result = await module.runReleaseGovernanceCheckPlan({
+    plan: getPlanById(plan, 'release-installed-runtime-contract-test'),
+    spawnSyncImpl() {
+      return {
+        status: 1,
+        stdout: '',
+        stderr: '',
+        error: new Error('spawnSync node EPERM'),
+      };
+    },
+  });
+
+  assert.equal(result.mode, 'fallback');
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 0);
+});
+
 test('release governance runner also falls back for linux docker compose smoke checks when node child execution is blocked', async () => {
   const module = await import(
     pathToFileURL(
@@ -1652,6 +1551,62 @@ test('release governance runner also falls back for release catalog materializat
 
   const result = await module.runReleaseGovernanceCheckPlan({
     plan: getPlanById(plan, 'release-materialize-release-catalog-test'),
+    spawnSyncImpl() {
+      return {
+        status: 1,
+        stdout: '',
+        stderr: '',
+        error: new Error('spawnSync node EPERM'),
+      };
+    },
+  });
+
+  assert.equal(result.mode, 'fallback');
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 0);
+});
+
+test('release governance runner also falls back for GHCR image publish checks when node child execution is blocked', async () => {
+  const module = await import(
+    pathToFileURL(
+      path.join(repoRoot, 'scripts', 'release', 'run-release-governance-checks.mjs'),
+    ).href,
+  );
+
+  const plan = module.listReleaseGovernanceCheckPlans({
+    nodeExecutable: 'node',
+  });
+
+  const result = await module.runReleaseGovernanceCheckPlan({
+    plan: getPlanById(plan, 'release-publish-ghcr-image-test'),
+    spawnSyncImpl() {
+      return {
+        status: 1,
+        stdout: '',
+        stderr: '',
+        error: new Error('spawnSync node EPERM'),
+      };
+    },
+  });
+
+  assert.equal(result.mode, 'fallback');
+  assert.equal(result.ok, true);
+  assert.equal(result.status, 0);
+});
+
+test('release governance runner also falls back for GHCR manifest publish checks when node child execution is blocked', async () => {
+  const module = await import(
+    pathToFileURL(
+      path.join(repoRoot, 'scripts', 'release', 'run-release-governance-checks.mjs'),
+    ).href,
+  );
+
+  const plan = module.listReleaseGovernanceCheckPlans({
+    nodeExecutable: 'node',
+  });
+
+  const result = await module.runReleaseGovernanceCheckPlan({
+    plan: getPlanById(plan, 'release-publish-ghcr-manifest-test'),
     spawnSyncImpl() {
       return {
         status: 1,

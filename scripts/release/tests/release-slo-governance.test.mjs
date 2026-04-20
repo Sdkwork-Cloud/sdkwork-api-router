@@ -151,6 +151,85 @@ test('slo governance exposes a machine-readable quantitative baseline', async ()
   );
 });
 
+test('slo governance exposes strict target and burn-rate-window lookup helpers', async () => {
+  const module = await import(
+    pathToFileURL(
+      path.join(repoRoot, 'scripts', 'release', 'slo-governance.mjs'),
+    ).href,
+  );
+
+  assert.equal(typeof module.findSloGovernanceTarget, 'function');
+  assert.equal(typeof module.listSloGovernanceTargetsByIds, 'function');
+  assert.equal(typeof module.listSloGovernanceBurnRateWindows, 'function');
+  assert.equal(typeof module.findSloGovernanceBurnRateWindow, 'function');
+  assert.equal(typeof module.listSloGovernanceBurnRateWindowsByIds, 'function');
+
+  assert.deepEqual(
+    module.listSloGovernanceBurnRateWindows(),
+    [
+      {
+        window: '1h',
+        maxBurnRate: 14.4,
+        severity: 'release-blocker',
+      },
+      {
+        window: '6h',
+        maxBurnRate: 6,
+        severity: 'release-blocker',
+      },
+    ],
+  );
+
+  const routingLatencyTarget = module.findSloGovernanceTarget('routing-simulation-p95-latency');
+  assert.equal(routingLatencyTarget.id, 'routing-simulation-p95-latency');
+  assert.equal(routingLatencyTarget.unit, 'ms');
+
+  routingLatencyTarget.burnRateWindows[0].maxBurnRate = 999;
+  routingLatencyTarget.evidenceSources.push('mutated-locally');
+  const freshRoutingLatencyTarget = module.findSloGovernanceTarget('routing-simulation-p95-latency');
+  assert.equal(freshRoutingLatencyTarget.burnRateWindows[0].maxBurnRate, 14.4);
+  assert.equal(freshRoutingLatencyTarget.evidenceSources.includes('mutated-locally'), false);
+
+  assert.deepEqual(
+    module.listSloGovernanceTargetsByIds([
+      'gateway-availability',
+      'portal-api-availability',
+    ]).map((target) => target.id),
+    [
+      'gateway-availability',
+      'portal-api-availability',
+    ],
+  );
+
+  const slowWindow = module.findSloGovernanceBurnRateWindow('6h');
+  assert.equal(slowWindow.maxBurnRate, 6);
+  slowWindow.maxBurnRate = 999;
+  assert.equal(
+    module.findSloGovernanceBurnRateWindow('6h').maxBurnRate,
+    6,
+  );
+
+  assert.deepEqual(
+    module.listSloGovernanceBurnRateWindowsByIds([
+      '1h',
+      '6h',
+    ]).map((window) => window.window),
+    [
+      '1h',
+      '6h',
+    ],
+  );
+
+  assert.throws(
+    () => module.findSloGovernanceTarget('missing-slo-target'),
+    /missing slo governance target.*missing-slo-target/i,
+  );
+  assert.throws(
+    () => module.findSloGovernanceBurnRateWindow('24h'),
+    /missing slo governance burn rate window.*24h/i,
+  );
+});
+
 test('slo governance passes when evidence satisfies objectives and burn-rate ceilings', async () => {
   const module = await import(
     pathToFileURL(

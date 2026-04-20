@@ -34,6 +34,24 @@ pub(crate) fn bind_is_loopback(bind: &str) -> bool {
         .unwrap_or(false)
 }
 
+pub(crate) fn placeholder_like_value(value: &str) -> bool {
+    let normalized = value.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return false;
+    }
+
+    [
+        "change-me",
+        "changeme",
+        "replace-with",
+        "replace_me",
+        "replace-me",
+        "placeholder",
+    ]
+    .into_iter()
+    .any(|marker| normalized.contains(marker))
+}
+
 pub(crate) fn normalized_bind_host(bind: &str) -> Option<&str> {
     let host = bind
         .rsplit_once(':')
@@ -485,5 +503,44 @@ mod tests {
 
         assert_eq!(config.portal_bind, "127.0.0.1:8082");
         assert_eq!(config.portal_jwt_signing_secret, "portal-secret");
+    }
+
+    #[test]
+    fn validate_security_posture_rejects_placeholder_secrets_even_on_loopback() {
+        let error = StandaloneConfig {
+            admin_jwt_signing_secret: "replace-with-admin-jwt-secret".to_owned(),
+            portal_jwt_signing_secret: "replace-with-portal-jwt-secret".to_owned(),
+            credential_master_key: "replace-with-credential-master-key".to_owned(),
+            metrics_bearer_token: "replace-with-metrics-token".to_owned(),
+            ..StandaloneConfig::default()
+        }
+        .validate_security_posture()
+        .expect_err("placeholder secrets must be rejected");
+
+        assert!(error.to_string().contains("placeholder"));
+        assert!(error.to_string().contains("admin_jwt_signing_secret"));
+        assert!(error.to_string().contains("portal_jwt_signing_secret"));
+        assert!(error.to_string().contains("credential_master_key"));
+        assert!(error.to_string().contains("metrics_bearer_token"));
+    }
+
+    #[test]
+    fn validate_security_posture_rejects_placeholder_database_url_when_public_entrypoint_is_exposed() {
+        let error = StandaloneConfig {
+            public_web_bind: Some("0.0.0.0:3001".to_owned()),
+            database_url:
+                "postgresql://sdkwork:replace-with-db-password@127.0.0.1:5432/sdkwork_api_router"
+                    .to_owned(),
+            admin_jwt_signing_secret: "rotated-admin-jwt-secret".to_owned(),
+            portal_jwt_signing_secret: "rotated-portal-jwt-secret".to_owned(),
+            credential_master_key: "rotated-credential-master-key".to_owned(),
+            metrics_bearer_token: "rotated-metrics-token".to_owned(),
+            ..StandaloneConfig::default()
+        }
+        .validate_security_posture()
+        .expect_err("placeholder database_url must be rejected");
+
+        assert!(error.to_string().contains("database_url"));
+        assert!(error.to_string().contains("placeholder"));
     }
 }

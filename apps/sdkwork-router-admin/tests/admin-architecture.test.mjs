@@ -57,6 +57,7 @@ test('admin typecheck stays on the repo-owned readable TypeScript launcher and o
   assert.match(packageJsonSource, /"typecheck": "node \.\.\/\.\.\/scripts\/dev\/run-tsc-cli\.mjs --noEmit"/);
   assert.equal(existsSync(path.join(appRoot, 'src', 'types', 'node-runtime-shim.d.ts')), true);
   assert.equal(existsSync(path.join(appRoot, 'src', 'types', 'vite-client-shim.d.ts')), true);
+  assert.equal(existsSync(path.join(appRoot, 'src', 'types', 'vite-runtime-lib-shim.d.ts')), false);
   assert.equal(existsSync(path.join(appRoot, 'src', 'types', 'sdkwork-ui-pc-react-shim.d.ts')), false);
   assert.doesNotMatch(tsconfig, /"types"\s*:\s*\[\s*"node"\s*,\s*"vite\/client"\s*\]/);
   assert.doesNotMatch(tsconfig, /sdkwork-ui-pc-react-shim\.d\.ts/);
@@ -74,6 +75,7 @@ test('admin typecheck stays on the repo-owned readable TypeScript launcher and o
   );
   assert.match(viteEnv, /types\/vite-client-shim\.d\.ts/);
   assert.match(viteEnv, /types\/node-runtime-shim\.d\.ts/);
+  assert.doesNotMatch(viteEnv, /types\/vite-runtime-lib-shim\.d\.ts/);
 });
 
 test('required packages exist under packages/', () => {

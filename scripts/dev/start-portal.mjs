@@ -22,15 +22,24 @@ function parseArgs(argv) {
     dryRun: false,
     help: false,
     install: false,
+    port: null,
     preview: false,
     tauri: false,
   };
 
-  for (const arg of argv) {
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
     if (arg === '--dry-run') {
       result.dryRun = true;
     } else if (arg === '--install') {
       result.install = true;
+    } else if (arg === '--port') {
+      const port = Number.parseInt(String(argv[index + 1] ?? ''), 10);
+      if (!Number.isInteger(port) || port <= 0) {
+        throw new Error('--port requires a positive integer');
+      }
+      result.port = port;
+      index += 1;
     } else if (arg === '--preview') {
       result.preview = true;
     } else if (arg === '--tauri') {
@@ -50,6 +59,7 @@ Starts the standalone sdkwork-router-portal app.
 
 Options:
   --install   Run pnpm install before starting
+  --port      Override the browser dev/preview port used for the portal app
   --preview   Build and preview the portal instead of dev mode
   --tauri     Start the portal Tauri desktop shell
   --dry-run   Print the commands without running them
@@ -57,7 +67,15 @@ Options:
 `);
 }
 
-function runStep(args, dryRun, distDir = '', allowInstallReuse = false) {
+function withPortOverride(args, port) {
+  if (!Number.isInteger(port) || port <= 0) {
+    return args;
+  }
+
+  return [...args, '--', '--port', String(port), '--strictPort'];
+}
+
+function runStep(args, dryRun, distDir = '', allowInstallReuse = false, cwd = process.cwd()) {
   const processSpec = pnpmProcessSpec(args);
   const command = pnpmDisplayCommand(args);
   console.log(`[start-portal] ${command}`);
@@ -67,7 +85,7 @@ function runStep(args, dryRun, distDir = '', allowInstallReuse = false) {
   }
 
   const result = spawnSync(processSpec.command, processSpec.args, {
-    ...pnpmSpawnOptions({ stdio: 'pipe' }),
+    ...pnpmSpawnOptions({ cwd, stdio: 'pipe' }),
     encoding: 'utf8',
     maxBuffer: 32 * 1024 * 1024,
   });
@@ -123,23 +141,23 @@ const installStatus = frontendInstallStatus({
   }),
 });
 const needInstall = settings.install || installStatus !== 'ready';
-if (needInstall && !runStep(['--dir', portalRoot, 'install'], settings.dryRun, `${portalRoot}/dist`, settings.preview)) {
+if (needInstall && !runStep(['install'], settings.dryRun, `${portalRoot}/dist`, settings.preview, portalRoot)) {
   process.exit(1);
 }
 
 if (settings.preview) {
-  if (!runStep(['--dir', portalRoot, 'build'], settings.dryRun, `${portalRoot}/dist`)) {
+  if (!runStep(['build'], settings.dryRun, `${portalRoot}/dist`, false, portalRoot)) {
     process.exit(1);
   }
-  if (!runStep(['--dir', portalRoot, 'preview'], settings.dryRun)) {
+  if (!runStep(withPortOverride(['preview'], settings.port), settings.dryRun, '', false, portalRoot)) {
     process.exit(1);
   }
   process.exit(0);
 }
 
 const longRunningArgs = settings.tauri
-  ? ['--dir', portalRoot, 'tauri:dev']
-  : ['--dir', portalRoot, 'dev'];
+  ? ['tauri:dev']
+  : withPortOverride(['dev'], settings.port);
 const longRunningProcessSpec = pnpmProcessSpec(longRunningArgs);
 const command = pnpmDisplayCommand(longRunningArgs);
 console.log(`[start-portal] ${command}`);
@@ -149,7 +167,7 @@ if (settings.dryRun) {
 }
 
 const child = spawn(longRunningProcessSpec.command, longRunningProcessSpec.args, {
-  ...pnpmSpawnOptions(),
+  ...pnpmSpawnOptions({ cwd: portalRoot }),
 });
 const releaseKeepAlive = createSupervisorKeepAlive();
 let shuttingDown = false;

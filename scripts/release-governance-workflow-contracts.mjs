@@ -1,9 +1,21 @@
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { listReleaseGovernanceNodeTestFiles } from './release-governance-node-test-catalog.mjs';
+import { listReleaseGovernanceWorkflowStepContracts } from './release-governance-workflow-step-contract-catalog.mjs';
+import { listReleaseGovernanceWorkflowWatchRequirements } from './release-governance-workflow-watch-catalog.mjs';
 
 function read(repoRoot, relativePath) {
   return readFileSync(path.join(repoRoot, relativePath), 'utf8');
+}
+
+function escapeRegexLiteral(value) {
+  return String(value).replace(/[|\\{}()[\]^$+*?.]/g, '\\$&');
+}
+
+function createLiteralPattern(value) {
+  return new RegExp(escapeRegexLiteral(value));
 }
 
 export async function assertReleaseGovernanceWorkflowContracts({
@@ -15,42 +27,52 @@ export async function assertReleaseGovernanceWorkflowContracts({
 
   const workflow = read(repoRoot, '.github/workflows/release-governance.yml');
 
-  assert.match(workflow, /pull_request:/);
-  assert.match(workflow, /workflow_dispatch:/);
   assert.match(
     workflow,
-    /FORCE_JAVASCRIPT_ACTIONS_TO_NODE24:\s*'true'/,
-    'release-governance workflow must force JavaScript actions onto the Node24 runtime',
+    /permissions:\s*contents:\s*read/,
+    'release governance workflow must declare an explicit read-only GITHUB_TOKEN baseline',
   );
-  assert.match(workflow, /actions\/checkout@v5/);
-  assert.match(workflow, /actions\/setup-node@v5/);
-  assert.match(
+  assert.doesNotMatch(
     workflow,
-    /actions\/setup-node@v5[\s\S]*?node-version:\s*22[\s\S]*?package-manager-cache:\s*false/,
-    'release-governance workflow must disable setup-node package-manager auto-cache in its non-pnpm job',
+    /^\s+(?:contents|id-token|attestations|artifact-metadata|packages):\s*write$/m,
+    'release governance workflow must not request release-grade write permissions',
   );
-  assert.match(workflow, /\.github\/workflows\/release-governance\.yml/, 'release-governance workflow must watch its own workflow file');
-  assert.match(workflow, /scripts\/release\/\*\*/);
-  assert.match(
-    workflow,
-    /scripts\/release-governance-workflow-contracts\.mjs/,
-    'release-governance workflow must watch the contract module',
+  for (const contract of listReleaseGovernanceWorkflowStepContracts()) {
+    assert.match(
+      workflow,
+      new RegExp(contract.patternSource),
+      contract.message,
+    );
+  }
+  for (const requirement of listReleaseGovernanceWorkflowWatchRequirements()) {
+    assert.match(
+      workflow,
+      createLiteralPattern(requirement.path),
+      requirement.message,
+    );
+  }
+
+  const releaseGovernanceNodeRunner = await import(
+    pathToFileURL(
+      path.join(repoRoot, 'scripts', 'run-release-governance-node-tests.mjs'),
+    ).href,
   );
-  assert.match(workflow, /scripts\/release-governance-workflow\.test\.mjs/);
-  assert.match(
-    workflow,
-    /docs\/架构\/135-可观测性与SLO治理设计-2026-04-07\.md/,
-    'release-governance workflow must watch the governed SLO architecture baseline',
+
+  assert.equal(typeof releaseGovernanceNodeRunner.listReleaseGovernanceNodeTests, 'function');
+  assert.equal(typeof releaseGovernanceNodeRunner.createReleaseGovernanceNodeTestPlan, 'function');
+  assert.equal(typeof releaseGovernanceNodeRunner.runReleaseGovernanceNodeTests, 'function');
+  assert.deepEqual(
+    releaseGovernanceNodeRunner.listReleaseGovernanceNodeTests(),
+    listReleaseGovernanceNodeTestFiles(),
+    'release-governance workflow contracts must be backed by the exact governed node test set',
   );
-  assert.match(
-    workflow,
-    /docs\/架构\/143-全局架构对齐与收口计划-2026-04-08\.md/,
-    'release-governance workflow must watch the global architecture closure baseline',
+  assert.deepEqual(
+    releaseGovernanceNodeRunner.createReleaseGovernanceNodeTestPlan({
+      cwd: '.',
+      env: {},
+      nodeExecutable: 'node',
+    }).args,
+    ['--test', '--experimental-test-isolation=none', ...listReleaseGovernanceNodeTestFiles()],
+    'release-governance workflow contracts must use the governed node test isolation mode in the repository-owned runner plan',
   );
-  assert.match(
-    workflow,
-    /run:\s*node --test --experimental-test-isolation=none scripts\/release\/tests\/release-governance-runner\.test\.mjs/,
-    'release-governance workflow must execute the runner self-test directly',
-  );
-  assert.match(workflow, /run:\s*node scripts\/release\/run-release-governance-checks\.mjs --profile preflight --format json/);
 }

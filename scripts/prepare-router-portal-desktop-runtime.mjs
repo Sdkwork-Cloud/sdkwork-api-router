@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 import { createDesktopAssetBuildPlan } from './build-router-desktop-assets.mjs';
 import { resolveDesktopReleaseTarget } from './release/desktop-targets.mjs';
+import { findNativePortalDesktopEmbeddedRuntimeLayoutSpec } from './release/native-runtime-layout-catalog.mjs';
 import {
   withManagedWorkspaceTargetDir,
   withManagedWorkspaceTempDir,
@@ -44,10 +45,84 @@ function writeJsonFile(filePath, value) {
   writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
 }
 
+function splitRelativeRuntimePath(relativePath) {
+  return String(relativePath ?? '')
+    .split('/')
+    .filter((segment) => segment.length > 0);
+}
+
+function resolveRelativeRuntimePath(rootPath, relativePath) {
+  return path.join(rootPath, ...splitRelativeRuntimePath(relativePath));
+}
+
+function toPortablePath(value) {
+  return String(value ?? '').replaceAll('\\', '/');
+}
+
+function withTrailingSlash(value) {
+  const normalized = toPortablePath(value).replace(/\/+$/u, '');
+  return normalized.length > 0 ? `${normalized}/` : './';
+}
+
+function resolveRuntimeLayoutMappedPath(entryMap, entryId, entryKind) {
+  const relativePath = entryMap[entryId];
+  if (!relativePath) {
+    throw new Error(`Missing runtime layout ${entryKind}: ${entryId}`);
+  }
+
+  return relativePath;
+}
+
+function resolvePortalDesktopRuntimeRootRelativePath(
+  runtimeLayout = findNativePortalDesktopEmbeddedRuntimeLayoutSpec(),
+) {
+  return path.posix.dirname(runtimeLayout.readmeFile);
+}
+
+function relativizePortalDesktopRuntimePath(
+  relativePath,
+  runtimeLayout = findNativePortalDesktopEmbeddedRuntimeLayoutSpec(),
+) {
+  return path.posix.relative(
+    resolvePortalDesktopRuntimeRootRelativePath(runtimeLayout),
+    relativePath,
+  );
+}
+
 function writePortalDesktopPayloadReadme({
   releasePayloadReadmePath,
   target,
+  runtimeLayout = findNativePortalDesktopEmbeddedRuntimeLayoutSpec(),
 } = {}) {
+  const routerBinaryPath = path.posix.join(
+    relativizePortalDesktopRuntimePath(runtimeLayout.serviceBinaryDir, runtimeLayout),
+    withExecutable(runtimeLayout.serviceBinaryName, target.platform),
+  );
+  const adminSiteDir = relativizePortalDesktopRuntimePath(
+    resolveRuntimeLayoutMappedPath(runtimeLayout.siteTargetDirs, 'admin', 'site target dir'),
+    runtimeLayout,
+  );
+  const portalSiteDir = relativizePortalDesktopRuntimePath(
+    resolveRuntimeLayoutMappedPath(runtimeLayout.siteTargetDirs, 'portal', 'site target dir'),
+    runtimeLayout,
+  );
+  const bootstrapDataDir = relativizePortalDesktopRuntimePath(
+    resolveRuntimeLayoutMappedPath(
+      runtimeLayout.bootstrapDataRootDirs,
+      'data',
+      'bootstrap data root dir',
+    ),
+    runtimeLayout,
+  );
+  const releaseManifestFile = relativizePortalDesktopRuntimePath(
+    runtimeLayout.releaseManifestFile,
+    runtimeLayout,
+  );
+  const readmeFile = relativizePortalDesktopRuntimePath(
+    runtimeLayout.readmeFile,
+    runtimeLayout,
+  );
+
   writeFileSync(
     releasePayloadReadmePath,
     [
@@ -58,12 +133,12 @@ function writePortalDesktopPayloadReadme({
       `target: ${target.targetTriple}`,
       '',
       'Contents:',
-      `- bin/${withExecutable('router-product-service', target.platform)}: supervised router-product sidecar`,
-      '- sites/admin/dist/: bundled admin site assets',
-      '- sites/portal/dist/: bundled portal site assets',
-      '- data/: bootstrap data packs for first-start initialization',
-      '- release-manifest.json: embedded runtime payload contract metadata',
-      '- README.txt: operator-facing payload notes',
+      `- ${routerBinaryPath}: supervised router-product sidecar`,
+      `- ${adminSiteDir}: bundled admin site assets`,
+      `- ${portalSiteDir}: bundled portal site assets`,
+      `- ${bootstrapDataDir}: bootstrap data packs for first-start initialization`,
+      `- ${releaseManifestFile}: embedded runtime payload contract metadata`,
+      `- ${readmeFile}: operator-facing payload notes`,
       '',
       'Desktop runtime contract:',
       '- fixed public port 3001',
@@ -82,14 +157,38 @@ export function resolvePortalDesktopRuntimeResourceRoot({
   return path.join(workspaceRoot, 'bin', 'portal-rt');
 }
 
+export function resolvePortalDesktopRuntimeTauriResourceMap({
+  workspaceRoot = path.resolve(__dirname, '..'),
+  appRoot = path.join(workspaceRoot, 'apps', 'sdkwork-router-portal'),
+  runtimeLayout = findNativePortalDesktopEmbeddedRuntimeLayoutSpec(),
+} = {}) {
+  const resourceRoot = resolvePortalDesktopRuntimeResourceRoot({ workspaceRoot });
+  const runtimeRootRelativePath = resolvePortalDesktopRuntimeRootRelativePath(runtimeLayout);
+  const sourceAbsolutePath = resolveRelativeRuntimePath(resourceRoot, runtimeRootRelativePath);
+  const tauriConfigRoot = path.join(appRoot, 'src-tauri');
+
+  return {
+    resourceRoot,
+    tauriConfigRoot,
+    sourceAbsolutePath,
+    sourceRelativePath: withTrailingSlash(path.relative(tauriConfigRoot, sourceAbsolutePath)),
+    targetRelativePath: withTrailingSlash(runtimeRootRelativePath),
+  };
+}
+
 export function resolvePortalDesktopRuntimeResourceLayout({
   workspaceRoot = path.resolve(__dirname, '..'),
   platform = process.platform,
   targetTriple = '',
   env = process.env,
 } = {}) {
-  const resourceRoot = resolvePortalDesktopRuntimeResourceRoot({ workspaceRoot });
-  const routerProductRoot = path.join(resourceRoot, 'router-product');
+  const runtimeLayout = findNativePortalDesktopEmbeddedRuntimeLayoutSpec();
+  const resourceMap = resolvePortalDesktopRuntimeTauriResourceMap({
+    workspaceRoot,
+    runtimeLayout,
+  });
+  const resourceRoot = resourceMap.resourceRoot;
+  const routerProductRoot = resourceMap.sourceAbsolutePath;
   const serviceReleaseRoot = resolveServiceReleaseRoot({
     workspaceRoot,
     targetTriple,
@@ -100,23 +199,44 @@ export function resolvePortalDesktopRuntimeResourceLayout({
   return {
     resourceRoot,
     routerProductRoot,
-    routerBinaryPath: path.join(
-      routerProductRoot,
-      'bin',
-      withExecutable('router-product-service', platform),
+    routerBinaryPath: resolveRelativeRuntimePath(
+      resourceRoot,
+      path.posix.join(
+        runtimeLayout.serviceBinaryDir,
+        withExecutable(runtimeLayout.serviceBinaryName, platform),
+      ),
     ),
     routerBinarySourcePath: path.join(
       serviceReleaseRoot,
-      withExecutable('router-product-service', platform),
+      withExecutable(runtimeLayout.serviceBinaryName, platform),
     ),
-    adminSiteDir: path.join(routerProductRoot, 'sites', 'admin', 'dist'),
+    adminSiteDir: resolveRelativeRuntimePath(
+      resourceRoot,
+      resolveRuntimeLayoutMappedPath(runtimeLayout.siteTargetDirs, 'admin', 'site target dir'),
+    ),
     adminSiteSourceDir: path.join(workspaceRoot, 'apps', 'sdkwork-router-admin', 'dist'),
-    portalSiteDir: path.join(routerProductRoot, 'sites', 'portal', 'dist'),
+    portalSiteDir: resolveRelativeRuntimePath(
+      resourceRoot,
+      resolveRuntimeLayoutMappedPath(runtimeLayout.siteTargetDirs, 'portal', 'site target dir'),
+    ),
     portalSiteSourceDir: path.join(workspaceRoot, 'apps', 'sdkwork-router-portal', 'dist'),
-    bootstrapDataDir: path.join(routerProductRoot, 'data'),
+    bootstrapDataDir: resolveRelativeRuntimePath(
+      resourceRoot,
+      resolveRuntimeLayoutMappedPath(
+        runtimeLayout.bootstrapDataRootDirs,
+        'data',
+        'bootstrap data root dir',
+      ),
+    ),
     bootstrapDataSourceDir: path.join(workspaceRoot, 'data'),
-    releasePayloadManifestPath: path.join(routerProductRoot, 'release-manifest.json'),
-    releasePayloadReadmePath: path.join(routerProductRoot, 'README.txt'),
+    releasePayloadManifestPath: resolveRelativeRuntimePath(
+      resourceRoot,
+      runtimeLayout.releaseManifestFile,
+    ),
+    releasePayloadReadmePath: resolveRelativeRuntimePath(
+      resourceRoot,
+      runtimeLayout.readmeFile,
+    ),
   };
 }
 
@@ -185,6 +305,7 @@ export function stagePortalDesktopRuntimeResources({
   targetTriple = process.env.SDKWORK_DESKTOP_TARGET ?? '',
   env = process.env,
 } = {}) {
+  const runtimeLayout = findNativePortalDesktopEmbeddedRuntimeLayoutSpec();
   const target = resolveDesktopReleaseTarget({
     targetTriple,
     platform,
@@ -226,8 +347,8 @@ export function stagePortalDesktopRuntimeResources({
     arch: target.arch,
     target: target.targetTriple,
     routerBinary: path.posix.join(
-      'bin',
-      withExecutable('router-product-service', target.platform),
+      relativizePortalDesktopRuntimePath(runtimeLayout.serviceBinaryDir, runtimeLayout),
+      withExecutable(runtimeLayout.serviceBinaryName, target.platform),
     ),
     sites: ['admin', 'portal'],
     bootstrapDataRoots: ['data'],
@@ -235,6 +356,7 @@ export function stagePortalDesktopRuntimeResources({
   writePortalDesktopPayloadReadme({
     releasePayloadReadmePath: layout.releasePayloadReadmePath,
     target,
+    runtimeLayout,
   });
 
   return layout;

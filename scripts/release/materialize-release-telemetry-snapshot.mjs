@@ -5,7 +5,8 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
-import { SLO_GOVERNANCE_BASELINE } from './slo-governance.mjs';
+import { SLO_GOVERNANCE_BASELINE, listSloGovernanceTargets } from './slo-governance.mjs';
+import { createStrictKeyedCatalog } from '../strict-contract-catalog.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -26,11 +27,29 @@ const DEFAULT_EXPORT_INPUT_PATH = path.join(
 );
 const PROMETHEUS_VALUE_PATTERN = /^([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)$/;
 const HTTP_REQUEST_TOTAL_METRIC = 'sdkwork_http_requests_total';
-const DIRECT_PROMETHEUS_TARGET_SPECS = Object.freeze([
-  Object.freeze({ targetId: 'gateway-availability', prometheusKey: 'gateway' }),
-  Object.freeze({ targetId: 'admin-api-availability', prometheusKey: 'admin' }),
-  Object.freeze({ targetId: 'portal-api-availability', prometheusKey: 'portal' }),
-]);
+
+const directPrometheusTargetSpecCatalog = createStrictKeyedCatalog({
+  entries: [
+    Object.freeze({ targetId: 'gateway-availability', prometheusKey: 'gateway' }),
+    Object.freeze({ targetId: 'admin-api-availability', prometheusKey: 'admin' }),
+    Object.freeze({ targetId: 'portal-api-availability', prometheusKey: 'portal' }),
+  ],
+  getKey: (spec) => spec.targetId,
+  duplicateKeyMessagePrefix: 'duplicate direct prometheus target spec',
+  missingKeyMessagePrefix: 'missing direct prometheus target spec',
+});
+
+export function listDirectPrometheusTargetSpecs() {
+  return directPrometheusTargetSpecCatalog.list();
+}
+
+export function findDirectPrometheusTargetSpec(targetId) {
+  return directPrometheusTargetSpecCatalog.find(targetId);
+}
+
+export function listDirectPrometheusTargetSpecsByIds(targetIds = []) {
+  return directPrometheusTargetSpecCatalog.listByKeys(targetIds);
+}
 
 function parseJson(text, context) {
   try {
@@ -330,6 +349,7 @@ export function validateReleaseTelemetryExportShape({
   exportBundle,
   baseline = SLO_GOVERNANCE_BASELINE,
 } = {}) {
+  const targets = listSloGovernanceTargets({ baseline });
   if (!exportBundle || typeof exportBundle !== 'object') {
     throw new Error('release telemetry export must be a JSON object');
   }
@@ -351,12 +371,12 @@ export function validateReleaseTelemetryExportShape({
   }
 
   const directTargetIds = new Set(
-    DIRECT_PROMETHEUS_TARGET_SPECS
+    listDirectPrometheusTargetSpecs()
       .map((spec) => spec.targetId)
-      .filter((targetId) => baseline.targets.some((target) => target.id === targetId)),
+      .filter((targetId) => targets.some((target) => target.id === targetId)),
   );
 
-  for (const spec of DIRECT_PROMETHEUS_TARGET_SPECS) {
+  for (const spec of listDirectPrometheusTargetSpecs()) {
     if (!directTargetIds.has(spec.targetId)) {
       continue;
     }
@@ -395,6 +415,7 @@ export function validateReleaseTelemetrySnapshotShape({
   snapshot,
   baseline = SLO_GOVERNANCE_BASELINE,
 } = {}) {
+  const targets = listSloGovernanceTargets({ baseline });
   if (!snapshot || typeof snapshot !== 'object') {
     throw new Error('release telemetry snapshot must be a JSON object');
   }
@@ -415,7 +436,7 @@ export function validateReleaseTelemetrySnapshotShape({
     throw new Error('release telemetry snapshot must include a targets object');
   }
 
-  for (const target of baseline.targets) {
+  for (const target of targets) {
     const targetSnapshot = snapshot.targets[target.id];
     if (!targetSnapshot || typeof targetSnapshot !== 'object') {
       throw new Error(`release telemetry snapshot is missing target ${target.id}`);
@@ -444,7 +465,7 @@ export function validateReleaseTelemetrySnapshotShape({
 
   return {
     snapshotId: RELEASE_TELEMETRY_SNAPSHOT_ID,
-    targetCount: baseline.targets.length,
+    targetCount: targets.length,
   };
 }
 
@@ -457,10 +478,11 @@ export function deriveReleaseTelemetrySnapshotFromExport({
     baseline,
   });
 
-  const targetMap = new Map(baseline.targets.map((target) => [target.id, target]));
+  const targets = listSloGovernanceTargets({ baseline });
+  const targetMap = new Map(targets.map((target) => [target.id, target]));
   const directlyDerivedTargets = {};
 
-  for (const spec of DIRECT_PROMETHEUS_TARGET_SPECS) {
+  for (const spec of listDirectPrometheusTargetSpecs()) {
     const target = targetMap.get(spec.targetId);
     if (!target) {
       continue;

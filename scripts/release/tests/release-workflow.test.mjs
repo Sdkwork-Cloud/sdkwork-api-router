@@ -6,6 +6,17 @@ import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 
 const repoRoot = path.resolve(import.meta.dirname, '..', '..', '..');
+const releaseWorkflowStepContractCatalog = await import(
+  pathToFileURL(
+    path.join(repoRoot, 'scripts', 'release', 'release-workflow-step-contract-catalog.mjs'),
+  ).href,
+);
+const DEFAULT_RELEASE_WORKFLOW_STEP_CONTRACTS = releaseWorkflowStepContractCatalog.listReleaseWorkflowStepContracts();
+const NON_PNPM_SETUP_NODE_CACHE_DISABLED_CONTRACTS =
+  releaseWorkflowStepContractCatalog.listReleaseWorkflowStepContractsByIds([
+    'rust-dependency-audit-cache-disabled',
+    'publish-setup-node-cache-disabled',
+  ]);
 
 function read(relativePath) {
   return readFileSync(path.join(repoRoot, relativePath), 'utf8');
@@ -13,7 +24,7 @@ function read(relativePath) {
 
 function extractTopLevelJobBlock(workflow, jobName) {
   const blockPattern = new RegExp(
-    String.raw`^  ${jobName}:\r?\n[\s\S]*?(?=^  [a-z0-9][a-z0-9-]*:|\Z)`,
+    String.raw`^  ${jobName}:\r?\n[\s\S]*?(?=^  [a-z0-9][a-z0-9-]*:|(?![\s\S]))`,
     'im',
   );
   const match = workflow.match(blockPattern);
@@ -23,12 +34,20 @@ function extractTopLevelJobBlock(workflow, jobName) {
 
 function extractNamedStepBlock(containerText, stepName) {
   const stepPattern = new RegExp(
-    String.raw`^\s+- name: ${stepName}\r?\n[\s\S]*?(?=^\s+- name:|\Z)`,
+    String.raw`^\s+- name: ${stepName}\r?\n[\s\S]*?(?=^\s+- name:|(?![\s\S]))`,
     'im',
   );
   const match = containerText.match(stepPattern);
   assert.ok(match, `missing ${stepName} step`);
   return match[0];
+}
+
+function selectReleaseWorkflowContractTarget(workflow, contract) {
+  if (contract.target === 'job') {
+    return extractTopLevelJobBlock(workflow, contract.jobName);
+  }
+
+  return workflow;
 }
 
 function writeModule(filePath, source) {
@@ -37,13 +56,21 @@ function writeModule(filePath, source) {
 }
 
 function withNode24JavaScriptActionsEnv(workflowText) {
-  if (/FORCE_JAVASCRIPT_ACTIONS_TO_NODE24:\s*'true'/.test(workflowText)) {
-    return workflowText;
+  let normalizedWorkflow = workflowText;
+  if (!/permissions:\s*[\s\S]*?packages:\s*write/m.test(normalizedWorkflow)) {
+    normalizedWorkflow = normalizedWorkflow.replace(
+      /artifact-metadata:\s*write\r?\n/,
+      `artifact-metadata: write\n  packages: write\n`,
+    );
   }
 
-  return workflowText.replace(
-    /artifact-metadata:\s*write\r?\n/,
-    `artifact-metadata: write\n\nenv:\n  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'\n`,
+  if (/FORCE_JAVASCRIPT_ACTIONS_TO_NODE24:\s*'true'/.test(normalizedWorkflow)) {
+    return normalizedWorkflow;
+  }
+
+  return normalizedWorkflow.replace(
+    /packages:\s*write\r?\n/,
+    `packages: write\n\nenv:\n  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'\n`,
   );
 }
 
@@ -55,6 +82,17 @@ function withWorkflowDispatchInputs(workflowText) {
   return workflowText.replace(
     /workflow_dispatch:\s*(\r?\n)/,
     `workflow_dispatch:\n    inputs:\n      release_tag:\n        description: Existing release tag to publish\n        required: true\n        type: string\n      git_ref:\n        description: Git ref to build; defaults to refs/tags/<release_tag>\n        required: false\n        type: string$1`,
+  );
+}
+
+function withWorkflowConcurrency(workflowText) {
+  if (/concurrency:\s*[\s\S]*?cancel-in-progress:\s*false/m.test(workflowText)) {
+    return workflowText;
+  }
+
+  return workflowText.replace(
+    /\npermissions:\n/,
+    `\nconcurrency:\n  group: release-\${{ github.workflow }}-\${{ github.event.inputs.release_tag || github.ref_name || github.run_id }}\n  cancel-in-progress: false\n\npermissions:\n`,
   );
 }
 
@@ -74,8 +112,8 @@ function writeReleaseWorkflowContractFixture({
   writeFileSync(
     path.join(fixtureRoot, '.github', 'workflows', 'release.yml'),
     includeNode24JavaScriptActionsEnv
-      ? withNode24JavaScriptActionsEnv(withWorkflowDispatchInputs(workflowText))
-      : withWorkflowDispatchInputs(workflowText),
+      ? withNode24JavaScriptActionsEnv(withWorkflowConcurrency(withWorkflowDispatchInputs(workflowText)))
+      : withWorkflowConcurrency(withWorkflowDispatchInputs(workflowText)),
     'utf8',
   );
 
@@ -127,6 +165,11 @@ export function resolveSloGovernanceEvidenceInput() { return { source: 'json', p
 export function validateSloGovernanceEvidenceShape() { return { baselineId: 'release-slo-governance-baseline', targetCount: 3 }; }
 export function materializeSloGovernanceEvidence() { return { outputPath: 'docs/release/slo-governance-latest.json' }; }
 `,
+    'materialize-third-party-governance.mjs': `
+export function materializeThirdPartyGovernance() { return { sbomOutputPath: 'docs/release/third-party-sbom-latest.spdx.json', noticesOutputPath: 'docs/release/third-party-notices-latest.json' }; }
+export function validateThirdPartySbomArtifact() { return { spdxVersion: 'SPDX-2.3', packageCount: 2 }; }
+export function validateThirdPartyNoticesArtifact() { return { version: 1, packageCount: 2, noticeLength: 42 }; }
+`,
     'materialize-release-governance-bundle.mjs': `
 export function listReleaseGovernanceBundleArtifactSpecs() { return []; }
 export function createReleaseGovernanceBundleManifest() { return { version: 1, bundleEntryCount: 0, artifacts: [] }; }
@@ -161,6 +204,16 @@ export function collectReleaseCatalogEntries() { return []; }
 export function createReleaseCatalog() { return { version: 1, products: [] }; }
 export function materializeReleaseCatalog() { return { outputPath: 'artifacts/release/release-catalog.json', productCount: 2, variantCount: 2 }; }
 `,
+    'publish-ghcr-image.mjs': `
+export function publishGhcrImage() { return { imageRef: 'ghcr.io/example/sdkwork-api-router:release-test-linux-x64', digest: 'sha256:test' }; }
+export function createImagePublishMetadata() { return { imageRef: 'ghcr.io/example/sdkwork-api-router:release-test-linux-x64', digest: 'sha256:test' }; }
+export function createGhcrImagePublishPlan() { return { imageRef: 'ghcr.io/example/sdkwork-api-router:release-test-linux-x64', bundlePath: 'artifacts/release/native/linux/x64/bundles/sdkwork-api-router-product-server-linux-x64.tar.gz' }; }
+`,
+    'publish-ghcr-manifest.mjs': `
+export function publishGhcrManifest() { return { targetImageRef: 'ghcr.io/example/sdkwork-api-router:release-test', digest: 'sha256:test' }; }
+export function createGhcrManifestPublishMetadata() { return { targetImageRef: 'ghcr.io/example/sdkwork-api-router:release-test', digest: 'sha256:test' }; }
+export function createGhcrManifestPublishPlan() { return { targetImageRef: 'ghcr.io/example/sdkwork-api-router:release-test', sourceImageRefs: [] }; }
+`,
   })) {
     writeModule(path.join(fixtureRoot, 'scripts', 'release', name), body);
   }
@@ -173,98 +226,41 @@ test('release workflow publishes only official server and portal desktop product
   assert.equal(existsSync(workflowPath), true, 'missing .github/workflows/release.yml');
 
   const workflow = read('.github/workflows/release.yml');
+  const contractSource = read('scripts/release/release-workflow-contracts.mjs');
 
-  assert.match(workflow, /FORCE_JAVASCRIPT_ACTIONS_TO_NODE24:\s*'true'/);
-  assert.match(
-    workflow,
-    /workflow_dispatch:\s*[\s\S]*?inputs:\s*[\s\S]*?release_tag:\s*[\s\S]*?description:\s*Existing release tag to publish[\s\S]*?required:\s*true[\s\S]*?type:\s*string[\s\S]*?git_ref:\s*[\s\S]*?description:\s*Git ref to build; defaults to refs\/tags\/<release_tag>[\s\S]*?required:\s*false[\s\S]*?type:\s*string/,
+  assert.match(contractSource, /release-workflow-step-contract-catalog\.mjs/);
+
+  for (const contract of DEFAULT_RELEASE_WORKFLOW_STEP_CONTRACTS) {
+    const targetText = selectReleaseWorkflowContractTarget(workflow, contract);
+    if (contract.assertion === 'doesNotMatch') {
+      assert.doesNotMatch(targetText, new RegExp(contract.patternSource));
+      continue;
+    }
+
+    assert.match(targetText, new RegExp(contract.patternSource));
+  }
+});
+
+test('release workflow helper extracts the full native-release job block when the body contains literal Z characters', () => {
+  const nativeReleaseJob = extractTopLevelJobBlock(
+    read('.github/workflows/release.yml'),
+    'native-release',
   );
-  assert.match(
-    workflow,
-    /Resolve release target[\s\S]*?if \[\[ \"\$\{GITHUB_EVENT_NAME\}\" == \"push\" \]\]; then[\s\S]*?release_tag=\"\$\{GITHUB_REF_NAME\}\"[\s\S]*?git_ref=\"\$\{GITHUB_REF\}\"[\s\S]*?else[\s\S]*?release_tag=\"\$\{\{\s*github\.event\.inputs\.release_tag\s*\}\}\"[\s\S]*?git_ref=\"\$\{\{\s*github\.event\.inputs\.git_ref\s*\}\}\"[\s\S]*?if \[\[ -z \"\$git_ref\" \]\]; then[\s\S]*?git_ref=\"refs\/tags\/\$release_tag\"/,
+
+  assert.match(nativeReleaseJob, /Materialize external release dependencies/);
+  assert.match(nativeReleaseJob, /Upload Windows installed runtime smoke evidence/);
+  assert.match(nativeReleaseJob, /Upload Linux Helm render smoke evidence/);
+});
+
+test('release workflow step helper extracts a final step block through EOF when the body contains literal Z characters', () => {
+  const stepBlock = extractNamedStepBlock(
+    `    - name: Final governed step
+      run: echo "Z-runtime-marker"
+`,
+    'Final governed step',
   );
-  assert.match(workflow, /pnpm\/action-setup@v5/);
-  assert.match(workflow, /actions\/upload-artifact@v6/);
-  assert.match(workflow, /actions\/download-artifact@v8/);
-  assert.match(workflow, /softprops\/action-gh-release@v3/);
-  assert.match(workflow, /governance-release:/);
-  assert.match(workflow, /native-release:/);
-  assert.match(workflow, /publish:/);
-  assert.match(workflow, /node scripts\/release\/run-desktop-release-build\.mjs --app portal --target \$\{\{ matrix\.target \}\}/);
-  assert.match(workflow, /node scripts\/release\/run-desktop-release-signing\.mjs --app portal --platform \$\{\{ matrix\.platform \}\} --arch \$\{\{ matrix\.arch \}\} --target \$\{\{ matrix\.target \}\} --evidence-path artifacts\/release-governance\/desktop-release-signing-\$\{\{ matrix\.platform \}\}-\$\{\{ matrix\.arch \}\}\.json/);
-  assert.match(
-    workflow,
-    /Run portal desktop signing hook[\s\S]*?env:[\s\S]*?SDKWORK_RELEASE_DESKTOP_SIGNING_REQUIRED:\s*\$\{\{\s*vars\.SDKWORK_RELEASE_DESKTOP_SIGNING_REQUIRED\s*\|\|\s*''\s*\}\}[\s\S]*?SDKWORK_RELEASE_DESKTOP_WINDOWS_SIGN_HOOK:\s*\$\{\{\s*secrets\.SDKWORK_RELEASE_DESKTOP_WINDOWS_SIGN_HOOK\s*\|\|\s*vars\.SDKWORK_RELEASE_DESKTOP_WINDOWS_SIGN_HOOK\s*\|\|\s*''\s*\}\}[\s\S]*?SDKWORK_RELEASE_DESKTOP_LINUX_SIGN_HOOK:\s*\$\{\{\s*secrets\.SDKWORK_RELEASE_DESKTOP_LINUX_SIGN_HOOK\s*\|\|\s*vars\.SDKWORK_RELEASE_DESKTOP_LINUX_SIGN_HOOK\s*\|\|\s*''\s*\}\}[\s\S]*?SDKWORK_RELEASE_DESKTOP_MACOS_SIGN_HOOK:\s*\$\{\{\s*secrets\.SDKWORK_RELEASE_DESKTOP_MACOS_SIGN_HOOK\s*\|\|\s*vars\.SDKWORK_RELEASE_DESKTOP_MACOS_SIGN_HOOK\s*\|\|\s*''\s*\}\}[\s\S]*?SDKWORK_RELEASE_DESKTOP_SIGN_HOOK:\s*\$\{\{\s*secrets\.SDKWORK_RELEASE_DESKTOP_SIGN_HOOK\s*\|\|\s*vars\.SDKWORK_RELEASE_DESKTOP_SIGN_HOOK\s*\|\|\s*''\s*\}\}/,
-  );
-  assert.match(workflow, /native-release:[\s\S]*?Build portal desktop release[\s\S]*?Run portal desktop signing hook[\s\S]*?Collect native release assets[\s\S]*?Run installed native runtime smoke on Windows/);
-  assert.match(workflow, /native-release:[\s\S]*?Build portal desktop release[\s\S]*?Run portal desktop signing hook[\s\S]*?Collect native release assets[\s\S]*?Run installed native runtime smoke on Unix/);
-  assert.match(workflow, /Upload desktop signing evidence/);
-  assert.match(workflow, /Generate desktop signing evidence attestation/);
-  assert.match(workflow, /node scripts\/release\/materialize-release-catalog\.mjs --release-tag \$\{\{ needs\.prepare\.outputs\.release_tag \}\} --assets-root artifacts\/release --output artifacts\/release\/release-catalog\.json/);
-  assert.match(workflow, /Generate release catalog attestation/);
-  assert.match(workflow, /subject-path:\s*artifacts\/release\/release-catalog\.json/);
-  assert.match(workflow, /publish:[\s\S]*?Checkout release ref/);
-  assert.match(workflow, /publish:[\s\S]*?actions\/setup-node@v5[\s\S]*?node-version:\s*22/);
-  assert.match(workflow, /sdkwork-api-router-product-server-\$\{\{ matrix\.platform \}\}-\$\{\{ matrix\.arch \}\}\.tar\.gz/);
-  assert.match(workflow, /sdkwork-api-router-product-server-\$\{\{ matrix\.platform \}\}-\$\{\{ matrix\.arch \}\}\.manifest\.json/);
-  assert.match(workflow, /desktop\/portal\/sdkwork-router-portal-desktop-\*/);
-  assert.match(
-    workflow,
-    /Upload Windows installed runtime smoke evidence[\s\S]*?if:\s*\$\{\{\s*always\(\)\s*&&\s*matrix\.platform == 'windows'[\s\S]*?hashFiles\(format\('artifacts\/release-governance\/windows-installed-runtime-smoke-\{0\}-\{1\}\.json', matrix\.platform, matrix\.arch\)\)\s*!=\s*''\s*\}\}/,
-  );
-  assert.match(
-    workflow,
-    /Generate Windows smoke evidence attestation[\s\S]*?if:\s*\$\{\{\s*\(!github\.event\.repository\.private \|\| vars\.SDKWORK_RELEASE_ARTIFACT_ATTESTATIONS_ENABLED == 'true'\)\s*&&\s*matrix\.platform == 'windows'[\s\S]*?hashFiles\(format\('artifacts\/release-governance\/windows-installed-runtime-smoke-\{0\}-\{1\}\.json', matrix\.platform, matrix\.arch\)\)\s*!=\s*''\s*\}\}/,
-  );
-  assert.match(
-    workflow,
-    /Upload Linux Helm render smoke evidence[\s\S]*?if:\s*\$\{\{\s*always\(\)\s*&&\s*matrix\.platform == 'linux'[\s\S]*?hashFiles\(format\('artifacts\/release-governance\/helm-render-smoke-\{0\}-\{1\}\.json', matrix\.platform, matrix\.arch\)\)\s*!=\s*''\s*\}\}/,
-  );
-  assert.match(
-    workflow,
-    /Generate Linux Helm render smoke evidence attestation[\s\S]*?if:\s*\$\{\{\s*\(!github\.event\.repository\.private \|\| vars\.SDKWORK_RELEASE_ARTIFACT_ATTESTATIONS_ENABLED == 'true'\)\s*&&\s*matrix\.platform == 'linux'[\s\S]*?hashFiles\(format\('artifacts\/release-governance\/helm-render-smoke-\{0\}-\{1\}\.json', matrix\.platform, matrix\.arch\)\)\s*!=\s*''\s*\}\}/,
-  );
-  assert.doesNotMatch(workflow, /console\/pnpm-lock\.yaml/);
-  assert.match(workflow, /docs\/pnpm-lock\.yaml/);
-  assert.match(
-    workflow,
-    /product-verification:[\s\S]*?Materialize external release dependencies[\s\S]*?SDKWORK_RELEASE_EXTERNAL_DEPENDENCY_SCOPE:\s*referenced[\s\S]*?node scripts\/release\/materialize-external-deps\.mjs[\s\S]*?Install product verification workspace dependencies[\s\S]*?pnpm --dir apps\/sdkwork-router-admin install --frozen-lockfile[\s\S]*?pnpm --dir apps\/sdkwork-router-portal install --frozen-lockfile[\s\S]*?pnpm --dir docs install --frozen-lockfile/,
-  );
-  assert.match(
-    workflow,
-    /Install product verification workspace dependencies[\s\S]*?pnpm --dir apps\/sdkwork-router-admin install --frozen-lockfile[\s\S]*?pnpm --dir apps\/sdkwork-router-portal install --frozen-lockfile[\s\S]*?pnpm --dir docs install --frozen-lockfile/,
-  );
-  assert.match(
-    workflow,
-    /Build docs site[\s\S]*?pnpm --dir docs build/,
-  );
-  assert.match(
-    workflow,
-    /governance-release:[\s\S]*?Materialize external release dependencies[\s\S]*?SDKWORK_RELEASE_EXTERNAL_DEPENDENCY_SCOPE:\s*referenced[\s\S]*?node scripts\/release\/materialize-external-deps\.mjs/,
-  );
-  assert.match(
-    workflow,
-    /native-release:[\s\S]*?Materialize external release dependencies[\s\S]*?SDKWORK_RELEASE_EXTERNAL_DEPENDENCY_SCOPE:\s*referenced[\s\S]*?node scripts\/release\/materialize-external-deps\.mjs/,
-  );
-  assert.match(
-    workflow,
-    /Materialize release sync audit[\s\S]*?SDKWORK_RELEASE_SYNC_AUDIT_PATH:\s*docs\/release\/release-sync-audit-latest\.json[\s\S]*?node scripts\/release\/materialize-release-sync-audit\.mjs/,
-  );
-  assert.match(
-    workflow,
-    /Materialize release telemetry export[\s\S]*?SDKWORK_RELEASE_TELEMETRY_EXPORT_PATH:\s*docs\/release\/release-telemetry-export-latest\.json[\s\S]*?node scripts\/release\/materialize-release-telemetry-export\.mjs/,
-  );
-  assert.doesNotMatch(workflow, /run-desktop-release-build\.mjs --app admin/);
-  assert.doesNotMatch(workflow, /web-release:/);
-  assert.doesNotMatch(workflow, /package-release-assets\.mjs web/);
-  assert.doesNotMatch(workflow, /release-assets-web/);
-  assert.doesNotMatch(workflow, /release-assets\/\*\*\/\*/);
-  assert.doesNotMatch(workflow, /desktop\/portal\/\*\*\/*/);
-  assert.match(workflow, /artifacts\/release\/\*\*\/sdkwork-api-router-product-server-\*\.tar\.gz/);
-  assert.match(workflow, /artifacts\/release\/\*\*\/sdkwork-api-router-product-server-\*\.tar\.gz\.sha256\.txt/);
-  assert.match(workflow, /artifacts\/release\/\*\*\/sdkwork-api-router-product-server-\*\.manifest\.json/);
-  assert.match(workflow, /artifacts\/release\/\*\*\/desktop\/portal\/sdkwork-router-portal-desktop-\*/);
-  assert.match(workflow, /artifacts\/release\/release-catalog\.json/);
+
+  assert.match(stepBlock, /Z-runtime-marker/);
 });
 
 test('release workflow contract helper accepts the repository workflow', async () => {
@@ -506,6 +502,76 @@ jobs:
     contracts.assertReleaseWorkflowContracts({
       repoRoot: fixtureRoot,
     }),
+  );
+});
+
+test('release workflow contract helper rejects workflows that do not attest the governance bundle artifact', async () => {
+  const contracts = await import(
+    pathToFileURL(
+      path.join(repoRoot, 'scripts', 'release', 'release-workflow-contracts.mjs'),
+    ).href,
+  );
+
+  const fixtureRoot = writeReleaseWorkflowContractFixture({
+    workflowText: read('.github/workflows/release.yml').replace(
+      /^\s*- name: Generate governance bundle attestation\r?\n[\s\S]*?(?=^\s*- name: Run release governance gate)/m,
+      '',
+    ),
+  });
+
+  await assert.rejects(
+    contracts.assertReleaseWorkflowContracts({
+      repoRoot: fixtureRoot,
+    }),
+    /governance bundle|attest/i,
+  );
+});
+
+test('release workflow contract helper rejects workflows that do not publish GHCR manifest metadata evidence', async () => {
+  const contracts = await import(
+    pathToFileURL(
+      path.join(repoRoot, 'scripts', 'release', 'release-workflow-contracts.mjs'),
+    ).href,
+  );
+
+  const fixtureRoot = writeReleaseWorkflowContractFixture({
+    workflowText: read('.github/workflows/release.yml').replace(
+      /^\s*- name: Publish multi-arch container image manifest\r?\n[\s\S]*?(?=^\s*- name: Publish release assets)/m,
+      `      - name: Publish multi-arch container image manifest\n        shell: bash\n        run: |\n          docker buildx imagetools create -t ghcr.io/example/sdkwork-api-router:\${{ needs.prepare.outputs.release_tag }} ghcr.io/example/sdkwork-api-router:\${{ needs.prepare.outputs.release_tag }}-linux-x64 ghcr.io/example/sdkwork-api-router:\${{ needs.prepare.outputs.release_tag }}-linux-arm64\n`,
+    ),
+  });
+
+  await assert.rejects(
+    contracts.assertReleaseWorkflowContracts({
+      repoRoot: fixtureRoot,
+    }),
+    /ghcr.*manifest.*metadata|repository-owned publish script/i,
+  );
+});
+
+test('release workflow contract helper rejects workflows whose GHCR image helper omits the publish plan export', async () => {
+  const contracts = await import(
+    pathToFileURL(
+      path.join(repoRoot, 'scripts', 'release', 'release-workflow-contracts.mjs'),
+    ).href,
+  );
+
+  const fixtureRoot = writeReleaseWorkflowContractFixture({
+    workflowText: read('.github/workflows/release.yml'),
+  });
+  writeModule(
+    path.join(fixtureRoot, 'scripts', 'release', 'publish-ghcr-image.mjs'),
+    `
+export function publishGhcrImage() { return { imageRef: 'ghcr.io/example/sdkwork-api-router:release-test-linux-x64', digest: 'sha256:test' }; }
+export function createImagePublishMetadata() { return { imageRef: 'ghcr.io/example/sdkwork-api-router:release-test-linux-x64', digest: 'sha256:test' }; }
+`,
+  );
+
+  await assert.rejects(
+    contracts.assertReleaseWorkflowContracts({
+      repoRoot: fixtureRoot,
+    }),
+    /ghcr.*image.*plan|createGhcrImagePublishPlan/i,
   );
 });
 
@@ -775,24 +841,36 @@ test('release workflow contract helper rejects workflows that do not seed teleme
   );
 });
 
+test('release workflow contract helper rejects workflows that do not materialize third-party governance artifacts', async () => {
+  const contracts = await import(
+    pathToFileURL(
+      path.join(repoRoot, 'scripts', 'release', 'release-workflow-contracts.mjs'),
+    ).href,
+  );
+
+  const fixtureRoot = writeReleaseWorkflowContractFixture({
+    workflowText: read('.github/workflows/release.yml').replace(
+      /^\s*- name: Materialize third-party governance\r?\n[\s\S]*?(?=^\s*- name: Upload third-party SBOM governance artifact)/m,
+      '',
+    ),
+  });
+
+  await assert.rejects(
+    contracts.assertReleaseWorkflowContracts({
+      repoRoot: fixtureRoot,
+    }),
+    /third-party|sbom|notices/i,
+  );
+});
+
 test('release workflow disables setup-node package-manager auto-cache in non-pnpm jobs', () => {
   const workflow = read('.github/workflows/release.yml');
-  const rustDependencyAuditJob = extractTopLevelJobBlock(workflow, 'rust-dependency-audit');
-  const governanceReleaseJob = extractTopLevelJobBlock(workflow, 'governance-release');
-  const publishJob = extractTopLevelJobBlock(workflow, 'publish');
-
-  assert.match(
-    rustDependencyAuditJob,
-    /actions\/setup-node@v5[\s\S]*?node-version:\s*22[\s\S]*?package-manager-cache:\s*false/,
-  );
-  assert.match(
-    governanceReleaseJob,
-    /actions\/setup-node@v5[\s\S]*?node-version:\s*22[\s\S]*?package-manager-cache:\s*false/,
-  );
-  assert.match(
-    publishJob,
-    /actions\/setup-node@v5[\s\S]*?node-version:\s*22[\s\S]*?package-manager-cache:\s*false/,
-  );
+  for (const contract of NON_PNPM_SETUP_NODE_CACHE_DISABLED_CONTRACTS) {
+    assert.match(
+      selectReleaseWorkflowContractTarget(workflow, contract),
+      new RegExp(contract.patternSource),
+    );
+  }
 });
 
 test('release workflow defers pnpm version selection to the root packageManager field', () => {
@@ -800,6 +878,10 @@ test('release workflow defers pnpm version selection to the root packageManager 
   const workflow = read('.github/workflows/release.yml');
   const productVerificationPnpmStep = extractNamedStepBlock(
     extractTopLevelJobBlock(workflow, 'product-verification'),
+    'Setup pnpm',
+  );
+  const governanceReleasePnpmStep = extractNamedStepBlock(
+    extractTopLevelJobBlock(workflow, 'governance-release'),
     'Setup pnpm',
   );
   const nativeReleasePnpmStep = extractNamedStepBlock(
@@ -810,6 +892,10 @@ test('release workflow defers pnpm version selection to the root packageManager 
   assert.equal(rootPackage.packageManager, 'pnpm@10.30.2');
   assert.doesNotMatch(
     productVerificationPnpmStep,
+    /^\s+version:/m,
+  );
+  assert.doesNotMatch(
+    governanceReleasePnpmStep,
     /^\s+version:/m,
   );
   assert.doesNotMatch(

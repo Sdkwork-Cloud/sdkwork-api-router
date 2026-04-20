@@ -8,6 +8,7 @@ import {
   resolveReadablePackageEntry,
   resolveWorkspaceDonorRoots,
 } from './vite-runtime-lib.mjs';
+import { normalizeForwardedCliArgs } from './vite-cli-argv-lib.mjs';
 
 const appRoot = process.cwd();
 const donorRoots = resolveWorkspaceDonorRoots(appRoot);
@@ -23,7 +24,7 @@ await applyWindowsVitePreload();
 process.argv = [
   process.argv[0],
   viteCliPath,
-  ...process.argv.slice(2),
+  ...normalizeForwardedCliArgs(process.argv.slice(2)),
 ];
 
 await import(pathToFileURL(viteCliPath).href);

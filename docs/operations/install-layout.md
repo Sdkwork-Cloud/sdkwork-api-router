@@ -7,7 +7,7 @@ This page defines the production install layout for the official server product,
 Every server install is split into three layers:
 
 - product root: the stable top-level install directory
-- current control home: the stable runtime wrapper layer used by operators and service managers
+- current control directory: the stable runtime wrapper layer used by operators and service managers
 - versioned release payload: the immutable program payload under `releases/<version>/`
 
 Mutable state is never stored inside the versioned release payload.
@@ -16,6 +16,7 @@ The immutable `releases/<version>/` payload is always materialized from the offi
 The installer selects and resolves that canonical bundle directly from `artifacts/release/release-catalog.json`.
 Any archive, checksum, or external manifest outside the published catalog entry is rejected before materializing `releases/<version>/`.
 That packaged release payload preserves the bundled `bin/`, `sites/*/dist/`, `data/`, `deploy/`, `release-manifest.json`, and `README.txt` entries exactly as published.
+The extracted bundle root also exposes governed `install.sh` and `install.ps1` entrypoints, and the external archive manifest records both `releaseVersion` plus the installer contract.
 
 ## Portable Layout
 
@@ -51,7 +52,8 @@ Portable layout:
 Notes:
 
 - `current/` is the control layer. It contains wrapper scripts and service descriptors.
-- `current/bin/` is the stable operator surface for `start.*`, `stop.*`, `validate-config.*`, `backup.*`, and `restore.*`.
+- `current/bin/` is the stable operator surface for `start.sh`, `start.ps1`, `stop.sh`, `stop.ps1`, `validate-config.sh`, `validate-config.ps1`, `backup.sh`, `backup.ps1`, `restore.sh`, `restore.ps1`, `support-bundle.sh`, and `support-bundle.ps1`.
+- installed `current/bin/` is materialized from the official server bundle's embedded `control/bin/` tree, so operator control scripts ship with the governed release artifact
 - `releases/<version>/` is the active immutable payload copied from the packaged server bundle.
 - `config/`, `data/`, `log/`, and `run/` stay writable and upgrade-safe.
 
@@ -62,7 +64,7 @@ System installs follow OS-standard mutable roots while keeping the program paylo
 ### Linux
 
 - product root: `/opt/sdkwork-api-router/`
-- current control home: `/opt/sdkwork-api-router/current/`
+- current control directory: `/opt/sdkwork-api-router/current/`
 - versioned release payload: `/opt/sdkwork-api-router/releases/<version>/`
 - config home: `/etc/sdkwork-api-router/`
 - config file: `/etc/sdkwork-api-router/router.yaml`
@@ -75,7 +77,7 @@ System installs follow OS-standard mutable roots while keeping the program paylo
 ### macOS
 
 - product root: `/usr/local/lib/sdkwork-api-router/`
-- current control home: `/usr/local/lib/sdkwork-api-router/current/`
+- current control directory: `/usr/local/lib/sdkwork-api-router/current/`
 - versioned release payload: `/usr/local/lib/sdkwork-api-router/releases/<version>/`
 - config home: `/Library/Application Support/sdkwork-api-router/`
 - config file: `/Library/Application Support/sdkwork-api-router/router.yaml`
@@ -88,7 +90,7 @@ System installs follow OS-standard mutable roots while keeping the program paylo
 ### Windows
 
 - product root: `C:\Program Files\sdkwork-api-router\`
-- current control home: `C:\Program Files\sdkwork-api-router\current\`
+- current control directory: `C:\Program Files\sdkwork-api-router\current\`
 - versioned release payload: `C:\Program Files\sdkwork-api-router\releases\<version>\`
 - config home: `C:\ProgramData\sdkwork-api-router\`
 - config file: `C:\ProgramData\sdkwork-api-router\router.yaml`
@@ -135,12 +137,9 @@ It records:
 
 - manifest schema and generation metadata: `layoutVersion`, `installedAt`
 - install topology and release selection: `installMode`, `productRoot`, `controlRoot`, `releasesRoot`, `releaseRoot`, `releaseVersion`
-- resolved target descriptor: `target`
+- resolved target triple: `target`
 - installed service payload inventory: `installedBinaries`
-- active release version
-- active release root
-- resolved router binary path
-- resolved admin and portal site roots
+- resolved active program payload paths: `routerBinary`, `adminSiteDistDir`, `portalSiteDistDir`
 - the installed bootstrap data and `deploy/` asset roots inside the active release payload: `bootstrapDataRoot`, `deploymentAssetRoot`
 - the installed release payload `release-manifest.json` and `README.txt` paths: `releasePayloadManifest`, `releasePayloadReadmeFile`
 - mutable config, data, log, and run roots plus the canonical config file path: `configRoot`, `configFile`, `mutableDataRoot`, `logRoot`, `runRoot`

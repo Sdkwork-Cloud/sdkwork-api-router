@@ -65,6 +65,7 @@ test('unix installed runtime smoke script exposes a parseable CLI contract for r
   assert.equal(typeof module.createUnixInstalledRuntimeSmokeOptions, 'function');
   assert.equal(typeof module.createUnixInstalledRuntimeSmokePlan, 'function');
   assert.equal(typeof module.createUnixInstalledRuntimeSmokeEvidence, 'function');
+  assert.equal(typeof module.assertInstalledReleasePayloadContract, 'function');
   assert.equal(typeof module.resolveInstalledBootstrapDataRoot, 'function');
 
   const options = module.parseArgs([
@@ -129,6 +130,13 @@ test('unix installed runtime smoke script exposes a parseable CLI contract for r
           'bundles',
           'sdkwork-api-router-product-server-linux-x64.tar.gz',
         )),
+      true,
+    );
+    assert.equal(
+      plan.installPlan.files.some((file) =>
+        file.type === 'bundle-directory'
+        && file.bundleEntryPath === 'control/bin'
+        && file.targetPath === path.join(options.runtimeHome, 'current', 'bin')),
       true,
     );
     assert.deepEqual(plan.healthUrls, [

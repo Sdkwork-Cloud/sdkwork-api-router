@@ -21,6 +21,36 @@ function toPortablePath(value) {
   return value.replaceAll(path.sep, '/');
 }
 
+function installLabelForRelativeDir(relativeDir) {
+  const appName = path.basename(relativeDir);
+
+  if (appName === 'sdkwork-router-admin') {
+    return 'admin install';
+  }
+
+  if (appName === 'sdkwork-router-portal') {
+    return 'portal install';
+  }
+
+  return `${appName} install`;
+}
+
+function installCandidatesForMode(mode) {
+  switch (mode) {
+    case 'server':
+      return [
+        toPortablePath(path.join('apps', 'sdkwork-router-admin')),
+        toPortablePath(path.join('apps', 'sdkwork-router-portal')),
+      ];
+    case 'desktop':
+    case 'service':
+    case 'browser':
+      return [toPortablePath(path.join('apps', 'sdkwork-router-portal'))];
+    default:
+      return [];
+  }
+}
+
 export function parseRouterProductArgs(argv) {
   const result = {
     mode: 'desktop',
@@ -50,7 +80,11 @@ export function parseRouterProductArgs(argv) {
       continue;
     }
     if (arg === '--help' || arg === '-h') {
-      result.help = true;
+      if (modeSet) {
+        result.extraArgs.push(arg);
+      } else {
+        result.help = true;
+      }
       continue;
     }
     if (!modeSet && !arg.startsWith('-')) {
@@ -72,6 +106,10 @@ function appendForwardArgs(args, extraArgs) {
   return [...args, '--', ...extraArgs];
 }
 
+function isForwardedHelpRequest(extraArgs = []) {
+  return extraArgs.length === 1 && (extraArgs[0] === '--help' || extraArgs[0] === '-h');
+}
+
 export function createRouterProductLaunchPlan({
   workspaceRoot = path.resolve(__dirname, '..'),
   mode = 'desktop',
@@ -87,11 +125,16 @@ export function createRouterProductLaunchPlan({
   const nodeCommand = process.execPath;
   const plan = [];
 
-  if (install || !existsSync(path.join(portalAbsoluteDir, 'node_modules'))) {
+  for (const relativeDir of installCandidatesForMode(mode)) {
+    const absoluteDir = path.join(workspaceRoot, relativeDir);
+    if (!install && existsSync(path.join(absoluteDir, 'node_modules'))) {
+      continue;
+    }
+
     plan.push({
-      label: 'portal install',
+      label: installLabelForRelativeDir(relativeDir),
       command: pnpm,
-      args: ['--dir', portalRelativeDir, 'install'],
+      args: ['--dir', relativeDir, 'install'],
       cwd: workspaceRoot,
       env,
       shell,
@@ -101,7 +144,10 @@ export function createRouterProductLaunchPlan({
 
   let launchArgs;
   let label;
+  let launchCommand = pnpm;
   let launchEnv = env;
+  let launchShell = shell;
+  let launchWindowsHide = platform === 'win32';
   switch (mode) {
     case 'desktop':
       label = 'portal desktop runtime';
@@ -118,8 +164,14 @@ export function createRouterProductLaunchPlan({
       };
       break;
     case 'server':
-      label = 'portal product server';
-      launchArgs = appendForwardArgs(['--dir', portalRelativeDir, 'server:start'], extraArgs);
+      label = 'server development workspace';
+      launchCommand = nodeCommand;
+      launchShell = false;
+      launchArgs = [
+        path.join(workspaceRoot, 'scripts', 'dev', 'start-workspace.mjs'),
+        '--proxy-dev',
+        ...extraArgs,
+      ];
       break;
     case 'plan':
       plan.push({
@@ -153,12 +205,12 @@ export function createRouterProductLaunchPlan({
 
   plan.push({
     label,
-    command: pnpm,
+    command: launchCommand,
     args: launchArgs,
     cwd: workspaceRoot,
     env: launchEnv,
-    shell,
-    windowsHide: platform === 'win32',
+    shell: launchShell,
+    windowsHide: launchWindowsHide,
   });
 
   return plan;
@@ -167,27 +219,30 @@ export function createRouterProductLaunchPlan({
 function printHelp() {
   console.log(`Usage: node scripts/run-router-product.mjs [mode] [options] [mode-args...]
 
-Start the sdkwork-router-portal product as a desktop runtime or server runtime.
+Start the sdkwork-router-portal product through the unified root entrypoint.
 
 Modes:
   desktop  Start the Tauri desktop host and embedded router product runtime (default)
   service  Start the desktop host in tray-managed service mode
-  server   Start router-product-service through the portal product entrypoint
+  server   Start the full server development workspace (backend + admin + portal + unified web host)
   plan     Print the resolved server deployment plan through the portal entrypoint
   check    Run the integrated product verification flow
   browser  Start the standalone portal browser dev server
 
 Options:
-  --install   Run pnpm install for sdkwork-router-portal before starting
+  --install   Run the required frontend pnpm installs before starting
   --dry-run   Print the planned commands without running them
   -h, --help  Show this help
 
 Examples:
   node scripts/run-router-product.mjs
   node scripts/run-router-product.mjs service
-  node scripts/run-router-product.mjs server --roles web --gateway-upstream 10.0.0.21:8080
+  node scripts/run-router-product.mjs server --gateway-bind 0.0.0.0:9980 --web-bind 127.0.0.1:9983
   node scripts/run-router-product.mjs plan --roles web
   node scripts/run-router-product.mjs check
+
+For the standalone integrated router-product-service CLI, use:
+  pnpm --dir apps/sdkwork-router-portal server:start -- --help
 `);
 }
 
@@ -228,10 +283,13 @@ async function main() {
     install: settings.install,
     extraArgs: settings.extraArgs,
   });
+  const suppressPlanLogging = isForwardedHelpRequest(settings.extraArgs) && !settings.dryRun;
 
   for (const step of plan) {
-    const rendered = `${step.command} ${step.args.join(' ')}`;
-    console.error(`[run-router-product] ${rendered}`);
+    if (!suppressPlanLogging) {
+      const rendered = `${step.command} ${step.args.join(' ')}`;
+      console.error(`[run-router-product] ${rendered}`);
+    }
     if (settings.dryRun) {
       continue;
     }

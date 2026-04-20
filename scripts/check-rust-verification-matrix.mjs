@@ -6,20 +6,40 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
+import { createStrictKeyedCatalog } from './strict-contract-catalog.mjs';
 import { withSupportedWindowsCmakeGenerator } from './run-tauri-cli.mjs';
 import { withManagedWorkspaceTargetDir, withManagedWorkspaceTempDir } from './workspace-target-dir.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-export const VERIFICATION_GROUPS = [
-  'interface-openapi',
-  'gateway-service',
-  'admin-service',
-  'portal-service',
-  'dependency-audit',
-  'product-runtime',
-  'workspace',
-];
+const rustVerificationGroupCatalog = createStrictKeyedCatalog({
+  entries: [
+    'interface-openapi',
+    'gateway-service',
+    'admin-service',
+    'portal-service',
+    'dependency-audit',
+    'product-runtime',
+    'workspace',
+  ],
+  getKey: (groupId) => groupId,
+  duplicateKeyMessagePrefix: 'duplicate rust verification group',
+  missingKeyMessagePrefix: 'missing rust verification group',
+});
+
+export const VERIFICATION_GROUPS = rustVerificationGroupCatalog.list();
+
+export function listRustVerificationGroups() {
+  return rustVerificationGroupCatalog.list();
+}
+
+export function findRustVerificationGroup(groupId) {
+  return rustVerificationGroupCatalog.find(groupId);
+}
+
+export function listRustVerificationGroupsByIds(groupIds = []) {
+  return rustVerificationGroupCatalog.listByKeys(groupIds);
+}
 
 function resolveRustRunner(platform = process.platform, env = process.env) {
   if (platform === 'win32') {
@@ -117,11 +137,9 @@ export function createRustVerificationPlan({
   platform = process.platform,
   env = process.env,
 } = {}) {
-  if (!VERIFICATION_GROUPS.includes(group)) {
-    throw new Error(`unknown verification group: ${group}`);
-  }
+  const verificationGroup = findRustVerificationGroup(group);
 
-  switch (group) {
+  switch (verificationGroup) {
     case 'interface-openapi':
       return [
         cargoStep({
@@ -239,7 +257,7 @@ function parseArgs(argv = process.argv.slice(2)) {
       continue;
     }
     if (value === '--list-groups') {
-      console.log(VERIFICATION_GROUPS.join('\n'));
+      console.log(listRustVerificationGroups().join('\n'));
       process.exit(0);
     }
     throw new Error(`unknown argument: ${value}`);

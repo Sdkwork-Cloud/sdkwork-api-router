@@ -93,6 +93,7 @@ test('release window snapshot helpers expose release baseline parsing and workin
       [
         ' M docs/release/release-window-snapshot-latest.json',
         ' M docs/release/release-sync-audit-latest.json',
+        ' M docs/release/third-party-sbom-latest.spdx.json',
         '?? docs/review/new-note.md',
       ].join('\n'),
     ),

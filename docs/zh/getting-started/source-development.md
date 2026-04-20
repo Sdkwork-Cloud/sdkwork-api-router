@@ -64,7 +64,12 @@ pnpm server:dev
 ```
 
 `pnpm tauri:dev` 会通过统一根入口启动 portal desktop 产品路径。
-`pnpm server:dev` 会通过同一套工作区契约启动 router product server 路径。
+`pnpm server:dev` 会通过同一套根入口启动完整的 server 开发工作区。
+这个 server 工作区使用 `proxy-dev` 模式，因此 backend API、admin Vite server、portal Vite server，以及统一的 Pingora web host 会一起启动。
+
+portal desktop 的源码调试构建现在会在把受监管 sidecar 判定为失败之前等待更久，这可以减少较慢 Windows 开发机上的误报。如果你仍然需要更大的预热预算，请在执行 `pnpm tauri:dev` 之前设置 `SDKWORK_ROUTER_RUNTIME_HEALTH_TIMEOUT_MS=<毫秒值>`。当启动确实失败时，desktop runtime 错误会打印解析后的路由器二进制路径、`router.yaml`、stdout/stderr 日志文件，以及实际探测过的 health probe URLs。
+
+如果你需要独立的一体化 `router-product-service` CLI，而不是开发工作区契约，请使用 `pnpm --dir apps/sdkwork-router-portal server:start`。
 
 特点：
 

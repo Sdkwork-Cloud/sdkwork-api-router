@@ -15,11 +15,16 @@ on:
         required: false
         type: string
 
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.event.inputs.release_tag || github.ref_name || github.run_id }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
   id-token: write
   attestations: write
   artifact-metadata: write
+  packages: write
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
@@ -153,11 +158,17 @@ jobs:
           ref: ${{ needs.prepare.outputs.git_ref }}
           fetch-depth: 0
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v5
+
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
           node-version: 22
-          package-manager-cache: false
+          cache: pnpm
+          cache-dependency-path: |
+            apps/sdkwork-router-admin/pnpm-lock.yaml
+            apps/sdkwork-router-portal/pnpm-lock.yaml
 
       - name: Materialize external release dependencies
         shell: bash
@@ -168,6 +179,30 @@ jobs:
           SDKWORK_APPBASE_GIT_REF: ${{ vars.SDKWORK_APPBASE_GIT_REF || 'main' }}
           SDKWORK_CRAW_CHAT_SDK_GIT_REF: ${{ vars.SDKWORK_CRAW_CHAT_SDK_GIT_REF || 'main' }}
         run: node scripts/release/materialize-external-deps.mjs
+
+      - name: Install governance workspace dependencies
+        shell: bash
+        run: |
+          pnpm --dir apps/sdkwork-router-admin install --frozen-lockfile
+          pnpm --dir apps/sdkwork-router-portal install --frozen-lockfile
+
+      - name: Materialize third-party governance
+        shell: bash
+        run: node scripts/release/materialize-third-party-governance.mjs
+
+      - name: Upload third-party SBOM governance artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-governance-third-party-sbom
+          path: docs/release/third-party-sbom-latest.spdx.json
+          if-no-files-found: error
+
+      - name: Upload third-party notices governance artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-governance-third-party-notices
+          path: docs/release/third-party-notices-latest.json
+          if-no-files-found: error
 
       - name: Materialize release window snapshot
         shell: bash
@@ -260,6 +295,12 @@ jobs:
           path: artifacts/release-governance-bundle/**/*
           if-no-files-found: error
 
+      - name: Generate governance bundle attestation
+        if: ${{ !github.event.repository.private || vars.SDKWORK_RELEASE_ARTIFACT_ATTESTATIONS_ENABLED == 'true' }}
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: artifacts/release-governance-bundle/**/*
+
       - name: Generate governance evidence attestation
         if: ${{ !github.event.repository.private || vars.SDKWORK_RELEASE_ARTIFACT_ATTESTATIONS_ENABLED == 'true' }}
         uses: actions/attest-build-provenance@v3
@@ -270,6 +311,8 @@ jobs:
             docs/release/release-telemetry-export-latest.json
             docs/release/release-telemetry-snapshot-latest.json
             docs/release/slo-governance-latest.json
+            docs/release/third-party-sbom-latest.spdx.json
+            docs/release/third-party-notices-latest.json
 
       - name: Run release governance gate
         shell: bash
@@ -505,6 +548,33 @@ jobs:
             artifacts/release/native/${{ matrix.platform }}/${{ matrix.arch }}/desktop/portal/sdkwork-router-portal-desktop-*
           if-no-files-found: error
 
+      - name: Publish Linux container image
+        if: matrix.platform == 'linux'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push Linux container image payload
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: node scripts/release/publish-ghcr-image.mjs --release-tag ${{ needs.prepare.outputs.release_tag }} --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --bundle-path artifacts/release/native/${{ matrix.platform }}/${{ matrix.arch }}/bundles/sdkwork-api-router-product-server-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz --metadata-path artifacts/release-governance/ghcr-image-publish-${{ matrix.platform }}-${{ matrix.arch }}.json
+
+      - name: Upload GHCR image publish metadata
+        if: ${{ always() && matrix.platform == 'linux' && hashFiles(format('artifacts/release-governance/ghcr-image-publish-{0}-{1}.json', matrix.platform, matrix.arch)) != '' }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-governance-ghcr-image-publish-${{ matrix.platform }}-${{ matrix.arch }}
+          path: artifacts/release-governance/ghcr-image-publish-${{ matrix.platform }}-${{ matrix.arch }}.json
+          if-no-files-found: error
+
+      - name: Generate GHCR image publish metadata attestation
+        if: ${{ (!github.event.repository.private || vars.SDKWORK_RELEASE_ARTIFACT_ATTESTATIONS_ENABLED == 'true') && matrix.platform == 'linux' && hashFiles(format('artifacts/release-governance/ghcr-image-publish-{0}-{1}.json', matrix.platform, matrix.arch)) != '' }}
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: artifacts/release-governance/ghcr-image-publish-${{ matrix.platform }}-${{ matrix.arch }}.json
+
       - name: Generate native release assets attestation
         if: ${{ !github.event.repository.private || vars.SDKWORK_RELEASE_ARTIFACT_ATTESTATIONS_ENABLED == 'true' }}
         uses: actions/attest-build-provenance@v3
@@ -550,6 +620,33 @@ jobs:
         uses: actions/attest-build-provenance@v3
         with:
           subject-path: artifacts/release/release-catalog.json
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Publish multi-arch container image manifest
+        run: node scripts/release/publish-ghcr-manifest.mjs --release-tag ${{ needs.prepare.outputs.release_tag }} --metadata-path artifacts/release-governance/ghcr-image-manifest-publish.json
+
+      - name: Upload GHCR image manifest publish metadata
+        if: ${{ always() && hashFiles('artifacts/release-governance/ghcr-image-manifest-publish.json') != '' }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-governance-ghcr-image-manifest-publish
+          path: artifacts/release-governance/ghcr-image-manifest-publish.json
+          if-no-files-found: error
+
+      - name: Generate GHCR image manifest publish metadata attestation
+        if: ${{ (!github.event.repository.private || vars.SDKWORK_RELEASE_ARTIFACT_ATTESTATIONS_ENABLED == 'true') && hashFiles('artifacts/release-governance/ghcr-image-manifest-publish.json') != '' }}
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: artifacts/release-governance/ghcr-image-manifest-publish.json
 
       - name: Publish release assets
         uses: softprops/action-gh-release@v3

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
@@ -35,6 +36,36 @@ test('router product launcher preserves forwarded mode arguments after --', asyn
   assert.deepEqual(parsed.extraArgs, ['--help']);
 });
 
+test('router product launcher forwards mode-specific help to the selected runtime instead of printing root help', () => {
+  const result = spawnSync(
+    process.execPath,
+    [path.join(workspaceRoot, 'scripts', 'run-router-product.mjs'), 'server', '--help'],
+    {
+      cwd: workspaceRoot,
+      encoding: 'utf8',
+    },
+  );
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /Usage: node scripts\/dev\/start-workspace\.mjs \[options\]/);
+  assert.doesNotMatch(result.stdout, /Usage: node scripts\/run-router-product\.mjs/);
+  assert.doesNotMatch(result.stderr, /\[run-router-product\]/);
+});
+
+test('router product launcher still prints root help when no mode is selected', () => {
+  const result = spawnSync(
+    process.execPath,
+    [path.join(workspaceRoot, 'scripts', 'run-router-product.mjs'), '--help'],
+    {
+      cwd: workspaceRoot,
+      encoding: 'utf8',
+    },
+  );
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /Usage: node scripts\/run-router-product\.mjs \[mode\] \[options\] \[mode-args\.\.\.\]/);
+});
+
 test('router product launcher defaults to desktop mode and installs dependencies when requested', async () => {
   const module = await import(
     pathToFileURL(path.join(workspaceRoot, 'scripts', 'run-router-product.mjs')).href
@@ -60,7 +91,7 @@ test('router product launcher defaults to desktop mode and installs dependencies
   assert.equal(plan[1].windowsHide, true);
 });
 
-test('router product launcher forwards cluster arguments into server mode', async () => {
+test('router product launcher forwards workspace arguments into server mode', async () => {
   const module = await import(
     pathToFileURL(path.join(workspaceRoot, 'scripts', 'run-router-product.mjs')).href
   );
@@ -71,24 +102,60 @@ test('router product launcher forwards cluster arguments into server mode', asyn
     install: false,
     platform: 'linux',
     env: {},
-    extraArgs: ['--roles', 'web', '--gateway-upstream', '10.0.0.21:8080'],
+    extraArgs: [
+      '--database-url',
+      'postgres://postgres:postgres@127.0.0.1:5432/sdkwork_api_router',
+      '--gateway-bind',
+      '0.0.0.0:9980',
+      '--web-bind',
+      '127.0.0.1:9983',
+    ],
   });
 
   assert.equal(plan.length, 1);
-  assert.equal(plan[0].label, 'portal product server');
-  assert.equal(plan[0].command, 'pnpm');
+  assert.equal(plan[0].label, 'server development workspace');
+  assert.equal(plan[0].command, process.execPath);
   assert.deepEqual(plan[0].args, [
-    '--dir',
-    'apps/sdkwork-router-portal',
-    'server:start',
-    '--',
-    '--roles',
-    'web',
-    '--gateway-upstream',
-    '10.0.0.21:8080',
+    path.join(workspaceRoot, 'scripts', 'dev', 'start-workspace.mjs'),
+    '--proxy-dev',
+    '--database-url',
+    'postgres://postgres:postgres@127.0.0.1:5432/sdkwork_api_router',
+    '--gateway-bind',
+    '0.0.0.0:9980',
+    '--web-bind',
+    '127.0.0.1:9983',
   ]);
   assert.equal(plan[0].shell, false);
   assert.equal(plan[0].windowsHide, false);
+});
+
+test('router product launcher installs admin and portal dependencies before server workspace mode when requested', async () => {
+  const module = await import(
+    pathToFileURL(path.join(workspaceRoot, 'scripts', 'run-router-product.mjs')).href
+  );
+
+  const plan = module.createRouterProductLaunchPlan({
+    workspaceRoot,
+    mode: 'server',
+    install: true,
+    platform: 'linux',
+    env: {},
+    extraArgs: [],
+  });
+
+  assert.equal(plan.length, 3);
+  assert.equal(plan[0].label, 'admin install');
+  assert.equal(plan[0].command, 'pnpm');
+  assert.deepEqual(plan[0].args, ['--dir', 'apps/sdkwork-router-admin', 'install']);
+  assert.equal(plan[1].label, 'portal install');
+  assert.equal(plan[1].command, 'pnpm');
+  assert.deepEqual(plan[1].args, ['--dir', 'apps/sdkwork-router-portal', 'install']);
+  assert.equal(plan[2].label, 'server development workspace');
+  assert.equal(plan[2].command, process.execPath);
+  assert.deepEqual(plan[2].args, [
+    path.join(workspaceRoot, 'scripts', 'dev', 'start-workspace.mjs'),
+    '--proxy-dev',
+  ]);
 });
 
 test('router product launcher enables hidden tray service mode for desktop startup', async () => {

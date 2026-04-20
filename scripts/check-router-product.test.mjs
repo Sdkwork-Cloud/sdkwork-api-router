@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
@@ -17,6 +17,26 @@ function readJson(relativePath) {
 
 function readText(relativePath) {
   return readFileSync(path.join(workspaceRoot, relativePath), 'utf8').replace(/\r\n/g, '\n');
+}
+
+function walkSourceFiles(rootDir, output = []) {
+  for (const entry of readdirSync(rootDir, { withFileTypes: true })) {
+    const fullPath = path.join(rootDir, entry.name);
+    if (entry.isDirectory()) {
+      if (entry.name === 'dist' || entry.name === 'node_modules' || entry.name === 'target') {
+        continue;
+      }
+
+      walkSourceFiles(fullPath, output);
+      continue;
+    }
+
+    if (/\.(?:[cm]?js|tsx?)$/.test(entry.name)) {
+      output.push(fullPath);
+    }
+  }
+
+  return output;
 }
 
 test('check-router-product exposes Windows-safe pnpm and rust runner plans without ambient globals', async () => {
@@ -56,6 +76,22 @@ test('check-router-product exposes Windows-safe pnpm and rust runner plans witho
   assert.equal(stepByLabel.get('admin typecheck')?.command, process.execPath);
   assert.match(stepByLabel.get('admin typecheck')?.args.join(' ') ?? '', /run-tsc-cli\.mjs --noEmit/);
   assert.match(stepByLabel.get('admin browser runtime smoke')?.args.join(' ') ?? '', /check-admin-browser-runtime\.mjs/);
+  assert.match(stepByLabel.get('server development workspace smoke')?.args.join(' ') ?? '', /check-server-dev-workspace\.mjs/);
+  const portalDesktopRustTests = stepByLabel.get('portal desktop runtime rust tests');
+  const portalDesktopRustRunner = module.resolveRustRunner(
+    'win32',
+    portalDesktopRustTests?.env ?? {},
+  );
+
+  assert.equal(portalDesktopRustTests?.command, portalDesktopRustRunner.command);
+  assert.deepEqual(portalDesktopRustTests?.args, [
+    ...portalDesktopRustRunner.args,
+    'test',
+    '--quiet',
+    '--manifest-path',
+    path.join(workspaceRoot, 'apps', 'sdkwork-router-portal', 'src-tauri', 'Cargo.toml'),
+  ]);
+  assert.equal(portalDesktopRustTests?.cwd, workspaceRoot);
   assert.match(stepByLabel.get('docs bootstrap safety')?.args.join(' ') ?? '', /check-router-docs-safety\.mjs/);
   assert.equal(stepByLabel.get('docs site build')?.command, 'powershell.exe');
   assert.deepEqual(stepByLabel.get('docs site build')?.args.slice(0, 4), [
@@ -166,6 +202,65 @@ test('product check requires the shared frontend runtime packages used by app re
   assert.deepEqual(
     module.PRODUCT_FRONTEND_REQUIRED_PACKAGES,
     ['vite', 'typescript', 'jiti'],
+  );
+});
+
+test('product check exposes strict required-frontend-package lookup helpers', async () => {
+  const module = await import(
+    pathToFileURL(path.join(workspaceRoot, 'scripts', 'check-router-product.mjs')).href,
+  );
+
+  assert.equal(typeof module.listProductFrontendRequiredPackages, 'function');
+  assert.equal(typeof module.findProductFrontendRequiredPackage, 'function');
+  assert.equal(typeof module.listProductFrontendRequiredPackagesByNames, 'function');
+
+  assert.equal(
+    module.findProductFrontendRequiredPackage('vite'),
+    'vite',
+  );
+  assert.deepEqual(
+    module.listProductFrontendRequiredPackagesByNames([
+      'typescript',
+      'jiti',
+    ]),
+    [
+      'typescript',
+      'jiti',
+    ],
+  );
+
+  assert.throws(
+    () => module.findProductFrontendRequiredPackage('missing-frontend-package'),
+    /missing product frontend required package.*missing-frontend-package/i,
+  );
+});
+
+test('source-linked frontend runtime code avoids named clsx imports that break browser ESM loading', () => {
+  const scanRoots = [
+    path.join(workspaceRoot, 'apps', 'sdkwork-router-portal', 'packages'),
+    path.resolve(workspaceRoot, '..', 'sdkwork-ui', 'sdkwork-ui-pc-react', 'src'),
+  ];
+  const offenders = [];
+
+  for (const scanRoot of scanRoots) {
+    assert.equal(
+      existsSync(scanRoot),
+      true,
+      `expected source-linked frontend runtime root to exist: ${scanRoot}`,
+    );
+
+    for (const sourceFile of walkSourceFiles(scanRoot)) {
+      const sourceText = readFileSync(sourceFile, 'utf8');
+      if (/import\s*\{\s*clsx\b/.test(sourceText)) {
+        offenders.push(path.relative(workspaceRoot, sourceFile).replaceAll('\\', '/'));
+      }
+    }
+  }
+
+  assert.deepEqual(
+    offenders,
+    [],
+    `named clsx imports are not browser-ESM safe for source-linked runtime code: ${offenders.join(', ')}`,
   );
 });
 

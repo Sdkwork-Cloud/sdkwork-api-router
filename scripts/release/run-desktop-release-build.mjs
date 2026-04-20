@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { buildDesktopReleaseEnv } from './desktop-targets.mjs';
 import {
   buildDesktopTargetTriple,
-  normalizeDesktopPlatform,
+  resolveDesktopReleaseBundleKinds,
 } from './desktop-targets.mjs';
 import {
   resolveAvailableNativeBuildRoot,
@@ -80,17 +80,7 @@ export function createDesktopReleaseBuildPlan({
 export function resolveDesktopReleaseBundles({
   platform = process.platform,
 } = {}) {
-  const normalizedPlatform = normalizeDesktopPlatform(platform);
-
-  if (normalizedPlatform === 'windows') {
-    return ['nsis'];
-  }
-
-  if (normalizedPlatform === 'linux') {
-    return ['deb'];
-  }
-
-  return ['dmg'];
+  return resolveDesktopReleaseBundleKinds({ platform });
 }
 
 export function shouldPassExplicitDesktopReleaseTarget({

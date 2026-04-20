@@ -19,6 +19,8 @@ test('parseWorkspaceArgs returns browser-mode defaults', () => {
     adminBind: '127.0.0.1:9981',
     portalBind: '127.0.0.1:9982',
     webBind: '0.0.0.0:9983',
+    adminSiteTarget: '127.0.0.1:5173',
+    portalSiteTarget: '127.0.0.1:5174',
     install: false,
     preview: false,
     proxyDev: false,
@@ -42,6 +44,10 @@ test('parseWorkspaceArgs forwards install, preview, proxy-dev, tauri, and bind o
     '0.0.0.0:18082',
     '--web-bind',
     '0.0.0.0:13001',
+    '--admin-site-target',
+    '127.0.0.1:15173',
+    '--portal-site-target',
+    '127.0.0.1:15174',
     '--install',
     '--preview',
     '--proxy-dev',
@@ -58,6 +64,8 @@ test('parseWorkspaceArgs forwards install, preview, proxy-dev, tauri, and bind o
   assert.equal(settings.adminBind, '0.0.0.0:18081');
   assert.equal(settings.portalBind, '0.0.0.0:18082');
   assert.equal(settings.webBind, '0.0.0.0:13001');
+  assert.equal(settings.adminSiteTarget, '127.0.0.1:15173');
+  assert.equal(settings.portalSiteTarget, '127.0.0.1:15174');
   assert.equal(settings.install, true);
   assert.equal(settings.preview, true);
   assert.equal(settings.proxyDev, true);
@@ -184,6 +192,8 @@ test('buildWorkspaceCommandPlan can proxy admin and portal dev servers through t
     adminBind: '127.0.0.1:9981',
     portalBind: '127.0.0.1:9982',
     webBind: '127.0.0.1:9983',
+    adminSiteTarget: '127.0.0.1:15173',
+    portalSiteTarget: '127.0.0.1:15174',
     install: false,
     preview: false,
     proxyDev: true,
@@ -192,8 +202,8 @@ test('buildWorkspaceCommandPlan can proxy admin and portal dev servers through t
     help: false,
   });
 
-  assert.deepEqual(plan.admin.args, ['scripts/dev/start-admin.mjs', '--dry-run']);
-  assert.deepEqual(plan.portal.args, ['scripts/dev/start-portal.mjs', '--dry-run']);
+  assert.deepEqual(plan.admin.args, ['scripts/dev/start-admin.mjs', '--port', '15173', '--dry-run']);
+  assert.deepEqual(plan.portal.args, ['scripts/dev/start-portal.mjs', '--port', '15174', '--dry-run']);
   assert.deepEqual(plan.web.args, [
     'scripts/dev/start-web.mjs',
     '--bind',
@@ -205,9 +215,9 @@ test('buildWorkspaceCommandPlan can proxy admin and portal dev servers through t
     '--gateway-target',
     '127.0.0.1:9980',
     '--admin-site-target',
-    '127.0.0.1:5173',
+    '127.0.0.1:15173',
     '--portal-site-target',
-    '127.0.0.1:5174',
+    '127.0.0.1:15174',
     '--proxy-dev',
     '--dry-run',
   ]);
@@ -220,6 +230,8 @@ test('buildWorkspaceCommandPlan keeps browser mode on standalone admin and porta
     adminBind: '127.0.0.1:9981',
     portalBind: '127.0.0.1:9982',
     webBind: '0.0.0.0:9983',
+    adminSiteTarget: '127.0.0.1:15173',
+    portalSiteTarget: '127.0.0.1:15174',
     install: false,
     preview: false,
     proxyDev: false,
@@ -229,9 +241,9 @@ test('buildWorkspaceCommandPlan keeps browser mode on standalone admin and porta
   });
 
   assert.equal(plan.admin.scriptPath, 'scripts/dev/start-admin.mjs');
-  assert.deepEqual(plan.admin.args, ['scripts/dev/start-admin.mjs', '--dry-run']);
+  assert.deepEqual(plan.admin.args, ['scripts/dev/start-admin.mjs', '--port', '15173', '--dry-run']);
   assert.equal(plan.portal.scriptPath, 'scripts/dev/start-portal.mjs');
-  assert.deepEqual(plan.portal.args, ['scripts/dev/start-portal.mjs', '--dry-run']);
+  assert.deepEqual(plan.portal.args, ['scripts/dev/start-portal.mjs', '--port', '15174', '--dry-run']);
 });
 
 test('workspaceAccessLines describe unified access, direct service links, and bootstrap guidance without exposing fixed credentials', () => {
@@ -241,6 +253,8 @@ test('workspaceAccessLines describe unified access, direct service links, and bo
     adminBind: '127.0.0.1:9981',
     portalBind: '127.0.0.1:9982',
     webBind: '127.0.0.1:9983',
+    adminSiteTarget: '127.0.0.1:15173',
+    portalSiteTarget: '127.0.0.1:15174',
     install: false,
     preview: true,
     proxyDev: false,
@@ -270,6 +284,8 @@ test('workspaceAccessLines describe unified access, direct service links, and bo
     adminBind: '127.0.0.1:9981',
     portalBind: '127.0.0.1:9982',
     webBind: '127.0.0.1:9983',
+    adminSiteTarget: '127.0.0.1:15173',
+    portalSiteTarget: '127.0.0.1:15174',
     install: false,
     preview: false,
     proxyDev: false,
@@ -279,8 +295,8 @@ test('workspaceAccessLines describe unified access, direct service links, and bo
   }).join('\n');
 
   assert.match(browserLines, /Frontend Access/);
-  assert.match(browserLines, /http:\/\/127\.0\.0\.1:5173\/admin\//);
-  assert.match(browserLines, /http:\/\/127\.0\.0\.1:5174\/portal\//);
+  assert.match(browserLines, /http:\/\/127\.0\.0\.1:15173\/admin\//);
+  assert.match(browserLines, /http:\/\/127\.0\.0\.1:15174\/portal\//);
   assert.match(browserLines, /http:\/\/127\.0\.0\.1:9980\/openapi\.json/);
   assert.match(browserLines, /http:\/\/127\.0\.0\.1:9981\/admin\/openapi\.json/);
   assert.match(browserLines, /http:\/\/127\.0\.0\.1:9982\/portal\/openapi\.json/);
@@ -291,6 +307,8 @@ test('workspaceAccessLines describe unified access, direct service links, and bo
     adminBind: '127.0.0.1:9981',
     portalBind: '127.0.0.1:9982',
     webBind: '127.0.0.1:9983',
+    adminSiteTarget: '127.0.0.1:15173',
+    portalSiteTarget: '127.0.0.1:15174',
     install: false,
     preview: false,
     proxyDev: true,

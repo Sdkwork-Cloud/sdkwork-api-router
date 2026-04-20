@@ -22,6 +22,42 @@ function toPortableRelativePath(root, targetPath) {
   return path.relative(root, targetPath).replaceAll('\\', '/');
 }
 
+function writeGovernanceBundleFixture(root) {
+  writeFixtureFile(
+    root,
+    'artifacts/release-governance-bundle/docs/release/release-window-snapshot-latest.json',
+  );
+  writeFixtureFile(
+    root,
+    'artifacts/release-governance-bundle/docs/release/release-sync-audit-latest.json',
+  );
+  writeFixtureFile(
+    root,
+    'artifacts/release-governance-bundle/docs/release/release-telemetry-export-latest.json',
+  );
+  writeFixtureFile(
+    root,
+    'artifacts/release-governance-bundle/docs/release/release-telemetry-snapshot-latest.json',
+  );
+  writeFixtureFile(
+    root,
+    'artifacts/release-governance-bundle/docs/release/slo-governance-latest.json',
+  );
+  writeFixtureFile(
+    root,
+    'artifacts/release-governance-bundle/docs/release/third-party-sbom-latest.spdx.json',
+  );
+  writeFixtureFile(
+    root,
+    'artifacts/release-governance-bundle/docs/release/third-party-notices-latest.json',
+  );
+  writeFixtureFile(
+    root,
+    'artifacts/release-governance-bundle/release-governance-bundle-manifest.json',
+    '{}\n',
+  );
+}
+
 test('release attestation verifier exposes governed subjects and gh command plans', async () => {
   const module = await import(
     pathToFileURL(
@@ -41,6 +77,12 @@ test('release attestation verifier exposes governed subjects and gh command plan
     writeFixtureFile(fixtureRoot, 'docs/release/release-telemetry-export-latest.json');
     writeFixtureFile(fixtureRoot, 'docs/release/release-telemetry-snapshot-latest.json');
     writeFixtureFile(fixtureRoot, 'docs/release/slo-governance-latest.json');
+    writeFixtureFile(fixtureRoot, 'docs/release/third-party-sbom-latest.spdx.json');
+    writeFixtureFile(fixtureRoot, 'docs/release/third-party-notices-latest.json');
+    writeFixtureFile(fixtureRoot, 'docs/release/third-party-sbom-latest.spdx.json');
+    writeFixtureFile(fixtureRoot, 'docs/release/third-party-notices-latest.json');
+    writeFixtureFile(fixtureRoot, 'docs/release/third-party-sbom-latest.spdx.json');
+    writeFixtureFile(fixtureRoot, 'docs/release/third-party-notices-latest.json');
     writeFixtureFile(
       fixtureRoot,
       'artifacts/release-governance/unix-installed-runtime-smoke-linux-x64.json',
@@ -49,6 +91,27 @@ test('release attestation verifier exposes governed subjects and gh command plan
       fixtureRoot,
       'artifacts/release-governance/windows-installed-runtime-smoke-windows-x64.json',
     );
+    writeFixtureFile(
+      fixtureRoot,
+      'artifacts/release-governance/desktop-release-signing-linux-x64.json',
+    );
+    writeFixtureFile(
+      fixtureRoot,
+      'artifacts/release-governance/docker-compose-smoke-linux-x64.json',
+    );
+    writeFixtureFile(
+      fixtureRoot,
+      'artifacts/release-governance/helm-render-smoke-linux-x64.json',
+    );
+    writeFixtureFile(
+      fixtureRoot,
+      'artifacts/release-governance/ghcr-image-publish-linux-x64.json',
+    );
+    writeFixtureFile(
+      fixtureRoot,
+      'artifacts/release-governance/ghcr-image-manifest-publish.json',
+    );
+    writeGovernanceBundleFixture(fixtureRoot);
     writeFixtureFile(fixtureRoot, 'artifacts/release/release-catalog.json');
     writeFixtureFile(fixtureRoot, 'artifacts/release/native/linux/x64/bundles/router-server.tar.gz', 'binary');
     writeFixtureFile(fixtureRoot, 'artifacts/release/native/linux/x64/desktop/portal/router-portal.zip', 'binary');
@@ -67,8 +130,23 @@ test('release attestation verifier exposes governed subjects and gh command plan
         'docs/release/release-telemetry-export-latest.json',
         'docs/release/release-telemetry-snapshot-latest.json',
         'docs/release/slo-governance-latest.json',
+        'docs/release/third-party-sbom-latest.spdx.json',
+        'docs/release/third-party-notices-latest.json',
+        'artifacts/release-governance-bundle/docs/release/release-sync-audit-latest.json',
+        'artifacts/release-governance-bundle/docs/release/release-telemetry-export-latest.json',
+        'artifacts/release-governance-bundle/docs/release/release-telemetry-snapshot-latest.json',
+        'artifacts/release-governance-bundle/docs/release/release-window-snapshot-latest.json',
+        'artifacts/release-governance-bundle/docs/release/slo-governance-latest.json',
+        'artifacts/release-governance-bundle/docs/release/third-party-notices-latest.json',
+        'artifacts/release-governance-bundle/docs/release/third-party-sbom-latest.spdx.json',
+        'artifacts/release-governance-bundle/release-governance-bundle-manifest.json',
         'artifacts/release-governance/unix-installed-runtime-smoke-linux-x64.json',
         'artifacts/release-governance/windows-installed-runtime-smoke-windows-x64.json',
+        'artifacts/release-governance/desktop-release-signing-linux-x64.json',
+        'artifacts/release-governance/docker-compose-smoke-linux-x64.json',
+        'artifacts/release-governance/helm-render-smoke-linux-x64.json',
+        'artifacts/release-governance/ghcr-image-publish-linux-x64.json',
+        'artifacts/release-governance/ghcr-image-manifest-publish.json',
         'artifacts/release/release-catalog.json',
         'artifacts/release/native/linux/x64/bundles/router-server.tar.gz',
         'artifacts/release/native/linux/x64/desktop/portal/router-portal.zip',
@@ -92,8 +170,16 @@ test('release attestation verifier exposes governed subjects and gh command plan
         'release-telemetry-export',
         'release-telemetry-snapshot',
         'release-slo-governance',
+        'third-party-sbom',
+        'third-party-notices',
+        'release-governance-bundle',
         'unix-installed-runtime-smoke',
         'windows-installed-runtime-smoke',
+        'desktop-release-signing',
+        'docker-compose-smoke',
+        'helm-render-smoke',
+        'ghcr-image-publish',
+        'ghcr-image-manifest-publish',
         'release-catalog',
         'release-assets',
       ],
@@ -101,6 +187,43 @@ test('release attestation verifier exposes governed subjects and gh command plan
   } finally {
     rmSync(fixtureRoot, { recursive: true, force: true });
   }
+});
+
+test('release attestation verifier exposes strict governed subject lookup helpers', async () => {
+  const module = await import(
+    pathToFileURL(
+      path.join(repoRoot, 'scripts', 'release', 'verify-release-attestations.mjs'),
+    ).href,
+  );
+
+  assert.equal(typeof module.findReleaseAttestationSubjectSpec, 'function');
+  assert.equal(typeof module.listReleaseAttestationSubjectSpecsByIds, 'function');
+
+  const releaseCatalogSpec = module.findReleaseAttestationSubjectSpec('release-catalog');
+  assert.equal(releaseCatalogSpec.id, 'release-catalog');
+  assert.equal(releaseCatalogSpec.type, 'file');
+
+  releaseCatalogSpec.description = 'mutated-locally';
+  assert.equal(
+    module.findReleaseAttestationSubjectSpec('release-catalog').description,
+    'published release catalog',
+  );
+
+  assert.deepEqual(
+    module.listReleaseAttestationSubjectSpecsByIds([
+      'release-window-snapshot',
+      'release-assets',
+    ]).map(({ id }) => id),
+    [
+      'release-window-snapshot',
+      'release-assets',
+    ],
+  );
+
+  assert.throws(
+    () => module.findReleaseAttestationSubjectSpec('missing-release-attestation-subject'),
+    /missing release attestation subject spec.*missing-release-attestation-subject/i,
+  );
 });
 
 test('release attestation verifier reports blocked when required subject paths are missing', async () => {
@@ -131,8 +254,16 @@ test('release attestation verifier reports blocked when required subject paths a
         'release-telemetry-export',
         'release-telemetry-snapshot',
         'release-slo-governance',
+        'third-party-sbom',
+        'third-party-notices',
+        'release-governance-bundle',
         'unix-installed-runtime-smoke',
         'windows-installed-runtime-smoke',
+        'desktop-release-signing',
+        'docker-compose-smoke',
+        'helm-render-smoke',
+        'ghcr-image-publish',
+        'ghcr-image-manifest-publish',
         'release-catalog',
         'release-assets',
       ],
@@ -157,6 +288,8 @@ test('release attestation verifier reports blocked when gh execution is unavaila
     writeFixtureFile(fixtureRoot, 'docs/release/release-telemetry-export-latest.json');
     writeFixtureFile(fixtureRoot, 'docs/release/release-telemetry-snapshot-latest.json');
     writeFixtureFile(fixtureRoot, 'docs/release/slo-governance-latest.json');
+    writeFixtureFile(fixtureRoot, 'docs/release/third-party-sbom-latest.spdx.json');
+    writeFixtureFile(fixtureRoot, 'docs/release/third-party-notices-latest.json');
     writeFixtureFile(
       fixtureRoot,
       'artifacts/release-governance/unix-installed-runtime-smoke-linux-x64.json',
@@ -165,6 +298,27 @@ test('release attestation verifier reports blocked when gh execution is unavaila
       fixtureRoot,
       'artifacts/release-governance/windows-installed-runtime-smoke-windows-x64.json',
     );
+    writeFixtureFile(
+      fixtureRoot,
+      'artifacts/release-governance/desktop-release-signing-linux-x64.json',
+    );
+    writeFixtureFile(
+      fixtureRoot,
+      'artifacts/release-governance/docker-compose-smoke-linux-x64.json',
+    );
+    writeFixtureFile(
+      fixtureRoot,
+      'artifacts/release-governance/helm-render-smoke-linux-x64.json',
+    );
+    writeFixtureFile(
+      fixtureRoot,
+      'artifacts/release-governance/ghcr-image-publish-linux-x64.json',
+    );
+    writeFixtureFile(
+      fixtureRoot,
+      'artifacts/release-governance/ghcr-image-manifest-publish.json',
+    );
+    writeGovernanceBundleFixture(fixtureRoot);
     writeFixtureFile(fixtureRoot, 'artifacts/release/release-catalog.json');
     writeFixtureFile(fixtureRoot, 'artifacts/release/native/linux/x64/bundles/router-server.tar.gz', 'binary');
 
@@ -205,6 +359,8 @@ test('release attestation verifier reports real verification failures separately
     writeFixtureFile(fixtureRoot, 'docs/release/release-telemetry-export-latest.json');
     writeFixtureFile(fixtureRoot, 'docs/release/release-telemetry-snapshot-latest.json');
     writeFixtureFile(fixtureRoot, 'docs/release/slo-governance-latest.json');
+    writeFixtureFile(fixtureRoot, 'docs/release/third-party-sbom-latest.spdx.json');
+    writeFixtureFile(fixtureRoot, 'docs/release/third-party-notices-latest.json');
     writeFixtureFile(
       fixtureRoot,
       'artifacts/release-governance/unix-installed-runtime-smoke-linux-x64.json',
@@ -213,6 +369,27 @@ test('release attestation verifier reports real verification failures separately
       fixtureRoot,
       'artifacts/release-governance/windows-installed-runtime-smoke-windows-x64.json',
     );
+    writeFixtureFile(
+      fixtureRoot,
+      'artifacts/release-governance/desktop-release-signing-linux-x64.json',
+    );
+    writeFixtureFile(
+      fixtureRoot,
+      'artifacts/release-governance/docker-compose-smoke-linux-x64.json',
+    );
+    writeFixtureFile(
+      fixtureRoot,
+      'artifacts/release-governance/helm-render-smoke-linux-x64.json',
+    );
+    writeFixtureFile(
+      fixtureRoot,
+      'artifacts/release-governance/ghcr-image-publish-linux-x64.json',
+    );
+    writeFixtureFile(
+      fixtureRoot,
+      'artifacts/release-governance/ghcr-image-manifest-publish.json',
+    );
+    writeGovernanceBundleFixture(fixtureRoot);
     writeFixtureFile(fixtureRoot, 'artifacts/release/release-catalog.json');
     writeFixtureFile(fixtureRoot, 'artifacts/release/native/linux/x64/bundles/router-server.tar.gz', 'binary');
 
@@ -242,7 +419,7 @@ test('release attestation verifier reports real verification failures separately
     assert.equal(result.blocked, false);
     assert.equal(result.reason, 'attestation-verify-failed');
     assert.equal(result.failedCount, 1);
-    assert.equal(result.verifiedCount, 8);
+    assert.equal(result.verifiedCount, 23);
     assert.match(
       result.reports.find((report) => report.ok === false)?.stderr ?? '',
       /no matching attestation/,

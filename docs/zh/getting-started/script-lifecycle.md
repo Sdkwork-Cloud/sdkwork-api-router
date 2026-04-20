@@ -65,6 +65,9 @@ SDKWork 提供两套脚本层，它们解决的问题不同。
 | `scripts/dev/start-portal.mjs` | 原始源码开发态 | 启动 portal 浏览器应用 | 仅源码树 | 当前终端 `Ctrl+C` |
 | `scripts/dev/start-web.mjs` | 原始源码开发态 | 构建 admin / portal 静态资源并通过 Pingora 暴露 | 仅源码树 | 当前终端 `Ctrl+C` |
 
+已安装的产品根目录直接使用 `./current/bin/start.sh`、`powershell -NoProfile -ExecutionPolicy Bypass -File .\current\bin\start.ps1`、`./current/bin/stop.sh` 和 `powershell -NoProfile -ExecutionPolicy Bypass -File .\current\bin\stop.ps1`。
+仓库内的 `bin/*` 仍然是源码 checkout 包装层，通过 `--home <product-root>` 指向同一套 installed contract。
+
 ## 端口模型
 
 仓库里有两套重要的默认端口。
@@ -254,14 +257,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\install.ps1
 Linux 或 macOS：
 
 ```bash
-./bin/start.sh --home artifacts/install/sdkwork-api-router/current
+./bin/start.sh --home artifacts/install/sdkwork-api-router
 ```
 
 Windows：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\start.ps1 -Home .\artifacts\install\sdkwork-api-router\current
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\start.ps1 -Home .\artifacts\install\sdkwork-api-router
 ```
+
+从已安装的产品根目录直接执行时，可使用：
+
+- `./current/bin/start.sh --home <product-root>`
+- `powershell -NoProfile -ExecutionPolicy Bypass -File .\current\bin\start.ps1 -Home <product-root>`
 
 发布态启动脚本会：
 
@@ -276,13 +284,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\start.ps1 -Home .\arti
 Linux 或 macOS：
 
 ```bash
-./bin/stop.sh --home artifacts/install/sdkwork-api-router/current
+./bin/stop.sh --home artifacts/install/sdkwork-api-router
 ```
 
 Windows：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\stop.ps1 -Home .\artifacts\install\sdkwork-api-router\current
+powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\stop.ps1 -Home .\artifacts\install\sdkwork-api-router
 ```
 
 ### 6. 可选：注册系统服务
@@ -301,8 +309,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\stop.ps1 -Home .\artif
 
 service manager 场景下应使用前台模式：
 
-- `bin/start.sh --foreground --home <product-root>/current`
-- `bin/start.ps1 -Foreground -Home <product-root>\current`
+- `./current/bin/start.sh --foreground --home <product-root>`
+- `powershell -NoProfile -ExecutionPolicy Bypass -File .\current\bin\start.ps1 -Foreground -Home <product-root>`
 
 ## Portal Desktop 生命周期
 

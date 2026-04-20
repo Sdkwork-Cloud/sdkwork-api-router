@@ -65,6 +65,10 @@ test('repository ships Docker and Helm deployment assets aligned to product serv
   assert.match(dockerfile, /SDKWORK_BOOTSTRAP_DATA_DIR=\/opt\/sdkwork\/data/);
   assert.match(dockerfile, /SDKWORK_ADMIN_SITE_DIR=\/opt\/sdkwork\/sites\/admin\/dist/);
   assert.match(dockerfile, /SDKWORK_PORTAL_SITE_DIR=\/opt\/sdkwork\/sites\/portal\/dist/);
+  assert.match(dockerfile, /mkdir -p config data log run/);
+  assert.doesNotMatch(dockerfile, /var\/data/);
+  assert.doesNotMatch(dockerfile, /var\/log/);
+  assert.doesNotMatch(dockerfile, /var\/run/);
   assert.match(dockerfile, /EXPOSE 3001/);
   assert.match(dockerfile, /HEALTHCHECK[\s\S]*\/api\/v1\/health/);
   assert.match(dockerfile, /USER sdkwork/);
@@ -83,6 +87,8 @@ test('repository ships Docker and Helm deployment assets aligned to product serv
   assert.match(compose, /SDKWORK_METRICS_BEARER_TOKEN:/);
   assert.match(compose, /3001:3001/);
   assert.match(compose, /\/api\/v1\/health/);
+  assert.match(compose, /security_opt:\s*[\s\S]*?no-new-privileges:true/);
+  assert.match(compose, /cap_drop:\s*[\s\S]*?ALL/);
 
   const envExample = read('deploy/docker/.env.example');
   assert.match(envExample, /^SDKWORK_POSTGRES_DB=/m);
@@ -101,12 +107,17 @@ test('repository ships Docker and Helm deployment assets aligned to product serv
   const values = read('deploy/helm/sdkwork-api-router/values.yaml');
   assert.match(values, /^image:/m);
   assert.match(values, /^\s{2}repository:/m);
+  assert.match(values, /ghcr\.io\/<owner>\/sdkwork-api-router/);
   assert.match(values, /^service:/m);
   assert.match(values, /^ingress:/m);
   assert.match(values, /^secrets:/m);
   assert.match(values, /bootstrapProfile:\s*prod/);
+  assert.match(values, /automountServiceAccountToken:\s*false/);
+  assert.match(values, /seccompProfile:\s*[\s\S]*?type:\s*RuntimeDefault/);
 
   const deployment = read('deploy/helm/sdkwork-api-router/templates/deployment.yaml');
+  assert.match(deployment, /automountServiceAccountToken:\s*\{\{\s*\.Values\.automountServiceAccountToken\s*\}\}/);
+  assert.match(deployment, /securityContext:\s*[\s\S]*?toYaml \.Values\.podSecurityContext/);
   assert.match(deployment, /SDKWORK_DATABASE_URL/);
   assert.match(deployment, /SDKWORK_BOOTSTRAP_PROFILE/);
   assert.match(deployment, /SDKWORK_BOOTSTRAP_DATA_DIR/);
@@ -138,17 +149,41 @@ test('native product server release packager exports deployment assets into comm
     'function',
     'expected deployment roots export for product-server bundles',
   );
+  assert.equal(
+    typeof packager.findNativeProductServerDeploymentAssetRoot,
+    'function',
+    'expected strict deployment root lookup helper for product-server bundles',
+  );
+  assert.equal(
+    typeof packager.listNativeProductServerDeploymentAssetRootsByIds,
+    'function',
+    'expected strict deployment root batch lookup helper for product-server bundles',
+  );
   assert.deepEqual(
     packager.listNativeProductServerDeploymentAssetRoots(),
     {
       deploy: path.join(repoRoot, 'deploy'),
     },
   );
+  assert.equal(
+    packager.findNativeProductServerDeploymentAssetRoot('deploy'),
+    path.join(repoRoot, 'deploy'),
+  );
+  assert.deepEqual(
+    packager.listNativeProductServerDeploymentAssetRootsByIds([
+      'deploy',
+    ]),
+    {
+      deploy: path.join(repoRoot, 'deploy'),
+    },
+  );
 
   const packagerSource = read('scripts/release/package-release-assets.mjs');
-  assert.match(packagerSource, /- deploy\/: docker, compose, and helm deployment assets/);
+  assert.match(packagerSource, /deploymentAssetDir\}\/: docker, compose, and helm deployment assets/);
   assert.match(packagerSource, /deploymentAssetRoots/);
   assert.match(packagerSource, /listNativeProductServerDeploymentAssetRoots/);
+  assert.match(packagerSource, /findNativeProductServerDeploymentAssetRoot/);
+  assert.match(packagerSource, /listNativeProductServerDeploymentAssetRootsByIds/);
 });
 
 test('release packager detects Windows tar flavor before deciding whether --force-local is safe', async () => {

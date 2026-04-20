@@ -8,6 +8,24 @@ import { pathToFileURL } from 'node:url';
 
 const repoRoot = path.resolve(import.meta.dirname, '..', '..');
 const testRuntimeRoot = path.join(repoRoot, 'artifacts', 'test-runtime');
+const BUNDLED_CONTROL_SCRIPT_FILES = [
+  'start.sh',
+  'stop.sh',
+  'backup.sh',
+  'restore.sh',
+  'support-bundle.sh',
+  'validate-config.sh',
+  'start.ps1',
+  'stop.ps1',
+  'backup.ps1',
+  'restore.ps1',
+  'support-bundle.ps1',
+  'validate-config.ps1',
+];
+const BUNDLED_CONTROL_LIB_FILES = [
+  'runtime-common.sh',
+  'runtime-common.ps1',
+];
 
 function createTempRuntimeHome(prefix) {
   mkdirSync(testRuntimeRoot, { recursive: true });
@@ -72,6 +90,8 @@ function createOfficialServerBundleFixture({
   releaseOutputDir,
   platform = 'linux',
   arch = 'x64',
+  releaseVersion = '0.1.0',
+  bundleManifestOverrides = {},
 } = {}) {
   const bundleDir = path.join(releaseOutputDir, 'native', platform, arch, 'bundles');
   const baseName = `sdkwork-api-router-product-server-${platform}-${arch}`;
@@ -83,6 +103,7 @@ function createOfficialServerBundleFixture({
   const releaseCatalogPath = path.join(releaseOutputDir, 'release-catalog.json');
 
   mkdirSync(path.join(bundleRoot, 'bin'), { recursive: true });
+  mkdirSync(path.join(bundleRoot, 'control', 'bin', 'lib'), { recursive: true });
   mkdirSync(path.join(bundleRoot, 'sites', 'admin', 'dist'), { recursive: true });
   mkdirSync(path.join(bundleRoot, 'sites', 'portal', 'dist'), { recursive: true });
   mkdirSync(path.join(bundleRoot, 'data'), { recursive: true });
@@ -103,6 +124,32 @@ function createOfficialServerBundleFixture({
   writeFileSync(path.join(bundleRoot, 'sites', 'portal', 'dist', 'index.html'), '<html>bundled portal</html>\n', 'utf8');
   writeFileSync(path.join(bundleRoot, 'data', 'seed.json'), '{"seed":"bundled"}\n', 'utf8');
   writeFileSync(path.join(bundleRoot, 'deploy', 'docker', 'docker-compose.yml'), 'services:\n  router:\n    image: sdkwork\n', 'utf8');
+  for (const fileName of BUNDLED_CONTROL_SCRIPT_FILES) {
+    const targetPath = path.join(bundleRoot, 'control', 'bin', fileName);
+    writeFileSync(
+      targetPath,
+      fileName.endsWith('.ps1')
+        ? "Write-Output 'bundled control script'\r\n"
+        : '#!/usr/bin/env sh\nprintf \'%s\\n\' "bundled control script"\n',
+      'utf8',
+    );
+    if (fileName.endsWith('.sh')) {
+      chmodSync(targetPath, 0o755);
+    }
+  }
+  for (const fileName of BUNDLED_CONTROL_LIB_FILES) {
+    const targetPath = path.join(bundleRoot, 'control', 'bin', 'lib', fileName);
+    writeFileSync(
+      targetPath,
+      fileName.endsWith('.ps1')
+        ? "Write-Output 'bundled control lib'\r\n"
+        : '#!/usr/bin/env sh\nprintf \'%s\\n\' "bundled control lib"\n',
+      'utf8',
+    );
+    if (fileName.endsWith('.sh')) {
+      chmodSync(targetPath, 0o755);
+    }
+  }
   writeFileSync(
     path.join(bundleRoot, 'release-manifest.json'),
     `${JSON.stringify({
@@ -112,6 +159,8 @@ function createOfficialServerBundleFixture({
     'utf8',
   );
   writeFileSync(path.join(bundleRoot, 'README.txt'), 'Official bundled readme\n', 'utf8');
+  writeFileSync(path.join(bundleRoot, 'install.sh'), '#!/usr/bin/env sh\nprintf \'%s\\n\' "bundled install"\n', 'utf8');
+  writeFileSync(path.join(bundleRoot, 'install.ps1'), "Write-Output 'bundled install'\r\n", 'utf8');
 
   createTarGzArchive(bundleSourceRoot, baseName, bundlePath);
   writeFileSync(
@@ -119,11 +168,22 @@ function createOfficialServerBundleFixture({
     `${JSON.stringify({
       type: 'product-server-archive',
       productId: 'sdkwork-api-router-product-server',
+      releaseVersion,
+      platform,
+      arch,
+      target: platform === 'win32' ? 'x86_64-pc-windows-msvc' : 'x86_64-unknown-linux-gnu',
       archiveFile: path.basename(bundlePath),
       checksumFile: path.basename(bundleChecksumPath),
+      embeddedManifestFile: 'release-manifest.json',
+      installers: {
+        shell: 'install.sh',
+        powershell: 'install.ps1',
+      },
+      services: ['router-product-service'],
       sites: ['admin', 'portal'],
       bootstrapDataRoots: ['data'],
       deploymentAssetRoots: ['deploy'],
+      ...bundleManifestOverrides,
     }, null, 2)}\n`,
     'utf8',
   );
@@ -155,8 +215,21 @@ function createOfficialServerBundleFixture({
               manifest: {
                 type: 'product-server-archive',
                 productId: 'sdkwork-api-router-product-server',
+                releaseVersion,
                 platform,
                 arch,
+                target: platform === 'win32' ? 'x86_64-pc-windows-msvc' : 'x86_64-unknown-linux-gnu',
+                archiveFile: path.basename(bundlePath),
+                checksumFile: path.basename(bundleChecksumPath),
+                embeddedManifestFile: 'release-manifest.json',
+                installers: {
+                  shell: 'install.sh',
+                  powershell: 'install.ps1',
+                },
+                services: ['router-product-service'],
+                sites: ['admin', 'portal'],
+                bootstrapDataRoots: ['data'],
+                deploymentAssetRoots: ['deploy'],
               },
             },
           ],
@@ -522,7 +595,7 @@ function installUnixRuntimeSmokeFixture(runtimeHome) {
   const portalSiteDir = path.join(runtimeHome, 'sites', 'portal', 'dist');
   const configDir = path.join(runtimeHome, 'config');
   const fakeBinDir = path.join(runtimeHome, 'test-bin');
-  const curlLogFile = path.join(runtimeHome, 'var', 'log', 'curl.log');
+  const curlLogFile = path.join(runtimeHome, 'log', 'curl.log');
   const runtimeBinaryPath = path.join(runtimeBinDir, 'router-product-service');
 
   mkdirSync(runtimeLibDir, { recursive: true });
@@ -530,7 +603,7 @@ function installUnixRuntimeSmokeFixture(runtimeHome) {
   mkdirSync(portalSiteDir, { recursive: true });
   mkdirSync(configDir, { recursive: true });
   mkdirSync(fakeBinDir, { recursive: true });
-  mkdirSync(path.join(runtimeHome, 'var', 'log'), { recursive: true });
+  mkdirSync(path.join(runtimeHome, 'log'), { recursive: true });
 
   writeFileSync(
     path.join(runtimeBinDir, 'start.sh'),
@@ -1200,14 +1273,13 @@ test('createInstallPlan separates stable current control assets from versioned r
     assert.equal(plan.directories.includes(path.join(installRoot, 'data')), true);
     assert.equal(plan.directories.includes(path.join(installRoot, 'log')), true);
     assert.equal(plan.directories.includes(path.join(installRoot, 'run')), true);
-    assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('current', 'bin', 'start.sh'))), true);
-    assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('current', 'bin', 'backup.sh'))), true);
-    assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('current', 'bin', 'restore.sh'))), true);
-    assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('current', 'bin', 'validate-config.sh'))), true);
-    assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('current', 'bin', 'stop.ps1'))), true);
-    assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('current', 'bin', 'backup.ps1'))), true);
-    assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('current', 'bin', 'restore.ps1'))), true);
-    assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('current', 'bin', 'validate-config.ps1'))), true);
+    assert.equal(
+      plan.files.some((file) =>
+        file.type === 'bundle-directory'
+        && file.bundleEntryPath === 'control/bin'
+        && file.targetPath.endsWith(path.join('current', 'bin'))),
+      true,
+    );
     assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('current', 'service', 'launchd', 'com.sdkwork.api-router.plist'))), true);
     assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('current', 'service', 'systemd', 'sdkwork-api-router.service'))), true);
     assert.equal(plan.files.some((file) => file.targetPath.endsWith(path.join('current', 'service', 'windows-task', 'sdkwork-api-router.xml'))), true);
@@ -1498,6 +1570,42 @@ test('createInstallPlan requires a matching release-catalog entry to resolve the
   }
 });
 
+test('createInstallPlan derives the installed release version from the official server bundle manifest', async () => {
+  const module = await loadModule();
+  const fixtureRoot = createTempDir('install-plan-release-version-');
+  const installRoot = path.join(fixtureRoot, 'install');
+  const releaseOutputDir = path.join(fixtureRoot, 'release');
+
+  try {
+    createOfficialServerBundleFixture({
+      releaseOutputDir,
+      platform: 'linux',
+      arch: 'x64',
+      releaseVersion: '9.9.9',
+    });
+
+    const plan = module.createInstallPlan({
+      repoRoot,
+      installRoot,
+      platform: 'linux',
+      arch: 'x64',
+      releaseOutputDir,
+    });
+
+    assert.equal(plan.releaseVersion, '9.9.9');
+    assert.equal(plan.releaseRoot, path.join(installRoot, 'releases', '9.9.9'));
+    assert.equal(
+      plan.files.some((file) =>
+        file.type === 'bundle-file'
+        && file.bundleEntryPath === 'release-manifest.json'
+        && file.targetPath.endsWith(path.join('releases', '9.9.9', 'release-manifest.json'))),
+      true,
+    );
+  } finally {
+    removeTempRuntimeHome(fixtureRoot);
+  }
+});
+
 test('assertInstallInputsExist requires the packaged bundle checksum for bundle-backed install plans', async () => {
   const module = await loadModule();
   const fixtureRoot = createTempDir('install-bundle-inputs-');
@@ -1524,6 +1632,45 @@ test('assertInstallInputsExist requires the packaged bundle checksum for bundle-
     assert.throws(
       () => module.assertInstallInputsExist(plan),
       /Missing install bundle checksum file:/,
+    );
+  } finally {
+    removeTempRuntimeHome(fixtureRoot);
+  }
+});
+
+test('assertInstallInputsExist rejects server bundle manifests that omit governed release metadata', async () => {
+  const module = await loadModule();
+  const fixtureRoot = createTempDir('install-bundle-manifest-contract-');
+  const installRoot = path.join(fixtureRoot, 'install');
+  const releaseOutputDir = path.join(fixtureRoot, 'release');
+
+  try {
+    createOfficialServerBundleFixture({
+      releaseOutputDir,
+      platform: 'linux',
+      arch: 'x64',
+      bundleManifestOverrides: {
+        releaseVersion: '',
+        embeddedManifestFile: '',
+        installers: {
+          shell: '',
+          powershell: 'install.ps1',
+        },
+        services: [],
+      },
+    });
+
+    const plan = module.createInstallPlan({
+      repoRoot,
+      installRoot,
+      platform: 'linux',
+      arch: 'x64',
+      releaseOutputDir,
+    });
+
+    assert.throws(
+      () => module.assertInstallInputsExist(plan),
+      /releaseVersion|embeddedManifestFile|installers|router-product-service/i,
     );
   } finally {
     removeTempRuntimeHome(fixtureRoot);
@@ -1598,6 +1745,40 @@ test('assertInstallInputsExist requires a matching release-catalog entry for bun
   }
 });
 
+test('assertInstallInputsExist rejects release-catalog bundle manifest snapshots that drift from the archive manifest', async () => {
+  const module = await loadModule();
+  const fixtureRoot = createTempDir('install-bundle-catalog-manifest-drift-');
+  const installRoot = path.join(fixtureRoot, 'install');
+  const releaseOutputDir = path.join(fixtureRoot, 'release');
+  const { releaseCatalogPath } = createOfficialServerBundleFixture({
+    releaseOutputDir,
+    platform: 'linux',
+    arch: 'x64',
+    releaseVersion: '0.1.0',
+  });
+
+  try {
+    const catalog = JSON.parse(readFileSync(releaseCatalogPath, 'utf8'));
+    catalog.products[0].variants[0].manifest.releaseVersion = '9.9.9';
+    writeFileSync(releaseCatalogPath, `${JSON.stringify(catalog, null, 2)}\n`, 'utf8');
+
+    const plan = module.createInstallPlan({
+      repoRoot,
+      installRoot,
+      platform: 'linux',
+      arch: 'x64',
+      releaseOutputDir,
+    });
+
+    assert.throws(
+      () => module.assertInstallInputsExist(plan),
+      /release-catalog.*manifest.*mismatch|bundle manifest snapshot/i,
+    );
+  } finally {
+    removeTempRuntimeHome(fixtureRoot);
+  }
+});
+
 test('applyInstallPlan materializes the versioned payload from the packaged server bundle', async () => {
   const module = await loadModule();
   const fixtureRoot = createTempDir('install-bundle-apply-');
@@ -1631,6 +1812,7 @@ test('applyInstallPlan materializes the versioned payload from the packaged serv
     const releasePayloadManifest = JSON.parse(readFileSync(releasePayloadManifestPath, 'utf8'));
 
     assert.equal(existsSync(path.join(currentRoot, 'bin', 'start.sh')), true);
+    assert.equal(existsSync(path.join(currentRoot, 'bin', 'lib', 'runtime-common.sh')), true);
     assert.equal(
       readFileSync(path.join(releaseRoot, 'sites', 'admin', 'dist', 'index.html'), 'utf8'),
       '<html>bundled admin</html>\n',
@@ -1665,6 +1847,8 @@ test('applyInstallPlan materializes the versioned payload from the packaged serv
       toPortablePath(currentManifest.bootstrapDataRoot),
       toPortablePath(path.join(releaseRoot, 'data')),
     );
+    assert.equal(currentManifest.target, 'x86_64-unknown-linux-gnu');
+    assert.equal(typeof currentManifest.target, 'string');
   } finally {
     removeTempRuntimeHome(fixtureRoot);
   }
@@ -1725,7 +1909,7 @@ test('renderRuntimeEnvTemplate system mode prefers config-file discovery and Pos
 
   assert.match(envFile, /SDKWORK_CONFIG_DIR="\/etc\/sdkwork-api-router"/);
   assert.match(envFile, /SDKWORK_CONFIG_FILE="\/etc\/sdkwork-api-router\/router\.yaml"/);
-  assert.match(envFile, /SDKWORK_DATABASE_URL="postgresql:\/\/sdkwork:change-me@127\.0\.0\.1:5432\/sdkwork_api_router"/);
+  assert.match(envFile, /SDKWORK_DATABASE_URL="postgresql:\/\/sdkwork:replace-with-db-password@127\.0\.0\.1:5432\/sdkwork_api_router"/);
   assert.doesNotMatch(envFile, /SDKWORK_ADMIN_SITE_DIR=/);
   assert.doesNotMatch(envFile, /SDKWORK_PORTAL_SITE_DIR=/);
   assert.doesNotMatch(envFile, /SDKWORK_ROUTER_BINARY=/);
@@ -2234,6 +2418,20 @@ test('validate-config entrypoints delegate to the managed start entrypoints in d
   assert.match(validateConfigSh, /--dry-run "\$@"/);
 });
 
+test('support-bundle entrypoints delegate to router-product-service with support-bundle-specific flags', () => {
+  const supportBundlePs1 = readFileSync(path.join(repoRoot, 'bin', 'support-bundle.ps1'), 'utf8');
+  const supportBundleSh = readFileSync(path.join(repoRoot, 'bin', 'support-bundle.sh'), 'utf8');
+
+  assert.match(supportBundlePs1, /--support-bundle-output/);
+  assert.match(supportBundlePs1, /--runtime-home/);
+  assert.match(supportBundlePs1, /\[string\]\$SupportBundleOutput/);
+  assert.match(supportBundlePs1, /\[Alias\('OutputPath'\)\]/);
+  assert.match(supportBundlePs1, /--output requires a value/);
+  assert.match(supportBundleSh, /--support-bundle-output/);
+  assert.match(supportBundleSh, /--runtime-home/);
+  assert.match(supportBundleSh, /--output requires a value/);
+});
+
 test('PowerShell stop scripts pass ProcessId into the shared process-tree helper', () => {
   const stopDevScript = readFileSync(path.join(repoRoot, 'bin', 'stop-dev.ps1'), 'utf8');
   const stopScript = readFileSync(path.join(repoRoot, 'bin', 'stop.ps1'), 'utf8');
@@ -2254,6 +2452,45 @@ test('runtime-common.ps1 includes platform-aware PowerShell process and binary h
   assert.match(script, /function Get-RouterReleaseDryRunPlanJson/);
   assert.match(script, /ps -o pid= -o ppid=/);
   assert.match(script, /Stop-Process -Id \$processId/);
+});
+
+test('runtime-common installed-layout helpers are generated from the governed catalog instead of hardcoding install defaults', async () => {
+  const commonSh = readFileSync(path.join(repoRoot, 'bin', 'lib', 'runtime-common.sh'), 'utf8');
+  const commonPs1 = readFileSync(path.join(repoRoot, 'bin', 'lib', 'runtime-common.ps1'), 'utf8');
+  const generatorModule = await import(
+    pathToFileURL(
+      path.join(repoRoot, 'scripts', 'release', 'installed-runtime-layout-script-generation.mjs'),
+    ).href,
+  );
+
+  assert.equal(typeof generatorModule.createInstalledRuntimeShellLayoutSnippet, 'function');
+  assert.equal(typeof generatorModule.createInstalledRuntimePowerShellLayoutSnippet, 'function');
+
+  const shellSnippet = generatorModule.createInstalledRuntimeShellLayoutSnippet();
+  const powerShellSnippet = generatorModule.createInstalledRuntimePowerShellLayoutSnippet();
+  const shellMatch = commonSh.match(
+    /# BEGIN GENERATED INSTALLED RUNTIME LAYOUT\r?\n([\s\S]*?)# END GENERATED INSTALLED RUNTIME LAYOUT/,
+  );
+  const powerShellMatch = commonPs1.match(
+    /# BEGIN GENERATED INSTALLED RUNTIME LAYOUT\r?\n([\s\S]*?)# END GENERATED INSTALLED RUNTIME LAYOUT/,
+  );
+
+  assert.ok(shellMatch, 'runtime-common.sh must include the governed installed runtime layout block');
+  assert.ok(powerShellMatch, 'runtime-common.ps1 must include the governed installed runtime layout block');
+  assert.equal(shellMatch[1], shellSnippet);
+  assert.equal(powerShellMatch[1], powerShellSnippet);
+
+  const commonShWithoutGeneratedBlock = commonSh.replace(
+    /# BEGIN GENERATED INSTALLED RUNTIME LAYOUT\r?\n[\s\S]*?# END GENERATED INSTALLED RUNTIME LAYOUT/,
+    '',
+  );
+  const commonPs1WithoutGeneratedBlock = commonPs1.replace(
+    /# BEGIN GENERATED INSTALLED RUNTIME LAYOUT\r?\n[\s\S]*?# END GENERATED INSTALLED RUNTIME LAYOUT/,
+    '',
+  );
+
+  assert.doesNotMatch(commonShWithoutGeneratedBlock, /artifacts\/install\/sdkwork-api-router\/current|\/var\/data|\/var\/log|\/var\/run/);
+  assert.doesNotMatch(commonPs1WithoutGeneratedBlock, /artifacts\\install\\sdkwork-api-router\\current|var\\data|var\\log|var\\run/);
 });
 
 test('runtime-common.ps1 carries startup summary helpers with unified links, direct links, and bootstrap identity guidance', () => {
@@ -3002,7 +3239,7 @@ test('start.ps1 dry-run falls back to host-local release paths when router.env c
     assert.equal(plan.plan_format, 'json');
     assert.equal(plan.public_web_bind, '0.0.0.0:19483');
     assert.equal(plan.config_dir, `${runtimeHomePortable}/config`);
-    assert.equal(plan.database_url, `sqlite://${runtimeHomePortable}/var/data/sdkwork-api-router.db`);
+    assert.equal(plan.database_url, `sqlite://${runtimeHomePortable}/data/sdkwork-api-router.db`);
     assert.equal(plan.site_dirs.admin, `${runtimeHomePortable}/sites/admin/dist`);
     assert.equal(plan.site_dirs.portal, `${runtimeHomePortable}/sites/portal/dist`);
   } finally {
@@ -3025,7 +3262,7 @@ test('start.ps1 dry-run accepts a missing relative -Home path without double-nes
     assert.equal(plan.plan_format, 'json');
     assert.equal(plan.public_web_bind, '127.0.0.1:3001');
     assert.equal(plan.config_dir, `${runtimeHomePortable}/config`);
-    assert.equal(plan.database_url, `sqlite://${runtimeHomePortable}/var/data/sdkwork-api-router.db`);
+    assert.equal(plan.database_url, `sqlite://${runtimeHomePortable}/data/sdkwork-api-router.db`);
   } finally {
     removeTempRuntimeHome(absoluteRuntimeHome);
   }
@@ -3062,7 +3299,7 @@ test('start.ps1 dry-run loads system install config from the release manifest in
         'SDKWORK_ROUTER_INSTALL_MODE="system"',
         `SDKWORK_CONFIG_DIR="${systemConfigDirPortable}"`,
         `SDKWORK_CONFIG_FILE="${routerYamlPortable}"`,
-        'SDKWORK_DATABASE_URL="postgresql://sdkwork:change-me@127.0.0.1:5432/sdkwork_api_router"',
+        'SDKWORK_DATABASE_URL="postgresql://sdkwork:replace-with-db-password@127.0.0.1:5432/sdkwork_api_router"',
         '',
       ].join('\n'),
       'utf8',
@@ -3076,9 +3313,9 @@ test('start.ps1 dry-run loads system install config from the release manifest in
     assert.equal(plan.plan_format, 'json');
     assert.equal(plan.config_dir, systemConfigDirPortable);
     assert.equal(plan.config_file, routerYamlPortable);
-    assert.equal(plan.database_url, 'postgresql://sdkwork:change-me@127.0.0.1:5432/sdkwork_api_router');
+    assert.equal(plan.database_url, 'postgresql://sdkwork:replace-with-db-password@127.0.0.1:5432/sdkwork_api_router');
     assert.notEqual(plan.config_dir, `${runtimeHomePortable}/config`);
-    assert.notEqual(plan.database_url, `sqlite://${runtimeHomePortable}/var/data/sdkwork-api-router.db`);
+    assert.notEqual(plan.database_url, `sqlite://${runtimeHomePortable}/data/sdkwork-api-router.db`);
   } finally {
     removeTempRuntimeHome(runtimeHome);
   }
@@ -3187,7 +3424,7 @@ test('start.sh dry-run falls back to host-local release paths when router.env ca
     assert.equal(plan.plan_format, 'json');
     assert.equal(plan.public_web_bind, '0.0.0.0:19484');
     assert.equal(plan.config_dir, `${runtimeHomeWsl}/config`);
-    assert.equal(plan.database_url, `sqlite://${runtimeHomeWsl}/var/data/sdkwork-api-router.db`);
+    assert.equal(plan.database_url, `sqlite://${runtimeHomeWsl}/data/sdkwork-api-router.db`);
     assert.equal(plan.site_dirs.admin, `${runtimeHomeWsl}/sites/admin/dist`);
     assert.equal(plan.site_dirs.portal, `${runtimeHomeWsl}/sites/portal/dist`);
   } finally {
@@ -3305,7 +3542,7 @@ test('start.sh dry-run loads system install config from the release manifest ins
         'SDKWORK_ROUTER_INSTALL_MODE="system"',
         `SDKWORK_CONFIG_DIR="${systemConfigDirWsl}"`,
         `SDKWORK_CONFIG_FILE="${routerYamlWsl}"`,
-        'SDKWORK_DATABASE_URL="postgresql://sdkwork:change-me@127.0.0.1:5432/sdkwork_api_router"',
+        'SDKWORK_DATABASE_URL="postgresql://sdkwork:replace-with-db-password@127.0.0.1:5432/sdkwork_api_router"',
         '',
       ].join('\n'),
       'utf8',
@@ -3319,9 +3556,9 @@ test('start.sh dry-run loads system install config from the release manifest ins
     assert.equal(plan.plan_format, 'json');
     assert.equal(plan.config_dir, systemConfigDirWsl);
     assert.equal(plan.config_file, routerYamlWsl);
-    assert.equal(plan.database_url, 'postgresql://sdkwork:change-me@127.0.0.1:5432/sdkwork_api_router');
+    assert.equal(plan.database_url, 'postgresql://sdkwork:replace-with-db-password@127.0.0.1:5432/sdkwork_api_router');
     assert.notEqual(plan.config_dir, `${runtimeHomeWsl}/config`);
-    assert.notEqual(plan.database_url, `sqlite://${runtimeHomeWsl}/var/data/sdkwork-api-router.db`);
+    assert.notEqual(plan.database_url, `sqlite://${runtimeHomeWsl}/data/sdkwork-api-router.db`);
   } finally {
     removeTempRuntimeHome(runtimeHome);
   }
@@ -3412,8 +3649,8 @@ test('installed current-home wrappers also recognize a sibling release manifest 
 
 test('installed unix runtime start.sh and stop.sh manage an installed home end-to-end', { skip: !canSpawnUnixShellFromNode() }, () => {
   const runtimeHome = createTempRuntimeHome('installed-unix-runtime-');
-  const pidFile = path.join(runtimeHome, 'var', 'run', 'router-product-service.pid');
-  const stateFile = path.join(runtimeHome, 'var', 'run', 'router-product-service.state.env');
+  const pidFile = path.join(runtimeHome, 'run', 'router-product-service.pid');
+  const stateFile = path.join(runtimeHome, 'run', 'router-product-service.state.env');
   const runtimeHomeShell = process.platform === 'win32' ? toGitBashPath(runtimeHome) : runtimeHome;
   const { curlLogFile, fakeBinDir } = installUnixRuntimeSmokeFixture(runtimeHome);
 

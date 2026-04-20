@@ -65,6 +65,7 @@ test('windows installed runtime smoke script exposes a parseable CLI contract fo
   assert.equal(typeof module.createWindowsInstalledRuntimeSmokeOptions, 'function');
   assert.equal(typeof module.createWindowsInstalledRuntimeSmokePlan, 'function');
   assert.equal(typeof module.createWindowsInstalledRuntimeSmokeEvidence, 'function');
+  assert.equal(typeof module.assertInstalledReleasePayloadContract, 'function');
   assert.equal(typeof module.resolveInstalledBootstrapDataRoot, 'function');
 
   const options = module.parseArgs([
@@ -129,6 +130,13 @@ test('windows installed runtime smoke script exposes a parseable CLI contract fo
           'bundles',
           'sdkwork-api-router-product-server-windows-x64.tar.gz',
         )),
+      true,
+    );
+    assert.equal(
+      plan.installPlan.files.some((file) =>
+        file.type === 'bundle-directory'
+        && file.bundleEntryPath === 'control/bin'
+        && file.targetPath === path.join(options.runtimeHome, 'current', 'bin')),
       true,
     );
     assert.deepEqual(plan.healthUrls, [

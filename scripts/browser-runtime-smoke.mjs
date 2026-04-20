@@ -203,6 +203,53 @@ function createEvalExpression(expectedTexts, expectedSelectors) {
   })()`;
 }
 
+function normalizeBrowserLocation(url, lineNumber, columnNumber) {
+  const normalizedUrl = String(url ?? '').trim();
+  if (!normalizedUrl) {
+    return '';
+  }
+
+  const normalizedLine = Number.isInteger(lineNumber) ? lineNumber + 1 : null;
+  const normalizedColumn = Number.isInteger(columnNumber) ? columnNumber + 1 : null;
+  if (normalizedLine == null || normalizedColumn == null) {
+    return normalizedUrl;
+  }
+
+  return `${normalizedUrl}:${normalizedLine}:${normalizedColumn}`;
+}
+
+export function formatBrowserExceptionDetails(params = {}) {
+  const exceptionDetails = params?.exceptionDetails ?? {};
+  const description = String(
+    exceptionDetails.exception?.description
+      ?? exceptionDetails.exception?.value
+      ?? '',
+  ).trim();
+
+  if (description) {
+    return description;
+  }
+
+  const text = String(exceptionDetails.text ?? '').trim();
+  const location = normalizeBrowserLocation(
+    exceptionDetails.url,
+    exceptionDetails.lineNumber,
+    exceptionDetails.columnNumber,
+  );
+
+  if (text && location) {
+    return `${text} at ${location}`;
+  }
+  if (text) {
+    return text;
+  }
+  if (location) {
+    return location;
+  }
+
+  return 'unhandled browser exception';
+}
+
 async function findAvailablePort() {
   return await new Promise((resolve, reject) => {
     const server = net.createServer();
@@ -539,6 +586,14 @@ function matchedRequestIncludes(requestLog, expectedRequestIncludes) {
     requestLog.some((requestUrl) => String(requestUrl).includes(entry)));
 }
 
+function summarizeRecentBrowserExceptions(exceptions = [], maxCount = 3) {
+  return uniqueStrings(
+    exceptions
+      .map((entry) => String(entry ?? '').trim())
+      .filter(Boolean),
+  ).slice(-maxCount);
+}
+
 async function readBrowserFetchRequestLog(client) {
   const evaluation = await client.send('Runtime.evaluate', {
     expression: 'globalThis.__SDKWORK_BROWSER_RUNTIME_FETCH_REQUESTS__ ?? []',
@@ -577,7 +632,29 @@ async function waitForExpectedRequestIncludes(
   );
 }
 
-async function waitForExpectedTargets(client, expectedTexts, expectedSelectors, timeoutMs) {
+export function formatBrowserTargetTimeoutDetails({
+  snapshot = null,
+  exceptions = [],
+} = {}) {
+  const baseMessage = `browser runtime smoke did not observe the expected runtime markers before timeout; last snapshot: ${truncateText(JSON.stringify(snapshot), 600)}`;
+  const recentExceptions = summarizeRecentBrowserExceptions(exceptions);
+
+  if (recentExceptions.length === 0) {
+    return baseMessage;
+  }
+
+  return `${baseMessage}\nJavaScript exceptions observed before timeout:\n${truncateText(recentExceptions.join('\n'), 1200)}`;
+}
+
+async function waitForExpectedTargets(
+  client,
+  expectedTexts,
+  expectedSelectors,
+  timeoutMs,
+  {
+    exceptions = [],
+  } = {},
+) {
   const deadline = Date.now() + timeoutMs;
   let lastSnapshot = null;
 
@@ -604,9 +681,10 @@ async function waitForExpectedTargets(client, expectedTexts, expectedSelectors, 
     await delay(DEFAULT_POLL_INTERVAL_MS);
   }
 
-  throw new Error(
-    `browser runtime smoke did not observe the expected runtime markers before timeout; last snapshot: ${truncateText(JSON.stringify(lastSnapshot), 600)}`,
-  );
+  throw new Error(formatBrowserTargetTimeoutDetails({
+    snapshot: lastSnapshot,
+    exceptions,
+  }));
 }
 
 function matchedForbiddenTexts(snapshot, forbiddenTexts) {
@@ -754,7 +832,7 @@ export async function runBrowserRuntimeSmoke({
 
     const exceptions = [];
     client.on('Runtime.exceptionThrown', (params) => {
-      exceptions.push(params.exceptionDetails?.text ?? 'unhandled browser exception');
+      exceptions.push(formatBrowserExceptionDetails(params));
     });
     client.on('Network.requestWillBeSent', (params) => {
       const requestUrl = params.request?.url?.trim();
@@ -791,6 +869,9 @@ export async function runBrowserRuntimeSmoke({
       plan.expectedTexts,
       plan.expectedSelectors,
       plan.timeoutMs,
+      {
+        exceptions,
+      },
     );
 
     const requestCheck = plan.expectedRequestIncludes.length > 0

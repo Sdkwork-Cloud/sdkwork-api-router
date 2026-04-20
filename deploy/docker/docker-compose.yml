@@ -5,7 +5,7 @@ services:
     environment:
       POSTGRES_DB: ${SDKWORK_POSTGRES_DB:-sdkwork_api_router}
       POSTGRES_USER: ${SDKWORK_POSTGRES_USER:-sdkwork}
-      POSTGRES_PASSWORD: ${SDKWORK_POSTGRES_PASSWORD:-change-me-db-password}
+      POSTGRES_PASSWORD: ${SDKWORK_POSTGRES_PASSWORD:?set in deploy/docker/.env}
     healthcheck:
       test:
         - CMD-SHELL
@@ -21,11 +21,15 @@ services:
       context: ../..
       dockerfile: deploy/docker/Dockerfile
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     depends_on:
       postgres:
         condition: service_healthy
     environment:
-      SDKWORK_DATABASE_URL: postgresql://${SDKWORK_POSTGRES_USER:-sdkwork}:${SDKWORK_POSTGRES_PASSWORD:-change-me-db-password}@postgres:5432/${SDKWORK_POSTGRES_DB:-sdkwork_api_router}
+      SDKWORK_DATABASE_URL: postgresql://${SDKWORK_POSTGRES_USER:-sdkwork}:${SDKWORK_POSTGRES_PASSWORD:?set in deploy/docker/.env}@postgres:5432/${SDKWORK_POSTGRES_DB:-sdkwork_api_router}
       SDKWORK_BOOTSTRAP_PROFILE: ${SDKWORK_BOOTSTRAP_PROFILE:-prod}
       SDKWORK_BOOTSTRAP_DATA_DIR: /opt/sdkwork/data
       SDKWORK_ADMIN_SITE_DIR: /opt/sdkwork/sites/admin/dist

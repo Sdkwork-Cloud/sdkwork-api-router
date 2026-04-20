@@ -9,6 +9,8 @@ import { fileURLToPath } from 'node:url';
 import {
   filterGovernedReleaseArtifactStatusLines,
 } from './release-governed-artifact-status.mjs';
+import { assertSupportedReleaseCliFormat } from './release-cli-format-catalog.mjs';
+import { createStrictKeyedCatalog } from '../strict-contract-catalog.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -39,7 +41,8 @@ function isNonNegativeInteger(value) {
   return Number.isInteger(value) && value >= 0;
 }
 
-const RELEASE_SYNC_REPOSITORY_SPECS = Object.freeze([
+const releaseSyncRepositorySpecCatalog = createStrictKeyedCatalog({
+  entries: [
   Object.freeze({
     id: 'sdkwork-api-router',
     targetDir: rootDir,
@@ -88,15 +91,47 @@ const RELEASE_SYNC_REPOSITORY_SPECS = Object.freeze([
     envRefKey: 'SDKWORK_CRAW_CHAT_SDK_GIT_REF',
     defaultRef: 'main',
   }),
-]);
-const RELEASE_SYNC_LIVE_REFRESH_REPOSITORY_IDS = new Set([
+  ],
+  getKey: (spec) => spec.id,
+  duplicateKeyMessagePrefix: 'duplicate release sync repository spec',
+  missingKeyMessagePrefix: 'missing release sync repository spec',
+});
+
+const releaseSyncLiveRefreshRepositoryIdCatalog = createStrictKeyedCatalog({
+  entries: [
   'sdkwork-api-router',
-]);
+  ],
+  getKey: (repositoryId) => repositoryId,
+  duplicateKeyMessagePrefix: 'duplicate release sync live refresh repository id',
+  missingKeyMessagePrefix: 'missing release sync live refresh repository id',
+});
+
+const releaseSyncLiveRefreshRepositoryIdSet = new Set(
+  releaseSyncLiveRefreshRepositoryIdCatalog.list(),
+);
 
 export function listReleaseSyncRepositorySpecs() {
-  return RELEASE_SYNC_REPOSITORY_SPECS.map((spec) => ({
-    ...spec,
-  }));
+  return releaseSyncRepositorySpecCatalog.list();
+}
+
+export function findReleaseSyncRepositorySpec(repositoryId) {
+  return releaseSyncRepositorySpecCatalog.find(repositoryId);
+}
+
+export function listReleaseSyncRepositorySpecsByIds(repositoryIds = []) {
+  return releaseSyncRepositorySpecCatalog.listByKeys(repositoryIds);
+}
+
+export function listReleaseSyncLiveRefreshRepositoryIds() {
+  return releaseSyncLiveRefreshRepositoryIdCatalog.list();
+}
+
+export function findReleaseSyncLiveRefreshRepositoryId(repositoryId) {
+  return releaseSyncLiveRefreshRepositoryIdCatalog.find(repositoryId);
+}
+
+export function listReleaseSyncLiveRefreshRepositoryIdsByIds(repositoryIds = []) {
+  return releaseSyncLiveRefreshRepositoryIdCatalog.listByKeys(repositoryIds);
 }
 
 function resolveReleaseExternalDependencyRoot({
@@ -647,7 +682,7 @@ function mergeGovernedReleaseSyncSummaryWithLiveReports(summary, {
     return summary;
   }
 
-  const refreshSpecs = specs.filter((spec) => RELEASE_SYNC_LIVE_REFRESH_REPOSITORY_IDS.has(spec.id));
+  const refreshSpecs = specs.filter((spec) => releaseSyncLiveRefreshRepositoryIdSet.has(spec.id));
   if (refreshSpecs.length === 0) {
     return summary;
   }
@@ -749,9 +784,7 @@ function parseArgs(argv = process.argv.slice(2)) {
     throw new Error(`unknown argument: ${token}`);
   }
 
-  if (!['text', 'json'].includes(format)) {
-    throw new Error(`unsupported format: ${format}`);
-  }
+  assertSupportedReleaseCliFormat(format);
 
   return {
     format,

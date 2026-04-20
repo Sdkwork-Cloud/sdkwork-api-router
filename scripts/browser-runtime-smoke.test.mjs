@@ -177,3 +177,80 @@ test('browser runtime smoke hardens Linux CI launch plans for hosted Chromium st
   assert.ok(plan.browserArgs.includes('--no-sandbox'));
   assert.ok(plan.browserArgs.includes('--disable-dev-shm-usage'));
 });
+
+test('browser runtime smoke formats detailed JavaScript exception diagnostics', async () => {
+  const module = await import(
+    pathToFileURL(path.join(repoRoot, 'scripts', 'browser-runtime-smoke.mjs')).href,
+  );
+
+  assert.equal(typeof module.formatBrowserExceptionDetails, 'function');
+
+  const message = module.formatBrowserExceptionDetails({
+    exceptionDetails: {
+      text: 'Uncaught',
+      url: 'http://127.0.0.1:3001/admin/@fs/D:/workspace/src/lib/utils.ts',
+      lineNumber: 0,
+      columnNumber: 24,
+      exception: {
+        description: [
+          "SyntaxError: The requested module '/admin/@fs/D:/workspace/node_modules/clsx/dist/clsx.js' does not provide an export named 'clsx'",
+          '    at http://127.0.0.1:3001/admin/@fs/D:/workspace/src/lib/utils.ts:1:25',
+        ].join('\n'),
+      },
+    },
+  });
+
+  assert.match(
+    message,
+    /SyntaxError: The requested module .* does not provide an export named 'clsx'/,
+  );
+  assert.match(message, /utils\.ts:1:25/);
+});
+
+test('browser runtime smoke falls back to compact exception text when richer details are unavailable', async () => {
+  const module = await import(
+    pathToFileURL(path.join(repoRoot, 'scripts', 'browser-runtime-smoke.mjs')).href,
+  );
+
+  assert.equal(
+    module.formatBrowserExceptionDetails({
+      exceptionDetails: {
+        text: 'Uncaught ReferenceError: missingValue is not defined',
+      },
+    }),
+    'Uncaught ReferenceError: missingValue is not defined',
+  );
+});
+
+test('browser runtime smoke timeout diagnostics include recent JavaScript exceptions when present', async () => {
+  const module = await import(
+    pathToFileURL(path.join(repoRoot, 'scripts', 'browser-runtime-smoke.mjs')).href,
+  );
+
+  assert.equal(typeof module.formatBrowserTargetTimeoutDetails, 'function');
+
+  const message = module.formatBrowserTargetTimeoutDetails({
+    snapshot: {
+      title: 'SDKWork Router Admin',
+      bodyText: '',
+      matchedTexts: [],
+      matchedSelectors: [],
+      expectedTexts: [],
+      expectedSelectors: ['input[type="email"]'],
+      readyState: 'complete',
+    },
+    exceptions: [
+      "SyntaxError: The requested module '/admin/@fs/D:/workspace/node_modules/react-remove-scroll-bar/dist/es5/constants.js' does not provide an export named 'fullWidthClassName'",
+      "TypeError: Cannot read properties of undefined (reading 'pathname')",
+    ],
+  });
+
+  assert.match(
+    message,
+    /browser runtime smoke did not observe the expected runtime markers before timeout/i,
+  );
+  assert.match(message, /SDKWork Router Admin/);
+  assert.match(message, /JavaScript exceptions observed before timeout/i);
+  assert.match(message, /fullWidthClassName/);
+  assert.match(message, /TypeError: Cannot read properties of undefined/);
+});

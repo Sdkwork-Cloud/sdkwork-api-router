@@ -15,6 +15,7 @@ import {
   renderRuntimeEnvTemplate,
 } from '../../bin/lib/router-runtime-tooling.mjs';
 import {
+  assertInstalledReleasePayloadContract,
   assertInstalledRuntimeBackupBundle,
   assertInstalledPackagedBootstrapData,
   createInstalledRuntimeSmokeLayout,
@@ -149,7 +150,7 @@ function buildFailureContext(plan) {
   return contexts.length > 0 ? `\n${contexts.join('\n\n')}` : '';
 }
 
-export { resolveInstalledBootstrapDataRoot };
+export { assertInstalledReleasePayloadContract, resolveInstalledBootstrapDataRoot };
 
 function buildCommandFailure(label, result, plan) {
   const fragments = [];

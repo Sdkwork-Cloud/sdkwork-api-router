@@ -43,6 +43,18 @@ const sloGovernanceEvidencePath = path.join(
   'release',
   'slo-governance-latest.json',
 );
+const thirdPartySbomPath = path.join(
+  repoRoot,
+  'docs',
+  'release',
+  'third-party-sbom-latest.spdx.json',
+);
+const thirdPartyNoticesPath = path.join(
+  repoRoot,
+  'docs',
+  'release',
+  'third-party-notices-latest.json',
+);
 
 const DIRECTLY_DERIVED_AVAILABILITY_TARGET_IDS = new Set([
   'gateway-availability',
@@ -272,6 +284,32 @@ function createSloGovernancePayload() {
   };
 }
 
+function createThirdPartySbomPayload() {
+  return {
+    spdxVersion: 'SPDX-2.3',
+    SPDXID: 'SPDXRef-DOCUMENT',
+    name: 'sdkwork-api-router-third-party-sbom',
+    dataLicense: 'CC0-1.0',
+    documentNamespace: 'https://sdkwork.example.test/spdx/2026-04-08',
+    creationInfo: {
+      created: '2026-04-08T14:00:00Z',
+      creators: ['Tool: sdkwork-third-party-governance'],
+    },
+    packages: [],
+    relationships: [],
+  };
+}
+
+function createThirdPartyNoticesPayload() {
+  return {
+    version: 1,
+    generatedAt: '2026-04-08T14:00:00Z',
+    packageCount: 0,
+    noticeText: 'Synthetic third-party notices\n',
+    packages: [],
+  };
+}
+
 function cleanupGovernedReleaseArtifacts() {
   for (const artifactPath of [
     releaseWindowSnapshotPath,
@@ -279,6 +317,8 @@ function cleanupGovernedReleaseArtifacts() {
     releaseTelemetryExportPath,
     releaseTelemetrySnapshotPath,
     sloGovernanceEvidencePath,
+    thirdPartySbomPath,
+    thirdPartyNoticesPath,
   ]) {
     if (existsSync(artifactPath)) {
       rmSync(artifactPath, { force: true });
@@ -293,6 +333,8 @@ async function withCleanedGovernedReleaseArtifacts(callback) {
     releaseTelemetryExportPath,
     releaseTelemetrySnapshotPath,
     sloGovernanceEvidencePath,
+    thirdPartySbomPath,
+    thirdPartyNoticesPath,
   ].map((filePath) => ({
     filePath,
     hadOriginalFile: existsSync(filePath),
@@ -363,13 +405,25 @@ test('restore release governance latest materializer restores required governanc
     path.join('docs', 'release', 'slo-governance-latest.json'),
     createSloGovernancePayload(),
   );
+  writeArtifact(
+    artifactRoot,
+    'release-governance-third-party-sbom-web',
+    path.join('docs', 'release', 'third-party-sbom-latest.spdx.json'),
+    createThirdPartySbomPayload(),
+  );
+  writeArtifact(
+    artifactRoot,
+    'release-governance-third-party-notices-web',
+    path.join('docs', 'release', 'third-party-notices-latest.json'),
+    createThirdPartyNoticesPayload(),
+  );
 
   const result = module.restoreReleaseGovernanceLatestArtifacts({
     artifactDir: artifactRoot,
     repoRoot: targetRoot,
   });
 
-  assert.equal(result.restored.length, 5);
+  assert.equal(result.restored.length, 7);
   assert.equal(
     existsSync(path.join(targetRoot, 'docs', 'release', 'release-window-snapshot-latest.json')),
     true,
@@ -429,13 +483,25 @@ test('restore release governance latest materializer tolerates duplicate identic
     path.join('docs', 'release', 'slo-governance-latest.json'),
     createSloGovernancePayload(),
   );
+  writeArtifact(
+    artifactRoot,
+    'release-governance-third-party-sbom-web',
+    path.join('docs', 'release', 'third-party-sbom-latest.spdx.json'),
+    createThirdPartySbomPayload(),
+  );
+  writeArtifact(
+    artifactRoot,
+    'release-governance-third-party-notices-web',
+    path.join('docs', 'release', 'third-party-notices-latest.json'),
+    createThirdPartyNoticesPayload(),
+  );
 
   const result = module.restoreReleaseGovernanceLatestArtifacts({
     artifactDir: artifactRoot,
     repoRoot: targetRoot,
   });
 
-  assert.equal(result.restored.length, 5);
+  assert.equal(result.restored.length, 7);
   assert.match(
     result.restored.find((item) => item.id === 'release-sync-audit')?.sourcePath ?? '',
     /release-governance-sync-audit-/,
@@ -488,6 +554,18 @@ test('restore release governance latest materializer rejects conflicting duplica
     'release-governance-slo-evidence-web',
     path.join('docs', 'release', 'slo-governance-latest.json'),
     createSloGovernancePayload(),
+  );
+  writeArtifact(
+    artifactRoot,
+    'release-governance-third-party-sbom-web',
+    path.join('docs', 'release', 'third-party-sbom-latest.spdx.json'),
+    createThirdPartySbomPayload(),
+  );
+  writeArtifact(
+    artifactRoot,
+    'release-governance-third-party-notices-web',
+    path.join('docs', 'release', 'third-party-notices-latest.json'),
+    createThirdPartyNoticesPayload(),
   );
 
   assert.throws(
@@ -543,6 +621,18 @@ test('restore release governance latest materializer enables blocked-host govern
       'release-governance-slo-evidence-web',
       path.join('docs', 'release', 'slo-governance-latest.json'),
       createSloGovernancePayload(),
+    );
+    writeArtifact(
+      artifactRoot,
+      'release-governance-third-party-sbom-web',
+      path.join('docs', 'release', 'third-party-sbom-latest.spdx.json'),
+      createThirdPartySbomPayload(),
+    );
+    writeArtifact(
+      artifactRoot,
+      'release-governance-third-party-notices-web',
+      path.join('docs', 'release', 'third-party-notices-latest.json'),
+      createThirdPartyNoticesPayload(),
     );
 
     restoreModule.restoreReleaseGovernanceLatestArtifacts({

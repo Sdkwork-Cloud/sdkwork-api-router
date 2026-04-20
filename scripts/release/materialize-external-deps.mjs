@@ -6,12 +6,22 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
+import { createStrictKeyedCatalog } from '../strict-contract-catalog.mjs';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, '..', '..');
 const siblingWorkspaceRoot = path.resolve(rootDir, '..');
 
-const EXTERNAL_RELEASE_DEPENDENCY_SPECS = Object.freeze([
+function cloneExternalReleaseDependencySpec(spec) {
+  return {
+    ...spec,
+    requiredPaths: [...spec.requiredPaths],
+  };
+}
+
+const externalReleaseDependencySpecCatalog = createStrictKeyedCatalog({
+  entries: [
   Object.freeze({
     id: 'sdkwork-core',
     repository: 'Sdkwork-Cloud/sdkwork-core',
@@ -54,30 +64,59 @@ const EXTERNAL_RELEASE_DEPENDENCY_SPECS = Object.freeze([
     cloneTargetDir: path.resolve(rootDir, '..', 'craw-chat'),
     requiredPaths: Object.freeze(['package.json']),
   }),
-]);
+  ],
+  getKey: (spec) => spec.id,
+  clone: cloneExternalReleaseDependencySpec,
+  duplicateKeyMessagePrefix: 'duplicate external release dependency spec',
+  missingKeyMessagePrefix: 'missing external release dependency spec',
+});
 
-const RELEASE_EXTERNAL_DEPENDENCY_SCAN_ROOTS = Object.freeze([
+const externalReleaseDependencyScanRootCatalog = createStrictKeyedCatalog({
+  entries: [
   path.resolve(rootDir, 'apps', 'sdkwork-router-admin'),
   path.resolve(rootDir, 'apps', 'sdkwork-router-portal'),
-]);
+  ],
+  getKey: (scanRoot) => scanRoot,
+  duplicateKeyMessagePrefix: 'duplicate external release dependency scan root',
+  missingKeyMessagePrefix: 'missing external release dependency scan root',
+});
 
-const PACKAGE_JSON_DEPENDENCY_FIELDS = Object.freeze([
+const packageJsonDependencyFieldCatalog = createStrictKeyedCatalog({
+  entries: [
   'dependencies',
   'devDependencies',
   'optionalDependencies',
   'peerDependencies',
-]);
+  ],
+  getKey: (fieldName) => fieldName,
+  duplicateKeyMessagePrefix: 'duplicate package.json dependency field',
+  missingKeyMessagePrefix: 'missing package.json dependency field',
+});
 
-const EXTERNAL_RELEASE_DEPENDENCY_MATERIALIZATION_SCOPES = new Set([
+const externalReleaseDependencyMaterializationScopeCatalog = createStrictKeyedCatalog({
+  entries: [
   'all',
   'referenced',
-]);
+  ],
+  getKey: (scopeId) => scopeId,
+  duplicateKeyMessagePrefix: 'duplicate external release dependency materialization scope',
+  missingKeyMessagePrefix: 'missing external release dependency materialization scope',
+});
+
+const externalReleaseDependencyMaterializationScopeSet = new Set(
+  externalReleaseDependencyMaterializationScopeCatalog.list(),
+);
 
 export function listExternalReleaseDependencySpecs() {
-  return EXTERNAL_RELEASE_DEPENDENCY_SPECS.map((spec) => ({
-    ...spec,
-    requiredPaths: [...spec.requiredPaths],
-  }));
+  return externalReleaseDependencySpecCatalog.list();
+}
+
+export function findExternalReleaseDependencySpec(dependencyId) {
+  return externalReleaseDependencySpecCatalog.find(dependencyId);
+}
+
+export function listExternalReleaseDependencySpecsByIds(dependencyIds = []) {
+  return externalReleaseDependencySpecCatalog.listByKeys(dependencyIds);
 }
 
 function resolveExternalReleaseDependencyRoot({
@@ -146,7 +185,39 @@ export function resolveExternalReleaseDependencySpecs({
 }
 
 export function listExternalReleaseDependencyScanRoots() {
-  return [...RELEASE_EXTERNAL_DEPENDENCY_SCAN_ROOTS];
+  return externalReleaseDependencyScanRootCatalog.list();
+}
+
+export function findExternalReleaseDependencyScanRoot(scanRoot) {
+  return externalReleaseDependencyScanRootCatalog.find(scanRoot);
+}
+
+export function listExternalReleaseDependencyScanRootsByPaths(scanRoots = []) {
+  return externalReleaseDependencyScanRootCatalog.listByKeys(scanRoots);
+}
+
+export function listPackageJsonDependencyFields() {
+  return packageJsonDependencyFieldCatalog.list();
+}
+
+export function findPackageJsonDependencyField(fieldName) {
+  return packageJsonDependencyFieldCatalog.find(fieldName);
+}
+
+export function listPackageJsonDependencyFieldsByNames(fieldNames = []) {
+  return packageJsonDependencyFieldCatalog.listByKeys(fieldNames);
+}
+
+export function listExternalReleaseDependencyMaterializationScopes() {
+  return externalReleaseDependencyMaterializationScopeCatalog.list();
+}
+
+export function findExternalReleaseDependencyMaterializationScope(scopeId) {
+  return externalReleaseDependencyMaterializationScopeCatalog.find(scopeId);
+}
+
+export function listExternalReleaseDependencyMaterializationScopesByIds(scopeIds = []) {
+  return externalReleaseDependencyMaterializationScopeCatalog.listByKeys(scopeIds);
 }
 
 function normalizePathForCompare(value) {
@@ -235,7 +306,7 @@ function collectPackageJsonExternalDependencyReferences({
   const packageDir = path.dirname(filePath);
   const references = [];
 
-  for (const field of PACKAGE_JSON_DEPENDENCY_FIELDS) {
+  for (const field of listPackageJsonDependencyFields()) {
     const deps = packageJson[field];
     if (!deps || typeof deps !== 'object') {
       continue;
@@ -422,7 +493,7 @@ export function resolveExternalReleaseDependencyMaterializationScope({
     scope ?? env.SDKWORK_RELEASE_EXTERNAL_DEPENDENCY_SCOPE ?? 'all',
   ).trim().toLowerCase();
 
-  if (EXTERNAL_RELEASE_DEPENDENCY_MATERIALIZATION_SCOPES.has(resolvedScope)) {
+  if (externalReleaseDependencyMaterializationScopeSet.has(resolvedScope)) {
     return resolvedScope;
   }
 

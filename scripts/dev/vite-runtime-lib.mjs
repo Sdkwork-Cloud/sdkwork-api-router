@@ -55,6 +55,148 @@ function defaultResolveFromRoot(root, specifier) {
   return createRequire(path.join(root, 'package.json')).resolve(specifier);
 }
 
+function defaultReadPackageJson(packageRoot) {
+  return JSON.parse(fs.readFileSync(path.join(packageRoot, 'package.json'), 'utf8'));
+}
+
+function parseBarePackageSpecifier(specifier) {
+  const normalizedSpecifier = String(specifier ?? '').trim();
+  if (!normalizedSpecifier || normalizedSpecifier.startsWith('.') || normalizedSpecifier.startsWith('/')) {
+    return null;
+  }
+
+  const segments = normalizedSpecifier.split('/');
+  if (normalizedSpecifier.startsWith('@')) {
+    if (segments.length < 2) {
+      return null;
+    }
+
+    return {
+      packageName: `${segments[0]}/${segments[1]}`,
+      packageSubpath: segments.slice(2),
+    };
+  }
+
+  return {
+    packageName: segments[0],
+    packageSubpath: segments.slice(1),
+  };
+}
+
+function formatPackageExportKey(packageSubpath) {
+  if (!Array.isArray(packageSubpath) || packageSubpath.length === 0) {
+    return '.';
+  }
+
+  return `./${packageSubpath.join('/')}`;
+}
+
+function resolvePackageExportPatternTarget(exportsField, exportKey) {
+  if (!exportsField || typeof exportsField !== 'object') {
+    return '';
+  }
+
+  const patternEntries = Object.entries(exportsField)
+    .filter(([candidateKey]) => (
+      candidateKey.startsWith('./')
+      && candidateKey.includes('*')
+    ))
+    .sort((left, right) => right[0].length - left[0].length);
+
+  for (const [patternKey, patternTarget] of patternEntries) {
+    const [patternPrefix, patternSuffix] = patternKey.split('*');
+    if (!exportKey.startsWith(patternPrefix) || !exportKey.endsWith(patternSuffix)) {
+      continue;
+    }
+
+    const wildcardValue = exportKey.slice(
+      patternPrefix.length,
+      exportKey.length - patternSuffix.length,
+    );
+    const resolvedTarget = selectImportEntryTarget(patternTarget);
+    if (!resolvedTarget) {
+      continue;
+    }
+
+    return resolvedTarget.replaceAll('*', wildcardValue);
+  }
+
+  return '';
+}
+
+function selectImportEntryTarget(candidate) {
+  if (typeof candidate === 'string') {
+    return candidate;
+  }
+  if (!candidate || typeof candidate !== 'object') {
+    return '';
+  }
+
+  const prioritizedKeys = [
+    'import',
+    'browser',
+    'development',
+    'default',
+    'module',
+  ];
+
+  for (const key of prioritizedKeys) {
+    if (!Object.prototype.hasOwnProperty.call(candidate, key)) {
+      continue;
+    }
+
+    const resolvedTarget = selectImportEntryTarget(candidate[key]);
+    if (resolvedTarget) {
+      return resolvedTarget;
+    }
+  }
+
+  return '';
+}
+
+function resolvePackageImportEntry(packageJson, packageSubpath = []) {
+  const exportsField = packageJson?.exports;
+  const exportKey = formatPackageExportKey(packageSubpath);
+
+  if (typeof exportsField === 'string') {
+    if (exportKey !== '.') {
+      return '';
+    }
+
+    return exportsField;
+  }
+
+  if (exportsField && typeof exportsField === 'object') {
+    const hasExplicitSubpathKeys = Object.keys(exportsField).some((candidateKey) => (
+      candidateKey === '.'
+      || candidateKey.startsWith('./')
+    ));
+    const exportTarget = Object.prototype.hasOwnProperty.call(exportsField, exportKey)
+      ? selectImportEntryTarget(exportsField[exportKey])
+      : (
+        exportKey === '.' && !hasExplicitSubpathKeys
+          ? selectImportEntryTarget(exportsField)
+          : resolvePackageExportPatternTarget(exportsField, exportKey)
+      );
+    if (exportTarget) {
+      return exportTarget;
+    }
+  }
+
+  if (packageSubpath.length > 0) {
+    return '';
+  }
+
+  const moduleEntry = String(
+    packageJson?.module
+      ?? packageJson?.['jsnext:main']
+      ?? packageJson?.main
+      ?? '',
+  ).trim();
+
+  return moduleEntry;
+}
+
 export function probeReadableFile(
   filePath,
   {
@@ -188,6 +330,54 @@ export function findReadableModuleResolution({
 
 export function resolveReadableModuleSpecifier(options) {
   return findReadableModuleResolution(options).resolvedPath;
+}
+
+export function resolveReadableFallbackModulePath({
+  specifier,
+  resolution,
+  resolveReadablePackageRootImpl = resolveReadablePackageRoot,
+  readPackageJsonImpl = defaultReadPackageJson,
+} = {}) {
+  if (!resolution?.candidateRoot || !resolution?.resolvedPath) {
+    throw new Error('resolution.candidateRoot and resolution.resolvedPath are required');
+  }
+
+  const parsedSpecifier = parseBarePackageSpecifier(specifier);
+  if (!parsedSpecifier) {
+    return resolution.resolvedPath;
+  }
+
+  if (parsedSpecifier.packageSubpath.length > 0) {
+    try {
+      const subpathPackageRoot = resolveReadablePackageRootImpl({
+        appRoot: resolution.candidateRoot,
+        donorRoots: [],
+        packageName: `${parsedSpecifier.packageName}/${parsedSpecifier.packageSubpath.join('/')}`,
+      });
+      const subpathPackageJson = readPackageJsonImpl(subpathPackageRoot);
+      const subpathImportEntry = resolvePackageImportEntry(subpathPackageJson);
+
+      if (subpathImportEntry) {
+        return path.resolve(subpathPackageRoot, subpathImportEntry);
+      }
+    } catch {
+      // Not every package subpath is a published package root. Fall back to root package metadata.
+    }
+  }
+
+  const packageRoot = resolveReadablePackageRootImpl({
+    appRoot: resolution.candidateRoot,
+    donorRoots: [],
+    packageName: parsedSpecifier.packageName,
+  });
+  const packageJson = readPackageJsonImpl(packageRoot);
+  const importEntry = resolvePackageImportEntry(packageJson, parsedSpecifier.packageSubpath);
+
+  if (!importEntry) {
+    return resolution.resolvedPath;
+  }
+
+  return path.resolve(packageRoot, importEntry);
 }
 
 export function resolveReadablePackageRoot({

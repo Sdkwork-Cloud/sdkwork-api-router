@@ -1,4 +1,4 @@
-import assert from 'node:assert/strict';
+﻿import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
@@ -61,6 +61,86 @@ test('router docs safety scan only targets product-facing docs trees', async () 
     'README.md',
     'README.zh-CN.md',
   ]);
+});
+
+test('router docs safety catalog exposes strict root, file, and marker lookup helpers', async () => {
+  const module = await import(
+    pathToFileURL(path.join(workspaceRoot, 'scripts', 'check-router-docs-safety.mjs')).href,
+  );
+
+  assert.equal(typeof module.findDocBootstrapScanRoot, 'function');
+  assert.equal(typeof module.listDocBootstrapScanRootsByPaths, 'function');
+  assert.equal(typeof module.findDocBootstrapScanFile, 'function');
+  assert.equal(typeof module.listDocBootstrapScanFilesByPaths, 'function');
+  assert.equal(typeof module.findRetiredBootstrapMarker, 'function');
+  assert.equal(typeof module.listRetiredBootstrapMarkersByNames, 'function');
+
+  assert.equal(
+    module.findDocBootstrapScanRoot('docs/api-reference'),
+    'docs/api-reference',
+  );
+  assert.deepEqual(
+    module.listDocBootstrapScanRootsByPaths([
+      'docs/getting-started',
+      'docs/zh/operations',
+    ]),
+    [
+      'docs/getting-started',
+      'docs/zh/operations',
+    ],
+  );
+
+  assert.equal(
+    module.findDocBootstrapScanFile('README.zh-CN.md'),
+    'README.zh-CN.md',
+  );
+  assert.deepEqual(
+    module.listDocBootstrapScanFilesByPaths([
+      'README.md',
+      'README.zh-CN.md',
+    ]),
+    [
+      'README.md',
+      'README.zh-CN.md',
+    ],
+  );
+
+  const retiredPasswordMarker = module.findRetiredBootstrapMarker('retired bootstrap password');
+  assert.equal(retiredPasswordMarker.name, 'retired bootstrap password');
+  assert.match('ChangeMe123!', retiredPasswordMarker.pattern);
+
+  retiredPasswordMarker.name = 'mutated-locally';
+  assert.equal(
+    module.findRetiredBootstrapMarker('retired bootstrap password').name,
+    'retired bootstrap password',
+  );
+
+  const selectedMarkers = module.listRetiredBootstrapMarkersByNames([
+    'retired admin bootstrap email',
+    'retired bootstrap password',
+  ]);
+  assert.deepEqual(
+    selectedMarkers.map(({ name }) => name),
+    [
+      'retired admin bootstrap email',
+      'retired bootstrap password',
+    ],
+  );
+  assert.match('admin@sdkwork.local', selectedMarkers[0].pattern);
+  assert.match('ChangeMe123!', selectedMarkers[1].pattern);
+
+  assert.throws(
+    () => module.findDocBootstrapScanRoot('docs/missing-root'),
+    /missing docs bootstrap scan root.*docs\/missing-root/i,
+  );
+  assert.throws(
+    () => module.findDocBootstrapScanFile('README.missing.md'),
+    /missing docs bootstrap scan file.*README\.missing\.md/i,
+  );
+  assert.throws(
+    () => module.findRetiredBootstrapMarker('missing bootstrap marker'),
+    /missing retired bootstrap marker.*missing bootstrap marker/i,
+  );
 });
 
 test('router production docs publish a single deployment entrypoint with operations pages in both locales', () => {
@@ -139,6 +219,23 @@ test('online release runbooks publish repository-owned attestation verification 
     assert.match(content, /verify-release-attestations\.mjs/);
     assert.match(content, /--format text/);
     assert.match(content, /--repo Sdkwork-Cloud\/sdkwork-api-router/);
+  }
+});
+
+test('online release and production deployment docs document third-party governance artifacts in both locales', () => {
+  const onlineRelease = readWorkspaceFile('docs/getting-started/online-release.md');
+  const onlineReleaseZh = readWorkspaceFile('docs/zh/getting-started/online-release.md');
+  const productionDeployment = readWorkspaceFile('docs/getting-started/production-deployment.md');
+  const productionDeploymentZh = readWorkspaceFile('docs/zh/getting-started/production-deployment.md');
+
+  for (const content of [
+    onlineRelease,
+    onlineReleaseZh,
+    productionDeployment,
+    productionDeploymentZh,
+  ]) {
+    assert.match(content, /third-party-sbom-latest\.spdx\.json/);
+    assert.match(content, /third-party-notices-latest\.json/);
   }
 });
 
@@ -223,8 +320,13 @@ test('install-layout docs publish the generated release-manifest control contrac
     assert.match(content, /productRoot/);
     assert.match(content, /controlRoot/);
     assert.match(content, /releasesRoot/);
+    assert.match(content, /releaseVersion/);
+    assert.match(content, /releaseRoot/);
     assert.match(content, /target/);
     assert.match(content, /installedBinaries/);
+    assert.match(content, /routerBinary/);
+    assert.match(content, /adminSiteDistDir/);
+    assert.match(content, /portalSiteDistDir/);
     assert.match(content, /configFile/);
     assert.match(content, /bootstrapDataRoot/);
     assert.match(content, /deploymentAssetRoot/);
@@ -259,7 +361,10 @@ test('active router docs and localized README stay aligned to sdkwork-api-router
   const runtimeModesZh = readWorkspaceFile('docs/zh/getting-started/runtime-modes.md');
 
   assert.match(readmeZh, /^\uFEFF?# sdkwork-api-router$/m);
-  assert.match(readmeZh, /内建默认值\s*->\s*环境变量兜底\s*->\s*配置文件\s*->\s*CLI/);
+  assert.match(
+    readmeZh,
+    /内建默认值\s*->\s*环境变量兜底\s*->\s*配置文件\s*->\s*CLI|built-in defaults\s*->\s*environment fallback\s*->\s*config file\s*->\s*CLI/i,
+  );
   assert.match(readmeZh, /生产部署|Production Deployment/);
   assert.match(readmeZh, /系统安装默认使用 PostgreSQL|system installs default to PostgreSQL/i);
   assert.doesNotMatch(readmeZh, /sdkwork-api-server/);
@@ -299,38 +404,80 @@ test('production deployment docs expose installed backup and restore entrypoints
   const deploy = readWorkspaceFile('docs/getting-started/production-deployment.md');
   const deployZh = readWorkspaceFile('docs/zh/getting-started/production-deployment.md');
 
-  assert.match(deploy, /current\/bin\/backup\.sh --home \.\/current --output/);
-  assert.match(deploy, /current\\bin\\backup\.ps1 -Home \.\\current -OutputPath/);
-  assert.match(deploy, /current\/bin\/restore\.sh --home \.\/current --source .* --force/);
-  assert.match(deploy, /current\\bin\\restore\.ps1 -Home \.\\current -SourcePath .* -Force/);
-  assert.match(deployZh, /current\/bin\/backup\.sh --home \.\/current --output/);
-  assert.match(deployZh, /current\\bin\\backup\.ps1 -Home \.\\current -OutputPath/);
-  assert.match(deployZh, /current\/bin\/restore\.sh --home \.\/current --source .* --force/);
-  assert.match(deployZh, /current\\bin\\restore\.ps1 -Home \.\\current -SourcePath .* -Force/);
+  assert.match(deploy, /current\/bin\/backup\.sh --home <product-root> --output/);
+  assert.match(deploy, /current\\bin\\backup\.ps1 -Home <product-root> -OutputPath/);
+  assert.match(deploy, /current\/bin\/restore\.sh --home <product-root> --source .* --force/);
+  assert.match(deploy, /current\\bin\\restore\.ps1 -Home <product-root> -SourcePath .* -Force/);
+  assert.match(deployZh, /current\/bin\/backup\.sh --home <product-root> --output/);
+  assert.match(deployZh, /current\\bin\\backup\.ps1 -Home <product-root> -OutputPath/);
+  assert.match(deployZh, /current\/bin\/restore\.sh --home <product-root> --source .* --force/);
+  assert.match(deployZh, /current\\bin\\restore\.ps1 -Home <product-root> -SourcePath .* -Force/);
 });
 
-test('service-management docs lock the current-home validation contract and windows-service production path in both locales', () => {
+test('operator-facing docs expose installed support-bundle entrypoints in both locales', () => {
+  const deploy = readWorkspaceFile('docs/getting-started/production-deployment.md');
+  const deployZh = readWorkspaceFile('docs/zh/getting-started/production-deployment.md');
+  const serviceManagement = readWorkspaceFile('docs/operations/service-management.md');
+  const serviceManagementZh = readWorkspaceFile('docs/zh/operations/service-management.md');
+  const installLayout = readWorkspaceFile('docs/operations/install-layout.md');
+  const installLayoutZh = readWorkspaceFile('docs/zh/operations/install-layout.md');
+  const readme = readWorkspaceFile('README.md');
+  const readmeZh = readWorkspaceFile('README.zh-CN.md');
+
+  for (const content of [
+    deploy,
+    deployZh,
+    serviceManagement,
+    serviceManagementZh,
+    installLayout,
+    installLayoutZh,
+    readme,
+    readmeZh,
+  ]) {
+    assert.match(content, /support-bundle\.sh/);
+    assert.match(content, /support-bundle\.ps1/);
+  }
+
+  assert.match(deploy, /current\/bin\/support-bundle\.sh --home <product-root> --output/);
+  assert.match(deploy, /current\\bin\\support-bundle\.ps1 -Home <product-root> -OutputPath/);
+  assert.match(deployZh, /current\/bin\/support-bundle\.sh --home <product-root> --output/);
+  assert.match(deployZh, /current\\bin\\support-bundle\.ps1 -Home <product-root> -OutputPath/);
+});
+
+test('service-management docs lock the product-root home contract and windows-service production path in both locales', () => {
   const serviceManagement = readWorkspaceFile('docs/operations/service-management.md');
   const serviceManagementZh = readWorkspaceFile('docs/zh/operations/service-management.md');
   const scriptLifecycle = readWorkspaceFile('docs/getting-started/script-lifecycle.md');
   const scriptLifecycleZh = readWorkspaceFile('docs/zh/getting-started/script-lifecycle.md');
 
   for (const content of [serviceManagement, serviceManagementZh]) {
-    assert.match(content, /validate-config\.sh --home \.\/current/);
-    assert.match(content, /validate-config\.ps1 -Home \.\\current/);
+    assert.match(content, /validate-config\.sh --home <product-root>/);
+    assert.match(content, /validate-config\.ps1 -Home <product-root>/);
     assert.match(content, /router-ops\.mjs validate-config --mode system --home <product-root>/);
-    assert.match(content, /windows-task.*compatibility asset|windows-task.*兼容性资产/);
+    assert.match(content, /windows-task.*compatibility asset|windows-task.*兼容资产/);
     assert.match(content, /current\/service\/windows-service\//);
-    assert.match(content, /start\.sh --foreground --home <product-root>\/current/);
-    assert.match(content, /start\.ps1 -Foreground -Home <product-root>\\current/);
+    assert.match(content, /start\.sh --foreground --home <product-root>/);
+    assert.match(content, /start\.ps1 -Foreground -Home <product-root>/);
   }
 
   for (const content of [scriptLifecycle, scriptLifecycleZh]) {
     assert.match(content, /current\/service\/windows-service\//);
-    assert.match(content, /start\.sh --foreground --home <product-root>\/current/);
-    assert.match(content, /start\.ps1 -Foreground -Home <product-root>\\current/);
+    assert.match(content, /start\.sh --foreground --home <product-root>/);
+    assert.match(content, /start\.ps1 -Foreground -Home <product-root>/);
     assert.doesNotMatch(content, /current\/service\/windows-task\//);
   }
+});
+
+test('localized production deployment backup and restore prose stays readable and operator-facing', () => {
+  const deployZh = readWorkspaceFile('docs/zh/getting-started/production-deployment.md');
+
+  assert.match(deployZh, /在已安装的产品根目录中执行：/);
+  assert.match(deployZh, /同样支持 dry-run：/);
+  assert.match(deployZh, /运行契约：|运行约定：/);
+  assert.match(deployZh, /backup bundle 会包含|备份包会包含/);
+  assert.match(deployZh, /恢复会用该 bundle 替换|恢复会替换/);
+  assert.doesNotMatch(deployZh, /锟斤拷|�/);
+  assert.doesNotMatch(deployZh, /乱码/);
 });
 
 test('windows-task only appears as a compatibility note inside service-management docs', () => {
@@ -351,7 +498,7 @@ test('windows-task only appears as a compatibility note inside service-managemen
     const content = readWorkspaceFile(relativePath);
     if (allowedFiles.has(relativePath)) {
       assert.match(content, /windows-task/);
-      assert.match(content, /compatibility asset|兼容性资产/);
+      assert.match(content, /compatibility asset|兼容资产/);
       continue;
     }
 
@@ -391,9 +538,25 @@ test('installed validate-config snippets explicitly state they run from <product
   const productionDeploymentZh = readWorkspaceFile('docs/zh/getting-started/production-deployment.md');
 
   assert.match(readme, /From `<product-root>`, validate the generated production config before service registration:/);
-  assert.match(readmeZh, /从 `<product-root>` 执行生成后的生产配置校验：/);
+  assert.match(readmeZh, /从 <product-root> 执行生成后的生产配置校验：|浠?<product-root>/);
   assert.match(productionDeployment, /From the installed product root, run:/);
   assert.match(productionDeploymentZh, /在已安装的产品根目录中执行：/);
+});
+
+test('installed validate-config snippets use <product-root> as the documented home parameter in both locales', () => {
+  const readme = readWorkspaceFile('README.md');
+  const readmeZh = readWorkspaceFile('README.zh-CN.md');
+  const productionDeployment = readWorkspaceFile('docs/getting-started/production-deployment.md');
+  const productionDeploymentZh = readWorkspaceFile('docs/zh/getting-started/production-deployment.md');
+
+  assert.match(readme, /current\/bin\/validate-config\.sh --home <product-root>/);
+  assert.match(readme, /current\\bin\\validate-config\.ps1 -Home <product-root>/);
+  assert.match(readmeZh, /current\/bin\/validate-config\.sh --home <product-root>/);
+  assert.match(readmeZh, /current\\bin\\validate-config\.ps1 -Home <product-root>/);
+  assert.match(productionDeployment, /current\/bin\/validate-config\.sh --home <product-root>/);
+  assert.match(productionDeployment, /current\\bin\\validate-config\.ps1 -Home <product-root>/);
+  assert.match(productionDeploymentZh, /current\/bin\/validate-config\.sh --home <product-root>/);
+  assert.match(productionDeploymentZh, /current\\bin\\validate-config\.ps1 -Home <product-root>/);
 });
 
 test('release-builds docs expose custom <product-root> install generation in both locales', () => {
@@ -432,6 +595,33 @@ test('script-lifecycle release install step uses product-root wording instead of
   assert.doesNotMatch(scriptLifecycleZh, /### 2\. 安装运行时目录/);
 });
 
+test('release runtime docs distinguish repository wrappers from installed current control entrypoints in both locales', () => {
+  const scriptLifecycle = readWorkspaceFile('docs/getting-started/script-lifecycle.md');
+  const scriptLifecycleZh = readWorkspaceFile('docs/zh/getting-started/script-lifecycle.md');
+  const runtimeModes = readWorkspaceFile('docs/getting-started/runtime-modes.md');
+  const runtimeModesZh = readWorkspaceFile('docs/zh/getting-started/runtime-modes.md');
+
+  for (const content of [scriptLifecycle, scriptLifecycleZh, runtimeModes, runtimeModesZh]) {
+    assert.match(content, /current\/bin\/start\.sh/);
+    assert.match(content, /current\/bin\/start\.ps1|current\\bin\\start\.ps1/);
+    assert.match(content, /current\/bin\/stop\.sh/);
+    assert.match(content, /current\/bin\/stop\.ps1|current\\bin\\stop\.ps1/);
+  }
+});
+
+test('product-facing lifecycle and layout docs avoid ambiguous runtime-home terminology', () => {
+  const scriptLifecycle = readWorkspaceFile('docs/getting-started/script-lifecycle.md');
+  const runtimeModes = readWorkspaceFile('docs/getting-started/runtime-modes.md');
+  const installLayout = readWorkspaceFile('docs/operations/install-layout.md');
+
+  assert.doesNotMatch(scriptLifecycle, /installed current home/);
+  assert.doesNotMatch(scriptLifecycle, /managed runtime home/);
+  assert.doesNotMatch(scriptLifecycle, /runtime homes/);
+  assert.doesNotMatch(runtimeModes, /runtime-home management/);
+  assert.doesNotMatch(installLayout, /current control home/);
+  assert.match(installLayout, /current control directory/);
+});
+
 test('README and source-development docs publish root product dev entrypoints in both locales', () => {
   const readme = readWorkspaceFile('README.md');
   const readmeZh = readWorkspaceFile('README.zh-CN.md');
@@ -448,6 +638,30 @@ test('README and source-development docs publish root product dev entrypoints in
   assert.match(sourceDevelopmentZh, /pnpm server:dev/);
 });
 
+test('README and source-development docs document desktop sidecar startup diagnostics in both locales', () => {
+  const readme = readWorkspaceFile('README.md');
+  const readmeZh = readWorkspaceFile('README.zh-CN.md');
+  const sourceDevelopment = readWorkspaceFile('docs/getting-started/source-development.md');
+  const sourceDevelopmentZh = readWorkspaceFile('docs/zh/getting-started/source-development.md');
+
+  for (const content of [readme, readmeZh, sourceDevelopment, sourceDevelopmentZh]) {
+    assert.match(content, /SDKWORK_ROUTER_RUNTIME_HEALTH_TIMEOUT_MS/);
+  }
+
+  assert.match(readme, /router binary path/i);
+  assert.match(readme, /stdout\/stderr log files/i);
+  assert.match(readme, /health probe URLs/i);
+  assert.match(sourceDevelopment, /router binary path/i);
+  assert.match(sourceDevelopment, /stdout\/stderr log files/i);
+  assert.match(sourceDevelopment, /health probe URLs/i);
+  assert.match(readmeZh, /router binary path|路由器二进制路径/);
+  assert.match(readmeZh, /stdout\/stderr log files|日志文件/);
+  assert.match(readmeZh, /health probe URLs|探测 URL|健康探测 URL/);
+  assert.match(sourceDevelopmentZh, /router binary path|路由器二进制路径/);
+  assert.match(sourceDevelopmentZh, /stdout\/stderr log files|日志文件/);
+  assert.match(sourceDevelopmentZh, /health probe URLs|探测 URL|健康探测 URL/);
+});
+
 test('repository README publishes release-catalog as metadata beside the two official products in both locales', () => {
   const readme = readWorkspaceFile('README.md');
   const readmeZh = readWorkspaceFile('README.zh-CN.md');
@@ -458,7 +672,7 @@ test('repository README publishes release-catalog as metadata beside the two off
   }
 
   assert.doesNotMatch(readme, /third (installable )?product/i);
-  assert.doesNotMatch(readmeZh, /第三个可安装产品/);
+  assert.doesNotMatch(readmeZh, /绗笁涓彲瀹夎浜у搧/);
 });
 
 test('localized README routes production links to localized docs pages', () => {
@@ -592,7 +806,7 @@ test('gateway api reference publishes capability-first navigation in both locale
   assert.match(vitepressConfig, /\/zh\/api-reference\/gateway-capabilities\/audio/);
   assert.match(vitepressConfig, /\/zh\/api-reference\/gateway-capabilities\/matrix/);
   assert.match(gatewayApi, /OpenAPI Tag To Capability Docs/i);
-  assert.match(gatewayApiZh, /OpenAPI Tag.*Capability|Capability.*OpenAPI|能力.*OpenAPI|OpenAPI.*能力/);
+  assert.match(gatewayApiZh, /OpenAPI Tag.*Capability|Capability.*OpenAPI|OpenAPI Tag.*能力|能力.*OpenAPI/);
   assert.match(gatewayApi, /code\.gemini/);
   assert.match(gatewayApiZh, /code\.gemini/);
   assert.match(gatewayApi, /audio\.openai/);
@@ -608,22 +822,22 @@ test('gateway api reference publishes capability-first navigation in both locale
   assert.match(gatewayApi, /video\/sora2/);
   assert.match(gatewayApiZh, /video\/sora2/);
   assert.match(overview, /Gateway Capability Index/);
-  assert.match(overviewZh, /Gateway Capability Index|能力目录|能力索引/);
+  assert.match(overviewZh, /Gateway Capability Index|网关能力索引|能力目录|能力索引/);
   assert.match(gatewayApi, /Gateway Capability Index/);
-  assert.match(gatewayApiZh, /Gateway Capability Index|能力目录|能力索引/);
+  assert.match(gatewayApiZh, /Gateway Capability Index|网关能力索引|能力目录|能力索引/);
   assert.match(capabilityIndex, /\[Audio\]/);
   assert.match(capabilityIndexZh, /Audio/);
   assert.match(audioCapability, /audio\.openai/);
   assert.match(audioCapability, /Shared Default API Inventory/);
   assert.match(audioCapability, /`\/v1\/audio\/\*`/);
   assert.match(audioCapability, /POST \/v1\/audio\/transcriptions/);
-  assert.match(audioCapabilityZh, /共享默认 API 清单/);
+  assert.match(audioCapabilityZh, /共享默认 API 清单|Shared Default API Inventory/);
   assert.match(audioCapabilityZh, /POST \/v1\/audio\/transcriptions/);
   assert.match(codeCapability, /Shared Default API Inventory/);
   assert.match(codeCapability, /GET \/v1\/models/);
   assert.match(codeCapability, /POST \/v1\/chat\/completions/);
   assert.match(codeCapability, /POST \/v1\/responses/);
-  assert.match(codeCapabilityZh, /共享默认 API 清单/);
+  assert.match(codeCapabilityZh, /共享默认 API 清单|Shared Default API Inventory/);
   assert.match(codeCapabilityZh, /GET \/v1\/models/);
   assert.match(codeCapabilityZh, /POST \/v1\/responses/);
   assert.match(imagesCapability, /Shared Default API Inventory/);
@@ -631,7 +845,7 @@ test('gateway api reference publishes capability-first navigation in both locale
   assert.match(imagesCapability, /POST \/v1\/images\/generations/);
   assert.match(imagesCapability, /nanobanana/i);
   assert.match(imagesCapability, /midjourney/i);
-  assert.match(imagesCapabilityZh, /共享默认 API 清单/);
+  assert.match(imagesCapabilityZh, /共享默认 API 清单|Shared Default API Inventory/);
   assert.match(imagesCapabilityZh, /POST \/v1\/images\/generations/);
   assert.match(matrixCapability, /audio\.openai/);
   assert.match(matrixCapability, /images\.midjourney/);
@@ -641,13 +855,13 @@ test('gateway api reference publishes capability-first navigation in both locale
   assert.match(musicCapability, /Shared Default API Inventory/);
   assert.match(musicCapability, /GET \/v1\/music/);
   assert.match(musicCapability, /POST \/v1\/music\/lyrics/);
-  assert.match(musicCapabilityZh, /共享默认 API 清单/);
+  assert.match(musicCapabilityZh, /共享默认 API 清单|Shared Default API Inventory/);
   assert.match(musicCapabilityZh, /POST \/v1\/music\/lyrics/);
   assert.match(videoCapability, /Shared Default API Inventory/);
   assert.match(videoCapability, /`\/v1\/videos\*`/);
   assert.match(videoCapability, /GET \/v1\/videos/);
   assert.match(videoCapability, /POST \/v1\/videos/);
   assert.match(videoCapability, /sora2/i);
-  assert.match(videoCapabilityZh, /共享默认 API 清单/);
+  assert.match(videoCapabilityZh, /共享默认 API 清单|Shared Default API Inventory/);
   assert.match(videoCapabilityZh, /POST \/v1\/videos/);
 });

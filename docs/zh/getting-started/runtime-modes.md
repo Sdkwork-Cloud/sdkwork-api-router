@@ -127,6 +127,16 @@ Windows 对应：
 - `.\bin\start.ps1`
 - `.\bin\stop.ps1`
 
+安装后的产品根目录 operator 入口：
+
+- `./current/bin/start.sh`
+- `./current/bin/stop.sh`
+
+PowerShell 对应入口：
+
+- `.\current\bin\start.ps1`
+- `.\current\bin\stop.ps1`
+
 ## 如何选择合适的模式
 
 在这些场景下选原始 standalone 服务模式：

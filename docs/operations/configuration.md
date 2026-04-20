@@ -246,11 +246,11 @@ extension_trusted_signers:
   partner: "c2Vjb25kLXB1YmxpYy1rZXk="
 require_signed_connector_extensions: false
 require_signed_native_dynamic_extensions: true
-admin_jwt_signing_secret: "change-me-admin"
-portal_jwt_signing_secret: "change-me-portal"
+admin_jwt_signing_secret: "replace-with-admin-jwt-secret"
+portal_jwt_signing_secret: "replace-with-portal-jwt-secret"
 runtime_snapshot_interval_secs: 30
 secret_backend: "local_encrypted_file"
-credential_master_key: "change-me-master-key"
+credential_master_key: "replace-with-credential-master-key"
 secret_local_file: "secrets.json"
 secret_keyring_service: "sdkwork-api-router"
 ```

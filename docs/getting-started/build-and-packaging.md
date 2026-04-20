@@ -62,7 +62,9 @@ The managed build output contract for the official server product is:
 - `artifacts/release/native/<platform>/<arch>/bundles/sdkwork-api-router-product-server-<platform>-<arch>.tar.gz.sha256.txt`
 - `artifacts/release/native/<platform>/<arch>/bundles/sdkwork-api-router-product-server-<platform>-<arch>.manifest.json`
 
-The external server manifest describes the archive file, checksum file, and the embedded bundle contract. The server archive itself expands into a product root that already includes `bin/`, `sites/`, `data/`, `deploy/`, `README.txt`, and an embedded `release-manifest.json`.
+The external server manifest describes the archive file, checksum file, the embedded bundle contract, the governed `releaseVersion`, and the bundle-root installer entrypoints.
+The server archive itself expands into a product root that already includes `install.sh`, `install.ps1`, `bin/`, `sites/`, `data/`, `deploy/`, `README.txt`, and an embedded `release-manifest.json`.
+That official server bundle also carries `control/bin/` and `control/bin/lib/`; bundle-root native install tooling materializes the installed `current/bin/` operator surface from that embedded control tree so production installs stay bound to the governed release artifact instead of to repository-local helper scripts.
 
 When the managed build output tree contains a complete official asset set, it also materializes the release-level metadata index at `artifacts/release/release-catalog.json`. That catalog aggregates the external manifests for the two official products into one machine-readable release index, carries `generatedAt` plus per-variant `variantKind`, `primaryFileSizeBytes`, and `checksumAlgorithm` fields, and remains release metadata rather than a third installable product.
 
@@ -90,7 +92,10 @@ pnpm server:dev
 ```
 
 `pnpm tauri:dev` launches the portal desktop product path through the shared root entrypoint.
-`pnpm server:dev` launches the router product server path through the same workspace contract.
+`pnpm server:dev` launches the full server development workspace through the same root entrypoint.
+That root-level server dev flow is development-only and starts backend APIs, the admin Vite server, the portal Vite server, and the unified Pingora web host together.
+
+Use `pnpm --dir apps/sdkwork-router-portal server:start` when you need the standalone integrated `router-product-service` CLI or deployment-oriented server runtime flags.
 
 Build the production desktop installer or bundle:
 

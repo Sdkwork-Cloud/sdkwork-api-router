@@ -117,6 +117,26 @@ function createGovernanceArtifacts(root) {
     generatedAt: '2026-04-09T09:04:00Z',
     targets: createGovernanceTargets(),
   });
+  writeJson(root, 'docs/release/third-party-sbom-latest.spdx.json', {
+    spdxVersion: 'SPDX-2.3',
+    SPDXID: 'SPDXRef-DOCUMENT',
+    name: 'sdkwork-api-router-third-party-sbom',
+    dataLicense: 'CC0-1.0',
+    documentNamespace: 'https://sdkwork.example.test/spdx/2026-04-09',
+    creationInfo: {
+      created: '2026-04-09T09:04:30Z',
+      creators: ['Tool: sdkwork-third-party-governance'],
+    },
+    packages: [],
+    relationships: [],
+  });
+  writeJson(root, 'docs/release/third-party-notices-latest.json', {
+    version: 1,
+    generatedAt: '2026-04-09T09:04:30Z',
+    packageCount: 0,
+    noticeText: 'Synthetic notice bundle\n',
+    packages: [],
+  });
 }
 
 test('release governance bundle materializer writes a single bundle directory plus manifest for restore operators', async () => {
@@ -140,7 +160,7 @@ test('release governance bundle materializer writes a single bundle directory pl
       generatedAt: '2026-04-09T09:05:00Z',
     });
 
-    assert.equal(result.bundleEntryCount, 5);
+    assert.equal(result.bundleEntryCount, 7);
     assert.equal(existsSync(path.join(result.outputDir, 'docs', 'release', 'release-window-snapshot-latest.json')), true);
     assert.equal(existsSync(path.join(result.outputDir, 'release-governance-bundle-manifest.json')), true);
 
@@ -148,7 +168,7 @@ test('release governance bundle materializer writes a single bundle directory pl
       readFileSync(path.join(result.outputDir, 'release-governance-bundle-manifest.json'), 'utf8'),
     );
     assert.equal(manifest.version, 1);
-    assert.equal(manifest.bundleEntryCount, 5);
+    assert.equal(manifest.bundleEntryCount, 7);
     assert.deepEqual(
       manifest.artifacts.map((artifact) => artifact.id),
       [
@@ -157,6 +177,8 @@ test('release governance bundle materializer writes a single bundle directory pl
         'release-telemetry-export',
         'release-telemetry-snapshot',
         'release-slo-governance',
+        'third-party-sbom',
+        'third-party-notices',
       ],
     );
     assert.match(

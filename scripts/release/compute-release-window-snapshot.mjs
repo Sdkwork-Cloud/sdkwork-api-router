@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import {
   filterGovernedReleaseArtifactStatusLines,
 } from './release-governed-artifact-status.mjs';
+import { assertSupportedReleaseCliFormat } from './release-cli-format-catalog.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -339,9 +340,7 @@ function parseArgs(argv = process.argv.slice(2)) {
     throw new Error(`unknown argument: ${token}`);
   }
 
-  if (!['text', 'json'].includes(format)) {
-    throw new Error(`unsupported format: ${format}`);
-  }
+  assertSupportedReleaseCliFormat(format);
 
   return {
     format,

@@ -113,19 +113,29 @@ Characteristics:
 - `router-product-service` serves `/admin/*`, `/portal/*`, and `/api/*`
 - designed for foreground execution under managed scripts or an external service manager
 
-Entry points:
+Repository wrapper entry points:
 
 - `./bin/build.sh`
 - `./bin/install.sh`
 - `./bin/start.sh`
 - `./bin/stop.sh`
 
-Windows equivalents:
+Windows wrapper equivalents:
 
 - `.\bin\build.ps1`
 - `.\bin\install.ps1`
 - `.\bin\start.ps1`
 - `.\bin\stop.ps1`
+
+Installed operator entry points from a product root:
+
+- `./current/bin/start.sh`
+- `./current/bin/stop.sh`
+
+Installed PowerShell equivalents:
+
+- `.\current\bin\start.ps1`
+- `.\current\bin\stop.ps1`
 
 ## Choosing The Right Mode
 
@@ -147,7 +157,7 @@ Choose source preview mode when:
 Choose managed development mode when:
 
 - you want the easiest repeatable local environment
-- you want PID, log, and runtime-home management
+- you want PID, log, and managed runtime directory management
 - you want startup summaries with URLs and credentials
 
 Choose managed release mode when:

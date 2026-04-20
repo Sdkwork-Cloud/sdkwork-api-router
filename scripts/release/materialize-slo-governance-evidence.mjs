@@ -9,7 +9,7 @@ import {
   resolveReleaseTelemetrySnapshotInput,
   validateReleaseTelemetrySnapshotShape,
 } from './materialize-release-telemetry-snapshot.mjs';
-import { SLO_GOVERNANCE_BASELINE } from './slo-governance.mjs';
+import { SLO_GOVERNANCE_BASELINE, listSloGovernanceTargets } from './slo-governance.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -117,6 +117,7 @@ export function validateSloGovernanceEvidenceShape({
   evidence,
   baseline = SLO_GOVERNANCE_BASELINE,
 } = {}) {
+  const targets = listSloGovernanceTargets({ baseline });
   if (!evidence || typeof evidence !== 'object') {
     throw new Error('SLO governance evidence must be a JSON object');
   }
@@ -129,7 +130,7 @@ export function validateSloGovernanceEvidenceShape({
     throw new Error('SLO governance evidence must include a targets object');
   }
 
-  for (const target of baseline.targets) {
+  for (const target of targets) {
     const targetEvidence = evidence.targets[target.id];
     if (!targetEvidence || typeof targetEvidence !== 'object') {
       throw new Error(`SLO governance evidence is missing target ${target.id}`);
@@ -158,7 +159,7 @@ export function validateSloGovernanceEvidenceShape({
 
   return {
     baselineId: baseline.baselineId,
-    targetCount: baseline.targets.length,
+    targetCount: targets.length,
   };
 }
 

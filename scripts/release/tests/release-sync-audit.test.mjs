@@ -151,6 +151,65 @@ function createLiveCurrentRepoGitSpawn(spec, {
   };
 }
 
+test('release sync audit exposes strict repository spec and live refresh lookup helpers', async () => {
+  const module = await import(
+    pathToFileURL(
+      path.join(repoRoot, 'scripts', 'release', 'verify-release-sync.mjs'),
+    ).href,
+  );
+
+  assert.equal(typeof module.findReleaseSyncRepositorySpec, 'function');
+  assert.equal(typeof module.listReleaseSyncRepositorySpecsByIds, 'function');
+  assert.equal(typeof module.listReleaseSyncLiveRefreshRepositoryIds, 'function');
+  assert.equal(typeof module.findReleaseSyncLiveRefreshRepositoryId, 'function');
+  assert.equal(typeof module.listReleaseSyncLiveRefreshRepositoryIdsByIds, 'function');
+
+  const uiSpec = module.findReleaseSyncRepositorySpec('sdkwork-ui');
+  assert.equal(uiSpec.id, 'sdkwork-ui');
+  assert.equal(uiSpec.envRefKey, 'SDKWORK_UI_GIT_REF');
+
+  uiSpec.defaultRef = 'mutated-locally';
+  assert.equal(
+    module.findReleaseSyncRepositorySpec('sdkwork-ui').defaultRef,
+    'main',
+  );
+
+  assert.deepEqual(
+    module.listReleaseSyncRepositorySpecsByIds([
+      'sdkwork-api-router',
+      'sdkwork-craw-chat-sdk',
+    ]).map(({ id }) => id),
+    [
+      'sdkwork-api-router',
+      'sdkwork-craw-chat-sdk',
+    ],
+  );
+
+  assert.deepEqual(
+    module.listReleaseSyncLiveRefreshRepositoryIds(),
+    ['sdkwork-api-router'],
+  );
+  assert.equal(
+    module.findReleaseSyncLiveRefreshRepositoryId('sdkwork-api-router'),
+    'sdkwork-api-router',
+  );
+  assert.deepEqual(
+    module.listReleaseSyncLiveRefreshRepositoryIdsByIds([
+      'sdkwork-api-router',
+    ]),
+    ['sdkwork-api-router'],
+  );
+
+  assert.throws(
+    () => module.findReleaseSyncRepositorySpec('missing-release-sync-repository'),
+    /missing release sync repository spec.*missing-release-sync-repository/i,
+  );
+  assert.throws(
+    () => module.findReleaseSyncLiveRefreshRepositoryId('sdkwork-ui'),
+    /missing release sync live refresh repository id.*sdkwork-ui/i,
+  );
+});
+
 test('release sync audit exposes repository specs and blocks non-standalone, dirty, or remote-unverifiable repositories', async () => {
   const module = await import(
     pathToFileURL(
@@ -227,6 +286,7 @@ test('release sync audit exposes repository specs and blocks non-standalone, dir
       '## HEAD (no branch)',
       ' M docs/release/release-sync-audit-latest.json',
       ' M docs/release/release-window-snapshot-latest.json',
+      ' M docs/release/third-party-notices-latest.json',
     ].join('\n'),
   );
   assert.equal(governedArtifactOnlySummary.branch, 'HEAD (no branch)');

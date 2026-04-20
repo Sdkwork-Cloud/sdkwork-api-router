@@ -38,42 +38,56 @@ test('product check script plans portal and admin regression tests before build 
     env: {},
   });
 
-  assert.equal(plan.length, 12);
-  assert.equal(plan[0].label, 'portal typecheck');
-  assert.equal(plan[0].command, process.execPath);
-  assert.match(plan[0].args.join(' '), /run-tsc-cli\.mjs --noEmit/);
-  assert.equal(plan[1].label, 'portal regression tests');
-  assert.equal(plan[2].label, 'portal browser runtime smoke');
-  assert.equal(plan[3].label, 'admin typecheck');
-  assert.equal(plan[3].command, process.execPath);
-  assert.match(plan[3].args.join(' '), /run-tsc-cli\.mjs --noEmit/);
-  assert.equal(plan[4].label, 'admin regression tests');
-  assert.equal(plan[5].label, 'admin browser runtime smoke');
-  assert.equal(plan[6].label, 'docs bootstrap safety');
-  assert.equal(plan[7].label, 'docs site build');
-  assert.equal(plan[8].label, 'workspace dependency audit');
-  assert.equal(plan[9].label, 'portal desktop runtime payload');
-  assert.equal(plan[10].label, 'server cargo check');
-  assert.equal(plan[11].label, 'server deployment plan');
-  assert.deepEqual(plan[1].args, ['--test', 'tests/*.mjs']);
-  assert.match(plan[2].args.join(' '), /check-portal-browser-runtime\.mjs/);
-  assert.match(plan[5].args.join(' '), /check-admin-browser-runtime\.mjs/);
-  assert.deepEqual(plan[4].args, ['--test', 'tests/*.mjs']);
-  assert.match(plan[6].args.join(' '), /check-router-docs-safety\.mjs/);
-  assert.equal(plan[7].command, 'powershell.exe');
-  assert.deepEqual(plan[7].args.slice(0, 4), [
+  const labels = plan.map((step) => step.label);
+  const stepByLabel = new Map(plan.map((step) => [step.label, step]));
+
+  assert.deepEqual(labels, [
+    'portal typecheck',
+    'portal regression tests',
+    'portal browser runtime smoke',
+    'admin typecheck',
+    'admin regression tests',
+    'admin browser runtime smoke',
+    'server development workspace smoke',
+    'portal desktop runtime rust tests',
+    'docs bootstrap safety',
+    'docs site build',
+    'workspace dependency audit',
+    'portal desktop runtime payload',
+    'server cargo check',
+    'server deployment plan',
+  ]);
+  assert.equal(stepByLabel.get('portal typecheck')?.command, process.execPath);
+  assert.match(stepByLabel.get('portal typecheck')?.args.join(' ') ?? '', /run-tsc-cli\.mjs --noEmit/);
+  assert.deepEqual(stepByLabel.get('portal regression tests')?.args, ['--test', 'tests/*.mjs']);
+  assert.match(stepByLabel.get('portal browser runtime smoke')?.args.join(' ') ?? '', /check-portal-browser-runtime\.mjs/);
+  assert.equal(stepByLabel.get('admin typecheck')?.command, process.execPath);
+  assert.match(stepByLabel.get('admin typecheck')?.args.join(' ') ?? '', /run-tsc-cli\.mjs --noEmit/);
+  assert.deepEqual(stepByLabel.get('admin regression tests')?.args, ['--test', 'tests/*.mjs']);
+  assert.match(stepByLabel.get('admin browser runtime smoke')?.args.join(' ') ?? '', /check-admin-browser-runtime\.mjs/);
+  assert.match(
+    stepByLabel.get('server development workspace smoke')?.args.join(' ') ?? '',
+    /check-server-dev-workspace\.mjs/,
+  );
+  assert.match(
+    stepByLabel.get('portal desktop runtime rust tests')?.args.join(' ') ?? '',
+    /test --quiet --manifest-path .*apps[\\/]+sdkwork-router-portal[\\/]+src-tauri[\\/]+Cargo\.toml/,
+  );
+  assert.match(stepByLabel.get('docs bootstrap safety')?.args.join(' ') ?? '', /check-router-docs-safety\.mjs/);
+  assert.equal(stepByLabel.get('docs site build')?.command, 'powershell.exe');
+  assert.deepEqual(stepByLabel.get('docs site build')?.args.slice(0, 4), [
     '-NoProfile',
     '-ExecutionPolicy',
     'Bypass',
     '-Command',
   ]);
-  assert.match(plan[7].args[4], /pnpm\.cjs/);
-  assert.match(plan[7].args[4], /--dir/);
-  assert.match(plan[7].args[4], /docs/);
-  assert.match(plan[7].args[4], /build/);
-  assert.match(plan[8].args.join(' '), /check-rust-dependency-audit\.mjs/);
-  assert.match(plan[9].args.join(' '), /prepare-router-portal-desktop-runtime\.mjs/);
-  assert.match(plan[11].args.join(' '), /--dry-run/);
-  assert.match(plan[11].args.join(' '), /--plan-format json/);
-  assert.match(plan[11].args.join(' '), /--bind 127\.0\.0\.1:3001/);
+  assert.match(stepByLabel.get('docs site build')?.args[4] ?? '', /pnpm\.cjs/);
+  assert.match(stepByLabel.get('docs site build')?.args[4] ?? '', /--dir/);
+  assert.match(stepByLabel.get('docs site build')?.args[4] ?? '', /docs/);
+  assert.match(stepByLabel.get('docs site build')?.args[4] ?? '', /build/);
+  assert.match(stepByLabel.get('workspace dependency audit')?.args.join(' ') ?? '', /check-rust-dependency-audit\.mjs/);
+  assert.match(stepByLabel.get('portal desktop runtime payload')?.args.join(' ') ?? '', /prepare-router-portal-desktop-runtime\.mjs/);
+  assert.match(stepByLabel.get('server deployment plan')?.args.join(' ') ?? '', /--dry-run/);
+  assert.match(stepByLabel.get('server deployment plan')?.args.join(' ') ?? '', /--plan-format json/);
+  assert.match(stepByLabel.get('server deployment plan')?.args.join(' ') ?? '', /--bind 127\.0\.0\.1:3001/);
 });

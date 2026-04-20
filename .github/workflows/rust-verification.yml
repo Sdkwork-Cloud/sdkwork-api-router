@@ -15,7 +15,12 @@ on:
       - 'scripts/check-rust-verification-matrix.mjs'
       - 'scripts/check-rust-verification-matrix.test.mjs'
       - 'scripts/release/desktop-targets.mjs'
+      - 'scripts/rust-governance-node-test-catalog.mjs'
+      - 'scripts/rust-governance-node-test-catalog.test.mjs'
+      - 'scripts/run-rust-governance-node-tests.mjs'
+      - 'scripts/run-rust-governance-node-tests.test.mjs'
       - 'scripts/run-tauri-cli.mjs'
+      - 'scripts/rust-verification-workflow-contracts.mjs'
       - 'scripts/rust-verification-workflow.test.mjs'
       - 'scripts/workspace-target-dir.mjs'
       - 'docs/review/2026-04-06-rust-verification-matrix.md'
@@ -25,6 +30,9 @@ on:
         description: Optional verification group to run
         required: false
         type: string
+
+permissions:
+  contents: read
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
@@ -73,7 +81,7 @@ jobs:
 
       - name: Run rust governance node tests
         if: ${{ (github.event_name != 'workflow_dispatch' || github.event.inputs.group == '' || github.event.inputs.group == matrix.group) && matrix.group == 'dependency-audit' }}
-        run: node --test scripts/check-rust-dependency-audit.test.mjs scripts/check-rust-verification-matrix.test.mjs scripts/rust-verification-workflow.test.mjs
+        run: node scripts/run-rust-governance-node-tests.mjs
 
       - name: Run package-group verification
         if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.group == '' || github.event.inputs.group == matrix.group }}

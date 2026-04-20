@@ -157,3 +157,100 @@ test('portal desktop runtime staging materializes bootstrap data and payload met
     rmSync(fixtureRoot, { recursive: true, force: true });
   }
 });
+
+test('portal desktop runtime preparation consumes the shared embedded runtime layout catalog', () => {
+  const source = readFileSync(
+    path.join(workspaceRoot, 'scripts', 'prepare-router-portal-desktop-runtime.mjs'),
+    'utf8',
+  );
+
+  assert.match(
+    source,
+    /native-runtime-layout-catalog\.mjs/,
+    'portal desktop runtime preparation must consume the shared embedded runtime layout catalog',
+  );
+  assert.doesNotMatch(
+    source,
+    /path\.join\(routerProductRoot,\s*['"`]bin['"`],\s*withExecutable\(|path\.join\(routerProductRoot,\s*['"`]sites['"`],\s*['"`]admin['"`],\s*['"`]dist['"`]\)|path\.join\(routerProductRoot,\s*['"`]sites['"`],\s*['"`]portal['"`],\s*['"`]dist['"`]\)|path\.join\(routerProductRoot,\s*['"`]data['"`]\)|path\.join\(routerProductRoot,\s*['"`]release-manifest\.json['"`]\)|path\.join\(routerProductRoot,\s*['"`]README\.txt['"`]\)/,
+    'portal desktop runtime preparation must not hardcode embedded runtime resource paths after catalog extraction',
+  );
+  assert.doesNotMatch(
+    source,
+    /-\s+sites\/admin\/dist: bundled admin site assets|-\s+sites\/portal\/dist: bundled portal site assets|-\s+data: bootstrap data packs for first-start initialization|-\s+release-manifest\.json: embedded runtime payload contract metadata|-\s+README\.txt: operator-facing payload notes/,
+    'portal desktop runtime readme content must derive embedded layout paths from the shared catalog',
+  );
+});
+
+test('portal desktop tauri bundle resources and rust sidecar lookup stay aligned to the embedded runtime catalog', async () => {
+  const module = await import(
+    pathToFileURL(
+      path.join(workspaceRoot, 'scripts', 'prepare-router-portal-desktop-runtime.mjs'),
+    ).href,
+  );
+  const runtimeCatalog = await import(
+    pathToFileURL(
+      path.join(workspaceRoot, 'scripts', 'release', 'native-runtime-layout-catalog.mjs'),
+    ).href,
+  );
+
+  assert.equal(typeof module.resolvePortalDesktopRuntimeTauriResourceMap, 'function');
+
+  const portalAppRoot = path.join(workspaceRoot, 'apps', 'sdkwork-router-portal');
+  const tauriConfig = JSON.parse(
+    readFileSync(path.join(portalAppRoot, 'src-tauri', 'tauri.conf.json'), 'utf8'),
+  );
+  const desktopRuntimeSource = readFileSync(
+    path.join(portalAppRoot, 'src-tauri', 'src', 'desktop_runtime.rs'),
+    'utf8',
+  );
+  const runtimeLayout = runtimeCatalog.findNativePortalDesktopEmbeddedRuntimeLayoutSpec();
+  const resourceMap = module.resolvePortalDesktopRuntimeTauriResourceMap({
+    workspaceRoot,
+    appRoot: portalAppRoot,
+  });
+
+  assert.deepEqual(tauriConfig.bundle.resources, {
+    [resourceMap.sourceRelativePath]: resourceMap.targetRelativePath,
+  });
+
+  const embeddedRootName = runtimeLayout.readmeFile.split('/')[0];
+  const routerBinaryDir = path.posix.relative(embeddedRootName, runtimeLayout.serviceBinaryDir);
+  const adminSiteDir = path.posix.relative(embeddedRootName, runtimeLayout.siteTargetDirs.admin);
+  const portalSiteDir = path.posix.relative(embeddedRootName, runtimeLayout.siteTargetDirs.portal);
+  const bootstrapDataDir = path.posix.relative(
+    embeddedRootName,
+    runtimeLayout.bootstrapDataRootDirs.data,
+  );
+  const releaseManifestFile = path.posix.relative(
+    embeddedRootName,
+    runtimeLayout.releaseManifestFile,
+  );
+  const readmeFile = path.posix.relative(embeddedRootName, runtimeLayout.readmeFile);
+
+  assert.match(desktopRuntimeSource, new RegExp(String.raw`join\("${embeddedRootName}"\)`));
+  assert.match(
+    desktopRuntimeSource,
+    new RegExp(String.raw`root\.join\("${routerBinaryDir}"\)\.join\(ROUTER_BINARY_NAME\)`),
+  );
+  assert.match(
+    desktopRuntimeSource,
+    new RegExp(
+      String.raw`root\.join\("${adminSiteDir.split('/')[0]}"\)\.join\("${adminSiteDir.split('/')[1]}"\)\.join\("${adminSiteDir.split('/')[2]}"\)`,
+    ),
+  );
+  assert.match(
+    desktopRuntimeSource,
+    new RegExp(
+      String.raw`root\.join\("${portalSiteDir.split('/')[0]}"\)\.join\("${portalSiteDir.split('/')[1]}"\)\.join\("${portalSiteDir.split('/')[2]}"\)`,
+    ),
+  );
+  assert.match(desktopRuntimeSource, new RegExp(String.raw`root\.join\("${bootstrapDataDir}"\)`));
+  assert.match(
+    desktopRuntimeSource,
+    new RegExp(String.raw`root\.join\("${releaseManifestFile.replace('.', '\\.')}"\)`),
+  );
+  assert.match(
+    desktopRuntimeSource,
+    new RegExp(String.raw`root\.join\("${readmeFile.replace('.', '\\.')}"\)`),
+  );
+});

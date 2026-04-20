@@ -20,8 +20,9 @@ const ROUTER_BINARY_NAME: &str = if cfg!(target_os = "windows") {
     "router-product-service"
 };
 
-const RUNTIME_HEALTH_TIMEOUT: Duration = Duration::from_secs(45);
+const RUNTIME_HEALTH_TIMEOUT_OVERRIDE_ENV: &str = "SDKWORK_ROUTER_RUNTIME_HEALTH_TIMEOUT_MS";
 const RUNTIME_HEALTH_RETRY_INTERVAL: Duration = Duration::from_millis(250);
+const RUNTIME_LOG_TAIL_MAX_BYTES: usize = 1_600;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -184,7 +185,12 @@ impl DesktopRuntimeSupervisor {
         })?;
         let snapshot = snapshot_for_settings(self.settings.access_mode);
 
-        if let Err(error) = wait_for_runtime_ready(&mut child, &snapshot) {
+        if let Err(error) = wait_for_runtime_ready(
+            &mut child,
+            &snapshot,
+            &self.resource_layout,
+            &self.runtime_paths,
+        ) {
             let _ = child.kill();
             let _ = child.wait();
             return Err(error);
@@ -330,6 +336,8 @@ fn snapshot_for_settings(access_mode: DesktopRuntimeAccessMode) -> PortalDesktop
 fn wait_for_runtime_ready(
     child: &mut Child,
     snapshot: &PortalDesktopRuntimeSnapshot,
+    resource_layout: &ProductResourceLayout,
+    runtime_paths: &DesktopRuntimePaths,
 ) -> Result<()> {
     let client = Client::builder()
         .timeout(Duration::from_secs(2))
@@ -338,7 +346,10 @@ fn wait_for_runtime_ready(
     let Some(public_base_url) = snapshot.public_base_url.as_deref() else {
         bail!("desktop runtime snapshot did not expose a public base URL");
     };
-    let deadline = Instant::now() + RUNTIME_HEALTH_TIMEOUT;
+    let health_timeout = resolve_runtime_health_timeout(
+        std::env::var(RUNTIME_HEALTH_TIMEOUT_OVERRIDE_ENV).ok().as_deref(),
+    );
+    let deadline = Instant::now() + health_timeout;
     let health_urls = health_probe_urls(public_base_url);
 
     while Instant::now() < deadline {
@@ -346,7 +357,16 @@ fn wait_for_runtime_ready(
             .try_wait()
             .context("failed to inspect desktop runtime sidecar process state")?
         {
-            bail!("desktop runtime sidecar exited early with status {exit_status}");
+            bail!(
+                "{}",
+                create_runtime_start_failure_message(
+                    &format!("desktop runtime sidecar exited early with status {exit_status}"),
+                    snapshot,
+                    resource_layout,
+                    runtime_paths,
+                    &health_urls,
+                )
+            );
         }
 
         if health_urls.iter().all(|url| endpoint_is_ready(&client, url)) {
@@ -357,8 +377,17 @@ fn wait_for_runtime_ready(
     }
 
     bail!(
-        "desktop runtime sidecar did not become healthy within {:?}",
-        RUNTIME_HEALTH_TIMEOUT
+        "{}",
+        create_runtime_start_failure_message(
+            &format!(
+                "desktop runtime sidecar did not become healthy within {:?}",
+                health_timeout
+            ),
+            snapshot,
+            resource_layout,
+            runtime_paths,
+            &health_urls,
+        )
     )
 }
 
@@ -379,15 +408,104 @@ fn endpoint_is_ready(client: &Client, url: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn default_runtime_health_timeout() -> Duration {
+    if cfg!(debug_assertions) {
+        Duration::from_secs(90)
+    } else {
+        Duration::from_secs(45)
+    }
+}
+
+fn resolve_runtime_health_timeout(override_ms: Option<&str>) -> Duration {
+    let default_timeout = default_runtime_health_timeout();
+    let Some(raw_value) = override_ms
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return default_timeout;
+    };
+
+    raw_value
+        .parse::<u64>()
+        .ok()
+        .filter(|milliseconds| *milliseconds > 0)
+        .map(Duration::from_millis)
+        .unwrap_or(default_timeout)
+}
+
+fn create_runtime_start_failure_message(
+    reason: &str,
+    snapshot: &PortalDesktopRuntimeSnapshot,
+    resource_layout: &ProductResourceLayout,
+    runtime_paths: &DesktopRuntimePaths,
+    health_urls: &[String],
+) -> String {
+    let mut message = format!(
+        "{reason}; access_mode={}; public_base_url={}; public_bind={}; router_root={}; router_binary={}; router_config={}; stdout_log={}; stderr_log={}; probes={}",
+        desktop_runtime_access_mode_label(snapshot.access_mode),
+        snapshot.public_base_url.as_deref().unwrap_or("(unavailable)"),
+        snapshot.public_bind_addr.as_deref().unwrap_or("(unavailable)"),
+        resource_layout.root.display(),
+        resource_layout.router_binary_path.display(),
+        runtime_paths.router_config_file.display(),
+        runtime_paths.router_stdout_log_file.display(),
+        runtime_paths.router_stderr_log_file.display(),
+        health_urls.join(", "),
+    );
+
+    if let Some(stdout_tail) =
+        read_runtime_log_tail(&runtime_paths.router_stdout_log_file, RUNTIME_LOG_TAIL_MAX_BYTES)
+    {
+        message.push_str("\nstdout_tail=");
+        message.push_str(&stdout_tail);
+    }
+
+    if let Some(stderr_tail) =
+        read_runtime_log_tail(&runtime_paths.router_stderr_log_file, RUNTIME_LOG_TAIL_MAX_BYTES)
+    {
+        message.push_str("\nstderr_tail=");
+        message.push_str(&stderr_tail);
+    }
+
+    message
+}
+
+fn read_runtime_log_tail(log_path: &Path, max_bytes: usize) -> Option<String> {
+    let bytes = fs::read(log_path).ok()?;
+    if bytes.is_empty() {
+        return None;
+    }
+
+    let start = bytes.len().saturating_sub(max_bytes);
+    let excerpt = String::from_utf8_lossy(&bytes[start..]).trim().to_owned();
+    if excerpt.is_empty() {
+        return None;
+    }
+
+    Some(excerpt)
+}
+
+fn desktop_runtime_access_mode_label(access_mode: DesktopRuntimeAccessMode) -> &'static str {
+    match access_mode {
+        DesktopRuntimeAccessMode::Local => "local",
+        DesktopRuntimeAccessMode::Shared => "shared",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
+    use std::time::Duration;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{
-        health_probe_urls, release_like_layout, resolve_product_resource_layout_for_paths,
+        create_runtime_start_failure_message, default_runtime_health_timeout, health_probe_urls,
+        release_like_layout, resolve_product_resource_layout_for_paths,
+        resolve_runtime_health_timeout, DesktopRuntimePaths, PortalDesktopRuntimeSnapshot,
+        ProductResourceLayout,
     };
+    use crate::desktop_runtime_config::DesktopRuntimeAccessMode;
 
     fn unique_temp_dir(name: &str) -> PathBuf {
         let suffix = SystemTime::now()
@@ -537,5 +655,155 @@ mod tests {
             ]
         );
         assert!(!urls.iter().any(|url| url.ends_with("/api/health")));
+    }
+
+    #[test]
+    fn desktop_runtime_health_timeout_prefers_valid_overrides_and_rejects_blank_values() {
+        assert_eq!(
+            resolve_runtime_health_timeout(None),
+            default_runtime_health_timeout()
+        );
+        assert_eq!(
+            resolve_runtime_health_timeout(Some("")),
+            default_runtime_health_timeout()
+        );
+        assert_eq!(
+            resolve_runtime_health_timeout(Some("0")),
+            default_runtime_health_timeout()
+        );
+        assert_eq!(
+            resolve_runtime_health_timeout(Some("not-a-number")),
+            default_runtime_health_timeout()
+        );
+        assert_eq!(
+            resolve_runtime_health_timeout(Some("120000")),
+            Duration::from_millis(120_000)
+        );
+    }
+
+    #[test]
+    fn desktop_runtime_start_failure_message_includes_operator_diagnostics() {
+        let layout = ProductResourceLayout {
+            root: PathBuf::from("/tmp/router-product"),
+            router_binary_path: PathBuf::from("/tmp/router-product/bin/router-product-service"),
+            admin_site_dir: PathBuf::from("/tmp/router-product/sites/admin/dist"),
+            portal_site_dir: PathBuf::from("/tmp/router-product/sites/portal/dist"),
+        };
+        let runtime_paths = DesktopRuntimePaths {
+            config_dir: PathBuf::from("/tmp/router-config"),
+            data_dir: PathBuf::from("/tmp/router-data"),
+            log_dir: PathBuf::from("/tmp/router-logs"),
+            runtime_state_file: PathBuf::from("/tmp/router-config/desktop-runtime.json"),
+            router_config_file: PathBuf::from("/tmp/router-config/router.yaml"),
+            router_stdout_log_file: PathBuf::from(
+                "/tmp/router-logs/router-product-service.stdout.log",
+            ),
+            router_stderr_log_file: PathBuf::from(
+                "/tmp/router-logs/router-product-service.stderr.log",
+            ),
+            router_database_file: PathBuf::from("/tmp/router-data/sdkwork-api-router.db"),
+        };
+        let snapshot = PortalDesktopRuntimeSnapshot {
+            mode: "desktop".to_owned(),
+            roles: vec![
+                "web".to_owned(),
+                "gateway".to_owned(),
+                "admin".to_owned(),
+                "portal".to_owned(),
+            ],
+            access_mode: DesktopRuntimeAccessMode::Shared,
+            public_base_url: Some("http://127.0.0.1:3001".to_owned()),
+            public_bind_addr: Some("0.0.0.0:3001".to_owned()),
+            gateway_bind_addr: Some("127.0.0.1:8080".to_owned()),
+            admin_bind_addr: Some("127.0.0.1:8081".to_owned()),
+            portal_bind_addr: Some("127.0.0.1:8082".to_owned()),
+        };
+        let probes = health_probe_urls("http://127.0.0.1:3001");
+
+        let message = create_runtime_start_failure_message(
+            "desktop runtime sidecar did not become healthy within 90s",
+            &snapshot,
+            &layout,
+            &runtime_paths,
+            &probes,
+        );
+
+        assert!(message.contains("did not become healthy"));
+        assert!(message.contains("access_mode=shared"));
+        assert!(message.contains("public_base_url=http://127.0.0.1:3001"));
+        assert!(message.contains("public_bind=0.0.0.0:3001"));
+        assert!(message.contains("router_root=/tmp/router-product"));
+        assert!(message.contains("router_binary=/tmp/router-product/bin/router-product-service"));
+        assert!(message.contains("router_config=/tmp/router-config/router.yaml"));
+        assert!(message.contains("stdout_log=/tmp/router-logs/router-product-service.stdout.log"));
+        assert!(message.contains("stderr_log=/tmp/router-logs/router-product-service.stderr.log"));
+        assert!(message.contains("http://127.0.0.1:3001/api/v1/health"));
+        assert!(message.contains("http://127.0.0.1:3001/api/admin/health"));
+        assert!(message.contains("http://127.0.0.1:3001/api/portal/health"));
+    }
+
+    #[test]
+    fn desktop_runtime_start_failure_message_includes_recent_log_tails_when_available() {
+        let runtime_root = unique_temp_dir("runtime-log-tails");
+        fs::create_dir_all(&runtime_root).expect("runtime root should exist");
+
+        let stdout_log = runtime_root.join("router-product-service.stdout.log");
+        let stderr_log = runtime_root.join("router-product-service.stderr.log");
+        fs::write(
+            &stdout_log,
+            "booting desktop runtime\nhealth probe pending\nportal ready soon\n",
+        )
+        .expect("stdout log should exist");
+        fs::write(
+            &stderr_log,
+            "WARN config fallback enabled\nERROR bind failed on 127.0.0.1:3001\n",
+        )
+        .expect("stderr log should exist");
+
+        let layout = ProductResourceLayout {
+            root: runtime_root.join("router-product"),
+            router_binary_path: runtime_root.join("router-product").join("bin").join("router-product-service"),
+            admin_site_dir: runtime_root.join("router-product").join("sites").join("admin").join("dist"),
+            portal_site_dir: runtime_root.join("router-product").join("sites").join("portal").join("dist"),
+        };
+        let runtime_paths = DesktopRuntimePaths {
+            config_dir: runtime_root.join("config"),
+            data_dir: runtime_root.join("data"),
+            log_dir: runtime_root.join("logs"),
+            runtime_state_file: runtime_root.join("config").join("desktop-runtime.json"),
+            router_config_file: runtime_root.join("config").join("router.yaml"),
+            router_stdout_log_file: stdout_log,
+            router_stderr_log_file: stderr_log,
+            router_database_file: runtime_root.join("data").join("sdkwork-api-router.db"),
+        };
+        let snapshot = PortalDesktopRuntimeSnapshot {
+            mode: "desktop".to_owned(),
+            roles: vec![
+                "web".to_owned(),
+                "gateway".to_owned(),
+                "admin".to_owned(),
+                "portal".to_owned(),
+            ],
+            access_mode: DesktopRuntimeAccessMode::Local,
+            public_base_url: Some("http://127.0.0.1:3001".to_owned()),
+            public_bind_addr: Some("127.0.0.1:3001".to_owned()),
+            gateway_bind_addr: Some("127.0.0.1:8080".to_owned()),
+            admin_bind_addr: Some("127.0.0.1:8081".to_owned()),
+            portal_bind_addr: Some("127.0.0.1:8082".to_owned()),
+        };
+        let probes = health_probe_urls("http://127.0.0.1:3001");
+
+        let message = create_runtime_start_failure_message(
+            "desktop runtime sidecar exited early with status 1",
+            &snapshot,
+            &layout,
+            &runtime_paths,
+            &probes,
+        );
+
+        assert!(message.contains("stdout_tail="));
+        assert!(message.contains("health probe pending"));
+        assert!(message.contains("stderr_tail="));
+        assert!(message.contains("ERROR bind failed on 127.0.0.1:3001"));
     }
 }

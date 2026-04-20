@@ -209,6 +209,38 @@ test('start-web preview path only skips frontend rebuilds when the existing dist
   assert.match(script, /reusing fresh dist/i);
 });
 
+test('start-web dry-run launches frontend pnpm steps from each app root without pnpm --dir', () => {
+  const repoRoot = path.resolve(import.meta.dirname, '..', '..', '..');
+  const result = spawnSync(
+    process.execPath,
+    [
+      'scripts/dev/start-web.mjs',
+      '--bind',
+      '127.0.0.1:13983',
+      '--admin-target',
+      '127.0.0.1:13981',
+      '--portal-target',
+      '127.0.0.1:13982',
+      '--gateway-target',
+      '127.0.0.1:13980',
+      '--preview',
+      '--install',
+      '--dry-run',
+    ],
+    {
+      cwd: repoRoot,
+      encoding: 'utf8',
+    },
+  );
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /\[start-web\] install apps\/sdkwork-router-admin: .*?\binstall\b/s);
+  assert.match(result.stdout, /\[start-web\] install apps\/sdkwork-router-portal: .*?\binstall\b/s);
+  assert.match(result.stdout, /\[start-web\] build apps\/sdkwork-router-admin: .*?\bbuild\b/s);
+  assert.match(result.stdout, /\[start-web\] build apps\/sdkwork-router-portal: .*?\bbuild\b/s);
+  assert.doesNotMatch(result.stdout, /\s--dir\s/);
+});
+
 test('start-web can reuse a prebuilt Windows router-web-service binary after warm-up instead of spawning cargo run', {
   skip: process.platform !== 'win32',
 }, () => {

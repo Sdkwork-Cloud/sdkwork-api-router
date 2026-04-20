@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url';
 
 import { materializeReleaseTelemetrySnapshot } from './materialize-release-telemetry-snapshot.mjs';
 import { materializeSloGovernanceEvidence } from './materialize-slo-governance-evidence.mjs';
+import { createStrictKeyedCatalog } from '../strict-contract-catalog.mjs';
+import { assertSupportedReleaseCliFormat } from './release-cli-format-catalog.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -30,18 +32,55 @@ const DEFAULT_RELEASE_TELEMETRY_EXPORT_PATH = path.join(
   'release-telemetry-export-latest.json',
 );
 
-const DEFAULT_BURN_RATE_WINDOWS = Object.freeze([
-  Object.freeze({
-    window: '1h',
-    maxBurnRate: 14.4,
-    severity: 'release-blocker',
-  }),
-  Object.freeze({
-    window: '6h',
-    maxBurnRate: 6,
-    severity: 'release-blocker',
-  }),
-]);
+function cloneSloGovernanceBurnRateWindow(window) {
+  return {
+    ...window,
+  };
+}
+
+function freezeSloGovernanceBurnRateWindow(window) {
+  return Object.freeze(cloneSloGovernanceBurnRateWindow(window));
+}
+
+function cloneSloGovernanceTarget(target) {
+  return {
+    ...target,
+    burnRateWindows: target.burnRateWindows.map((window) => ({ ...window })),
+    evidenceSources: [...target.evidenceSources],
+  };
+}
+
+function freezeSloGovernanceTarget(target) {
+  const clone = cloneSloGovernanceTarget(target);
+  clone.burnRateWindows = Object.freeze(
+    clone.burnRateWindows.map((window) => Object.freeze({ ...window })),
+  );
+  clone.evidenceSources = Object.freeze([...clone.evidenceSources]);
+  return Object.freeze(clone);
+}
+
+const sloGovernanceBurnRateWindowCatalog = createStrictKeyedCatalog({
+  entries: [
+    Object.freeze({
+      window: '1h',
+      maxBurnRate: 14.4,
+      severity: 'release-blocker',
+    }),
+    Object.freeze({
+      window: '6h',
+      maxBurnRate: 6,
+      severity: 'release-blocker',
+    }),
+  ],
+  getKey: (window) => window.window,
+  clone: cloneSloGovernanceBurnRateWindow,
+  duplicateKeyMessagePrefix: 'duplicate slo governance burn rate window',
+  missingKeyMessagePrefix: 'missing slo governance burn rate window',
+});
+
+const DEFAULT_BURN_RATE_WINDOWS = Object.freeze(
+  sloGovernanceBurnRateWindowCatalog.list().map(freezeSloGovernanceBurnRateWindow),
+);
 
 function createRatioTarget({
   id,
@@ -100,16 +139,8 @@ function createLatencyTarget({
   });
 }
 
-export const SLO_GOVERNANCE_BASELINE = Object.freeze({
-  version: 1,
-  baselineId: 'release-slo-governance-baseline-2026-04-08',
-  baselineDate: '2026-04-08',
-  sources: Object.freeze([
-    'docs/架构/135-可观测性与SLO治理设计-2026-04-07.md',
-    'docs/架构/143-全局架构对齐与收口计划-2026-04-08.md',
-    'docs/架构/145-可观测性发布门禁收口-2026-04-08.md',
-  ]),
-  targets: Object.freeze([
+const sloGovernanceTargetCatalog = createStrictKeyedCatalog({
+  entries: [
     createRatioTarget({
       id: 'gateway-availability',
       plane: 'data-plane',
@@ -208,17 +239,76 @@ export const SLO_GOVERNANCE_BASELINE = Object.freeze({
       description: 'Pricing lifecycle synchronization must stay inside the governed commercial success envelope.',
       evidenceSources: ['billing/accounts', 'pricing lifecycle'],
     }),
-  ]),
+  ],
+  getKey: (target) => target.id,
+  clone: cloneSloGovernanceTarget,
+  duplicateKeyMessagePrefix: 'duplicate slo governance target',
+  missingKeyMessagePrefix: 'missing slo governance target',
 });
+
+export const SLO_GOVERNANCE_BASELINE = Object.freeze({
+  version: 1,
+  baselineId: 'release-slo-governance-baseline-2026-04-08',
+  baselineDate: '2026-04-08',
+  sources: Object.freeze([
+    'docs/架构/135-可观测性与SLO治理设计-2026-04-07.md',
+    'docs/架构/143-全局架构对齐与收口计划-2026-04-08.md',
+    'docs/架构/145-可观测性发布门禁收口-2026-04-08.md',
+  ]),
+  targets: Object.freeze(
+    sloGovernanceTargetCatalog.list().map(freezeSloGovernanceTarget),
+  ),
+});
+
+function cloneCustomBaselineTargets(baseline) {
+  return (baseline.targets ?? []).map(cloneSloGovernanceTarget);
+}
 
 export function listSloGovernanceTargets({
   baseline = SLO_GOVERNANCE_BASELINE,
 } = {}) {
-  return baseline.targets.map((target) => ({
-    ...target,
-    burnRateWindows: target.burnRateWindows.map((window) => ({ ...window })),
-    evidenceSources: [...target.evidenceSources],
-  }));
+  if (baseline === SLO_GOVERNANCE_BASELINE) {
+    return sloGovernanceTargetCatalog.list();
+  }
+
+  return cloneCustomBaselineTargets(baseline);
+}
+
+export function findSloGovernanceTarget(targetId, {
+  baseline = SLO_GOVERNANCE_BASELINE,
+} = {}) {
+  if (baseline === SLO_GOVERNANCE_BASELINE) {
+    return sloGovernanceTargetCatalog.find(targetId);
+  }
+
+  const target = (baseline.targets ?? []).find((candidate) => candidate.id === targetId);
+  if (!target) {
+    throw new Error(`missing slo governance target: ${targetId}`);
+  }
+
+  return cloneSloGovernanceTarget(target);
+}
+
+export function listSloGovernanceTargetsByIds(targetIds = [], {
+  baseline = SLO_GOVERNANCE_BASELINE,
+} = {}) {
+  if (baseline === SLO_GOVERNANCE_BASELINE) {
+    return sloGovernanceTargetCatalog.listByKeys(targetIds);
+  }
+
+  return targetIds.map((targetId) => findSloGovernanceTarget(targetId, { baseline }));
+}
+
+export function listSloGovernanceBurnRateWindows() {
+  return sloGovernanceBurnRateWindowCatalog.list();
+}
+
+export function findSloGovernanceBurnRateWindow(windowId) {
+  return sloGovernanceBurnRateWindowCatalog.find(windowId);
+}
+
+export function listSloGovernanceBurnRateWindowsByIds(windowIds = []) {
+  return sloGovernanceBurnRateWindowCatalog.listByKeys(windowIds);
 }
 
 function readJsonFile(filePath) {
@@ -289,6 +379,7 @@ export function evaluateSloGovernanceEvidence({
   evidence,
   baseline = SLO_GOVERNANCE_BASELINE,
 } = {}) {
+  const targets = listSloGovernanceTargets({ baseline });
   const evidenceTargets = evidence?.targets && typeof evidence.targets === 'object'
     ? evidence.targets
     : {};
@@ -297,7 +388,7 @@ export function evaluateSloGovernanceEvidence({
   const missingTargetIds = [];
   const passingTargetIds = [];
 
-  for (const target of baseline.targets) {
+  for (const target of targets) {
     const targetEvidence = evidenceTargets[target.id];
     if (!targetEvidence) {
       missingTargetIds.push(target.id);
@@ -486,9 +577,7 @@ function parseArgs(argv = process.argv.slice(2)) {
     throw new Error(`unknown argument: ${token}`);
   }
 
-  if (!['text', 'json'].includes(format)) {
-    throw new Error(`unsupported format: ${format}`);
-  }
+  assertSupportedReleaseCliFormat(format);
 
   return {
     format,

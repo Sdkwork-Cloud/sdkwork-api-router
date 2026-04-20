@@ -8,6 +8,7 @@ import test from 'node:test';
 import {
   databaseDisplayValue,
   parseStackArgs,
+  renderSourceDevRouterConfig,
   serviceEnv,
 } from '../backend-launch-lib.mjs';
 
@@ -36,6 +37,52 @@ test('serviceEnv omits SDKWORK_DATABASE_URL when local config defaults should ap
     },
   );
 
+  assert.equal(env.SDKWORK_DATABASE_URL, undefined);
+  assert.equal(env.SDKWORK_GATEWAY_BIND, '127.0.0.1:9980');
+  assert.equal(env.SDKWORK_ADMIN_BIND, '127.0.0.1:9981');
+  assert.equal(env.SDKWORK_PORTAL_BIND, '127.0.0.1:9982');
+});
+
+test('renderSourceDevRouterConfig materializes canonical source-dev router.yaml overrides', () => {
+  const routerYaml = renderSourceDevRouterConfig({
+    databaseUrl: 'postgresql://sdkwork:secret@127.0.0.1:5432/sdkwork_api_router',
+    gatewayBind: '127.0.0.1:19980',
+    adminBind: '127.0.0.1:19981',
+    portalBind: '127.0.0.1:19982',
+  });
+
+  assert.match(routerYaml, /gateway_bind: "127\.0\.0\.1:19980"/);
+  assert.match(routerYaml, /admin_bind: "127\.0\.0\.1:19981"/);
+  assert.match(routerYaml, /portal_bind: "127\.0\.0\.1:19982"/);
+  assert.match(
+    routerYaml,
+    /database_url: "postgresql:\/\/sdkwork:secret@127\.0\.0\.1:5432\/sdkwork_api_router"/,
+  );
+});
+
+test('serviceEnv forces source-dev backends onto an isolated config root instead of inherited installed config discovery', () => {
+  const sourceConfigDir = 'D:/sdkwork/source-dev/run-1/config';
+  const sourceConfigFile = `${sourceConfigDir}/router.yaml`;
+  const env = serviceEnv(
+    {
+      databaseUrl: null,
+      gatewayBind: '127.0.0.1:9980',
+      adminBind: '127.0.0.1:9981',
+      portalBind: '127.0.0.1:9982',
+    },
+    {
+      SDKWORK_CONFIG_DIR: 'C:/ProgramData/sdkwork-api-router',
+      SDKWORK_CONFIG_FILE: 'C:/ProgramData/sdkwork-api-router/router.yaml',
+      SDKWORK_DATABASE_URL: 'postgresql://should-be-removed',
+    },
+    {
+      sourceConfigDir,
+      sourceConfigFile,
+    },
+  );
+
+  assert.equal(env.SDKWORK_CONFIG_DIR, sourceConfigDir);
+  assert.equal(env.SDKWORK_CONFIG_FILE, sourceConfigFile);
   assert.equal(env.SDKWORK_DATABASE_URL, undefined);
   assert.equal(env.SDKWORK_GATEWAY_BIND, '127.0.0.1:9980');
   assert.equal(env.SDKWORK_ADMIN_BIND, '127.0.0.1:9981');

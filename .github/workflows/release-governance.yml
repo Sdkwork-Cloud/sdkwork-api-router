@@ -6,6 +6,16 @@ on:
       - '.github/workflows/release.yml'
       - '.github/workflows/release-governance.yml'
       - 'scripts/release/**'
+      - 'scripts/strict-contract-catalog.mjs'
+      - 'scripts/strict-contract-catalog.test.mjs'
+      - 'scripts/release-governance-node-test-catalog.mjs'
+      - 'scripts/release-governance-node-test-catalog.test.mjs'
+      - 'scripts/release-governance-workflow-step-contract-catalog.mjs'
+      - 'scripts/release-governance-workflow-step-contract-catalog.test.mjs'
+      - 'scripts/release-governance-workflow-watch-catalog.mjs'
+      - 'scripts/release-governance-workflow-watch-catalog.test.mjs'
+      - 'scripts/run-release-governance-node-tests.mjs'
+      - 'scripts/run-release-governance-node-tests.test.mjs'
       - 'scripts/release-governance-workflow-contracts.mjs'
       - 'scripts/release-governance-workflow.test.mjs'
       - 'bin/**'
@@ -13,6 +23,9 @@ on:
       - 'docs/架构/143-全局架构对齐与收口计划-2026-04-08.md'
       - 'docs/release/**'
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
@@ -30,8 +43,8 @@ jobs:
           node-version: 22
           package-manager-cache: false
 
-      - name: Run release governance runner self-test
-        run: node --test --experimental-test-isolation=none scripts/release/tests/release-governance-runner.test.mjs
+      - name: Run release governance node tests
+        run: node scripts/run-release-governance-node-tests.mjs
 
       - name: Run release governance checks
         run: node scripts/release/run-release-governance-checks.mjs --profile preflight --format json

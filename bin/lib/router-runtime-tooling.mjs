@@ -22,9 +22,14 @@ import {
 } from '../../scripts/dev/pnpm-launch-lib.mjs';
 import { resolveDesktopReleaseTarget } from '../../scripts/release/desktop-targets.mjs';
 import {
+  materializeInstalledRuntimeLayout,
+  resolveInstalledRuntimeDefaultProductRoot,
+} from '../../scripts/release/installed-runtime-layout-catalog.mjs';
+import {
   readReleaseCatalogFile,
   resolveReleaseCatalogVariantPaths,
 } from '../../scripts/release/materialize-release-catalog.mjs';
+import { findNativeProductServerBundleRuntimeLayoutSpec } from '../../scripts/release/native-runtime-layout-catalog.mjs';
 import { withSupportedWindowsCmakeGenerator } from '../../scripts/run-tauri-cli.mjs';
 import {
   resolveWorkspaceTargetDir,
@@ -128,7 +133,16 @@ function createOfficialProductServerBundleInstallEntries({
   bundleManifestPath,
   releaseCatalogPath,
 } = {}) {
+  const runtimeLayout = findNativeProductServerBundleRuntimeLayoutSpec();
   return [
+    createBundleInstallEntry({
+      type: 'bundle-directory',
+      bundlePath,
+      bundleManifestPath,
+      releaseCatalogPath,
+      bundleEntryPath: runtimeLayout.controlScriptDir,
+      targetPath: layout.binDir,
+    }),
     createBundleInstallEntry({
       type: 'bundle-directory',
       bundlePath,
@@ -194,18 +208,55 @@ function readOfficialProductServerBundleManifest(bundleManifestPath, {
   return JSON.parse(String(readFile(bundleManifestPath, 'utf8')));
 }
 
+function normalizeManifestStringField(value) {
+  return String(value ?? '').trim();
+}
+
+function normalizeManifestStringArray(values = []) {
+  return [...new Set(
+    (Array.isArray(values) ? values : [])
+      .map((value) => String(value ?? '').trim())
+      .filter((value) => value.length > 0),
+  )].sort((left, right) => left.localeCompare(right));
+}
+
+function normalizeManifestInstallerSpec(installers = {}) {
+  return {
+    shell: normalizeManifestStringField(installers?.shell),
+    powershell: normalizeManifestStringField(installers?.powershell),
+  };
+}
+
 function assertOfficialProductServerBundleManifest(manifest, {
   bundlePath,
   bundleManifestPath,
 } = {}) {
+  const runtimeLayout = findNativeProductServerBundleRuntimeLayoutSpec();
   if (manifest?.type !== 'product-server-archive') {
     throw new Error(`Unsupported server bundle manifest type at ${bundleManifestPath}`);
   }
   if (manifest?.productId !== 'sdkwork-api-router-product-server') {
     throw new Error(`Unsupported server bundle product id at ${bundleManifestPath}`);
   }
+  if (normalizeManifestStringField(manifest?.releaseVersion).length === 0) {
+    throw new Error(`Server bundle manifest is missing releaseVersion at ${bundleManifestPath}`);
+  }
   if (String(manifest.archiveFile ?? '').trim() !== path.basename(bundlePath)) {
     throw new Error(`Server bundle manifest archiveFile mismatch at ${bundleManifestPath}`);
+  }
+  if (normalizeManifestStringField(manifest?.embeddedManifestFile) !== runtimeLayout.releaseManifestFile) {
+    throw new Error(`Server bundle manifest embeddedManifestFile mismatch at ${bundleManifestPath}`);
+  }
+
+  const manifestInstallers = normalizeManifestInstallerSpec(manifest?.installers);
+  const expectedInstallers = normalizeManifestInstallerSpec(runtimeLayout.bundleInstallers);
+  if (manifestInstallers.shell !== expectedInstallers.shell || manifestInstallers.powershell !== expectedInstallers.powershell) {
+    throw new Error(`Server bundle manifest installers mismatch at ${bundleManifestPath}`);
+  }
+
+  const actualServices = new Set(normalizeManifestStringArray(manifest.services));
+  if (!actualServices.has(runtimeLayout.serviceBinaryName)) {
+    throw new Error(`Server bundle manifest is missing service ${runtimeLayout.serviceBinaryName} at ${bundleManifestPath}`);
   }
 
   const requiredSites = new Set(['admin', 'portal']);
@@ -238,6 +289,7 @@ function assertReleaseCatalogServerBundleEntry(catalog, {
   bundleManifestPath,
   bundleChecksumPath,
   releaseCatalogPath,
+  bundleManifest,
 } = {}) {
   const expectedOutputDirectory = toPortablePath(
     path.relative(path.dirname(releaseCatalogPath), path.dirname(bundlePath)),
@@ -258,6 +310,67 @@ function assertReleaseCatalogServerBundleEntry(catalog, {
   if (!matchingVariant) {
     throw new Error(`Missing install bundle release-catalog entry: ${releaseCatalogPath}`);
   }
+
+  const variantManifest = matchingVariant?.manifest;
+  if (!variantManifest || typeof variantManifest !== 'object') {
+    throw new Error(`Release catalog bundle manifest snapshot is missing at ${releaseCatalogPath}`);
+  }
+
+  const manifestFieldPairs = [
+    ['type', variantManifest.type, bundleManifest?.type],
+    ['productId', variantManifest.productId, bundleManifest?.productId],
+    ['releaseVersion', variantManifest.releaseVersion, bundleManifest?.releaseVersion],
+    ['archiveFile', variantManifest.archiveFile, bundleManifest?.archiveFile],
+    ['checksumFile', variantManifest.checksumFile, bundleManifest?.checksumFile],
+    ['embeddedManifestFile', variantManifest.embeddedManifestFile, bundleManifest?.embeddedManifestFile],
+  ];
+  for (const [fieldName, catalogValue, bundleValue] of manifestFieldPairs) {
+    if (normalizeManifestStringField(catalogValue) !== normalizeManifestStringField(bundleValue)) {
+      throw new Error(`Release-catalog bundle manifest snapshot mismatch for ${fieldName} at ${releaseCatalogPath}`);
+    }
+  }
+
+  const catalogInstallers = normalizeManifestInstallerSpec(variantManifest.installers);
+  const bundleInstallers = normalizeManifestInstallerSpec(bundleManifest?.installers);
+  if (catalogInstallers.shell !== bundleInstallers.shell || catalogInstallers.powershell !== bundleInstallers.powershell) {
+    throw new Error(`Release-catalog bundle manifest snapshot mismatch for installers at ${releaseCatalogPath}`);
+  }
+
+  const manifestArrayFields = [
+    'services',
+    'sites',
+    'bootstrapDataRoots',
+    'deploymentAssetRoots',
+  ];
+  for (const fieldName of manifestArrayFields) {
+    const catalogValues = normalizeManifestStringArray(variantManifest[fieldName]);
+    const bundleValues = normalizeManifestStringArray(bundleManifest?.[fieldName]);
+    if (
+      catalogValues.length !== bundleValues.length
+      || catalogValues.some((value, index) => value !== bundleValues[index])
+    ) {
+      throw new Error(`Release-catalog bundle manifest snapshot mismatch for ${fieldName} at ${releaseCatalogPath}`);
+    }
+  }
+}
+
+function resolveBundleInstallReleaseVersion({
+  repoRoot,
+  bundleManifestPath,
+  exists = existsSync,
+  readFile = readFileSync,
+} = {}) {
+  if (bundleManifestPath && exists(bundleManifestPath)) {
+    const manifest = readOfficialProductServerBundleManifest(bundleManifestPath, {
+      readFile,
+    });
+    const manifestReleaseVersion = normalizeManifestStringField(manifest?.releaseVersion);
+    if (manifestReleaseVersion.length > 0) {
+      return manifestReleaseVersion;
+    }
+  }
+
+  return resolveProductReleaseVersion(repoRoot);
 }
 
 function resolveBundleEntrySourcePath(bundleRoot, bundleEntryPath) {
@@ -378,55 +491,6 @@ function sqliteUrlForFilePath(filePath) {
   return normalized.startsWith('/') ? `sqlite://${normalized}` : `sqlite:///${normalized}`;
 }
 
-function resolveSystemLayoutRoots({
-  platform = process.platform,
-  env = process.env,
-} = {}) {
-  const runtimePlatform = normalizeRuntimePlatform(platform);
-  const pathApi = runtimePathApi(runtimePlatform);
-
-  if (runtimePlatform === 'win32') {
-    const programFilesRoot = env.ProgramFiles ?? 'C:\\Program Files';
-    const programDataRoot = env.ProgramData ?? 'C:\\ProgramData';
-
-    return {
-      productRoot: pathApi.join(programFilesRoot, 'sdkwork-api-router'),
-      configRoot: pathApi.join(programDataRoot, 'sdkwork-api-router'),
-      dataRoot: pathApi.join(programDataRoot, 'sdkwork-api-router', 'data'),
-      logRoot: pathApi.join(programDataRoot, 'sdkwork-api-router', 'log'),
-      runRoot: pathApi.join(programDataRoot, 'sdkwork-api-router', 'run'),
-    };
-  }
-
-  if (runtimePlatform === 'darwin') {
-    return {
-      productRoot: pathApi.join('/usr/local/lib', 'sdkwork-api-router'),
-      configRoot: pathApi.join('/Library/Application Support', 'sdkwork-api-router'),
-      dataRoot: pathApi.join('/Library/Application Support', 'sdkwork-api-router', 'data'),
-      logRoot: pathApi.join('/Library/Logs', 'sdkwork-api-router'),
-      runRoot: pathApi.join('/Library/Application Support', 'sdkwork-api-router', 'run'),
-    };
-  }
-
-  return {
-    productRoot: pathApi.join('/opt', 'sdkwork-api-router'),
-    configRoot: pathApi.join('/etc', 'sdkwork-api-router'),
-    dataRoot: pathApi.join('/var', 'lib', 'sdkwork-api-router'),
-    logRoot: pathApi.join('/var', 'log', 'sdkwork-api-router'),
-    runRoot: pathApi.join('/run', 'sdkwork-api-router'),
-  };
-}
-
-function normalizeProductInstallRoot(installRoot, pathApi) {
-  if (!installRoot) {
-    return installRoot;
-  }
-
-  return pathApi.basename(installRoot) === 'current'
-    ? pathApi.dirname(installRoot)
-    : installRoot;
-}
-
 export function resolveProductReleaseVersion(repoRoot, {
   readFile = readFileSync,
 } = {}) {
@@ -444,106 +508,27 @@ function resolveRuntimeLayout({
 } = {}) {
   const normalizedMode = normalizeInstallMode(mode);
   const runtimePlatform = normalizeRuntimePlatform(platform);
-  const pathApi = runtimePathApi(runtimePlatform);
   const activeReleaseVersion = String(releaseVersion ?? '').trim() || '0.1.0';
-
-  if (normalizedMode === 'system') {
-    const roots = resolveSystemLayoutRoots({
-      platform: runtimePlatform,
-      env,
-    });
-    const productRoot = normalizeProductInstallRoot(installRoot ?? roots.productRoot, pathApi);
-    const controlRoot = pathApi.join(productRoot, 'current');
-    const releasesRoot = pathApi.join(productRoot, 'releases');
-    const releaseRoot = pathApi.join(releasesRoot, activeReleaseVersion);
-    const releaseBinDir = pathApi.join(releaseRoot, 'bin');
-
-    return {
-      mode: normalizedMode,
-      runtimePlatform,
-      pathApi,
-      installRoot: productRoot,
-      controlRoot,
-      releasesRoot,
-      releaseVersion: activeReleaseVersion,
-      releaseRoot,
-      binDir: pathApi.join(controlRoot, 'bin'),
-      binLibDir: pathApi.join(controlRoot, 'bin', 'lib'),
-      startScript: pathApi.join(controlRoot, 'bin', 'start.sh'),
-      startPs1Script: pathApi.join(controlRoot, 'bin', 'start.ps1'),
-      releaseBinDir,
-      staticDataDir: pathApi.join(releaseRoot, 'data'),
-      serviceSystemdDir: pathApi.join(controlRoot, 'service', 'systemd'),
-      serviceLaunchdDir: pathApi.join(controlRoot, 'service', 'launchd'),
-      serviceWindowsTaskDir: pathApi.join(controlRoot, 'service', 'windows-task'),
-      serviceWindowsServiceDir: pathApi.join(controlRoot, 'service', 'windows-service'),
-      releaseDeployDir: pathApi.join(releaseRoot, 'deploy'),
-      releasePayloadManifestFile: pathApi.join(releaseRoot, 'release-manifest.json'),
-      releasePayloadReadmeFile: pathApi.join(releaseRoot, 'README.txt'),
-      sitesAdminDir: pathApi.join(releaseRoot, 'sites', 'admin'),
-      sitesPortalDir: pathApi.join(releaseRoot, 'sites', 'portal'),
-      adminSiteDistDir: pathApi.join(releaseRoot, 'sites', 'admin', 'dist'),
-      portalSiteDistDir: pathApi.join(releaseRoot, 'sites', 'portal', 'dist'),
-      configRoot: roots.configRoot,
-      configFile: pathApi.join(roots.configRoot, 'router.yaml'),
-      configFragmentDir: pathApi.join(roots.configRoot, 'conf.d'),
-      envFile: pathApi.join(roots.configRoot, 'router.env'),
-      envExampleFile: pathApi.join(roots.configRoot, 'router.env.example'),
-      dataRoot: roots.dataRoot,
-      logRoot: roots.logRoot,
-      runRoot: roots.runRoot,
-      routerBinary: pathApi.join(releaseBinDir, withExecutable('router-product-service', runtimePlatform)),
-      releaseManifestFile: pathApi.join(controlRoot, 'release-manifest.json'),
-    };
-  }
-
-  const productRoot = normalizeProductInstallRoot(installRoot, path);
-  const controlRoot = path.join(productRoot, 'current');
-  const releasesRoot = path.join(productRoot, 'releases');
-  const releaseRoot = path.join(releasesRoot, activeReleaseVersion);
-  const releaseBinDir = path.join(releaseRoot, 'bin');
-  return {
+  const pathApi = normalizedMode === 'system' ? runtimePathApi(runtimePlatform) : path;
+  const layout = materializeInstalledRuntimeLayout({
+    installRoot,
     mode: normalizedMode,
-    runtimePlatform,
-    pathApi: path,
-    installRoot: productRoot,
-    controlRoot,
-    releasesRoot,
+    platform: runtimePlatform,
+    env,
     releaseVersion: activeReleaseVersion,
-    releaseRoot,
-    binDir: path.join(controlRoot, 'bin'),
-    binLibDir: path.join(controlRoot, 'bin', 'lib'),
-    startScript: path.join(controlRoot, 'bin', 'start.sh'),
-    startPs1Script: path.join(controlRoot, 'bin', 'start.ps1'),
-    releaseBinDir,
-    staticDataDir: path.join(releaseRoot, 'data'),
-    serviceSystemdDir: path.join(controlRoot, 'service', 'systemd'),
-    serviceLaunchdDir: path.join(controlRoot, 'service', 'launchd'),
-    serviceWindowsTaskDir: path.join(controlRoot, 'service', 'windows-task'),
-    serviceWindowsServiceDir: path.join(controlRoot, 'service', 'windows-service'),
-    releaseDeployDir: path.join(releaseRoot, 'deploy'),
-    releasePayloadManifestFile: path.join(releaseRoot, 'release-manifest.json'),
-    releasePayloadReadmeFile: path.join(releaseRoot, 'README.txt'),
-    sitesAdminDir: path.join(releaseRoot, 'sites', 'admin'),
-    sitesPortalDir: path.join(releaseRoot, 'sites', 'portal'),
-    adminSiteDistDir: path.join(releaseRoot, 'sites', 'admin', 'dist'),
-    portalSiteDistDir: path.join(releaseRoot, 'sites', 'portal', 'dist'),
-    configRoot: path.join(productRoot, 'config'),
-    configFile: path.join(productRoot, 'config', 'router.yaml'),
-    configFragmentDir: path.join(productRoot, 'config', 'conf.d'),
-    envFile: path.join(productRoot, 'config', 'router.env'),
-    envExampleFile: path.join(productRoot, 'config', 'router.env.example'),
-    dataRoot: path.join(productRoot, 'data'),
-    logRoot: path.join(productRoot, 'log'),
-    runRoot: path.join(productRoot, 'run'),
-    routerBinary: path.join(releaseBinDir, withExecutable('router-product-service', runtimePlatform)),
-    releaseManifestFile: path.join(controlRoot, 'release-manifest.json'),
+    pathApi,
+  });
+
+  return {
+    ...layout,
+    runtimePlatform,
+    pathApi,
   };
 }
 
 function defaultDatabaseUrlForLayout(layout) {
   if (layout.mode === 'system') {
-    return 'postgresql://sdkwork:change-me@127.0.0.1:5432/sdkwork_api_router';
+    return 'postgresql://sdkwork:replace-with-db-password@127.0.0.1:5432/sdkwork_api_router';
   }
 
   return sqliteUrlForFilePath(layout.pathApi.join(layout.dataRoot, 'sdkwork-api-router.db'));
@@ -554,15 +539,13 @@ export function defaultInstallRoot(repoRoot, {
   platform = process.platform,
   env = process.env,
 } = {}) {
-  const normalizedMode = normalizeInstallMode(mode);
-  if (normalizedMode === 'portable') {
-    return path.join(repoRoot, 'artifacts', 'install', 'sdkwork-api-router');
-  }
-
-  return resolveSystemLayoutRoots({
-    platform,
+  return resolveInstalledRuntimeDefaultProductRoot({
+    repoRoot,
+    mode: normalizeInstallMode(mode),
+    platform: normalizeRuntimePlatform(platform),
     env,
-  }).productRoot;
+    pathApi: normalizeInstallMode(mode) === 'portable' ? path : undefined,
+  });
 }
 
 function quoteEnvValue(value) {
@@ -1659,14 +1642,6 @@ export function createInstallPlan({
     platform: runtimePlatform,
     env,
   });
-  const releaseVersion = resolveProductReleaseVersion(repoRoot);
-  const layout = resolveRuntimeLayout({
-    installRoot: resolvedInstallRoot,
-    mode: normalizedMode,
-    platform: runtimePlatform,
-    env,
-    releaseVersion,
-  });
   const target = resolveDesktopReleaseTarget({
     platform: runtimePlatform,
     arch,
@@ -1678,6 +1653,17 @@ export function createInstallPlan({
     platform: runtimePlatform,
     arch: target.arch,
     env,
+  });
+  const releaseVersion = resolveBundleInstallReleaseVersion({
+    repoRoot,
+    bundleManifestPath: serverBundlePaths.bundleManifestPath,
+  });
+  const layout = resolveRuntimeLayout({
+    installRoot: resolvedInstallRoot,
+    mode: normalizedMode,
+    platform: runtimePlatform,
+    env,
+    releaseVersion,
   });
   const directories = Array.from(new Set([
     layout.installRoot,
@@ -1703,35 +1689,6 @@ export function createInstallPlan({
   ]));
 
   const files = [];
-
-  const runtimeScripts = [
-    'start.sh',
-    'stop.sh',
-    'backup.sh',
-    'restore.sh',
-    'validate-config.sh',
-    'start.ps1',
-    'stop.ps1',
-    'backup.ps1',
-    'restore.ps1',
-    'validate-config.ps1',
-  ];
-  for (const scriptName of runtimeScripts) {
-    files.push({
-      type: 'file',
-      sourcePath: path.join(repoRoot, 'bin', scriptName),
-      targetPath: layout.pathApi.join(layout.binDir, scriptName),
-    });
-  }
-
-  const runtimeLibs = ['runtime-common.sh', 'runtime-common.ps1'];
-  for (const libName of runtimeLibs) {
-    files.push({
-      type: 'file',
-      sourcePath: path.join(repoRoot, 'bin', 'lib', libName),
-      targetPath: layout.pathApi.join(layout.binLibDir, libName),
-    });
-  }
 
   files.push(
     ...createOfficialProductServerBundleInstallEntries({
@@ -1892,7 +1849,7 @@ export function createInstallPlan({
         releaseVersion,
         releasesRoot: layout.releasesRoot,
         releaseRoot: layout.releaseRoot,
-        target,
+        target: target.targetTriple,
         installedBinaries: RELEASE_BINARY_NAMES,
         bootstrapDataRoot: layout.staticDataDir,
         deploymentAssetRoot: layout.releaseDeployDir,
@@ -1992,6 +1949,7 @@ function assertBundleInputsExist({
     bundleManifestPath,
     bundleChecksumPath: checksumPath,
     releaseCatalogPath,
+    bundleManifest: manifest,
   });
 }
 

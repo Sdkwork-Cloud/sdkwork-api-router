@@ -62,7 +62,7 @@ const previewBuildInputs = [
   'scripts',
 ];
 
-function runPnpmStep(args, dryRun, label, env, distDir = '', allowInstallReuse = false) {
+function runPnpmStep(args, dryRun, label, env, distDir = '', allowInstallReuse = false, cwd = process.cwd()) {
   const processSpec = pnpmProcessSpec(args);
   console.log(`[start-web] ${label}: ${pnpmDisplayCommand(args)}`);
 
@@ -71,7 +71,7 @@ function runPnpmStep(args, dryRun, label, env, distDir = '', allowInstallReuse =
   }
 
   const result = spawnSync(processSpec.command, processSpec.args, {
-    ...pnpmSpawnOptions({ env, stdio: 'pipe' }),
+    ...pnpmSpawnOptions({ env, stdio: 'pipe', cwd }),
     encoding: 'utf8',
     maxBuffer: 32 * 1024 * 1024,
   });
@@ -146,7 +146,7 @@ for (const appRoot of appRoots) {
     }),
   });
   const needInstall = settings.install || installStatus !== 'ready';
-  if (needInstall && !runPnpmStep(['--dir', appRoot, 'install'], settings.dryRun, `install ${appRoot}`, env, `${appRoot}/dist`, true)) {
+  if (needInstall && !runPnpmStep(['install'], settings.dryRun, `install ${appRoot}`, env, `${appRoot}/dist`, true, appRoot)) {
     process.exit(1);
   }
 }
@@ -166,7 +166,7 @@ if (!settings.proxyDev) {
       continue;
     }
 
-    if (!runPnpmStep(['--dir', appRoot, 'build'], settings.dryRun, `build ${appRoot}`, env, distDir)) {
+    if (!runPnpmStep(['build'], settings.dryRun, `build ${appRoot}`, env, distDir, false, appRoot)) {
       process.exit(1);
     }
   }

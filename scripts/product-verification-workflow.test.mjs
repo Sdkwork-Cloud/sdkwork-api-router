@@ -6,14 +6,36 @@ import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 
 const repoRoot = path.resolve(import.meta.dirname, '..');
+const productGovernanceCatalog = await import(
+  pathToFileURL(
+    path.join(repoRoot, 'scripts', 'product-governance-node-test-catalog.mjs'),
+  ).href,
+);
+const productVerificationWorkflowWatchCatalog = await import(
+  pathToFileURL(
+    path.join(repoRoot, 'scripts', 'product-verification-workflow-watch-catalog.mjs'),
+  ).href,
+);
+const productVerificationWorkflowStepContractCatalog = await import(
+  pathToFileURL(
+    path.join(repoRoot, 'scripts', 'product-verification-workflow-step-contract-catalog.mjs'),
+  ).href,
+);
+const DEFAULT_PRODUCT_GOVERNANCE_NODE_TESTS = productGovernanceCatalog.listProductGovernanceNodeTestFiles();
+const DEFAULT_PRODUCT_VERIFICATION_WORKFLOW_WATCH_PATHS = productVerificationWorkflowWatchCatalog.listProductVerificationWorkflowWatchPaths();
+const DEFAULT_PRODUCT_VERIFICATION_WORKFLOW_STEP_CONTRACTS = productVerificationWorkflowStepContractCatalog.listProductVerificationWorkflowStepContracts();
 
 function read(relativePath) {
   return readFileSync(path.join(repoRoot, relativePath), 'utf8');
 }
 
+function escapeRegexLiteral(value) {
+  return String(value).replace(/[|\\{}()[\]^$+*?.]/g, '\\$&');
+}
+
 function extractNamedStepBlock(containerText, stepName) {
   const stepPattern = new RegExp(
-    String.raw`^\s+- name: ${stepName}\r?\n[\s\S]*?(?=^\s+- name:|\Z)`,
+    String.raw`^\s+- name: ${stepName}\r?\n[\s\S]*?(?=^\s+- name:|(?![\s\S]))`,
     'im',
   );
   const match = containerText.match(stepPattern);
@@ -32,17 +54,103 @@ function withNode24JavaScriptActionsEnv(workflowText) {
   );
 }
 
+function createFixtureRoot() {
+  const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), 'sdkwork-product-verification-workflow-'));
+  mkdirSync(path.join(fixtureRoot, '.github', 'workflows'), { recursive: true });
+  mkdirSync(path.join(fixtureRoot, 'scripts'), { recursive: true });
+  return fixtureRoot;
+}
+
+function createProductGovernanceCatalogFixtureSource({
+  testFiles = DEFAULT_PRODUCT_GOVERNANCE_NODE_TESTS,
+} = {}) {
+  return `
+const PRODUCT_GOVERNANCE_NODE_TEST_FILES = ${JSON.stringify(testFiles, null, 2)};
+
+export function listProductGovernanceNodeTestFiles() {
+  return [...PRODUCT_GOVERNANCE_NODE_TEST_FILES];
+}
+`;
+}
+
+function createProductGovernanceRunnerFixtureSource({
+  testFiles = DEFAULT_PRODUCT_GOVERNANCE_NODE_TESTS,
+} = {}) {
+  return `
+import { listProductGovernanceNodeTestFiles } from './product-governance-node-test-catalog.mjs';
+
+export function listProductGovernanceNodeTests() {
+  return listProductGovernanceNodeTestFiles();
+}
+
+export function createProductGovernanceNodeTestPlan({
+  cwd = '.',
+  env = {},
+  nodeExecutable = 'node',
+} = {}) {
+  return {
+    command: nodeExecutable,
+    args: ['--test', '--experimental-test-isolation=none', ...listProductGovernanceNodeTests()],
+    cwd,
+    env,
+    shell: false,
+    windowsHide: false,
+  };
+}
+
+export function runProductGovernanceNodeTests() {
+  return { status: 0 };
+}
+`;
+}
+
+function writeProductVerificationFixture({
+  workflowText = read('.github/workflows/product-verification.yml'),
+  testFiles = DEFAULT_PRODUCT_GOVERNANCE_NODE_TESTS,
+} = {}) {
+  const fixtureRoot = createFixtureRoot();
+  writeFileSync(
+    path.join(fixtureRoot, '.github', 'workflows', 'product-verification.yml'),
+    workflowText,
+    'utf8',
+  );
+  writeFileSync(
+    path.join(fixtureRoot, 'scripts', 'product-governance-node-test-catalog.mjs'),
+    createProductGovernanceCatalogFixtureSource({ testFiles }),
+    'utf8',
+  );
+  writeFileSync(
+    path.join(fixtureRoot, 'scripts', 'run-product-governance-node-tests.mjs'),
+    createProductGovernanceRunnerFixtureSource({ testFiles }),
+    'utf8',
+  );
+  return fixtureRoot;
+}
+
+async function loadContracts() {
+  return import(
+    pathToFileURL(
+      path.join(repoRoot, 'scripts', 'product-verification-workflow-contracts.mjs'),
+    ).href,
+  );
+}
+
 test('repository exposes a pull-request product verification workflow with governed installs and strict mode', () => {
   const workflowPath = path.join(repoRoot, '.github', 'workflows', 'product-verification.yml');
 
   assert.equal(existsSync(workflowPath), true, 'missing .github/workflows/product-verification.yml');
 
   const workflow = read('.github/workflows/product-verification.yml');
+  const contractSource = read('scripts/product-verification-workflow-contracts.mjs');
 
   assert.match(workflow, /pull_request:/);
   assert.match(workflow, /workflow_dispatch:/);
+  assert.match(workflow, /permissions:\s*contents:\s*read/);
+  assert.doesNotMatch(
+    workflow,
+    /^\s+(?:contents|id-token|attestations|artifact-metadata|packages):\s*write$/m,
+  );
   assert.match(workflow, /FORCE_JAVASCRIPT_ACTIONS_TO_NODE24:\s*'true'/);
-  assert.match(workflow, /\.github\/workflows\/release\.yml/);
   assert.match(workflow, /actions\/checkout@v5/);
   assert.match(workflow, /pnpm\/action-setup@v5/);
   assert.match(workflow, /actions\/setup-node@v5/);
@@ -50,58 +158,17 @@ test('repository exposes a pull-request product verification workflow with gover
   assert.match(workflow, /Swatinem\/rust-cache@v2/);
   assert.match(workflow, /taiki-e\/install-action@cargo-audit/);
   assert.match(workflow, /docs\/pnpm-lock\.yaml/);
-  assert.match(workflow, /\.github\/workflows\/product-verification\.yml/);
-  assert.match(workflow, /apps\/sdkwork-router-admin\/\*\*/);
-  assert.match(workflow, /apps\/sdkwork-router-portal\/\*\*/);
-  assert.match(workflow, /docs\/\*\*/);
+  for (const watchedPath of DEFAULT_PRODUCT_VERIFICATION_WORKFLOW_WATCH_PATHS) {
+    assert.match(workflow, new RegExp(escapeRegexLiteral(watchedPath)));
+  }
   assert.doesNotMatch(workflow, /console\/\*\*/);
-  assert.match(workflow, /README\.md/);
-  assert.match(workflow, /README\.zh-CN\.md/);
-  assert.match(workflow, /'\*\.sh'/);
-  assert.match(workflow, /'\*\.ps1'/);
-  assert.match(workflow, /package\.json/);
-  assert.match(workflow, /scripts\/check-router-product\.mjs/);
-  assert.match(workflow, /scripts\/browser-runtime-smoke\.mjs/);
-  assert.match(workflow, /scripts\/browser-runtime-smoke\.test\.mjs/);
-  assert.match(workflow, /scripts\/check-portal-browser-runtime\.mjs/);
-  assert.match(workflow, /scripts\/check-portal-browser-runtime\.test\.mjs/);
-  assert.match(workflow, /scripts\/check-admin-browser-runtime\.mjs/);
-  assert.match(workflow, /scripts\/check-admin-browser-runtime\.test\.mjs/);
-  assert.match(workflow, /scripts\/run-tauri-cli\.mjs/);
-  assert.match(workflow, /scripts\/prepare-router-portal-desktop-runtime\.mjs/);
-  assert.match(workflow, /scripts\/prepare-router-portal-desktop-runtime\.test\.mjs/);
-  assert.match(workflow, /scripts\/release\/\*\*/);
-  assert.match(workflow, /scripts\/release-flow-contract\.test\.mjs/);
-  assert.match(workflow, /scripts\/release\/desktop-targets\.mjs/);
-  assert.match(workflow, /scripts\/product-verification-workflow-contracts\.mjs/);
-  assert.match(workflow, /scripts\/product-verification-workflow\.test\.mjs/);
-  assert.match(workflow, /scripts\/run-router-product\.mjs/);
-  assert.match(workflow, /scripts\/run-router-product\.test\.mjs/);
-  assert.match(workflow, /scripts\/run-router-product-service\.mjs/);
-  assert.match(workflow, /scripts\/run-router-product-service\.test\.mjs/);
-  assert.match(workflow, /bin\/tests\/root-entrypoint-wrappers\.test\.mjs/);
-  assert.match(
-    workflow,
-    /Run product governance node tests[\s\S]*?node --test scripts\/product-verification-workflow\.test\.mjs scripts\/check-router-product\.test\.mjs scripts\/browser-runtime-smoke\.test\.mjs scripts\/check-admin-browser-runtime\.test\.mjs scripts\/check-portal-browser-runtime\.test\.mjs scripts\/build-router-desktop-assets\.test\.mjs scripts\/check-router-docs-safety\.test\.mjs scripts\/check-router-frontend-budgets\.test\.mjs scripts\/run-router-product\.test\.mjs scripts\/run-router-product-service\.test\.mjs bin\/tests\/root-entrypoint-wrappers\.test\.mjs scripts\/dev\/tests\/pnpm-launch-lib\.test\.mjs scripts\/prepare-router-portal-desktop-runtime\.test\.mjs scripts\/release-flow-contract\.test\.mjs scripts\/release\/tests\/materialize-release-catalog\.test\.mjs scripts\/release\/tests\/release-workflow\.test\.mjs scripts\/release\/tests\/release-attestation-verify\.test\.mjs scripts\/release\/tests\/docs-product-contract\.test\.mjs apps\/sdkwork-router-portal\/tests\/product-entrypoint-scripts\.test\.mjs/,
-  );
-  assert.match(
-    workflow,
-    /Materialize external release dependencies[\s\S]*?env:[\s\S]*?SDKWORK_RELEASE_EXTERNAL_DEPENDENCY_SCOPE:\s*referenced[\s\S]*?node scripts\/release\/materialize-external-deps\.mjs[\s\S]*?Install product verification workspace dependencies[\s\S]*?pnpm --dir apps\/sdkwork-router-admin install --frozen-lockfile[\s\S]*?pnpm --dir apps\/sdkwork-router-portal install --frozen-lockfile/,
-  );
-  assert.match(
-    workflow,
-    /Install product verification workspace dependencies[\s\S]*?pnpm --dir apps\/sdkwork-router-admin install --frozen-lockfile[\s\S]*?pnpm --dir apps\/sdkwork-router-portal install --frozen-lockfile[\s\S]*?pnpm --dir docs install --frozen-lockfile/,
-  );
-  assert.match(
-    workflow,
-    /Build docs site[\s\S]*?pnpm --dir docs build/,
-  );
+  for (const contract of DEFAULT_PRODUCT_VERIFICATION_WORKFLOW_STEP_CONTRACTS) {
+    assert.match(workflow, new RegExp(contract.patternSource));
+  }
   assert.doesNotMatch(workflow, /console\/tests\/sdk-transport-unsafe-integer\.test\.mjs/);
   assert.doesNotMatch(workflow, /console\/pnpm-lock\.yaml/);
-  assert.match(
-    workflow,
-    /Run product verification gate[\s\S]*?env:[\s\S]*?SDKWORK_STRICT_FRONTEND_INSTALLS:\s*'1'[\s\S]*?run:\s*node scripts\/check-router-product\.mjs/,
-  );
+  assert.match(contractSource, /product-verification-workflow-watch-catalog\.mjs/);
+  assert.match(contractSource, /product-verification-workflow-step-contract-catalog\.mjs/);
 });
 
 test('product verification workflow defers pnpm version selection to the root packageManager field', () => {
@@ -118,24 +185,82 @@ test('product verification workflow defers pnpm version selection to the root pa
   );
 });
 
-test('product verification workflow contract helper rejects workflows that do not opt JavaScript actions into Node 24', async () => {
-  const contracts = await import(
-    pathToFileURL(
-      path.join(repoRoot, 'scripts', 'product-verification-workflow-contracts.mjs'),
-    ).href,
+test('product verification workflow step helper extracts a final step block through EOF when the body contains literal Z characters', () => {
+  const stepBlock = extractNamedStepBlock(
+    `    - name: Final governed step
+      run: echo "Z-product-marker"
+`,
+    'Final governed step',
   );
 
-  const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), 'sdkwork-product-verification-workflow-'));
-  mkdirSync(path.join(fixtureRoot, '.github', 'workflows'), { recursive: true });
+  assert.match(stepBlock, /Z-product-marker/);
+});
 
-  writeFileSync(
-    path.join(fixtureRoot, '.github', 'workflows', 'product-verification.yml'),
-    read('.github/workflows/product-verification.yml').replace(
+test('product verification workflow contract helper rejects workflows that inline raw node test lists instead of the repository runner', async () => {
+  const contracts = await loadContracts();
+
+  const fixtureRoot = writeProductVerificationFixture({
+    workflowText: read('.github/workflows/product-verification.yml').replace(
+      /run:\s*node scripts\/run-product-governance-node-tests\.mjs/,
+      `run: node --test ${DEFAULT_PRODUCT_GOVERNANCE_NODE_TESTS.join(' ')}`,
+    ),
+  });
+
+  await assert.rejects(
+    contracts.assertProductVerificationWorkflowContracts({
+      repoRoot: fixtureRoot,
+    }),
+    /repository-owned runner|run-product-governance-node-tests/i,
+  );
+});
+
+test('product verification workflow contract helper rejects workflows that omit the explicit read-only token permissions', async () => {
+  const contracts = await loadContracts();
+
+  const fixtureRoot = writeProductVerificationFixture({
+    workflowText: read('.github/workflows/product-verification.yml').replace(
+      /permissions:\r?\n\s+contents:\s*read\r?\n\r?\n/,
+      '',
+    ),
+  });
+
+  await assert.rejects(
+    contracts.assertProductVerificationWorkflowContracts({
+      repoRoot: fixtureRoot,
+    }),
+    /read-only GITHUB_TOKEN baseline|permissions/i,
+  );
+});
+
+test('product verification workflow contract helper rejects workflows that omit the GHCR publish contract tests', async () => {
+  const contracts = await loadContracts();
+
+  const fixtureRoot = writeProductVerificationFixture({
+    testFiles: DEFAULT_PRODUCT_GOVERNANCE_NODE_TESTS.filter(
+      (testFile) => ![
+        'scripts/release/tests/publish-ghcr-image.test.mjs',
+        'scripts/release/tests/publish-ghcr-manifest.test.mjs',
+      ].includes(testFile),
+    ),
+  });
+
+  await assert.rejects(
+    contracts.assertProductVerificationWorkflowContracts({
+      repoRoot: fixtureRoot,
+    }),
+    /ghcr|publish coverage|governed test set/i,
+  );
+});
+
+test('product verification workflow contract helper rejects workflows that do not opt JavaScript actions into Node 24', async () => {
+  const contracts = await loadContracts();
+
+  const fixtureRoot = writeProductVerificationFixture({
+    workflowText: read('.github/workflows/product-verification.yml').replace(
       /^env:\r?\n\s+FORCE_JAVASCRIPT_ACTIONS_TO_NODE24:\s*'true'\r?\n\r?\n/m,
       '',
     ),
-    'utf8',
-  );
+  });
 
   await assert.rejects(
     contracts.assertProductVerificationWorkflowContracts({
@@ -146,96 +271,14 @@ test('product verification workflow contract helper rejects workflows that do no
 });
 
 test('product verification workflow contract helper rejects workflows without strict frontend install mode', async () => {
-  const contracts = await import(
-    pathToFileURL(
-      path.join(repoRoot, 'scripts', 'product-verification-workflow-contracts.mjs'),
-    ).href,
-  );
+  const contracts = await loadContracts();
 
-  const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), 'sdkwork-product-verification-workflow-'));
-  mkdirSync(path.join(fixtureRoot, '.github', 'workflows'), { recursive: true });
-
-  writeFileSync(
-    path.join(fixtureRoot, '.github', 'workflows', 'product-verification.yml'),
-    withNode24JavaScriptActionsEnv(`
-name: product-verification
-
-on:
-  pull_request:
-    paths:
-      - '.github/workflows/product-verification.yml'
-      - '.github/workflows/release.yml'
-      - 'package.json'
-      - 'apps/sdkwork-router-admin/**'
-      - 'apps/sdkwork-router-portal/**'
-      - 'docs/**'
-      - 'README.md'
-      - 'README.zh-CN.md'
-      - 'scripts/check-router-product.mjs'
-      - 'scripts/browser-runtime-smoke.mjs'
-      - 'scripts/browser-runtime-smoke.test.mjs'
-      - 'scripts/check-portal-browser-runtime.mjs'
-      - 'scripts/check-portal-browser-runtime.test.mjs'
-      - 'scripts/check-admin-browser-runtime.mjs'
-      - 'scripts/check-admin-browser-runtime.test.mjs'
-      - 'scripts/prepare-router-portal-desktop-runtime.mjs'
-      - 'scripts/prepare-router-portal-desktop-runtime.test.mjs'
-      - 'scripts/release/**'
-      - 'scripts/release-flow-contract.test.mjs'
-      - 'scripts/run-router-product.mjs'
-      - 'scripts/run-router-product.test.mjs'
-      - 'scripts/run-router-product-service.mjs'
-      - 'scripts/run-router-product-service.test.mjs'
-      - 'scripts/run-tauri-cli.mjs'
-      - 'scripts/release/desktop-targets.mjs'
-      - 'scripts/product-verification-workflow-contracts.mjs'
-      - 'scripts/product-verification-workflow.test.mjs'
-  workflow_dispatch:
-
-jobs:
-  product-verification:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v5
-        with:
-          version: 10
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v5
-        with:
-          node-version: 22
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-
-      - name: Install cargo-audit
-        uses: taiki-e/install-action@cargo-audit
-
-      - name: Materialize external release dependencies
-        env:
-          SDKWORK_RELEASE_EXTERNAL_DEPENDENCY_SCOPE: referenced
-        run: node scripts/release/materialize-external-deps.mjs
-
-      - name: Install product verification workspace dependencies
-        run: |
-          pnpm --dir apps/sdkwork-router-admin install --frozen-lockfile
-          pnpm --dir apps/sdkwork-router-portal install --frozen-lockfile
-
-      - name: Run product governance node tests
-        run: node --test scripts/product-verification-workflow.test.mjs scripts/check-router-product.test.mjs scripts/browser-runtime-smoke.test.mjs scripts/check-admin-browser-runtime.test.mjs scripts/check-portal-browser-runtime.test.mjs scripts/build-router-desktop-assets.test.mjs scripts/check-router-docs-safety.test.mjs scripts/check-router-frontend-budgets.test.mjs scripts/run-router-product.test.mjs scripts/run-router-product-service.test.mjs bin/tests/root-entrypoint-wrappers.test.mjs scripts/dev/tests/pnpm-launch-lib.test.mjs scripts/prepare-router-portal-desktop-runtime.test.mjs scripts/release-flow-contract.test.mjs scripts/release/tests/materialize-release-catalog.test.mjs scripts/release/tests/release-workflow.test.mjs scripts/release/tests/release-attestation-verify.test.mjs scripts/release/tests/docs-product-contract.test.mjs apps/sdkwork-router-portal/tests/product-entrypoint-scripts.test.mjs
-
-      - name: Run product verification gate
-        run: node scripts/check-router-product.mjs
-`),
-    'utf8',
-  );
+  const fixtureRoot = writeProductVerificationFixture({
+    workflowText: read('.github/workflows/product-verification.yml').replace(
+      /^\s*env:\r?\n\s*SDKWORK_STRICT_FRONTEND_INSTALLS:\s*'1'\r?\n\s*run:\s*node scripts\/check-router-product\.mjs/m,
+      '        run: node scripts/check-router-product.mjs',
+    ),
+  });
 
   await assert.rejects(
     contracts.assertProductVerificationWorkflowContracts({
@@ -246,97 +289,12 @@ jobs:
 });
 
 test('product verification workflow contract helper rejects workflows that do not watch the contract module', async () => {
-  const contracts = await import(
-    pathToFileURL(
-      path.join(repoRoot, 'scripts', 'product-verification-workflow-contracts.mjs'),
-    ).href,
-  );
+  const contracts = await loadContracts();
 
-  const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), 'sdkwork-product-verification-workflow-'));
-  mkdirSync(path.join(fixtureRoot, '.github', 'workflows'), { recursive: true });
-
-  writeFileSync(
-    path.join(fixtureRoot, '.github', 'workflows', 'product-verification.yml'),
-    withNode24JavaScriptActionsEnv(`
-name: product-verification
-
-on:
-  pull_request:
-    paths:
-      - '.github/workflows/product-verification.yml'
-      - '.github/workflows/release.yml'
-      - 'package.json'
-      - 'apps/sdkwork-router-admin/**'
-      - 'apps/sdkwork-router-portal/**'
-      - 'docs/**'
-      - 'README.md'
-      - 'README.zh-CN.md'
-      - 'scripts/check-router-product.mjs'
-      - 'scripts/browser-runtime-smoke.mjs'
-      - 'scripts/browser-runtime-smoke.test.mjs'
-      - 'scripts/check-portal-browser-runtime.mjs'
-      - 'scripts/check-portal-browser-runtime.test.mjs'
-      - 'scripts/check-admin-browser-runtime.mjs'
-      - 'scripts/check-admin-browser-runtime.test.mjs'
-      - 'scripts/prepare-router-portal-desktop-runtime.mjs'
-      - 'scripts/prepare-router-portal-desktop-runtime.test.mjs'
-      - 'scripts/release/**'
-      - 'scripts/release-flow-contract.test.mjs'
-      - 'scripts/run-router-product.mjs'
-      - 'scripts/run-router-product.test.mjs'
-      - 'scripts/run-router-product-service.mjs'
-      - 'scripts/run-router-product-service.test.mjs'
-      - 'scripts/run-tauri-cli.mjs'
-      - 'scripts/release/desktop-targets.mjs'
-      - 'scripts/product-verification-workflow.test.mjs'
-  workflow_dispatch:
-
-jobs:
-  product-verification:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v5
-        with:
-          version: 10
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v5
-        with:
-          node-version: 22
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-
-      - name: Install cargo-audit
-        uses: taiki-e/install-action@cargo-audit
-
-      - name: Materialize external release dependencies
-        env:
-          SDKWORK_RELEASE_EXTERNAL_DEPENDENCY_SCOPE: referenced
-        run: node scripts/release/materialize-external-deps.mjs
-
-      - name: Install product verification workspace dependencies
-        run: |
-          pnpm --dir apps/sdkwork-router-admin install --frozen-lockfile
-          pnpm --dir apps/sdkwork-router-portal install --frozen-lockfile
-
-      - name: Run product governance node tests
-        run: node --test scripts/product-verification-workflow.test.mjs scripts/check-router-product.test.mjs scripts/browser-runtime-smoke.test.mjs scripts/check-admin-browser-runtime.test.mjs scripts/check-portal-browser-runtime.test.mjs scripts/build-router-desktop-assets.test.mjs scripts/check-router-docs-safety.test.mjs scripts/check-router-frontend-budgets.test.mjs scripts/run-router-product.test.mjs scripts/run-router-product-service.test.mjs bin/tests/root-entrypoint-wrappers.test.mjs scripts/dev/tests/pnpm-launch-lib.test.mjs scripts/prepare-router-portal-desktop-runtime.test.mjs scripts/release-flow-contract.test.mjs scripts/release/tests/materialize-release-catalog.test.mjs scripts/release/tests/release-workflow.test.mjs scripts/release/tests/release-attestation-verify.test.mjs scripts/release/tests/docs-product-contract.test.mjs apps/sdkwork-router-portal/tests/product-entrypoint-scripts.test.mjs
-
-      - name: Run product verification gate
-        env:
-          SDKWORK_STRICT_FRONTEND_INSTALLS: '1'
-        run: node scripts/check-router-product.mjs
-`),
-    'utf8',
-  );
+  const fixtureRoot = writeProductVerificationFixture({
+    workflowText: read('.github/workflows/product-verification.yml')
+      .replace(/^.*scripts\/product-verification-workflow-contracts\.mjs.*\r?\n/gm, ''),
+  });
 
   await assert.rejects(
     contracts.assertProductVerificationWorkflowContracts({
@@ -347,94 +305,15 @@ jobs:
 });
 
 test('product verification workflow contract helper rejects workflows that do not watch product desktop/runtime helper inputs', async () => {
-  const contracts = await import(
-    pathToFileURL(
-      path.join(repoRoot, 'scripts', 'product-verification-workflow-contracts.mjs'),
-    ).href,
-  );
+  const contracts = await loadContracts();
 
-  const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), 'sdkwork-product-verification-workflow-'));
-  mkdirSync(path.join(fixtureRoot, '.github', 'workflows'), { recursive: true });
-
-  writeFileSync(
-    path.join(fixtureRoot, '.github', 'workflows', 'product-verification.yml'),
-    withNode24JavaScriptActionsEnv(`
-name: product-verification
-
-on:
-  pull_request:
-    paths:
-      - '.github/workflows/product-verification.yml'
-      - '.github/workflows/release.yml'
-      - 'package.json'
-      - 'apps/sdkwork-router-admin/**'
-      - 'apps/sdkwork-router-portal/**'
-      - 'docs/**'
-      - 'README.md'
-      - 'README.zh-CN.md'
-      - 'scripts/check-router-product.mjs'
-      - 'scripts/browser-runtime-smoke.mjs'
-      - 'scripts/browser-runtime-smoke.test.mjs'
-      - 'scripts/check-portal-browser-runtime.mjs'
-      - 'scripts/check-portal-browser-runtime.test.mjs'
-      - 'scripts/check-admin-browser-runtime.mjs'
-      - 'scripts/check-admin-browser-runtime.test.mjs'
-      - 'scripts/run-router-product.mjs'
-      - 'scripts/run-router-product.test.mjs'
-      - 'scripts/run-router-product-service.mjs'
-      - 'scripts/run-router-product-service.test.mjs'
-      - 'scripts/release/**'
-      - 'scripts/release-flow-contract.test.mjs'
-      - 'scripts/product-verification-workflow-contracts.mjs'
-      - 'scripts/product-verification-workflow.test.mjs'
-  workflow_dispatch:
-
-jobs:
-  product-verification:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v5
-        with:
-          version: 10
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v5
-        with:
-          node-version: 22
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-
-      - name: Install cargo-audit
-        uses: taiki-e/install-action@cargo-audit
-
-      - name: Materialize external release dependencies
-        env:
-          SDKWORK_RELEASE_EXTERNAL_DEPENDENCY_SCOPE: referenced
-        run: node scripts/release/materialize-external-deps.mjs
-
-      - name: Install product verification workspace dependencies
-        run: |
-          pnpm --dir apps/sdkwork-router-admin install --frozen-lockfile
-          pnpm --dir apps/sdkwork-router-portal install --frozen-lockfile
-
-      - name: Run product governance node tests
-        run: node --test scripts/product-verification-workflow.test.mjs scripts/check-router-product.test.mjs scripts/browser-runtime-smoke.test.mjs scripts/check-admin-browser-runtime.test.mjs scripts/check-portal-browser-runtime.test.mjs scripts/build-router-desktop-assets.test.mjs scripts/check-router-docs-safety.test.mjs scripts/check-router-frontend-budgets.test.mjs scripts/run-router-product.test.mjs scripts/run-router-product-service.test.mjs bin/tests/root-entrypoint-wrappers.test.mjs scripts/dev/tests/pnpm-launch-lib.test.mjs scripts/release-flow-contract.test.mjs scripts/release/tests/materialize-release-catalog.test.mjs scripts/release/tests/release-workflow.test.mjs scripts/release/tests/release-attestation-verify.test.mjs scripts/release/tests/docs-product-contract.test.mjs apps/sdkwork-router-portal/tests/product-entrypoint-scripts.test.mjs
-
-      - name: Run product verification gate
-        env:
-          SDKWORK_STRICT_FRONTEND_INSTALLS: '1'
-        run: node scripts/check-router-product.mjs
-`),
-    'utf8',
-  );
+  const fixtureRoot = writeProductVerificationFixture({
+    workflowText: read('.github/workflows/product-verification.yml')
+      .replace(/^.*scripts\/run-tauri-cli\.mjs.*\r?\n/gm, '')
+      .replace(/^.*scripts\/prepare-router-portal-desktop-runtime\.mjs.*\r?\n/gm, '')
+      .replace(/^.*scripts\/prepare-router-portal-desktop-runtime\.test\.mjs.*\r?\n/gm, '')
+      .replace(/^.*scripts\/release\/desktop-targets\.mjs.*\r?\n/gm, ''),
+  });
 
   await assert.rejects(
     contracts.assertProductVerificationWorkflowContracts({
@@ -445,95 +324,13 @@ jobs:
 });
 
 test('product verification workflow contract helper rejects workflows that do not run the shared pnpm helper tests', async () => {
-  const contracts = await import(
-    pathToFileURL(
-      path.join(repoRoot, 'scripts', 'product-verification-workflow-contracts.mjs'),
-    ).href,
-  );
+  const contracts = await loadContracts();
 
-  const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), 'sdkwork-product-verification-workflow-'));
-  mkdirSync(path.join(fixtureRoot, '.github', 'workflows'), { recursive: true });
-
-  writeFileSync(
-    path.join(fixtureRoot, '.github', 'workflows', 'product-verification.yml'),
-    withNode24JavaScriptActionsEnv(`
-name: product-verification
-
-on:
-  pull_request:
-    paths:
-      - '.github/workflows/product-verification.yml'
-      - '.github/workflows/release.yml'
-      - 'package.json'
-      - 'apps/sdkwork-router-admin/**'
-      - 'apps/sdkwork-router-portal/**'
-      - 'docs/**'
-      - 'README.md'
-      - 'README.zh-CN.md'
-      - 'scripts/check-router-product.mjs'
-      - 'scripts/browser-runtime-smoke.mjs'
-      - 'scripts/browser-runtime-smoke.test.mjs'
-      - 'scripts/check-portal-browser-runtime.mjs'
-      - 'scripts/check-portal-browser-runtime.test.mjs'
-      - 'scripts/check-admin-browser-runtime.mjs'
-      - 'scripts/check-admin-browser-runtime.test.mjs'
-      - 'scripts/prepare-router-portal-desktop-runtime.mjs'
-      - 'scripts/prepare-router-portal-desktop-runtime.test.mjs'
-      - 'scripts/release/**'
-      - 'scripts/release-flow-contract.test.mjs'
-      - 'scripts/run-router-product.mjs'
-      - 'scripts/run-router-product.test.mjs'
-      - 'scripts/run-router-product-service.mjs'
-      - 'scripts/run-router-product-service.test.mjs'
-      - 'scripts/run-tauri-cli.mjs'
-      - 'scripts/release/desktop-targets.mjs'
-      - 'scripts/dev/pnpm-launch-lib.mjs'
-      - 'scripts/dev/tests/pnpm-launch-lib.test.mjs'
-      - 'scripts/product-verification-workflow-contracts.mjs'
-      - 'scripts/product-verification-workflow.test.mjs'
-  workflow_dispatch:
-
-jobs:
-  product-verification:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v5
-        with:
-          version: 10
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v5
-        with:
-          node-version: 22
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-
-      - name: Install cargo-audit
-        uses: taiki-e/install-action@cargo-audit
-
-      - name: Install product verification workspace dependencies
-        run: |
-          pnpm --dir apps/sdkwork-router-admin install --frozen-lockfile
-          pnpm --dir apps/sdkwork-router-portal install --frozen-lockfile
-
-      - name: Run product governance node tests
-        run: node --test scripts/product-verification-workflow.test.mjs scripts/check-router-product.test.mjs scripts/browser-runtime-smoke.test.mjs scripts/check-admin-browser-runtime.test.mjs scripts/check-portal-browser-runtime.test.mjs scripts/build-router-desktop-assets.test.mjs scripts/check-router-docs-safety.test.mjs scripts/check-router-frontend-budgets.test.mjs scripts/run-router-product.test.mjs scripts/run-router-product-service.test.mjs bin/tests/root-entrypoint-wrappers.test.mjs scripts/prepare-router-portal-desktop-runtime.test.mjs scripts/release-flow-contract.test.mjs scripts/release/tests/materialize-release-catalog.test.mjs scripts/release/tests/release-workflow.test.mjs scripts/release/tests/release-attestation-verify.test.mjs scripts/release/tests/docs-product-contract.test.mjs apps/sdkwork-router-portal/tests/product-entrypoint-scripts.test.mjs
-
-      - name: Run product verification gate
-        env:
-          SDKWORK_STRICT_FRONTEND_INSTALLS: '1'
-        run: node scripts/check-router-product.mjs
-`),
-    'utf8',
-  );
+  const fixtureRoot = writeProductVerificationFixture({
+    testFiles: DEFAULT_PRODUCT_GOVERNANCE_NODE_TESTS.filter(
+      (testFile) => testFile !== 'scripts/dev/tests/pnpm-launch-lib.test.mjs',
+    ),
+  });
 
   await assert.rejects(
     contracts.assertProductVerificationWorkflowContracts({
@@ -543,25 +340,77 @@ jobs:
   );
 });
 
-test('product verification workflow contract helper rejects workflows that do not run the root product entrypoint tests', async () => {
-  const contracts = await import(
-    pathToFileURL(
-      path.join(repoRoot, 'scripts', 'product-verification-workflow-contracts.mjs'),
-    ).href,
-  );
+test('product verification workflow contract helper rejects runners that omit the governed node test isolation mode', async () => {
+  const contracts = await loadContracts();
 
-  const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), 'sdkwork-product-verification-workflow-'));
-  mkdirSync(path.join(fixtureRoot, '.github', 'workflows'), { recursive: true });
-
+  const fixtureRoot = writeProductVerificationFixture();
   writeFileSync(
-    path.join(fixtureRoot, '.github', 'workflows', 'product-verification.yml'),
-    read('.github/workflows/product-verification.yml')
-      .replace(
-        / scripts\/run-router-product\.test\.mjs scripts\/run-router-product-service\.test\.mjs/,
-        '',
-      ),
+    path.join(fixtureRoot, 'scripts', 'run-product-governance-node-tests.mjs'),
+    `
+import { listProductGovernanceNodeTestFiles } from './product-governance-node-test-catalog.mjs';
+
+export function listProductGovernanceNodeTests() {
+  return listProductGovernanceNodeTestFiles();
+}
+
+export function createProductGovernanceNodeTestPlan({
+  cwd = '.',
+  env = {},
+  nodeExecutable = 'node',
+} = {}) {
+  return {
+    command: nodeExecutable,
+    args: ['--test', ...listProductGovernanceNodeTests()],
+    cwd,
+    env,
+    shell: false,
+    windowsHide: false,
+  };
+}
+
+export function runProductGovernanceNodeTests() {
+  return { status: 0 };
+}
+`,
     'utf8',
   );
+
+  await assert.rejects(
+    contracts.assertProductVerificationWorkflowContracts({
+      repoRoot: fixtureRoot,
+    }),
+    /test isolation|experimental-test-isolation/i,
+  );
+});
+
+test('product verification workflow contract helper rejects workflows that do not run the Rust dependency audit contract test', async () => {
+  const contracts = await loadContracts();
+
+  const fixtureRoot = writeProductVerificationFixture({
+    testFiles: DEFAULT_PRODUCT_GOVERNANCE_NODE_TESTS.filter(
+      (testFile) => testFile !== 'scripts/check-rust-dependency-audit.test.mjs',
+    ),
+  });
+
+  await assert.rejects(
+    contracts.assertProductVerificationWorkflowContracts({
+      repoRoot: fixtureRoot,
+    }),
+    /rust dependency audit/i,
+  );
+});
+
+test('product verification workflow contract helper rejects workflows that do not run the root product entrypoint tests', async () => {
+  const contracts = await loadContracts();
+
+  const fixtureRoot = writeProductVerificationFixture({
+    testFiles: DEFAULT_PRODUCT_GOVERNANCE_NODE_TESTS.filter(
+      (testFile) => ![
+        'scripts/run-router-product.test.mjs',
+        'scripts/run-router-product-service.test.mjs',
+      ].includes(testFile),
+    ),
+  });
 
   await assert.rejects(
     contracts.assertProductVerificationWorkflowContracts({
@@ -572,21 +421,13 @@ test('product verification workflow contract helper rejects workflows that do no
 });
 
 test('product verification workflow contract helper rejects workflows that do not run the root entrypoint wrapper contract test', async () => {
-  const contracts = await import(
-    pathToFileURL(
-      path.join(repoRoot, 'scripts', 'product-verification-workflow-contracts.mjs'),
-    ).href,
-  );
+  const contracts = await loadContracts();
 
-  const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), 'sdkwork-product-verification-workflow-'));
-  mkdirSync(path.join(fixtureRoot, '.github', 'workflows'), { recursive: true });
-
-  writeFileSync(
-    path.join(fixtureRoot, '.github', 'workflows', 'product-verification.yml'),
-    read('.github/workflows/product-verification.yml')
-      .replace(/ bin\/tests\/root-entrypoint-wrappers\.test\.mjs/, ''),
-    'utf8',
-  );
+  const fixtureRoot = writeProductVerificationFixture({
+    testFiles: DEFAULT_PRODUCT_GOVERNANCE_NODE_TESTS.filter(
+      (testFile) => testFile !== 'bin/tests/root-entrypoint-wrappers.test.mjs',
+    ),
+  });
 
   await assert.rejects(
     contracts.assertProductVerificationWorkflowContracts({
@@ -597,25 +438,16 @@ test('product verification workflow contract helper rejects workflows that do no
 });
 
 test('product verification workflow contract helper rejects workflows that do not watch the root product entrypoint inputs', async () => {
-  const contracts = await import(
-    pathToFileURL(
-      path.join(repoRoot, 'scripts', 'product-verification-workflow-contracts.mjs'),
-    ).href,
-  );
+  const contracts = await loadContracts();
 
-  const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), 'sdkwork-product-verification-workflow-'));
-  mkdirSync(path.join(fixtureRoot, '.github', 'workflows'), { recursive: true });
-
-  writeFileSync(
-    path.join(fixtureRoot, '.github', 'workflows', 'product-verification.yml'),
-    read('.github/workflows/product-verification.yml')
+  const fixtureRoot = writeProductVerificationFixture({
+    workflowText: read('.github/workflows/product-verification.yml')
       .replace(/^.*package\.json.*\r?\n/gm, '')
       .replace(/^.*scripts\/run-router-product\.mjs.*\r?\n/gm, '')
       .replace(/^.*scripts\/run-router-product\.test\.mjs.*\r?\n/gm, '')
       .replace(/^.*scripts\/run-router-product-service\.mjs.*\r?\n/gm, '')
       .replace(/^.*scripts\/run-router-product-service\.test\.mjs.*\r?\n/gm, ''),
-    'utf8',
-  );
+  });
 
   await assert.rejects(
     contracts.assertProductVerificationWorkflowContracts({
@@ -626,22 +458,13 @@ test('product verification workflow contract helper rejects workflows that do no
 });
 
 test('product verification workflow contract helper rejects workflows that do not watch the root wrapper inputs', async () => {
-  const contracts = await import(
-    pathToFileURL(
-      path.join(repoRoot, 'scripts', 'product-verification-workflow-contracts.mjs'),
-    ).href,
-  );
+  const contracts = await loadContracts();
 
-  const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), 'sdkwork-product-verification-workflow-'));
-  mkdirSync(path.join(fixtureRoot, '.github', 'workflows'), { recursive: true });
-
-  writeFileSync(
-    path.join(fixtureRoot, '.github', 'workflows', 'product-verification.yml'),
-    read('.github/workflows/product-verification.yml')
+  const fixtureRoot = writeProductVerificationFixture({
+    workflowText: read('.github/workflows/product-verification.yml')
       .replace(/^.*'\*\.sh'.*\r?\n/gm, '')
       .replace(/^.*'\*\.ps1'.*\r?\n/gm, ''),
-    'utf8',
-  );
+  });
 
   await assert.rejects(
     contracts.assertProductVerificationWorkflowContracts({
@@ -652,106 +475,14 @@ test('product verification workflow contract helper rejects workflows that do no
 });
 
 test('product verification workflow contract helper rejects workflows that do not build the docs site', async () => {
-  const contracts = await import(
-    pathToFileURL(
-      path.join(repoRoot, 'scripts', 'product-verification-workflow-contracts.mjs'),
-    ).href,
-  );
+  const contracts = await loadContracts();
 
-  const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), 'sdkwork-product-verification-workflow-'));
-  mkdirSync(path.join(fixtureRoot, '.github', 'workflows'), { recursive: true });
-
-  writeFileSync(
-    path.join(fixtureRoot, '.github', 'workflows', 'product-verification.yml'),
-    withNode24JavaScriptActionsEnv(`
-name: product-verification
-
-on:
-  pull_request:
-    paths:
-      - '.github/workflows/product-verification.yml'
-      - '.github/workflows/release.yml'
-      - 'package.json'
-      - 'apps/sdkwork-router-admin/**'
-      - 'apps/sdkwork-router-portal/**'
-      - 'docs/**'
-      - 'README.md'
-      - 'README.zh-CN.md'
-      - 'scripts/check-router-product.mjs'
-      - 'scripts/browser-runtime-smoke.mjs'
-      - 'scripts/browser-runtime-smoke.test.mjs'
-      - 'scripts/check-portal-browser-runtime.mjs'
-      - 'scripts/check-portal-browser-runtime.test.mjs'
-      - 'scripts/check-admin-browser-runtime.mjs'
-      - 'scripts/check-admin-browser-runtime.test.mjs'
-      - 'scripts/prepare-router-portal-desktop-runtime.mjs'
-      - 'scripts/prepare-router-portal-desktop-runtime.test.mjs'
-      - 'scripts/release/**'
-      - 'scripts/release-flow-contract.test.mjs'
-      - 'scripts/run-router-product.mjs'
-      - 'scripts/run-router-product.test.mjs'
-      - 'scripts/run-router-product-service.mjs'
-      - 'scripts/run-router-product-service.test.mjs'
-      - 'scripts/run-tauri-cli.mjs'
-      - 'scripts/release/desktop-targets.mjs'
-      - 'scripts/dev/pnpm-launch-lib.mjs'
-      - 'scripts/dev/tests/pnpm-launch-lib.test.mjs'
-      - 'scripts/product-verification-workflow-contracts.mjs'
-      - 'scripts/product-verification-workflow.test.mjs'
-  workflow_dispatch:
-
-jobs:
-  product-verification:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v5
-        with:
-          version: 10
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v5
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: |
-            apps/sdkwork-router-admin/pnpm-lock.yaml
-            apps/sdkwork-router-portal/pnpm-lock.yaml
-            docs/pnpm-lock.yaml
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-
-      - name: Install cargo-audit
-        uses: taiki-e/install-action@cargo-audit
-
-      - name: Materialize external release dependencies
-        env:
-          SDKWORK_RELEASE_EXTERNAL_DEPENDENCY_SCOPE: referenced
-        run: node scripts/release/materialize-external-deps.mjs
-
-      - name: Install product verification workspace dependencies
-        run: |
-          pnpm --dir apps/sdkwork-router-admin install --frozen-lockfile
-          pnpm --dir apps/sdkwork-router-portal install --frozen-lockfile
-          pnpm --dir docs install --frozen-lockfile
-
-      - name: Run product governance node tests
-        run: node --test scripts/product-verification-workflow.test.mjs scripts/check-router-product.test.mjs scripts/browser-runtime-smoke.test.mjs scripts/check-admin-browser-runtime.test.mjs scripts/check-portal-browser-runtime.test.mjs scripts/build-router-desktop-assets.test.mjs scripts/check-router-docs-safety.test.mjs scripts/check-router-frontend-budgets.test.mjs scripts/run-router-product.test.mjs scripts/run-router-product-service.test.mjs bin/tests/root-entrypoint-wrappers.test.mjs scripts/dev/tests/pnpm-launch-lib.test.mjs scripts/prepare-router-portal-desktop-runtime.test.mjs scripts/release-flow-contract.test.mjs scripts/release/tests/materialize-release-catalog.test.mjs scripts/release/tests/release-workflow.test.mjs scripts/release/tests/release-attestation-verify.test.mjs scripts/release/tests/docs-product-contract.test.mjs apps/sdkwork-router-portal/tests/product-entrypoint-scripts.test.mjs
-
-      - name: Run product verification gate
-        env:
-          SDKWORK_STRICT_FRONTEND_INSTALLS: '1'
-        run: node scripts/check-router-product.mjs
-`),
-    'utf8',
-  );
+  const fixtureRoot = writeProductVerificationFixture({
+    workflowText: read('.github/workflows/product-verification.yml').replace(
+      /^\s*- name: Build docs site\r?\n[\s\S]*?(?=^\s*- name: Run product governance node tests)/m,
+      '',
+    ),
+  });
 
   await assert.rejects(
     contracts.assertProductVerificationWorkflowContracts({

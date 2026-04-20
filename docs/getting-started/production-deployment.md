@@ -87,14 +87,15 @@ This prepares the same server product inputs used by the release workflow:
 
 If you want the local repository run to prove the same governed contract as the official release path, use `./bin/build.sh --verify-release` or `powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\build.ps1 -VerifyRelease`. That mode keeps the same build inputs, then also requires the docs site build, packaged runtime smoke, and the local `release governance preflight`.
 
-For native installs, only the packaged server bundle is valid install input. The installer then materializes `bin/`, `sites/*/dist/`, `data/`, `deploy/`, `release-manifest.json`, and `README.txt` into `releases/<version>/`.
+For native installs, only the packaged server bundle is valid install input. After extracting the archive, the governed bundle-root `install.sh` and `install.ps1` entrypoints materialize `bin/`, `sites/*/dist/`, `data/`, `deploy/`, `release-manifest.json`, and `README.txt` into `releases/<version>/`.
+That bundle also carries the governed `control/bin/` control tree used to materialize installed `current/bin/` entrypoints, keeping production operations pinned to the official release artifact.
 `release-catalog.json` is the release-level source of truth for selecting and resolving that bundle from a complete official asset set.
 
 ## Release Governance
 
 The release workflow separates governance evidence from user-facing products:
 
-- `governance-release` materializes release-window, sync-audit, telemetry, and SLO evidence
+- `governance-release` materializes release-window, sync-audit, telemetry, SLO evidence, and the third-party governance artifacts `docs/release/third-party-sbom-latest.spdx.json` plus `docs/release/third-party-notices-latest.json`
 - `native-release` builds the official server and portal desktop products
 - governance artifacts stay as workflow artifacts and attestations
 - installable public products stay limited to the server archive set and portal desktop installer set
@@ -126,13 +127,13 @@ node scripts/release/run-release-governance-checks.mjs
 Linux or macOS:
 
 ```bash
-./bin/install.sh --mode system
+./install.sh --mode system
 ```
 
 Windows:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\install.ps1 -Mode system
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Mode system
 ```
 
 Generated production assets include:
@@ -166,11 +167,11 @@ Recommended first edits:
 From the installed product root, run:
 
 ```bash
-./current/bin/validate-config.sh --home ./current
+./current/bin/validate-config.sh --home <product-root>
 ```
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\current\bin\validate-config.ps1 -Home .\current
+powershell -NoProfile -ExecutionPolicy Bypass -File .\current\bin\validate-config.ps1 -Home <product-root>
 ```
 
 From a repository checkout, the managed fallback remains:
@@ -188,6 +189,7 @@ Validation checks:
 - config discovery and merge order
 - config-file-over-environment precedence for business fields
 - production security posture
+- rejection of placeholder database URLs and secrets during startup and `validate-config`
 - rejection of SQLite in `system` mode unless an explicit development override is enabled
 
 ## Backup And Restore
@@ -195,34 +197,65 @@ Validation checks:
 Run installed backup and restore operations from the installed product root:
 
 ```bash
-./current/bin/backup.sh --home ./current --output ./backups/2026-04-19 --force
-./current/bin/restore.sh --home ./current --source ./backups/2026-04-19 --force
+./current/bin/backup.sh --home <product-root> --output ./backups/2026-04-19 --force
+./current/bin/restore.sh --home <product-root> --source ./backups/2026-04-19 --force
 ```
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\current\bin\backup.ps1 -Home .\current -OutputPath .\backups\2026-04-19 -Force
-powershell -NoProfile -ExecutionPolicy Bypass -File .\current\bin\restore.ps1 -Home .\current -SourcePath .\backups\2026-04-19 -Force
+powershell -NoProfile -ExecutionPolicy Bypass -File .\current\bin\backup.ps1 -Home <product-root> -OutputPath .\backups\2026-04-19 -Force
+powershell -NoProfile -ExecutionPolicy Bypass -File .\current\bin\restore.ps1 -Home <product-root> -SourcePath .\backups\2026-04-19 -Force
 ```
 
 Dry-run planning is also available:
 
 ```bash
-./current/bin/backup.sh --home ./current --output ./backups/2026-04-19 --dry-run
-./current/bin/restore.sh --home ./current --source ./backups/2026-04-19 --force --dry-run
+./current/bin/backup.sh --home <product-root> --output ./backups/2026-04-19 --dry-run
+./current/bin/restore.sh --home <product-root> --source ./backups/2026-04-19 --force --dry-run
 ```
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\current\bin\backup.ps1 -Home .\current -OutputPath .\backups\2026-04-19 -DryRun
-powershell -NoProfile -ExecutionPolicy Bypass -File .\current\bin\restore.ps1 -Home .\current -SourcePath .\backups\2026-04-19 -Force -DryRun
+powershell -NoProfile -ExecutionPolicy Bypass -File .\current\bin\backup.ps1 -Home <product-root> -OutputPath .\backups\2026-04-19 -DryRun
+powershell -NoProfile -ExecutionPolicy Bypass -File .\current\bin\restore.ps1 -Home <product-root> -SourcePath .\backups\2026-04-19 -Force -DryRun
 ```
 
 Operational contract:
 
 - stop the managed runtime before backup and before restore
 - the backup bundle contains `control/release-manifest.json`, a full config snapshot, a mutable data snapshot, and a PostgreSQL dump when the installed database URL is PostgreSQL
+- `backup-manifest.json` is the machine-readable backup contract; the current `formatVersion` is `2`, and its `bundle.controlManifestFile`, `bundle.configSnapshotRoot`, and `bundle.mutableDataSnapshotRoot` fields declare the exported control manifest, config snapshot, and mutable-data snapshot paths
 - restore replaces the installed config and mutable data roots from that bundle, then replays the PostgreSQL dump against the database configured by the restored runtime config
 - `log/` and `run/` are operational state and are not restored from the backup bundle
 - PostgreSQL backups require `pg_dump` on `PATH`; PostgreSQL restores require `pg_restore` on `PATH`
+
+## Support Bundle
+
+Run installed support-bundle exports from the installed product root:
+
+```bash
+./current/bin/support-bundle.sh --home <product-root> --output ./support/2026-04-19 --force
+```
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\current\bin\support-bundle.ps1 -Home <product-root> -OutputPath .\support\2026-04-19 -Force
+```
+
+Dry-run planning is also available:
+
+```bash
+./current/bin/support-bundle.sh --home <product-root> --output ./support/2026-04-19 --dry-run
+```
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\current\bin\support-bundle.ps1 -Home <product-root> -OutputPath .\support\2026-04-19 -DryRun
+```
+
+Operational contract:
+
+- support-bundle is safe to run against an installed runtime without replacing mutable state
+- the bundle contains `control/release-manifest.json`, redacted config snapshots, log inventories and redacted text captures when available, runtime-state inventory, and managed process-state metadata
+- `support-bundle-manifest.json` is the machine-readable support export contract; the current `formatVersion` is `2`, and its `paths.controlManifestFile`, `paths.configSnapshotRoot`, `paths.configInventoryFile`, `paths.logsSnapshotRoot`, `paths.logsInventoryFile`, `paths.runtimeSnapshotRoot`, `paths.runtimeInventoryFile`, and `paths.processStateFile` fields declare the produced artifact paths
+- known secret-bearing config values are redacted before export; binary credential stores and key material are omitted from the support bundle
+- use support bundles for operator escalation and release-audit capture, not for disaster recovery; backup and restore remain the state-migration surfaces
 
 ## Register And Start Services
 
@@ -240,19 +273,29 @@ Reference guides:
 ## Docker Compose Quick Deployment
 
 ```bash
+tar -xzf sdkwork-api-router-product-server-linux-x64.tar.gz
+cd sdkwork-api-router-product-server-linux-x64
 cp deploy/docker/.env.example deploy/docker/.env
 docker build -f deploy/docker/Dockerfile -t sdkwork-api-router:local .
 docker compose -f deploy/docker/docker-compose.yml --env-file deploy/docker/.env up -d
 ```
 
+Before the first `docker compose up`, replace every `replace-with-*` value in `deploy/docker/.env`. The container entrypoint and `validate-config` both fail closed when placeholder database credentials, JWT secrets, credential keys, or metrics tokens remain configured.
+
 ## Helm Quick Deployment
 
 ```bash
 helm upgrade --install sdkwork-api-router deploy/helm/sdkwork-api-router \
-  --set image.repository=ghcr.io/your-org/sdkwork-api-router \
+  --set image.repository=ghcr.io/<owner>/sdkwork-api-router \
   --set image.tag=<release-tag> \
-  --set secrets.databaseUrl='postgresql://sdkwork:change-me@postgresql:5432/sdkwork_api_router'
+  --set secrets.databaseUrl='postgresql://sdkwork:replace-with-db-password@postgresql:5432/sdkwork_api_router' \
+  --set secrets.adminJwtSigningSecret='replace-with-admin-jwt-secret' \
+  --set secrets.portalJwtSigningSecret='replace-with-portal-jwt-secret' \
+  --set secrets.credentialMasterKey='replace-with-credential-master-key' \
+  --set secrets.metricsBearerToken='replace-with-metrics-token'
 ```
+
+Official GitHub releases also publish the multi-architecture Linux OCI image `ghcr.io/<owner>/sdkwork-api-router:<release-tag>`. The workflow first publishes `:<release-tag>-linux-x64` and `:<release-tag>-linux-arm64`, then assembles the public release tag as a multi-arch manifest in GHCR.
 
 ## Initialization Checklist
 

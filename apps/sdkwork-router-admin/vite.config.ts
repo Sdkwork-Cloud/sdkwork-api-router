@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import {
   findReadableModuleResolution,
   importReadablePackageDefault,
+  resolveReadableFallbackModulePath,
   resolveReadablePackageRoot,
   resolveWorkspaceDonorRoots,
 } from '../../scripts/dev/vite-runtime-lib.mjs';
@@ -23,6 +24,22 @@ const zustandPackageRoot = resolveReadablePackageRoot({
 });
 const zustandEsmEntry = normalizeAliasPath(path.join(zustandPackageRoot, 'esm', 'index.mjs'));
 const zustandEsmSubpathRoot = `${normalizeAliasPath(path.join(zustandPackageRoot, 'esm'))}/`;
+const clsxPackageRoot = normalizeAliasPath(resolveReadablePackageRoot({
+  appRoot: configDir,
+  donorRoots,
+  packageName: 'clsx',
+}));
+const tailwindMergePackageRoot = normalizeAliasPath(resolveReadablePackageRoot({
+  appRoot: configDir,
+  donorRoots,
+  packageName: 'tailwind-merge',
+}));
+const lucideReactPackageRoot = normalizeAliasPath(resolveReadablePackageRoot({
+  appRoot: configDir,
+  donorRoots,
+  packageName: 'lucide-react',
+}));
+const lucideReactIconsRoot = `${normalizeAliasPath(path.join(lucideReactPackageRoot, 'dist', 'esm', 'icons'))}/`;
 
 function normalizeAliasPath(value: string) {
   return value.replaceAll('\\', '/');
@@ -72,6 +89,22 @@ const readableRuntimeDependencyAliases = [
   {
     find: /^zustand\//,
     replacement: zustandEsmSubpathRoot,
+  },
+  {
+    find: /^clsx$/,
+    replacement: clsxPackageRoot,
+  },
+  {
+    find: /^tailwind-merge$/,
+    replacement: tailwindMergePackageRoot,
+  },
+  {
+    find: /^lucide-react$/,
+    replacement: lucideReactPackageRoot,
+  },
+  {
+    find: /^lucide-react\/dist\/esm\/icons\//,
+    replacement: lucideReactIconsRoot,
   },
 ];
 
@@ -185,7 +218,10 @@ function readableExternalFallbackPlugin() {
 
         return resolution.candidateRoot === normalizedConfigDir
           ? null
-          : resolution.resolvedPath;
+          : normalizeAliasPath(resolveReadableFallbackModulePath({
+            specifier: source,
+            resolution,
+          }));
       } catch {
         return null;
       }
@@ -229,7 +265,7 @@ async function defineAdminViteConfig() {
       },
     },
     resolve: {
-      dedupe: ['react', 'react-dom', 'zustand'],
+      dedupe: ['react', 'react-dom', 'react-router-dom', 'lucide-react', 'motion', 'framer-motion', 'zustand'],
       alias: [
         ...sharedUiEntryAliases,
         ...readableRuntimeDependencyAliases,

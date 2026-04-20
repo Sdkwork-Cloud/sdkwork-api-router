@@ -71,6 +71,134 @@ function createGitAuditSpawn({
   };
 }
 
+test('external release dependency catalogs expose strict governed lookup helpers', async () => {
+  const module = await import(
+    pathToFileURL(
+      path.join(repoRoot, 'scripts', 'release', 'materialize-external-deps.mjs'),
+    ).href,
+  );
+
+  assert.equal(typeof module.findExternalReleaseDependencySpec, 'function');
+  assert.equal(typeof module.listExternalReleaseDependencySpecsByIds, 'function');
+  assert.equal(typeof module.findExternalReleaseDependencyScanRoot, 'function');
+  assert.equal(typeof module.listExternalReleaseDependencyScanRootsByPaths, 'function');
+  assert.equal(typeof module.listPackageJsonDependencyFields, 'function');
+  assert.equal(typeof module.findPackageJsonDependencyField, 'function');
+  assert.equal(typeof module.listPackageJsonDependencyFieldsByNames, 'function');
+  assert.equal(typeof module.listExternalReleaseDependencyMaterializationScopes, 'function');
+  assert.equal(typeof module.findExternalReleaseDependencyMaterializationScope, 'function');
+  assert.equal(typeof module.listExternalReleaseDependencyMaterializationScopesByIds, 'function');
+
+  assert.deepEqual(
+    module.listExternalReleaseDependencySpecs().map(({ id }) => id),
+    [
+      'sdkwork-core',
+      'sdkwork-ui',
+      'sdkwork-appbase',
+      'sdkwork-craw-chat-sdk',
+    ],
+  );
+  assert.deepEqual(
+    module.listExternalReleaseDependencySpecsByIds([
+      'sdkwork-ui',
+      'sdkwork-craw-chat-sdk',
+    ]).map(({ id }) => id),
+    [
+      'sdkwork-ui',
+      'sdkwork-craw-chat-sdk',
+    ],
+  );
+
+  const sdkworkUi = module.findExternalReleaseDependencySpec('sdkwork-ui');
+  sdkworkUi.requiredPaths.push('mutated-locally');
+  assert.deepEqual(
+    module.findExternalReleaseDependencySpec('sdkwork-ui').requiredPaths,
+    ['sdkwork-ui-pc-react/package.json'],
+  );
+
+  const expectedScanRoots = [
+    path.join(repoRoot, 'apps', 'sdkwork-router-admin'),
+    path.join(repoRoot, 'apps', 'sdkwork-router-portal'),
+  ];
+  assert.deepEqual(
+    module.listExternalReleaseDependencyScanRoots(),
+    expectedScanRoots,
+  );
+  assert.equal(
+    module.findExternalReleaseDependencyScanRoot(expectedScanRoots[1]),
+    expectedScanRoots[1],
+  );
+  assert.deepEqual(
+    module.listExternalReleaseDependencyScanRootsByPaths([
+      expectedScanRoots[0],
+    ]),
+    [
+      expectedScanRoots[0],
+    ],
+  );
+
+  assert.deepEqual(
+    module.listPackageJsonDependencyFields(),
+    [
+      'dependencies',
+      'devDependencies',
+      'optionalDependencies',
+      'peerDependencies',
+    ],
+  );
+  assert.equal(
+    module.findPackageJsonDependencyField('peerDependencies'),
+    'peerDependencies',
+  );
+  assert.deepEqual(
+    module.listPackageJsonDependencyFieldsByNames([
+      'dependencies',
+      'peerDependencies',
+    ]),
+    [
+      'dependencies',
+      'peerDependencies',
+    ],
+  );
+
+  assert.deepEqual(
+    module.listExternalReleaseDependencyMaterializationScopes(),
+    [
+      'all',
+      'referenced',
+    ],
+  );
+  assert.equal(
+    module.findExternalReleaseDependencyMaterializationScope('referenced'),
+    'referenced',
+  );
+  assert.deepEqual(
+    module.listExternalReleaseDependencyMaterializationScopesByIds([
+      'all',
+    ]),
+    [
+      'all',
+    ],
+  );
+
+  assert.throws(
+    () => module.findExternalReleaseDependencySpec('missing-external-release-dependency'),
+    /missing external release dependency spec.*missing-external-release-dependency/i,
+  );
+  assert.throws(
+    () => module.findExternalReleaseDependencyScanRoot(path.join(repoRoot, 'apps', 'missing-app')),
+    /missing external release dependency scan root.*missing-app/i,
+  );
+  assert.throws(
+    () => module.findPackageJsonDependencyField('bundledDependencies'),
+    /missing package\.json dependency field.*bundledDependencies/i,
+  );
+  assert.throws(
+    () => module.findExternalReleaseDependencyMaterializationScope('incremental'),
+    /missing external release dependency materialization scope.*incremental/i,
+  );
+});
+
 test('external release dependency materializer reuses a governed standalone checkout', async () => {
   const module = await import(
     pathToFileURL(
