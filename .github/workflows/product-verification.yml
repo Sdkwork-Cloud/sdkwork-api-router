@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - '.github/workflows/product-verification.yml'
+      - '.github/workflows/user-center-upstream-sync.yml'
       - '.github/workflows/release.yml'
       - 'Cargo.toml'
       - 'Cargo.lock'
@@ -34,6 +35,10 @@ on:
       - 'scripts/check-portal-browser-runtime.test.mjs'
       - 'scripts/check-server-dev-workspace.mjs'
       - 'scripts/check-server-dev-workspace.test.mjs'
+      - 'scripts/check-browser-storage-governance.mjs'
+      - 'scripts/check-browser-storage-governance.test.mjs'
+      - 'scripts/check-product-source-tracking.mjs'
+      - 'scripts/check-product-source-tracking.test.mjs'
       - 'scripts/check-router-product.mjs'
       - 'scripts/check-router-product.test.mjs'
       - 'scripts/check-rust-dependency-audit.mjs'
@@ -43,6 +48,8 @@ on:
       - 'scripts/dev/tests/pnpm-launch-lib.test.mjs'
       - 'scripts/prepare-router-portal-desktop-runtime.mjs'
       - 'scripts/prepare-router-portal-desktop-runtime.test.mjs'
+      - 'scripts/smoke-bind-retry-lib.mjs'
+      - 'scripts/smoke-bind-retry-lib.test.mjs'
       - 'scripts/product-governance-node-test-catalog.mjs'
       - 'scripts/product-governance-node-test-catalog.test.mjs'
       - 'scripts/product-verification-workflow-contracts.mjs'
@@ -59,6 +66,11 @@ on:
       - 'scripts/run-router-product.test.mjs'
       - 'scripts/run-router-product-service.mjs'
       - 'scripts/run-router-product-service.test.mjs'
+      - 'scripts/run-user-center-standard.mjs'
+      - 'scripts/run-user-center-standard.test.mjs'
+      - 'scripts/user-center-upstream-sync-payload.mjs'
+      - 'scripts/user-center-upstream-sync-payload.test.mjs'
+      - 'scripts/user-center-upstream-sync-workflow.test.mjs'
       - 'scripts/run-tauri-cli.mjs'
       - 'scripts/release/desktop-targets.mjs'
       - 'services/**'
@@ -107,7 +119,7 @@ jobs:
           SDKWORK_CORE_GIT_REF: ${{ vars.SDKWORK_CORE_GIT_REF || 'main' }}
           SDKWORK_UI_GIT_REF: ${{ vars.SDKWORK_UI_GIT_REF || 'main' }}
           SDKWORK_APPBASE_GIT_REF: ${{ vars.SDKWORK_APPBASE_GIT_REF || 'main' }}
-          SDKWORK_CRAW_CHAT_SDK_GIT_REF: ${{ vars.SDKWORK_CRAW_CHAT_SDK_GIT_REF || 'main' }}
+          SDKWORK_IM_SDK_GIT_REF: ${{ vars.SDKWORK_IM_SDK_GIT_REF || 'main' }}
         run: node scripts/release/materialize-external-deps.mjs
 
       - name: Install product verification workspace dependencies

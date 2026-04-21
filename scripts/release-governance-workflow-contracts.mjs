@@ -61,8 +61,13 @@ export async function assertReleaseGovernanceWorkflowContracts({
   assert.equal(typeof releaseGovernanceNodeRunner.listReleaseGovernanceNodeTests, 'function');
   assert.equal(typeof releaseGovernanceNodeRunner.createReleaseGovernanceNodeTestPlan, 'function');
   assert.equal(typeof releaseGovernanceNodeRunner.runReleaseGovernanceNodeTests, 'function');
+  const governedNodeTests = releaseGovernanceNodeRunner.listReleaseGovernanceNodeTests();
+  assert.ok(
+    governedNodeTests.includes('scripts/release/run-service-release-build.test.mjs'),
+    'release-governance workflow contracts must include the managed service release runner contract test',
+  );
   assert.deepEqual(
-    releaseGovernanceNodeRunner.listReleaseGovernanceNodeTests(),
+    governedNodeTests,
     listReleaseGovernanceNodeTestFiles(),
     'release-governance workflow contracts must be backed by the exact governed node test set',
   );

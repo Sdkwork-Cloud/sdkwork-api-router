@@ -17,8 +17,8 @@ SDKWork API Router 只发布两个正式用户可见产品：
 
 | 目标 | 命令 | 输出 |
 |---|---|---|
-| 产品宿主运行时 | `cargo build --release -p router-product-service` | `target/release/router-product-service` |
-| 独立服务二进制 | `cargo build --release -p gateway-service -p admin-api-service -p portal-api-service -p router-web-service` | `target/release/` |
+| 正式 release 服务二进制集合 | `node scripts/release/run-service-release-build.mjs --target <triple>` | `$CARGO_TARGET_DIR/<triple>/release/` |
+| 原始产品宿主运行时（工程态） | `cargo build --release -p router-product-service` | `target/release/router-product-service` |
 | admin 浏览器应用 | `pnpm --dir apps/sdkwork-router-admin build` | `apps/sdkwork-router-admin/dist/` |
 | portal 浏览器应用 | `pnpm --dir apps/sdkwork-router-portal build` | `apps/sdkwork-router-portal/dist/` |
 | portal desktop sidecar 载荷 | `node scripts/prepare-router-portal-desktop-runtime.mjs` | `bin/portal-rt/router-product/` |
@@ -27,10 +27,21 @@ SDKWork API Router 只发布两个正式用户可见产品：
 
 ## 构建 Server 产品输入
 
-先编译 server 侧 Rust 二进制：
+先使用受治理的仓库入口构建正式 server 侧 Rust release 二进制集合：
 
 ```bash
-cargo build --release -p router-product-service -p gateway-service -p admin-api-service -p portal-api-service -p router-web-service
+node scripts/release/run-service-release-build.mjs --target <triple>
+```
+
+这个 runner 会一次性构建完整的正式二进制集合，包括 `router-product-service`、`gateway-service`、`admin-api-service`、`portal-api-service` 和 `router-web-service`。
+它复用统一的 release build plan，因此 Linux 和 macOS 继续使用常规 `target/<triple>/release/` 布局，而 Windows 会自动切换到托管的短路径 `CARGO_TARGET_DIR`、`TEMP` 和 `TMP`。
+脚本在构建结束后会打印实际的 release 输出目录，后续打包和运维校验不需要猜测路径。
+
+如果你只是做源码工程态构建，仍然可以直接使用原始 Cargo 命令：
+
+```bash
+cargo build --release -p router-product-service
+cargo build --release -p gateway-service -p admin-api-service -p portal-api-service -p router-web-service
 ```
 
 再构建会被 server 产品归档打入的前端静态资源：

@@ -114,6 +114,7 @@ test('windows installed runtime smoke script exposes a parseable CLI contract fo
     assert.equal(plan.evidencePath, options.evidencePath);
     assert.equal(plan.installPlan.directories[0], options.runtimeHome);
     assert.equal(plan.controlHome, path.join(options.runtimeHome, 'current'));
+    assert.equal(plan.routerConfigPath, path.join(options.runtimeHome, 'config', 'router.yaml'));
     assert.equal(plan.routerEnvPath, path.join(options.runtimeHome, 'config', 'router.env'));
     assert.equal(plan.pidFilePath, path.join(options.runtimeHome, 'run', 'router-product-service.pid'));
     assert.equal(plan.stdoutLogPath, path.join(options.runtimeHome, 'log', 'router-product-service.stdout.log'));
@@ -217,6 +218,11 @@ test('windows installed runtime smoke script exposes a parseable CLI contract fo
       path.join(options.runtimeHome, 'backup-smoke'),
       '-Force',
     ]);
+    assert.match(plan.routerConfigContents, /^# SDKWork Router canonical runtime config/m);
+    assert.match(plan.routerConfigContents, /web_bind: "127\.0\.0\.1:29483"/);
+    assert.match(plan.routerConfigContents, /gateway_bind: "127\.0\.0\.1:29480"/);
+    assert.match(plan.routerConfigContents, /admin_bind: "127\.0\.0\.1:29481"/);
+    assert.match(plan.routerConfigContents, /portal_bind: "127\.0\.0\.1:29482"/);
     assert.match(plan.routerEnvContents, /SDKWORK_WEB_BIND="127\.0\.0\.1:29483"/);
     assert.match(plan.routerEnvContents, /SDKWORK_GATEWAY_BIND="127\.0\.0\.1:29480"/);
     assert.match(plan.routerEnvContents, /SDKWORK_ADMIN_BIND="127\.0\.0\.1:29481"/);
@@ -302,4 +308,113 @@ test('windows installed runtime smoke resolves packaged bootstrap data from curr
   } finally {
     rmSync(runtimeHome, { recursive: true, force: true });
   }
+});
+
+test('windows installed runtime smoke retries after a bind conflict and returns the later successful result', async () => {
+  const module = await import(
+    pathToFileURL(
+      path.join(repoRoot, 'scripts', 'release', 'run-windows-installed-runtime-smoke.mjs'),
+    ).href,
+  );
+
+  assert.equal(typeof module.runWindowsInstalledRuntimeSmokeWithDependencies, 'function');
+
+  const attemptedPorts = [];
+  let delayCalls = 0;
+
+  const result = await module.runWindowsInstalledRuntimeSmokeWithDependencies({
+    repoRoot,
+    platform: 'windows',
+    arch: 'x64',
+    target: 'x86_64-pc-windows-msvc',
+    releaseOutputDir: path.resolve(repoRoot, 'artifacts', 'release-fixture'),
+    runtimeHome: path.resolve(repoRoot, 'artifacts', 'release-smoke', 'windows-x64'),
+    evidencePath: path.resolve(repoRoot, 'artifacts', 'release-governance', 'windows-installed-runtime-smoke-windows-x64.json'),
+    env: {},
+    maxAttempts: 2,
+    retryDelayMs: 0,
+    allocatePorts: async ({ attempt }) => ({
+      web: attempt === 1 ? 29483 : 29583,
+      gateway: attempt === 1 ? 29480 : 29580,
+      admin: attempt === 1 ? 29481 : 29581,
+      portal: attempt === 1 ? 29482 : 29582,
+    }),
+    createPlan: ({ ports }) => ({
+      ports,
+    }),
+    attemptRunner: async ({ plan }) => {
+      attemptedPorts.push(plan.ports.web);
+      if (plan.ports.web === 29483) {
+        throw new Error('Only one usage of each socket address (protocol/network address/port) is normally permitted. (os error 10048)');
+      }
+
+      return {
+        ok: true,
+        ports: plan.ports,
+      };
+    },
+    delayImpl: async () => {
+      delayCalls += 1;
+    },
+  });
+
+  assert.deepEqual(attemptedPorts, [29483, 29583]);
+  assert.equal(delayCalls, 1);
+  assert.deepEqual(result, {
+    ok: true,
+    ports: {
+      web: 29583,
+      gateway: 29580,
+      admin: 29581,
+      portal: 29582,
+    },
+  });
+});
+
+test('windows installed runtime smoke surfaces non-bind failures without retrying', async () => {
+  const module = await import(
+    pathToFileURL(
+      path.join(repoRoot, 'scripts', 'release', 'run-windows-installed-runtime-smoke.mjs'),
+    ).href,
+  );
+
+  let allocationCalls = 0;
+  let delayCalls = 0;
+
+  await assert.rejects(
+    () => module.runWindowsInstalledRuntimeSmokeWithDependencies({
+      repoRoot,
+      platform: 'windows',
+      arch: 'x64',
+      target: 'x86_64-pc-windows-msvc',
+      releaseOutputDir: path.resolve(repoRoot, 'artifacts', 'release-fixture'),
+      runtimeHome: path.resolve(repoRoot, 'artifacts', 'release-smoke', 'windows-x64'),
+      evidencePath: path.resolve(repoRoot, 'artifacts', 'release-governance', 'windows-installed-runtime-smoke-windows-x64.json'),
+      env: {},
+      maxAttempts: 3,
+      retryDelayMs: 0,
+      allocatePorts: async () => {
+        allocationCalls += 1;
+        return {
+          web: 29483,
+          gateway: 29480,
+          admin: 29481,
+          portal: 29482,
+        };
+      },
+      createPlan: ({ ports }) => ({
+        ports,
+      }),
+      attemptRunner: async () => {
+        throw new Error('release manifest mismatch');
+      },
+      delayImpl: async () => {
+        delayCalls += 1;
+      },
+    }),
+    /release manifest mismatch/,
+  );
+
+  assert.equal(allocationCalls, 1);
+  assert.equal(delayCalls, 0);
 });

@@ -154,10 +154,7 @@ impl ProductServiceSettings {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = RouterProductServiceCli::parse();
-    let mut settings = resolve_service_settings(&cli, env::vars())?;
-    let runtime_context = resolve_runtime_context(settings.runtime_home.as_deref())?;
-    apply_runtime_context_defaults(&mut settings, runtime_context.as_ref());
-    load_router_env_defaults(&settings)?;
+    let (settings, runtime_context) = resolve_runtime_contextual_service_settings(&cli, env::vars())?;
     let (loader, config) = load_runtime_config(&settings, &cli)?;
 
     if settings.dry_run {
@@ -188,16 +185,10 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn resolve_service_settings<I, K, V>(
+fn resolve_service_settings_from_env_values(
     cli: &RouterProductServiceCli,
-    env_pairs: I,
-) -> anyhow::Result<ProductServiceSettings>
-where
-    I: IntoIterator<Item = (K, V)>,
-    K: Into<String>,
-    V: Into<String>,
-{
-    let env_values = collect_env_values(env_pairs);
+    env_values: &HashMap<String, String>,
+) -> anyhow::Result<ProductServiceSettings> {
 
     if (cli.backup_output.is_some()
         || cli.restore_source.is_some()
@@ -284,6 +275,39 @@ where
         plan_format: cli.plan_format,
         dry_run: cli.dry_run,
     })
+}
+
+fn resolve_runtime_contextual_service_settings<I, K, V>(
+    cli: &RouterProductServiceCli,
+    env_pairs: I,
+) -> anyhow::Result<(ProductServiceSettings, Option<InstalledRuntimeContext>)>
+where
+    I: IntoIterator<Item = (K, V)>,
+    K: Into<String>,
+    V: Into<String>,
+{
+    let mut env_values = collect_env_values(env_pairs);
+    let mut settings = resolve_service_settings_from_env_values(cli, &env_values)?;
+    let runtime_context = resolve_runtime_context(settings.runtime_home.as_deref())?;
+    apply_runtime_context_defaults(&mut settings, runtime_context.as_ref());
+
+    let mut merged_router_env = false;
+    for (key, value) in load_router_env_default_pairs(&settings)? {
+        if !env_values.contains_key(&key) {
+            env_values.insert(key.clone(), value.clone());
+            merged_router_env = true;
+        }
+        if env::var_os(&key).is_none() {
+            env::set_var(&key, &value);
+        }
+    }
+
+    if merged_router_env {
+        settings = resolve_service_settings_from_env_values(cli, &env_values)?;
+        apply_runtime_context_defaults(&mut settings, runtime_context.as_ref());
+    }
+
+    Ok((settings, runtime_context))
 }
 
 fn resolve_runtime_context(
@@ -383,7 +407,9 @@ fn path_to_string(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
-fn load_router_env_defaults(settings: &ProductServiceSettings) -> anyhow::Result<()> {
+fn load_router_env_default_pairs(
+    settings: &ProductServiceSettings,
+) -> anyhow::Result<Vec<(String, String)>> {
     let config_root = settings
         .config_dir
         .as_deref()
@@ -396,21 +422,18 @@ fn load_router_env_defaults(settings: &ProductServiceSettings) -> anyhow::Result
         });
 
     let Some(config_root) = config_root else {
-        return Ok(());
+        return Ok(Vec::new());
     };
 
     let env_file = config_root.join("router.env");
     if !env_file.is_file() {
-        return Ok(());
+        return Ok(Vec::new());
     }
 
-    for (key, value) in read_env_file_pairs(&env_file)? {
-        if env::var_os(&key).is_none() {
-            env::set_var(key, value);
-        }
-    }
-
-    Ok(())
+    Ok(read_env_file_pairs(&env_file)?
+        .into_iter()
+        .filter(|(key, _)| key != SDKWORK_CONFIG_DIR && key != SDKWORK_CONFIG_FILE)
+        .collect())
 }
 
 fn read_env_file_pairs(env_file: &Path) -> anyhow::Result<Vec<(String, String)>> {
@@ -2752,11 +2775,12 @@ mod tests {
     use super::{
         build_loader_cli_overrides, execute_backup_operation, execute_restore_operation,
         execute_support_bundle_operation, render_service_plan, resolve_default_site_dirs_for_paths,
-        resolve_effective_public_web_bind, resolve_runtime_context, resolve_service_settings,
-        validate_runtime_config_for_install_mode, InstalledRuntimeContext,
-        InstalledRuntimeManifest, PlanFormat, ProductRuntimeRole, ProductServiceSettings,
-        RouterProductServiceCli, StandaloneConfig, StandaloneConfigLoader,
-        INSTALLED_RUNTIME_LAYOUT_VERSION, INSTALLED_RUNTIME_NAME,
+        resolve_effective_public_web_bind, resolve_runtime_context,
+        resolve_service_settings_from_env_values,
+        resolve_runtime_contextual_service_settings, validate_runtime_config_for_install_mode,
+        collect_env_values, InstalledRuntimeContext, InstalledRuntimeManifest, PlanFormat,
+        ProductRuntimeRole, ProductServiceSettings, RouterProductServiceCli, StandaloneConfig,
+        StandaloneConfigLoader, INSTALLED_RUNTIME_LAYOUT_VERSION, INSTALLED_RUNTIME_NAME,
         ROUTER_PRODUCT_SERVICE_BINARY_STEM,
     };
 
@@ -2800,7 +2824,10 @@ mod tests {
         ])
         .expect("cli should parse");
 
-        let settings = resolve_service_settings(&cli, Vec::<(String, String)>::new())
+        let settings = resolve_service_settings_from_env_values(
+            &cli,
+            &collect_env_values(Vec::<(String, String)>::new()),
+        )
             .expect("settings should resolve");
 
         assert_eq!(settings.config_dir, Some("D:/router/config".to_owned()));
@@ -2843,15 +2870,15 @@ mod tests {
         ])
         .expect("cli should parse");
 
-        let settings = resolve_service_settings(
+        let settings = resolve_service_settings_from_env_values(
             &cli,
-            [
+            &collect_env_values([
                 ("SDKWORK_DATABASE_URL", "sqlite:///tmp/router.db"),
                 ("SDKWORK_WEB_BIND", "0.0.0.0:3001"),
                 ("SDKWORK_ROUTER_ROLES", "web,gateway,admin"),
                 ("SDKWORK_GATEWAY_PROXY_TARGET", "10.0.0.21:8080"),
                 ("SDKWORK_ADMIN_PROXY_TARGET", "10.0.0.31:8081"),
-            ],
+            ]),
         )
         .expect("settings should resolve");
 
@@ -2863,6 +2890,86 @@ mod tests {
             Some("sqlite:///tmp/router.db".to_owned())
         );
         assert_eq!(settings.roles, Some(vec![ProductRuntimeRole::Portal]));
+    }
+
+    #[test]
+    fn resolve_runtime_contextual_service_settings_merges_router_env_defaults_before_materializing_settings() {
+        let config_root = unique_temp_dir("router-env-defaults");
+        fs::create_dir_all(&config_root).expect("config root should exist");
+        fs::write(
+            config_root.join("router.env"),
+            "SDKWORK_ROUTER_ROLES=web,portal\nSDKWORK_ADMIN_PROXY_TARGET=10.0.0.21:8081\nSDKWORK_PORTAL_PROXY_TARGET=10.0.0.22:8082\n",
+        )
+        .expect("router.env should exist");
+
+        let cli = RouterProductServiceCli::try_parse_from([
+            "router-product-service",
+            "--config-dir",
+            &config_root.to_string_lossy(),
+        ])
+        .expect("cli should parse");
+
+        let (settings, _) =
+            resolve_runtime_contextual_service_settings(&cli, Vec::<(String, String)>::new())
+                .expect("settings should resolve");
+
+        assert_eq!(
+            settings.roles,
+            Some(vec![ProductRuntimeRole::Web, ProductRuntimeRole::Portal])
+        );
+        assert_eq!(settings.admin_upstream, Some("10.0.0.21:8081".to_owned()));
+        assert_eq!(settings.portal_upstream, Some("10.0.0.22:8082".to_owned()));
+
+        let (env_preferred_settings, _) = resolve_runtime_contextual_service_settings(
+            &cli,
+            [("SDKWORK_ROUTER_ROLES", "gateway")],
+        )
+        .expect("env-preferred settings should resolve");
+        assert_eq!(
+            env_preferred_settings.roles,
+            Some(vec![ProductRuntimeRole::Gateway])
+        );
+    }
+
+    #[test]
+    fn resolve_runtime_contextual_service_settings_reads_router_env_from_installed_runtime_home() {
+        let (runtime_root, runtime_home, manifest) =
+            create_valid_installed_runtime_manifest_fixture("runtime-home-router-env");
+        let config_root = manifest
+            .config_root
+            .clone()
+            .expect("config root should exist in manifest");
+        fs::write(
+            config_root.join("router.env"),
+            "SDKWORK_ROUTER_NODE_ID_PREFIX=desktop\n",
+        )
+        .expect("router.env should exist");
+        fs::write(
+            runtime_home.join("release-manifest.json"),
+            serde_json::to_string_pretty(&manifest).expect("manifest should serialize"),
+        )
+        .expect("release manifest should exist");
+
+        let cli = RouterProductServiceCli::try_parse_from([
+            "router-product-service",
+            "--runtime-home",
+            &runtime_home.to_string_lossy(),
+        ])
+        .expect("cli should parse");
+
+        let (settings, runtime_context) =
+            resolve_runtime_contextual_service_settings(&cli, Vec::<(String, String)>::new())
+                .expect("settings should resolve");
+
+        assert_eq!(settings.node_id_prefix, Some("desktop".to_owned()));
+        assert_eq!(settings.config_dir, Some(config_root.to_string_lossy().into_owned()));
+        assert_eq!(
+            runtime_context
+                .expect("runtime context should resolve")
+                .runtime_home,
+            runtime_home
+        );
+        fs::remove_dir_all(runtime_root).expect("fixture should be removed");
     }
 
     #[test]
@@ -2882,7 +2989,10 @@ mod tests {
         ])
         .expect("backup cli should parse");
 
-        let settings = resolve_service_settings(&cli, Vec::<(String, String)>::new())
+        let settings = resolve_service_settings_from_env_values(
+            &cli,
+            &collect_env_values(Vec::<(String, String)>::new()),
+        )
             .expect("backup settings should resolve");
 
         assert_eq!(settings.config_dir, Some("D:/router/config".to_owned()));
@@ -2913,9 +3023,11 @@ mod tests {
         ])
         .expect("restore cli should parse");
 
-        let restore_settings =
-            resolve_service_settings(&restore_cli, Vec::<(String, String)>::new())
-                .expect("restore settings should resolve");
+        let restore_settings = resolve_service_settings_from_env_values(
+            &restore_cli,
+            &collect_env_values(Vec::<(String, String)>::new()),
+        )
+        .expect("restore settings should resolve");
 
         assert_eq!(
             restore_settings.restore_source,
@@ -2939,9 +3051,11 @@ mod tests {
         ])
         .expect("support-bundle cli should parse");
 
-        let support_bundle_settings =
-            resolve_service_settings(&support_bundle_cli, Vec::<(String, String)>::new())
-                .expect("support-bundle settings should resolve");
+        let support_bundle_settings = resolve_service_settings_from_env_values(
+            &support_bundle_cli,
+            &collect_env_values(Vec::<(String, String)>::new()),
+        )
+        .expect("support-bundle settings should resolve");
 
         assert_eq!(
             support_bundle_settings.support_bundle_output,

@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import { spawn, spawnSync } from 'node:child_process';
-import net from 'node:net';
 import path from 'node:path';
 import process from 'node:process';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -16,6 +15,13 @@ import {
   ensureFrontendDependenciesReady,
   pnpmSpawnOptions,
 } from './dev/pnpm-launch-lib.mjs';
+import {
+  createChildFailureWatcher,
+  findAvailableTcpPort,
+  raceAgainstChildFailure,
+  resolvePositiveInteger,
+  runWithBindConflictRetry,
+} from './smoke-bind-retry-lib.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -29,7 +35,7 @@ const PORTAL_EXPECTED_SELECTORS = [
   '[data-slot="portal-home-page"]',
   '[data-slot="portal-home-metrics"]',
 ];
-const PORTAL_SESSION_TOKEN_KEY = 'sdkwork.router.portal.session-token';
+const PORTAL_SESSION_TOKEN_KEY = 'sdkwork-router-portal.user-center.session-token';
 const PORTAL_UNSAFE_ACCOUNT_ID = '1950809575122113173';
 const PORTAL_FORBIDDEN_ACCOUNT_ID = '1950809575122113300';
 const PORTAL_USER = {
@@ -268,6 +274,21 @@ function truncateText(value, maxLength = 400) {
   return `${text.slice(0, Math.max(0, maxLength - 12))}...[truncated]`;
 }
 
+function appendPreviewOutputContext(message, stdout, stderr) {
+  const contexts = [];
+  if (String(stdout ?? '').trim()) {
+    contexts.push(`preview stdout:\n${truncateText(stdout, 1200)}`);
+  }
+  if (String(stderr ?? '').trim()) {
+    contexts.push(`preview stderr:\n${truncateText(stderr, 1200)}`);
+  }
+  if (contexts.length === 0) {
+    return message;
+  }
+
+  return `${message}\n${contexts.join('\n')}`;
+}
+
 function runForegroundStep(step, {
   env = process.env,
   platform = process.platform,
@@ -331,25 +352,6 @@ async function waitForHttpOk(url, timeoutMs = DEFAULT_TIMEOUT_MS) {
   );
 }
 
-async function findAvailablePort() {
-  return await new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.unref();
-    server.on('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address();
-      const port = typeof address === 'object' && address ? address.port : 0;
-      server.close((error) => {
-        if (error) {
-          reject(error);
-          return;
-        }
-        resolve(port);
-      });
-    });
-  });
-}
-
 export function createPortalBrowserRuntimeSmokePlan({
   workspaceRoot = path.resolve(__dirname, '..'),
   portalAppDir = path.join(workspaceRoot, 'apps', 'sdkwork-router-portal'),
@@ -393,12 +395,11 @@ export function createPortalBrowserRuntimeSmokePlan({
   };
 }
 
-export async function runPortalBrowserRuntimeSmoke({
-  workspaceRoot = path.resolve(__dirname, '..'),
-  portalAppDir = path.join(workspaceRoot, 'apps', 'sdkwork-router-portal'),
-  platform = process.platform,
-  env = process.env,
-} = {}) {
+function ensurePortalBrowserRuntimeReady({
+  portalAppDir,
+  platform,
+  env,
+}) {
   ensureFrontendDependenciesReady({
     appRoot: portalAppDir,
     requiredPackages: ['vite', 'typescript'],
@@ -410,18 +411,14 @@ export async function runPortalBrowserRuntimeSmoke({
     platform,
     env,
   });
+}
 
-  const previewPort = await findAvailablePort();
-  const plan = createPortalBrowserRuntimeSmokePlan({
-    workspaceRoot,
-    portalAppDir,
-    platform,
-    env,
-    previewPort,
-  });
-
-  runForegroundStep(plan.buildStep, { env, platform });
-
+async function runPortalBrowserRuntimeSmokeAttempt({
+  plan,
+  platform,
+  env,
+  timeoutMs,
+}) {
   const previewProcess = spawn(plan.previewStep.command, plan.previewStep.args, {
     ...pnpmSpawnOptions({
       platform,
@@ -440,23 +437,33 @@ export async function runPortalBrowserRuntimeSmoke({
     previewStderr += String(chunk);
   });
 
+  const childFailureWatcher = createChildFailureWatcher(previewProcess, {
+    label: plan.previewStep.label,
+    createExitError: ({ code, signal }) => {
+      const baseMessage = signal
+        ? `${plan.previewStep.label} exited before smoke completed with signal ${signal}`
+        : `${plan.previewStep.label} exited before smoke completed with code ${code ?? 0}`;
+      return new Error(appendPreviewOutputContext(baseMessage, previewStdout, previewStderr));
+    },
+  });
+
   try {
-    await waitForHttpOk(plan.previewUrl, DEFAULT_TIMEOUT_MS);
+    await raceAgainstChildFailure(waitForHttpOk(plan.previewUrl, timeoutMs), childFailureWatcher);
     const checks = [];
 
     for (const routeCheck of plan.routeChecks) {
       // eslint-disable-next-line no-await-in-loop
-      const result = await runBrowserRuntimeSmoke({
+      const result = await raceAgainstChildFailure(runBrowserRuntimeSmoke({
         url: routeCheck.url,
         expectedTexts: routeCheck.expectedTexts,
         expectedSelectors: routeCheck.expectedSelectors,
         forbiddenTexts: routeCheck.forbiddenTexts,
         expectedRequestIncludes: routeCheck.expectedRequestIncludes,
         setupScript: routeCheck.setupScript,
-        timeoutMs: DEFAULT_TIMEOUT_MS,
+        timeoutMs,
         platform,
         env,
-      });
+      }), childFailureWatcher);
 
       checks.push({
         id: routeCheck.id,
@@ -468,10 +475,100 @@ export async function runPortalBrowserRuntimeSmoke({
       previewUrl: plan.previewUrl,
       checks,
     };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(appendPreviewOutputContext(message, previewStdout, previewStderr));
   } finally {
+    childFailureWatcher.stop();
     killProcessTree(previewProcess, platform);
     await delay(250).catch(() => {});
   }
+}
+
+export async function runPortalBrowserRuntimeSmokeWithDependencies({
+  workspaceRoot = path.resolve(__dirname, '..'),
+  portalAppDir = path.join(workspaceRoot, 'apps', 'sdkwork-router-portal'),
+  platform = process.platform,
+  env = process.env,
+  timeoutMs = resolvePositiveInteger(
+    env.SDKWORK_PORTAL_BROWSER_RUNTIME_SMOKE_TIMEOUT_MS,
+    DEFAULT_TIMEOUT_MS,
+  ),
+  maxAttempts = resolvePositiveInteger(
+    env.SDKWORK_PORTAL_BROWSER_RUNTIME_SMOKE_BIND_RETRY_ATTEMPTS,
+    3,
+  ),
+  retryDelayMs = resolvePositiveInteger(
+    env.SDKWORK_PORTAL_BROWSER_RUNTIME_SMOKE_BIND_RETRY_DELAY_MS,
+    250,
+  ),
+  ensureReady = ensurePortalBrowserRuntimeReady,
+  allocatePreviewPort = async () => await findAvailableTcpPort(),
+  runBuildStep = async ({ step, env: targetEnv, platform: targetPlatform }) => {
+    runForegroundStep(step, {
+      env: targetEnv,
+      platform: targetPlatform,
+    });
+  },
+  attemptRunner = runPortalBrowserRuntimeSmokeAttempt,
+  delayImpl = delay,
+} = {}) {
+  ensureReady({
+    portalAppDir,
+    platform,
+    env,
+  });
+
+  const initialPlan = createPortalBrowserRuntimeSmokePlan({
+    workspaceRoot,
+    portalAppDir,
+    platform,
+    env,
+  });
+  await runBuildStep({
+    step: initialPlan.buildStep,
+    env,
+    platform,
+  });
+
+  return await runWithBindConflictRetry({
+    label: 'check-portal-browser-runtime',
+    maxAttempts,
+    retryDelayMs,
+    delayImpl,
+    allocate: async ({ attempt, maxAttempts: attemptLimit }) =>
+      await allocatePreviewPort({ attempt, maxAttempts: attemptLimit }),
+    run: async ({ allocation: previewPort }) => {
+      const plan = createPortalBrowserRuntimeSmokePlan({
+        workspaceRoot,
+        portalAppDir,
+        platform,
+        env,
+        previewPort,
+      });
+
+      return await attemptRunner({
+        plan,
+        platform,
+        env,
+        timeoutMs,
+      });
+    },
+  });
+}
+
+export async function runPortalBrowserRuntimeSmoke({
+  workspaceRoot = path.resolve(__dirname, '..'),
+  portalAppDir = path.join(workspaceRoot, 'apps', 'sdkwork-router-portal'),
+  platform = process.platform,
+  env = process.env,
+} = {}) {
+  return await runPortalBrowserRuntimeSmokeWithDependencies({
+    workspaceRoot,
+    portalAppDir,
+    platform,
+    env,
+  });
 }
 
 async function main() {

@@ -234,6 +234,117 @@ export function resolveWorkspaceDonorRoots(appRoot) {
     .filter((candidateRoot) => candidateRoot !== normalizedAppRoot);
 }
 
+function listPnpmPackageEntryCandidates({
+  pnpmRoot,
+  packageName,
+  entrySegments,
+  fileExists = defaultFileExists,
+  readDir = defaultReadDir,
+} = {}) {
+  let pnpmEntries = [];
+  try {
+    pnpmEntries = readDir(pnpmRoot, { withFileTypes: true });
+  } catch {
+    pnpmEntries = [];
+  }
+
+  const pnpmDirectoryPrefix = `${packageName.replaceAll('/', '+')}@`;
+  const preferredEntries = [];
+  const fallbackEntries = [];
+
+  for (const entry of pnpmEntries
+    .filter((candidate) => candidate.isDirectory())
+    .sort((left, right) => right.name.localeCompare(left.name))) {
+    const candidateEntry = path.join(
+      pnpmRoot,
+      entry.name,
+      'node_modules',
+      packageName,
+      ...entrySegments,
+    );
+
+    if (!fileExists(candidateEntry)) {
+      continue;
+    }
+
+    if (entry.name.startsWith(pnpmDirectoryPrefix)) {
+      preferredEntries.push(candidateEntry);
+      continue;
+    }
+
+    fallbackEntries.push(candidateEntry);
+  }
+
+  return [...preferredEntries, ...fallbackEntries];
+}
+
+function resolveReadableModuleFromPackageMetadata({
+  candidateRoot,
+  specifier,
+  fileExists = defaultFileExists,
+  readDir = defaultReadDir,
+  readPackageJson = defaultReadPackageJson,
+  isReadable = defaultIsReadable,
+} = {}) {
+  const parsedSpecifier = parseBarePackageSpecifier(specifier);
+  if (!parsedSpecifier) {
+    return null;
+  }
+
+  if (parsedSpecifier.packageSubpath.length > 0) {
+    try {
+      const subpathPackageRoot = resolveReadablePackageRoot({
+        appRoot: candidateRoot,
+        donorRoots: [],
+        packageName: `${parsedSpecifier.packageName}/${parsedSpecifier.packageSubpath.join('/')}`,
+        fileExists,
+        readDir,
+        isReadable,
+      });
+      const subpathPackageJson = readPackageJson(subpathPackageRoot);
+      const subpathImportEntry = resolvePackageImportEntry(subpathPackageJson);
+
+      if (subpathImportEntry) {
+        const subpathImportPath = path.resolve(subpathPackageRoot, subpathImportEntry);
+        if (isReadable(subpathImportPath)) {
+          return subpathImportPath;
+        }
+      }
+    } catch {
+      // Not every package subpath is a separately published package root.
+    }
+  }
+
+  let packageRoot;
+  try {
+    packageRoot = resolveReadablePackageRoot({
+      appRoot: candidateRoot,
+      donorRoots: [],
+      packageName: parsedSpecifier.packageName,
+      fileExists,
+      readDir,
+      isReadable,
+    });
+  } catch {
+    return null;
+  }
+
+  let packageJson;
+  try {
+    packageJson = readPackageJson(packageRoot);
+  } catch {
+    return null;
+  }
+
+  const importEntry = resolvePackageImportEntry(packageJson, parsedSpecifier.packageSubpath);
+  if (!importEntry) {
+    return null;
+  }
+
+  const importPath = path.resolve(packageRoot, importEntry);
+  return isReadable(importPath) ? importPath : null;
+}
+
 export function resolveReadablePackageEntry({
   appRoot,
   donorRoots = [],
@@ -259,25 +370,13 @@ export function resolveReadablePackageEntry({
     const candidateEntries = [directEntry];
     const pnpmRoot = path.join(candidateRoot, 'node_modules', '.pnpm');
     if (fileExists(pnpmRoot)) {
-      const pnpmDirectoryPrefix = `${packageName.replace('/', '+')}@`;
-
-      let pnpmEntries = [];
-      try {
-        pnpmEntries = readDir(pnpmRoot, { withFileTypes: true });
-      } catch {
-        pnpmEntries = [];
-      }
-
-      candidateEntries.push(...pnpmEntries
-        .filter((entry) => entry.isDirectory() && entry.name.startsWith(pnpmDirectoryPrefix))
-        .sort((left, right) => right.name.localeCompare(left.name))
-        .map((entry) => path.join(
-          pnpmRoot,
-          entry.name,
-          'node_modules',
-          packageName,
-          ...entrySegments,
-        )));
+      candidateEntries.push(...listPnpmPackageEntryCandidates({
+        pnpmRoot,
+        packageName,
+        entrySegments,
+        fileExists,
+        readDir,
+      }));
     }
 
     for (const candidateEntry of candidateEntries) {
@@ -301,6 +400,9 @@ export function findReadableModuleResolution({
   donorRoots = [],
   specifier,
   resolveFromRoot = defaultResolveFromRoot,
+  fileExists = defaultFileExists,
+  readDir = defaultReadDir,
+  readPackageJson = defaultReadPackageJson,
   isReadable = defaultIsReadable,
 }) {
   const candidateRoots = [appRoot, ...donorRoots]
@@ -308,17 +410,30 @@ export function findReadableModuleResolution({
     .filter((candidateRoot, index, roots) => roots.indexOf(candidateRoot) === index);
 
   for (const candidateRoot of candidateRoots) {
-    let resolvedPath;
     try {
-      resolvedPath = resolveFromRoot(candidateRoot, specifier);
+      const resolvedPath = resolveFromRoot(candidateRoot, specifier);
+      if (isReadable(resolvedPath)) {
+        return {
+          candidateRoot,
+          resolvedPath,
+        };
+      }
     } catch {
-      continue;
+      // Fall back to direct package metadata scanning when require.resolve cannot see pnpm internals.
     }
 
-    if (isReadable(resolvedPath)) {
+    const fallbackResolvedPath = resolveReadableModuleFromPackageMetadata({
+      candidateRoot,
+      specifier,
+      fileExists,
+      readDir,
+      readPackageJson,
+      isReadable,
+    });
+    if (fallbackResolvedPath) {
       return {
         candidateRoot,
-        resolvedPath,
+        resolvedPath: fallbackResolvedPath,
       };
     }
   }

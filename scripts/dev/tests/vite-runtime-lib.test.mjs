@@ -180,6 +180,47 @@ test('resolveReadablePackageRoot can recover a transitive pnpm package from the 
   );
 });
 
+test('resolveReadablePackageRoot can recover a long transitive pnpm package from a truncated virtual-store directory name', () => {
+  const pnpmRoot = path.join(adminRoot, 'node_modules', '.pnpm');
+  const transitivePackageJson = path.join(
+    pnpmRoot,
+    '@radix-ui+react-use-is-hydr_007902adb43e9ff4f499bb7ccf6a6eaa',
+    'node_modules',
+    '@radix-ui',
+    'react-use-is-hydrated',
+    'package.json',
+  );
+
+  const packageRoot = resolveReadablePackageRoot({
+    appRoot: adminRoot,
+    donorRoots: [portalRoot],
+    packageName: '@radix-ui/react-use-is-hydrated',
+    fileExists(filePath) {
+      return filePath === transitivePackageJson || filePath === pnpmRoot;
+    },
+    isReadable(filePath) {
+      return filePath === transitivePackageJson;
+    },
+    readDir(directoryPath) {
+      if (directoryPath !== pnpmRoot) {
+        throw new Error(`unexpected directory scan: ${directoryPath}`);
+      }
+
+      return [{
+        isDirectory() {
+          return true;
+        },
+        name: '@radix-ui+react-use-is-hydr_007902adb43e9ff4f499bb7ccf6a6eaa',
+      }];
+    },
+  });
+
+  assert.equal(
+    packageRoot,
+    path.dirname(transitivePackageJson),
+  );
+});
+
 test('findReadableModuleResolution falls back to a donor app when the current app resolution is unreadable', () => {
   const currentResolvedPath = path.join(adminRoot, 'node_modules', 'lucide-react', 'dist', 'index.js');
   const donorResolvedPath = path.join(portalRoot, 'node_modules', 'lucide-react', 'dist', 'index.js');
@@ -238,6 +279,60 @@ test('findReadableModuleResolution falls back to a donor app when the current ap
   assert.deepEqual(resolution, {
     candidateRoot: portalRoot,
     resolvedPath: donorResolvedPath,
+  });
+});
+
+test('findReadableModuleResolution can recover a transitive pnpm package from the current app when require resolution fails', () => {
+  const pnpmRoot = path.join(adminRoot, 'node_modules', '.pnpm');
+  const packageRoot = path.join(
+    pnpmRoot,
+    '@radix-ui+react-use-is-hydr_007902adb43e9ff4f499bb7ccf6a6eaa',
+    'node_modules',
+    '@radix-ui',
+    'react-use-is-hydrated',
+  );
+  const packageJsonPath = path.join(packageRoot, 'package.json');
+  const moduleEntry = path.join(packageRoot, 'dist', 'index.mjs');
+
+  const resolution = findReadableModuleResolution({
+    appRoot: adminRoot,
+    donorRoots: [portalRoot],
+    specifier: '@radix-ui/react-use-is-hydrated',
+    resolveFromRoot() {
+      const error = new Error('cannot find module');
+      error.code = 'MODULE_NOT_FOUND';
+      throw error;
+    },
+    fileExists(filePath) {
+      return [pnpmRoot, packageJsonPath, moduleEntry].includes(filePath);
+    },
+    readDir(directoryPath) {
+      if (directoryPath !== pnpmRoot) {
+        throw new Error(`unexpected directory scan: ${directoryPath}`);
+      }
+
+      return [{
+        isDirectory() {
+          return true;
+        },
+        name: '@radix-ui+react-use-is-hydr_007902adb43e9ff4f499bb7ccf6a6eaa',
+      }];
+    },
+    readPackageJson(packageRootPath) {
+      assert.equal(packageRootPath, packageRoot);
+      return {
+        module: './dist/index.mjs',
+        main: './dist/index.js',
+      };
+    },
+    isReadable(filePath) {
+      return [packageJsonPath, moduleEntry].includes(filePath);
+    },
+  });
+
+  assert.deepEqual(resolution, {
+    candidateRoot: adminRoot,
+    resolvedPath: moduleEntry,
   });
 });
 

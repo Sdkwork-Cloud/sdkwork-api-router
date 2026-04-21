@@ -252,6 +252,23 @@ test('product verification workflow contract helper rejects workflows that omit 
   );
 });
 
+test('product verification workflow contract helper rejects workflows that do not run the managed service release runner contract test', async () => {
+  const contracts = await loadContracts();
+
+  const fixtureRoot = writeProductVerificationFixture({
+    testFiles: DEFAULT_PRODUCT_GOVERNANCE_NODE_TESTS.filter(
+      (testFile) => testFile !== 'scripts/release/run-service-release-build.test.mjs',
+    ),
+  });
+
+  await assert.rejects(
+    contracts.assertProductVerificationWorkflowContracts({
+      repoRoot: fixtureRoot,
+    }),
+    /managed service release runner|run-service-release-build/i,
+  );
+});
+
 test('product verification workflow contract helper rejects workflows that do not opt JavaScript actions into Node 24', async () => {
   const contracts = await loadContracts();
 
@@ -420,6 +437,23 @@ test('product verification workflow contract helper rejects workflows that do no
   );
 });
 
+test('product verification workflow contract helper rejects workflows that do not run the root user-center standard runner contract test', async () => {
+  const contracts = await loadContracts();
+
+  const fixtureRoot = writeProductVerificationFixture({
+    testFiles: DEFAULT_PRODUCT_GOVERNANCE_NODE_TESTS.filter(
+      (testFile) => testFile !== 'scripts/run-user-center-standard.test.mjs',
+    ),
+  });
+
+  await assert.rejects(
+    contracts.assertProductVerificationWorkflowContracts({
+      repoRoot: fixtureRoot,
+    }),
+    /user-center standard runner|run-user-center-standard/i,
+  );
+});
+
 test('product verification workflow contract helper rejects workflows that do not run the root entrypoint wrapper contract test', async () => {
   const contracts = await loadContracts();
 
@@ -454,6 +488,23 @@ test('product verification workflow contract helper rejects workflows that do no
       repoRoot: fixtureRoot,
     }),
     /root product entrypoint|root workspace package|run-router-product/i,
+  );
+});
+
+test('product verification workflow contract helper rejects workflows that do not watch the root user-center standard runner inputs', async () => {
+  const contracts = await loadContracts();
+
+  const fixtureRoot = writeProductVerificationFixture({
+    workflowText: read('.github/workflows/product-verification.yml')
+      .replace(/^.*scripts\/run-user-center-standard\.mjs.*\r?\n/gm, '')
+      .replace(/^.*scripts\/run-user-center-standard\.test\.mjs.*\r?\n/gm, ''),
+  });
+
+  await assert.rejects(
+    contracts.assertProductVerificationWorkflowContracts({
+      repoRoot: fixtureRoot,
+    }),
+    /user-center standard runner|run-user-center-standard/i,
   );
 });
 

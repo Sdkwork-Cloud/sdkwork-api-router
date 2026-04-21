@@ -106,10 +106,10 @@ node scripts/dev/start-workspace.mjs
 node scripts/dev/start-workspace.mjs --tauri
 ```
 
-编译独立 release 服务二进制：
+构建正式 release 服务二进制集合：
 
 ```bash
-cargo build --release -p admin-api-service -p gateway-service -p portal-api-service -p router-web-service
+node scripts/release/run-service-release-build.mjs --target <triple>
 ```
 
 构建正式 server 产品输入：

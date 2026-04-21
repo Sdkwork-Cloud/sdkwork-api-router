@@ -2,12 +2,18 @@
 
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
+import {
+  createChildFailureWatcher,
+  findAvailableTcpPort,
+  raceAgainstChildFailure,
+  resolvePositiveInteger,
+  runWithBindConflictRetry,
+} from './smoke-bind-retry-lib.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -36,6 +42,21 @@ function truncateText(value, maxLength = 400) {
   }
 
   return `${text.slice(0, Math.max(0, maxLength - 12))}...[truncated]`;
+}
+
+function appendBrowserProcessOutputContext(message, stdout, stderr) {
+  const contexts = [];
+  if (String(stdout ?? '').trim()) {
+    contexts.push(`browser stdout:\n${truncateText(stdout, 1200)}`);
+  }
+  if (String(stderr ?? '').trim()) {
+    contexts.push(`browser stderr:\n${truncateText(stderr, 1200)}`);
+  }
+  if (contexts.length === 0) {
+    return message;
+  }
+
+  return `${message}\n${contexts.join('\n')}`;
 }
 
 function uniqueStrings(values = []) {
@@ -248,25 +269,6 @@ export function formatBrowserExceptionDetails(params = {}) {
   }
 
   return 'unhandled browser exception';
-}
-
-async function findAvailablePort() {
-  return await new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.unref();
-    server.on('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address();
-      const port = typeof address === 'object' && address ? address.port : 0;
-      server.close((error) => {
-        if (error) {
-          reject(error);
-          return;
-        }
-        resolve(port);
-      });
-    });
-  });
 }
 
 export function createBrowserRuntimeSmokePlan({
@@ -782,9 +784,7 @@ export async function runBrowserRuntimeSmoke({
   platform = process.platform,
   env = process.env,
 } = {}) {
-  const remoteDebuggingPort = await findAvailablePort();
-  const userDataDir = mkdtempSync(path.join(os.tmpdir(), 'sdkwork-browser-smoke-'));
-  const plan = createBrowserRuntimeSmokePlan({
+  return await runBrowserRuntimeSmokeWithDependencies({
     url,
     expectedTexts,
     expectedSelectors,
@@ -795,10 +795,14 @@ export async function runBrowserRuntimeSmoke({
     setupScript,
     platform,
     env,
-    remoteDebuggingPort,
-    userDataDir,
   });
+}
 
+async function runBrowserRuntimeSmokeAttempt({
+  plan,
+  platform,
+  env,
+}) {
   const browserProcess = spawn(plan.browserCommand, plan.browserArgs, {
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -815,19 +819,31 @@ export async function runBrowserRuntimeSmoke({
     browserStderr += String(chunk);
   });
 
+  const childFailureWatcher = createChildFailureWatcher(browserProcess, {
+    label: 'browser runtime smoke process',
+    createExitError: ({ code, signal }) => {
+      const baseMessage = signal
+        ? `browser runtime smoke process exited before smoke completed with signal ${signal}`
+        : `browser runtime smoke process exited before smoke completed with code ${code ?? 0}`;
+      return new Error(
+        appendBrowserProcessOutputContext(baseMessage, browserStdout, browserStderr),
+      );
+    },
+  });
+
   let client = null;
   const requestLog = [];
 
   try {
-    await waitForJson(
+    await raceAgainstChildFailure(waitForJson(
       `http://127.0.0.1:${plan.remoteDebuggingPort}/json/version`,
       plan.devtoolsTimeoutMs,
-    );
-    const pageDebuggerUrl = await waitForPageWebSocketDebuggerUrl(
+    ), childFailureWatcher);
+    const pageDebuggerUrl = await raceAgainstChildFailure(waitForPageWebSocketDebuggerUrl(
       plan.remoteDebuggingPort,
       plan.devtoolsTimeoutMs,
-    );
-    const socket = await connectWebSocket(pageDebuggerUrl);
+    ), childFailureWatcher);
+    const socket = await raceAgainstChildFailure(connectWebSocket(pageDebuggerUrl), childFailureWatcher);
     client = createCdpClient(socket);
 
     const exceptions = [];
@@ -864,7 +880,7 @@ export async function runBrowserRuntimeSmoke({
       });
     });
 
-    const snapshot = await waitForExpectedTargets(
+    const snapshot = await raceAgainstChildFailure(waitForExpectedTargets(
       client,
       plan.expectedTexts,
       plan.expectedSelectors,
@@ -872,15 +888,15 @@ export async function runBrowserRuntimeSmoke({
       {
         exceptions,
       },
-    );
+    ), childFailureWatcher);
 
     const requestCheck = plan.expectedRequestIncludes.length > 0
-      ? await waitForExpectedRequestIncludes(
+      ? await raceAgainstChildFailure(waitForExpectedRequestIncludes(
         client,
         requestLog,
         plan.expectedRequestIncludes,
         plan.timeoutMs,
-      )
+      ), childFailureWatcher)
       : {
         matchedRequestUrls: [],
         observedRequests: requestLog,
@@ -912,7 +928,12 @@ export async function runBrowserRuntimeSmoke({
       matchedRequestUrls: requestCheck.matchedRequestUrls,
       observedRequests: requestCheck.observedRequests,
     };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(appendBrowserProcessOutputContext(message, browserStdout, browserStderr));
   } finally {
+    childFailureWatcher.stop();
+
     if (client) {
       await client.close().catch(() => {});
     }
@@ -928,6 +949,70 @@ export async function runBrowserRuntimeSmoke({
       }
     }
   }
+}
+
+export async function runBrowserRuntimeSmokeWithDependencies({
+  url,
+  expectedTexts = [],
+  expectedSelectors = [],
+  forbiddenTexts = [],
+  expectedRequestIncludes = [],
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+  browserPath = '',
+  setupScript = '',
+  platform = process.platform,
+  env = process.env,
+  maxAttempts = resolvePositiveInteger(
+    env.SDKWORK_BROWSER_RUNTIME_SMOKE_BIND_RETRY_ATTEMPTS,
+    3,
+  ),
+  retryDelayMs = resolvePositiveInteger(
+    env.SDKWORK_BROWSER_RUNTIME_SMOKE_BIND_RETRY_DELAY_MS,
+    250,
+  ),
+  allocateRemoteDebuggingPort = async () => await findAvailableTcpPort(),
+  createUserDataDir = () => mkdtempSync(path.join(os.tmpdir(), 'sdkwork-browser-smoke-')),
+  attemptRunner = runBrowserRuntimeSmokeAttempt,
+  delayImpl = delay,
+} = {}) {
+  return await runWithBindConflictRetry({
+    label: 'browser-runtime-smoke',
+    maxAttempts,
+    retryDelayMs,
+    delayImpl,
+    allocate: async ({ attempt, maxAttempts: attemptLimit }) => ({
+      remoteDebuggingPort: await allocateRemoteDebuggingPort({
+        attempt,
+        maxAttempts: attemptLimit,
+      }),
+      userDataDir: createUserDataDir({
+        attempt,
+        maxAttempts: attemptLimit,
+      }),
+    }),
+    run: async ({ allocation }) => {
+      const plan = createBrowserRuntimeSmokePlan({
+        url,
+        expectedTexts,
+        expectedSelectors,
+        forbiddenTexts,
+        expectedRequestIncludes,
+        timeoutMs,
+        browserPath,
+        setupScript,
+        platform,
+        env,
+        remoteDebuggingPort: allocation.remoteDebuggingPort,
+        userDataDir: allocation.userDataDir,
+      });
+
+      return await attemptRunner({
+        plan,
+        platform,
+        env,
+      });
+    },
+  });
 }
 
 async function main() {

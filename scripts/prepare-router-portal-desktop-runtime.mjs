@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 
-import { spawn } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
-import { createDesktopAssetBuildPlan } from './build-router-desktop-assets.mjs';
+import {
+  createDesktopAssetBuildPlan,
+  runBuildStepWithDependencyRecovery,
+} from './build-router-desktop-assets.mjs';
 import { resolveDesktopReleaseTarget } from './release/desktop-targets.mjs';
 import { findNativePortalDesktopEmbeddedRuntimeLayoutSpec } from './release/native-runtime-layout-catalog.mjs';
 import {
@@ -43,6 +45,63 @@ function resolveServiceReleaseRoot({
 
 function writeJsonFile(filePath, value) {
   writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+}
+
+function sleepSync(delayMs = 0) {
+  if (!Number.isFinite(delayMs) || delayMs <= 0) {
+    return;
+  }
+
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
+}
+
+function isTransientDirectoryRemovalError(error) {
+  const errorCode = String(error?.code ?? '').trim().toUpperCase();
+  return errorCode === 'ENOTEMPTY'
+    || errorCode === 'EBUSY'
+    || errorCode === 'EPERM';
+}
+
+export function removeDirectoryWithRetry(
+  directoryPath,
+  {
+    existsSyncImpl = existsSync,
+    rmSyncImpl = rmSync,
+    sleepImpl = sleepSync,
+    maxAttempts = 6,
+    retryDelayMs = 50,
+  } = {},
+) {
+  if (!directoryPath) {
+    return;
+  }
+
+  const attempts = Math.max(1, Number.parseInt(String(maxAttempts ?? 1), 10) || 1);
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    if (!existsSyncImpl(directoryPath)) {
+      return;
+    }
+
+    try {
+      rmSyncImpl(directoryPath, { recursive: true, force: true });
+      if (!existsSyncImpl(directoryPath)) {
+        return;
+      }
+    } catch (error) {
+      if (attempt >= attempts || !isTransientDirectoryRemovalError(error)) {
+        throw error;
+      }
+    }
+
+    if (attempt < attempts) {
+      sleepImpl(retryDelayMs);
+    }
+  }
+
+  if (existsSyncImpl(directoryPath)) {
+    throw new Error(`Failed to remove directory after ${attempts} attempts: ${directoryPath}`);
+  }
 }
 
 function splitRelativeRuntimePath(relativePath) {
@@ -331,7 +390,7 @@ export function stagePortalDesktopRuntimeResources({
     throw new Error(`Missing portal desktop bootstrap data: ${layout.bootstrapDataSourceDir}`);
   }
 
-  rmSync(layout.routerProductRoot, { recursive: true, force: true });
+  removeDirectoryWithRetry(layout.routerProductRoot);
   mkdirSync(layout.routerProductRoot, { recursive: true });
   mkdirSync(path.dirname(layout.routerBinaryPath), { recursive: true });
   mkdirSync(path.dirname(layout.adminSiteDir), { recursive: true });
@@ -363,27 +422,9 @@ export function stagePortalDesktopRuntimeResources({
 }
 
 async function runBuildStep(step) {
-  await new Promise((resolve, reject) => {
-    const child = spawn(step.command, step.args, {
-      cwd: step.cwd,
-      env: step.env,
-      stdio: 'inherit',
-      shell: step.shell,
-      windowsHide: step.windowsHide ?? process.platform === 'win32',
-    });
-
-    child.on('error', reject);
-    child.on('exit', (code, signal) => {
-      if (signal) {
-        reject(new Error(`${step.label} exited with signal ${signal}`));
-        return;
-      }
-      if ((code ?? 1) !== 0) {
-        reject(new Error(`${step.label} exited with code ${code}`));
-        return;
-      }
-      resolve();
-    });
+  runBuildStepWithDependencyRecovery(step, {
+    env: step.env ?? process.env,
+    platform: process.platform,
   });
 }
 

@@ -1,15 +1,12 @@
-const adminSessionTokenKey = 'sdkwork.router.admin.session-token';
+import {
+  invokeDesktopCommand,
+  isTauriDesktop,
+} from './desktopBridge';
+import {
+  createAdminSessionStore,
+} from './sessionStore';
+
 const adminProxyPrefix = '/api/admin';
-
-type TauriWindowLike = Window & {
-  __TAURI__?: unknown;
-  __TAURI_INTERNALS__?: TauriInternalsLike;
-  isTauri?: boolean;
-};
-
-type TauriInternalsLike = {
-  invoke?: <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
-};
 
 let cachedAdminDesktopBaseUrl: string | null = null;
 
@@ -25,23 +22,6 @@ export function adminBaseUrl(): string {
   return cachedAdminDesktopBaseUrl ?? adminProxyPrefix;
 }
 
-function resolveWindow(): TauriWindowLike | null {
-  if (typeof window === 'undefined') {
-    return null;
-  }
-
-  return window as TauriWindowLike;
-}
-
-function isDesktopRuntime(): boolean {
-  const currentWindow = resolveWindow();
-  return Boolean(
-    currentWindow?.isTauri
-      || currentWindow?.__TAURI__
-      || currentWindow?.__TAURI_INTERNALS__,
-  );
-}
-
 function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/g, '');
 }
@@ -52,24 +32,12 @@ function joinUrl(baseUrl: string, path: string): string {
   return `${normalizedBase}${normalizedPath}`;
 }
 
-async function invokeDesktopCommand<T>(
-  command: string,
-  args?: Record<string, unknown>,
-): Promise<T> {
-  const invoke = resolveWindow()?.__TAURI_INTERNALS__?.invoke;
-  if (typeof invoke !== 'function') {
-    throw new Error('Tauri invoke bridge is unavailable.');
-  }
-
-  return invoke<T>(command, args);
-}
-
 async function resolveAdminBaseUrl(): Promise<string> {
   if (cachedAdminDesktopBaseUrl) {
     return cachedAdminDesktopBaseUrl;
   }
 
-  if (!isDesktopRuntime()) {
+  if (!isTauriDesktop()) {
     return adminProxyPrefix;
   }
 
@@ -88,15 +56,15 @@ async function resolveAdminBaseUrl(): Promise<string> {
 }
 
 export function readAdminSessionToken(): string | null {
-  return globalThis.localStorage?.getItem(adminSessionTokenKey) ?? null;
+  return createAdminSessionStore().readSessionToken();
 }
 
 export function persistAdminSessionToken(token: string): void {
-  globalThis.localStorage?.setItem(adminSessionTokenKey, token);
+  createAdminSessionStore().persistSessionToken(token);
 }
 
 export function clearAdminSessionToken(): void {
-  globalThis.localStorage?.removeItem(adminSessionTokenKey);
+  createAdminSessionStore().clearSessionToken();
 }
 
 async function readJson<T>(response: Response): Promise<T> {

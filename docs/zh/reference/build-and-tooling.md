@@ -18,6 +18,7 @@
 | 命令 | 范围 | 用途 |
 |---|---|---|
 | `cargo build -p gateway-service` | 后端 | 编译单个服务 |
+| `node scripts/release/run-service-release-build.mjs --target <triple>` | 正式本地发布 | 使用托管 target 与 temp 路径构建受治理的 release 二进制集合 |
 | `cargo build --release -p admin-api-service -p gateway-service -p portal-api-service -p router-web-service` | 后端 | 编译独立服务 release 二进制 |
 | `cargo build --release -p router-product-service` | 后端 | 编译集成产品宿主运行时 |
 | `cargo test --workspace -q -j 1` | 后端 | 工作区回归测试 |
@@ -26,7 +27,9 @@
 | `pnpm --dir apps/sdkwork-router-admin typecheck` | 前端 | admin TypeScript 校验 |
 | `pnpm --dir apps/sdkwork-router-portal build` | 前端 | portal 生产构建 |
 | `pnpm --dir apps/sdkwork-router-portal typecheck` | 前端 | portal TypeScript 校验 |
-| `node scripts/check-router-product.mjs` | product verification | 运行受治理的 product gate，覆盖 portal/admin 校验、浏览器 smoke、桌面 release-like 载荷预制，以及仅回环地址的 server dry-run 计划 |
+| `node scripts/check-router-product.mjs` | product verification | 运行受治理的 product gate，覆盖 portal/admin 校验、浏览器 smoke、Tauri capability 审计、桌面 release-like 载荷预制，以及仅回环地址的 server dry-run 计划 |
+| `node scripts/check-tauri-capabilities.mjs` | desktop | 校验每个 desktop capability 都覆盖自动生成的 invoke 权限、受控 desktop bridge 实际需要的 window 权限，并确保 Tauri globals 与 `@tauri-apps/api/window` 只出现在治理白名单 bridge 文件中 |
+| `node scripts/check-browser-storage-governance.mjs` | frontend governance | 校验浏览器 `localStorage` 与 `sessionStorage` 访问是否只存在于批准的受治理 store 模块中 |
 | `./bin/build.sh --verify-release` / `.\bin\build.ps1 -VerifyRelease` | 正式本地 release 验证 | 执行受治理的本地正式发布路径，包含 docs 构建、打包运行时 smoke，以及 release governance preflight |
 | `node scripts/prepare-router-portal-desktop-runtime.mjs` | 桌面 | 预制 portal desktop 的 sidecar 载荷到 `bin/portal-rt/router-product/` |
 | `pnpm --dir apps/sdkwork-router-portal tauri:build` | 桌面 | 打包正式 portal desktop 安装器 |
@@ -76,13 +79,17 @@
 | 产物 | 路径 |
 |---|---|
 | debug Rust 二进制 | `target/debug/` |
-| release Rust 二进制 | `target/release/` |
+| 原始 release Rust 二进制 | `target/release/` |
+| 托管正式 release Rust 二进制 | `$CARGO_TARGET_DIR/<triple>/release/` |
 | admin 浏览器资源 | `apps/sdkwork-router-admin/dist/` |
 | portal 浏览器资源 | `apps/sdkwork-router-portal/dist/` |
 | portal desktop sidecar 载荷 | `bin/portal-rt/router-product/` |
 | docs 站点构建产物 | `docs/.vitepress/dist/` |
 | 托管开发运行目录 | `artifacts/runtime/dev/` |
 | 托管安装根目录 | `artifacts/install/sdkwork-api-router/` |
+
+正式 release 服务二进制优先使用 `node scripts/release/run-service-release-build.mjs --target <triple>`，而不是直接运行原始 `cargo build --release`。
+这个 runner 会复用受治理的 release build plan、打印实际输出目录，并在 Windows 上自动启用短路径 target 与 temp 根目录，避免官方 release 构建受到深路径限制影响。
 
 ## 推荐验证组合
 
@@ -103,6 +110,15 @@ pnpm --dir apps/sdkwork-router-portal build
 pnpm --dir docs typecheck
 pnpm --dir docs build
 ```
+
+## 前端治理约束
+
+- portal 和 admin 的 desktop 能力只能通过受治理的 bridge 模块访问，`node scripts/check-tauri-capabilities.mjs` 会作为产品门禁强制校验。
+- portal 认证会话必须保持 session-only。`readPortalSessionToken`、`persistPortalSessionToken`、`clearPortalSessionToken` 统一委托给 canonical user-center session store，`usePortalAuthStore` 只保留运行时内存态，通过 `hydrate()` 恢复身份与工作区上下文。
+- 敏感浏览器持久化必须保持 session 级约束。会话 token、一次性 API key 明文 reveal，以及包含手机号/微信号等个人联系信息的 user-center 本地偏好草稿，只能通过受治理的 sessionStorage 模块或易失性内存兜底保存。遗留 `localStorage` 副本只能作为迁移来源，并且在受治理的 session store 接管后必须被清除。
+- 非敏感浏览器偏好只有通过独立受治理的 store 模块时，才允许跨会话持久化。locale 这类 shell 偏好不能在 i18n 或功能入口里内联读写 `localStorage`。
+- `node scripts/check-browser-storage-governance.mjs` 是这条浏览器持久化契约的静态门禁。任何新功能如果需要浏览器存储，必须先落到批准的受治理 store 模块中，而不是在功能入口里直接内联访问存储。
+- 任何直接 source-link 到带显式 `.ts` 扩展名标准件的前端包，都必须在本地 `tsconfig.json` 中开启 `"allowImportingTsExtensions": true`。这属于产品 TypeScript 校验契约，不是可选便利项。
 
 ### 正式本地 Release 验证
 

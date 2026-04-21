@@ -231,9 +231,6 @@ importers:
 
   packages/sdkwork-router-portal-api-keys:
     dependencies:
-      '@tauri-apps/api':
-        specifier: 2.10.1
-        version: 2.10.1
       lucide-react:
         specifier: 0.554.0
         version: 0.554.0(react@19.2.4)
@@ -348,9 +345,6 @@ importers:
       '@sdkwork/ui-pc-react':
         specifier: workspace:*
         version: link:../../../../../sdkwork-ui/sdkwork-ui-pc-react
-      '@tauri-apps/api':
-        specifier: 2.10.1
-        version: 2.10.1
       lucide-react:
         specifier: 0.554.0
         version: 0.554.0(react@19.2.4)
@@ -528,6 +522,9 @@ importers:
 
   packages/sdkwork-router-portal-portal-api:
     dependencies:
+      '@tauri-apps/api':
+        specifier: 2.10.1
+        version: 2.10.1
       sdkwork-router-portal-types:
         specifier: workspace:*
         version: link:../sdkwork-router-portal-types

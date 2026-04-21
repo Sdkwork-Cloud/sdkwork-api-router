@@ -1,0 +1,53 @@
+name: user-center-upstream-sync
+
+on:
+  repository_dispatch:
+    types:
+      - sdkwork-appbase-user-center-standard-updated
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  user-center-upstream-sync:
+    runs-on: ubuntu-latest
+    env:
+      SDKWORK_APPBASE_REF: ${{ github.event.client_payload.source_sha || github.event.client_payload.source_ref || 'main' }}
+      SDKWORK_APPBASE_ROOT: ${{ github.workspace }}/external/sdkwork-appbase
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Validate upstream dispatch payload
+        if: github.event_name == 'repository_dispatch'
+        run: node scripts/user-center-upstream-sync-payload.mjs
+
+      - name: Checkout sdkwork-appbase
+        uses: actions/checkout@v5
+        with:
+          repository: Sdkwork-Cloud/sdkwork-appbase
+          ref: ${{ env.SDKWORK_APPBASE_REF }}
+          path: external/sdkwork-appbase
+
+      - name: Verify sdkwork-appbase checkout revision
+        if: github.event_name == 'repository_dispatch'
+        shell: bash
+        run: |
+          actual_sha="$(git -C external/sdkwork-appbase rev-parse HEAD)"
+          expected_sha="${{ github.event.client_payload.source_sha }}"
+          if [[ "$actual_sha" != "$expected_sha" ]]; then
+            echo "Expected sdkwork-appbase checkout SHA $expected_sha but found $actual_sha"
+            exit 1
+          fi
+
+      - name: Run canonical user-center standard
+        run: node scripts/run-user-center-standard.mjs

@@ -4,6 +4,8 @@
   "type": "module",
   "packageManager": "pnpm@10.30.2",
   "scripts": {
+    "product:check": "node scripts/run-router-product.mjs check",
+    "test:user-center-standard": "node scripts/run-user-center-standard.mjs",
     "tauri:dev": "node scripts/run-router-product.mjs desktop",
     "server:dev": "node scripts/run-router-product.mjs server"
   }

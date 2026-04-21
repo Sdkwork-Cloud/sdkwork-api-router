@@ -114,6 +114,7 @@ test('unix installed runtime smoke script exposes a parseable CLI contract for r
     assert.equal(plan.evidencePath, options.evidencePath);
     assert.equal(plan.installPlan.directories[0], options.runtimeHome);
     assert.equal(plan.controlHome, path.join(options.runtimeHome, 'current'));
+    assert.equal(plan.routerConfigPath, path.join(options.runtimeHome, 'config', 'router.yaml'));
     assert.equal(plan.routerEnvPath, path.join(options.runtimeHome, 'config', 'router.env'));
     assert.equal(plan.pidFilePath, path.join(options.runtimeHome, 'run', 'router-product-service.pid'));
     assert.equal(plan.stdoutLogPath, path.join(options.runtimeHome, 'log', 'router-product-service.stdout.log'));
@@ -182,6 +183,11 @@ test('unix installed runtime smoke script exposes a parseable CLI contract for r
       path.join(options.runtimeHome, 'backup-smoke'),
       '--force',
     ]);
+    assert.match(plan.routerConfigContents, /^# SDKWork Router canonical runtime config/m);
+    assert.match(plan.routerConfigContents, /web_bind: "127\.0\.0\.1:19483"/);
+    assert.match(plan.routerConfigContents, /gateway_bind: "127\.0\.0\.1:19480"/);
+    assert.match(plan.routerConfigContents, /admin_bind: "127\.0\.0\.1:19481"/);
+    assert.match(plan.routerConfigContents, /portal_bind: "127\.0\.0\.1:19482"/);
     assert.match(plan.routerEnvContents, /SDKWORK_WEB_BIND="127\.0\.0\.1:19483"/);
     assert.match(plan.routerEnvContents, /SDKWORK_GATEWAY_BIND="127\.0\.0\.1:19480"/);
     assert.match(plan.routerEnvContents, /SDKWORK_ADMIN_BIND="127\.0\.0\.1:19481"/);
@@ -267,4 +273,113 @@ test('unix installed runtime smoke resolves packaged bootstrap data from current
   } finally {
     rmSync(runtimeHome, { recursive: true, force: true });
   }
+});
+
+test('unix installed runtime smoke retries after a bind conflict and returns the later successful result', async () => {
+  const module = await import(
+    pathToFileURL(
+      path.join(repoRoot, 'scripts', 'release', 'run-unix-installed-runtime-smoke.mjs'),
+    ).href,
+  );
+
+  assert.equal(typeof module.runUnixInstalledRuntimeSmokeWithDependencies, 'function');
+
+  const attemptedPorts = [];
+  let delayCalls = 0;
+
+  const result = await module.runUnixInstalledRuntimeSmokeWithDependencies({
+    repoRoot,
+    platform: 'linux',
+    arch: 'x64',
+    target: 'x86_64-unknown-linux-gnu',
+    releaseOutputDir: path.resolve(repoRoot, 'artifacts', 'release-fixture'),
+    runtimeHome: path.resolve(repoRoot, 'artifacts', 'release-smoke', 'linux-x64'),
+    evidencePath: path.resolve(repoRoot, 'artifacts', 'release-governance', 'unix-installed-runtime-smoke-linux-x64.json'),
+    env: {},
+    maxAttempts: 2,
+    retryDelayMs: 0,
+    allocatePorts: async ({ attempt }) => ({
+      web: attempt === 1 ? 19483 : 19583,
+      gateway: attempt === 1 ? 19480 : 19580,
+      admin: attempt === 1 ? 19481 : 19581,
+      portal: attempt === 1 ? 19482 : 19582,
+    }),
+    createPlan: ({ ports }) => ({
+      ports,
+    }),
+    attemptRunner: async ({ plan }) => {
+      attemptedPorts.push(plan.ports.web);
+      if (plan.ports.web === 19483) {
+        throw new Error('Address already in use (os error 98)');
+      }
+
+      return {
+        ok: true,
+        ports: plan.ports,
+      };
+    },
+    delayImpl: async () => {
+      delayCalls += 1;
+    },
+  });
+
+  assert.deepEqual(attemptedPorts, [19483, 19583]);
+  assert.equal(delayCalls, 1);
+  assert.deepEqual(result, {
+    ok: true,
+    ports: {
+      web: 19583,
+      gateway: 19580,
+      admin: 19581,
+      portal: 19582,
+    },
+  });
+});
+
+test('unix installed runtime smoke surfaces non-bind failures without retrying', async () => {
+  const module = await import(
+    pathToFileURL(
+      path.join(repoRoot, 'scripts', 'release', 'run-unix-installed-runtime-smoke.mjs'),
+    ).href,
+  );
+
+  let allocationCalls = 0;
+  let delayCalls = 0;
+
+  await assert.rejects(
+    () => module.runUnixInstalledRuntimeSmokeWithDependencies({
+      repoRoot,
+      platform: 'linux',
+      arch: 'x64',
+      target: 'x86_64-unknown-linux-gnu',
+      releaseOutputDir: path.resolve(repoRoot, 'artifacts', 'release-fixture'),
+      runtimeHome: path.resolve(repoRoot, 'artifacts', 'release-smoke', 'linux-x64'),
+      evidencePath: path.resolve(repoRoot, 'artifacts', 'release-governance', 'unix-installed-runtime-smoke-linux-x64.json'),
+      env: {},
+      maxAttempts: 3,
+      retryDelayMs: 0,
+      allocatePorts: async () => {
+        allocationCalls += 1;
+        return {
+          web: 19483,
+          gateway: 19480,
+          admin: 19481,
+          portal: 19482,
+        };
+      },
+      createPlan: ({ ports }) => ({
+        ports,
+      }),
+      attemptRunner: async () => {
+        throw new Error('release catalog mismatch');
+      },
+      delayImpl: async () => {
+        delayCalls += 1;
+      },
+    }),
+    /release catalog mismatch/,
+  );
+
+  assert.equal(allocationCalls, 1);
+  assert.equal(delayCalls, 0);
 });

@@ -158,6 +158,47 @@ test('portal desktop runtime staging materializes bootstrap data and payload met
   }
 });
 
+test('portal desktop runtime cleanup retries transient non-empty directory removals on Windows-like filesystems', async () => {
+  const module = await import(
+    pathToFileURL(
+      path.join(workspaceRoot, 'scripts', 'prepare-router-portal-desktop-runtime.mjs'),
+    ).href,
+  );
+
+  assert.equal(typeof module.removeDirectoryWithRetry, 'function');
+
+  const targetDirectory = path.join(os.tmpdir(), 'sdkwork-portal-desktop-cleanup-fixture');
+  let attempts = 0;
+  let removed = false;
+  const sleepCalls = [];
+
+  module.removeDirectoryWithRetry(targetDirectory, {
+    existsSyncImpl(candidatePath) {
+      assert.equal(candidatePath, targetDirectory);
+      return !removed;
+    },
+    rmSyncImpl(candidatePath) {
+      assert.equal(candidatePath, targetDirectory);
+      attempts += 1;
+      if (attempts === 1) {
+        const error = new Error('directory not empty');
+        error.code = 'ENOTEMPTY';
+        throw error;
+      }
+
+      removed = true;
+    },
+    sleepImpl(delayMs) {
+      sleepCalls.push(delayMs);
+    },
+    maxAttempts: 3,
+    retryDelayMs: 25,
+  });
+
+  assert.equal(attempts, 2);
+  assert.deepEqual(sleepCalls, [25]);
+});
+
 test('portal desktop runtime preparation consumes the shared embedded runtime layout catalog', () => {
   const source = readFileSync(
     path.join(workspaceRoot, 'scripts', 'prepare-router-portal-desktop-runtime.mjs'),

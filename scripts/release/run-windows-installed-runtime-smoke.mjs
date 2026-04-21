@@ -2,7 +2,6 @@
 
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { createServer } from 'node:net';
 import path from 'node:path';
 import process from 'node:process';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -12,6 +11,7 @@ import {
   applyInstallPlan,
   assertInstallInputsExist,
   createInstallPlan,
+  renderRuntimeConfigTemplate,
   renderRuntimeEnvTemplate,
 } from '../../bin/lib/router-runtime-tooling.mjs';
 import {
@@ -22,6 +22,10 @@ import {
   resolveInstalledBootstrapDataRoot,
 } from './installed-runtime-smoke-lib.mjs';
 import { resolveDesktopReleaseTarget } from './desktop-targets.mjs';
+import {
+  findAvailableTcpPort,
+  runWithBindConflictRetry,
+} from '../smoke-bind-retry-lib.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -108,6 +112,31 @@ function renderWindowsInstalledRuntimeSmokeEnvContents({
   return contents;
 }
 
+function renderWindowsInstalledRuntimeSmokeConfigContents({
+  runtimeHome,
+  ports,
+} = {}) {
+  assertWindowsRuntimeSmokePorts(ports);
+
+  let contents = renderRuntimeConfigTemplate({
+    installRoot: runtimeHome,
+    platform: 'win32',
+  });
+
+  const replacements = new Map([
+    ['web_bind', `web_bind: "127.0.0.1:${ports.web}"`],
+    ['gateway_bind', `gateway_bind: "127.0.0.1:${ports.gateway}"`],
+    ['admin_bind', `admin_bind: "127.0.0.1:${ports.admin}"`],
+    ['portal_bind', `portal_bind: "127.0.0.1:${ports.portal}"`],
+  ]);
+
+  for (const [key, replacement] of replacements.entries()) {
+    contents = contents.replace(new RegExp(`^${key}:.*$`, 'm'), replacement);
+  }
+
+  return contents;
+}
+
 function truncateText(value, maxLength = 1600) {
   const text = String(value ?? '').trim();
   if (text.length <= maxLength) {
@@ -189,40 +218,12 @@ function runScriptCommand(command, args, { cwd, env, label, plan, stdio = 'pipe'
   return result;
 }
 
-async function reserveLoopbackPort() {
-  const server = createServer();
-  await new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
-  });
-
-  const address = server.address();
-  if (!address || typeof address !== 'object') {
-    await new Promise((resolve) => server.close(resolve));
-    throw new Error('failed to reserve a loopback port');
-  }
-
-  const { port } = address;
-  await new Promise((resolve, reject) => {
-    server.close((error) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-
-      resolve();
-    });
-  });
-
-  return port;
-}
-
 async function allocateLoopbackPorts() {
   return {
-    web: await reserveLoopbackPort(),
-    gateway: await reserveLoopbackPort(),
-    admin: await reserveLoopbackPort(),
-    portal: await reserveLoopbackPort(),
+    web: await findAvailableTcpPort(),
+    gateway: await findAvailableTcpPort(),
+    admin: await findAvailableTcpPort(),
+    portal: await findAvailableTcpPort(),
   };
 }
 
@@ -438,6 +439,11 @@ export function createWindowsInstalledRuntimeSmokePlan({
     installPlan,
     controlHome: runtimeLayout.controlHome,
     backupBundlePath: path.join(options.runtimeHome, 'backup-smoke'),
+    routerConfigPath: path.join(runtimeLayout.configDir, 'router.yaml'),
+    routerConfigContents: renderWindowsInstalledRuntimeSmokeConfigContents({
+      runtimeHome: options.runtimeHome,
+      ports,
+    }),
     routerEnvPath: path.join(runtimeLayout.configDir, 'router.env'),
     routerEnvContents: renderWindowsInstalledRuntimeSmokeEnvContents({
       runtimeHome: options.runtimeHome,
@@ -593,37 +599,28 @@ function writeWindowsInstalledRuntimeSmokeEvidence({
   writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`, 'utf8');
 }
 
-export async function runWindowsInstalledRuntimeSmoke({
+function hasWindowsInstalledRuntimeSmokeEvidenceFields(plan) {
+  return Boolean(
+    plan
+    && typeof plan.runtimeHome === 'string'
+    && typeof plan.evidencePath === 'string'
+    && typeof plan.backupBundlePath === 'string'
+    && Array.isArray(plan.healthUrls),
+  );
+}
+
+async function executeWindowsInstalledRuntimeSmokeAttempt({
   repoRoot = rootDir,
-  platform,
-  arch,
-  target,
-  releaseOutputDir,
-  runtimeHome,
-  evidencePath,
+  plan,
   env = process.env,
 } = {}) {
-  const ports = await allocateLoopbackPorts();
-  const plan = createWindowsInstalledRuntimeSmokePlan({
-    repoRoot,
-    platform,
-    arch,
-    target,
-    releaseOutputDir,
-    runtimeHome,
-    evidencePath,
-    env,
-    ports,
-  });
-
-  let failure = null;
-
   try {
     assertInstallInputsExist(plan.installPlan);
     applyInstallPlan(plan.installPlan, {
       force: true,
     });
     assertInstalledPackagedBootstrapData(plan.runtimeHome);
+    writeFileSync(plan.routerConfigPath, plan.routerConfigContents, 'utf8');
     writeFileSync(plan.routerEnvPath, plan.routerEnvContents, 'utf8');
 
     runScriptCommand(plan.startCommand.command, plan.startCommand.args, {
@@ -668,44 +665,125 @@ export async function runWindowsInstalledRuntimeSmoke({
       plan,
     });
 
-    const evidence = createWindowsInstalledRuntimeSmokeEvidence({
+    return createWindowsInstalledRuntimeSmokeEvidence({
       repoRoot,
       plan,
       ok: true,
     });
-    writeWindowsInstalledRuntimeSmokeEvidence({
-      evidencePath: plan.evidencePath,
-      evidence,
-    });
-    return evidence;
   } catch (error) {
-    failure = error instanceof Error ? error : new Error(String(error));
-
-    try {
-      if (existsSync(plan.pidFilePath)) {
+    const failure = error instanceof Error ? error : new Error(String(error));
+    throw new Error(`${failure.message}${buildFailureContext(plan)}`);
+  } finally {
+    if (existsSync(plan.pidFilePath)) {
+      try {
         runScriptCommand(plan.stopCommand.command, plan.stopCommand.args, {
           cwd: repoRoot,
           env,
           label: 'installed runtime stop.ps1',
           plan,
         });
+      } catch {
+        // Preserve the main smoke outcome; stop cleanup is best-effort.
       }
-    } catch {
-      // Preserve the original smoke failure; stop cleanup is best-effort.
     }
+  }
+}
 
-    const evidence = createWindowsInstalledRuntimeSmokeEvidence({
-      repoRoot,
-      plan,
-      ok: false,
-      failure,
+export async function runWindowsInstalledRuntimeSmokeWithDependencies({
+  repoRoot = rootDir,
+  platform,
+  arch,
+  target,
+  releaseOutputDir,
+  runtimeHome,
+  evidencePath,
+  env = process.env,
+  maxAttempts = 3,
+  retryDelayMs = 250,
+  allocatePorts = async () => await allocateLoopbackPorts(),
+  createPlan = (options) => createWindowsInstalledRuntimeSmokePlan(options),
+  attemptRunner = executeWindowsInstalledRuntimeSmokeAttempt,
+  delayImpl = delay,
+} = {}) {
+  let lastPlan = null;
+
+  try {
+    const evidence = await runWithBindConflictRetry({
+      label: 'run-windows-installed-runtime-smoke',
+      maxAttempts,
+      retryDelayMs,
+      delayImpl,
+      allocate: async ({ attempt, maxAttempts: attemptLimit }) => {
+        const ports = await allocatePorts({
+          attempt,
+          maxAttempts: attemptLimit,
+        });
+        const plan = createPlan({
+          repoRoot,
+          platform,
+          arch,
+          target,
+          releaseOutputDir,
+          runtimeHome,
+          evidencePath,
+          env,
+          ports,
+        });
+        lastPlan = plan;
+        return plan;
+      },
+      run: async ({ allocation: plan }) =>
+        await attemptRunner({
+          repoRoot,
+          plan,
+          env,
+        }),
     });
-    writeWindowsInstalledRuntimeSmokeEvidence({
-      evidencePath: plan.evidencePath,
-      evidence,
-    });
+
+    if (hasWindowsInstalledRuntimeSmokeEvidenceFields(lastPlan)) {
+      writeWindowsInstalledRuntimeSmokeEvidence({
+        evidencePath: lastPlan.evidencePath,
+        evidence,
+      });
+    }
+    return evidence;
+  } catch (error) {
+    const failure = error instanceof Error ? error : new Error(String(error));
+    if (hasWindowsInstalledRuntimeSmokeEvidenceFields(lastPlan)) {
+      writeWindowsInstalledRuntimeSmokeEvidence({
+        evidencePath: lastPlan.evidencePath,
+        evidence: createWindowsInstalledRuntimeSmokeEvidence({
+          repoRoot,
+          plan: lastPlan,
+          ok: false,
+          failure,
+        }),
+      });
+    }
     throw failure;
   }
+}
+
+export async function runWindowsInstalledRuntimeSmoke({
+  repoRoot = rootDir,
+  platform,
+  arch,
+  target,
+  releaseOutputDir,
+  runtimeHome,
+  evidencePath,
+  env = process.env,
+} = {}) {
+  return await runWindowsInstalledRuntimeSmokeWithDependencies({
+    repoRoot,
+    platform,
+    arch,
+    target,
+    releaseOutputDir,
+    runtimeHome,
+    evidencePath,
+    env,
+  });
 }
 
 async function main() {

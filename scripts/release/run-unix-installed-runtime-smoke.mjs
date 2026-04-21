@@ -2,7 +2,6 @@
 
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { createServer } from 'node:net';
 import path from 'node:path';
 import process from 'node:process';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -12,6 +11,7 @@ import {
   applyInstallPlan,
   assertInstallInputsExist,
   createInstallPlan,
+  renderRuntimeConfigTemplate,
   renderRuntimeEnvTemplate,
 } from '../../bin/lib/router-runtime-tooling.mjs';
 import {
@@ -22,6 +22,10 @@ import {
   resolveInstalledBootstrapDataRoot,
 } from './installed-runtime-smoke-lib.mjs';
 import { resolveDesktopReleaseTarget } from './desktop-targets.mjs';
+import {
+  findAvailableTcpPort,
+  runWithBindConflictRetry,
+} from '../smoke-bind-retry-lib.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -109,6 +113,32 @@ function renderUnixInstalledRuntimeSmokeEnvContents({
   return contents;
 }
 
+function renderUnixInstalledRuntimeSmokeConfigContents({
+  runtimeHome,
+  platform,
+  ports,
+} = {}) {
+  assertUnixRuntimeSmokePorts(ports);
+
+  let contents = renderRuntimeConfigTemplate({
+    installRoot: runtimeHome,
+    platform,
+  });
+
+  const replacements = new Map([
+    ['web_bind', `web_bind: "127.0.0.1:${ports.web}"`],
+    ['gateway_bind', `gateway_bind: "127.0.0.1:${ports.gateway}"`],
+    ['admin_bind', `admin_bind: "127.0.0.1:${ports.admin}"`],
+    ['portal_bind', `portal_bind: "127.0.0.1:${ports.portal}"`],
+  ]);
+
+  for (const [key, replacement] of replacements.entries()) {
+    contents = contents.replace(new RegExp(`^${key}:.*$`, 'm'), replacement);
+  }
+
+  return contents;
+}
+
 function truncateText(value, maxLength = 1600) {
   const text = String(value ?? '').trim();
   if (text.length <= maxLength) {
@@ -185,40 +215,12 @@ function runScriptCommand(command, args, { cwd, env, label, plan } = {}) {
   return result;
 }
 
-async function reserveLoopbackPort() {
-  const server = createServer();
-  await new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
-  });
-
-  const address = server.address();
-  if (!address || typeof address !== 'object') {
-    await new Promise((resolve) => server.close(resolve));
-    throw new Error('failed to reserve a loopback port');
-  }
-
-  const { port } = address;
-  await new Promise((resolve, reject) => {
-    server.close((error) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-
-      resolve();
-    });
-  });
-
-  return port;
-}
-
 async function allocateLoopbackPorts() {
   return {
-    web: await reserveLoopbackPort(),
-    gateway: await reserveLoopbackPort(),
-    admin: await reserveLoopbackPort(),
-    portal: await reserveLoopbackPort(),
+    web: await findAvailableTcpPort(),
+    gateway: await findAvailableTcpPort(),
+    admin: await findAvailableTcpPort(),
+    portal: await findAvailableTcpPort(),
   };
 }
 
@@ -412,6 +414,12 @@ export function createUnixInstalledRuntimeSmokePlan({
     evidencePath: options.evidencePath,
     controlHome: runtimeLayout.controlHome,
     backupBundlePath: path.join(options.runtimeHome, 'backup-smoke'),
+    routerConfigPath: path.join(runtimeLayout.configDir, 'router.yaml'),
+    routerConfigContents: renderUnixInstalledRuntimeSmokeConfigContents({
+      runtimeHome: options.runtimeHome,
+      platform: options.platform,
+      ports,
+    }),
     routerEnvPath: path.join(runtimeLayout.configDir, 'router.env'),
     routerEnvContents: renderUnixInstalledRuntimeSmokeEnvContents({
       runtimeHome: options.runtimeHome,
@@ -502,37 +510,27 @@ function writeUnixInstalledRuntimeSmokeEvidence({
   writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`, 'utf8');
 }
 
-export async function runUnixInstalledRuntimeSmoke({
-  repoRoot = rootDir,
-  platform,
-  arch,
-  target,
-  releaseOutputDir,
-  runtimeHome,
-  evidencePath,
+function hasUnixInstalledRuntimeSmokeEvidenceFields(plan) {
+  return Boolean(
+    plan
+    && typeof plan.runtimeHome === 'string'
+    && typeof plan.evidencePath === 'string'
+    && typeof plan.backupBundlePath === 'string'
+    && Array.isArray(plan.healthUrls),
+  );
+}
+
+async function executeUnixInstalledRuntimeSmokeAttempt({
+  plan,
   env = process.env,
 } = {}) {
-  const ports = await allocateLoopbackPorts();
-  const plan = createUnixInstalledRuntimeSmokePlan({
-    repoRoot,
-    platform,
-    arch,
-    target,
-    releaseOutputDir,
-    runtimeHome,
-    evidencePath,
-    env,
-    ports,
-  });
-
-  let failure = null;
-
   try {
     assertInstallInputsExist(plan.installPlan);
     applyInstallPlan(plan.installPlan, {
       force: true,
     });
     assertInstalledPackagedBootstrapData(plan.runtimeHome);
+    writeFileSync(plan.routerConfigPath, plan.routerConfigContents, 'utf8');
     writeFileSync(plan.routerEnvPath, plan.routerEnvContents, 'utf8');
 
     runScriptCommand(plan.startCommand.command, plan.startCommand.args, {
@@ -573,57 +571,128 @@ export async function runUnixInstalledRuntimeSmoke({
       label: 'unix installed runtime restore',
       plan,
     });
-  } catch (error) {
-    failure = error instanceof Error ? error : new Error(String(error));
-  }
 
-  if (existsSync(plan.pidFilePath)) {
-    try {
+    return {
+      ok: true,
+      runtimeHome: plan.runtimeHome,
+      evidencePath: plan.evidencePath,
+      target: plan.target,
+      healthUrls: plan.healthUrls,
+    };
+  } catch (error) {
+    const failure = error instanceof Error ? error : new Error(String(error));
+    throw new Error(`${failure.message}${buildFailureContext(plan)}`);
+  } finally {
+    if (existsSync(plan.pidFilePath)) {
       runScriptCommand(plan.stopCommand.command, plan.stopCommand.args, {
         cwd: plan.runtimeHome,
         env,
         label: 'unix installed runtime stop',
         plan,
       });
-    } catch (error) {
-      const stopError = error instanceof Error ? error : new Error(String(error));
-      if (failure) {
-        failure = new Error(`${failure.message}\n${stopError.message}`);
-      } else {
-        failure = stopError;
-      }
     }
   }
+}
 
-  if (failure) {
-    writeUnixInstalledRuntimeSmokeEvidence({
-      evidencePath: plan.evidencePath,
-      evidence: createUnixInstalledRuntimeSmokeEvidence({
-        repoRoot,
-        plan,
-        ok: false,
-        failure,
-      }),
+export async function runUnixInstalledRuntimeSmokeWithDependencies({
+  repoRoot = rootDir,
+  platform,
+  arch,
+  target,
+  releaseOutputDir,
+  runtimeHome,
+  evidencePath,
+  env = process.env,
+  maxAttempts = 3,
+  retryDelayMs = 250,
+  allocatePorts = async () => await allocateLoopbackPorts(),
+  createPlan = (options) => createUnixInstalledRuntimeSmokePlan(options),
+  attemptRunner = executeUnixInstalledRuntimeSmokeAttempt,
+  delayImpl = delay,
+} = {}) {
+  let lastPlan = null;
+
+  try {
+    const result = await runWithBindConflictRetry({
+      label: 'run-unix-installed-runtime-smoke',
+      maxAttempts,
+      retryDelayMs,
+      delayImpl,
+      allocate: async ({ attempt, maxAttempts: attemptLimit }) => {
+        const ports = await allocatePorts({
+          attempt,
+          maxAttempts: attemptLimit,
+        });
+        const plan = createPlan({
+          repoRoot,
+          platform,
+          arch,
+          target,
+          releaseOutputDir,
+          runtimeHome,
+          evidencePath,
+          env,
+          ports,
+        });
+        lastPlan = plan;
+        return plan;
+      },
+      run: async ({ allocation: plan }) =>
+        await attemptRunner({
+          repoRoot,
+          plan,
+          env,
+        }),
     });
+
+    if (hasUnixInstalledRuntimeSmokeEvidenceFields(lastPlan)) {
+      writeUnixInstalledRuntimeSmokeEvidence({
+        evidencePath: lastPlan.evidencePath,
+        evidence: createUnixInstalledRuntimeSmokeEvidence({
+          repoRoot,
+          plan: lastPlan,
+          ok: true,
+        }),
+      });
+    }
+    return result;
+  } catch (error) {
+    const failure = error instanceof Error ? error : new Error(String(error));
+    if (hasUnixInstalledRuntimeSmokeEvidenceFields(lastPlan)) {
+      writeUnixInstalledRuntimeSmokeEvidence({
+        evidencePath: lastPlan.evidencePath,
+        evidence: createUnixInstalledRuntimeSmokeEvidence({
+          repoRoot,
+          plan: lastPlan,
+          ok: false,
+          failure,
+        }),
+      });
+    }
     throw failure;
   }
+}
 
-  writeUnixInstalledRuntimeSmokeEvidence({
-    evidencePath: plan.evidencePath,
-    evidence: createUnixInstalledRuntimeSmokeEvidence({
-      repoRoot,
-      plan,
-      ok: true,
-    }),
+export async function runUnixInstalledRuntimeSmoke({
+  repoRoot = rootDir,
+  platform,
+  arch,
+  target,
+  releaseOutputDir,
+  runtimeHome,
+  evidencePath,
+  env = process.env,
+} = {}) {
+  return await runUnixInstalledRuntimeSmokeWithDependencies({
+    repoRoot,
+    platform,
+    arch,
+    target,
+    releaseOutputDir,
+    runtimeHome,
+    evidencePath,
+    env,
   });
-
-  return {
-    ok: true,
-    runtimeHome: plan.runtimeHome,
-    evidencePath: plan.evidencePath,
-    target: plan.target,
-    healthUrls: plan.healthUrls,
-  };
 }
 
 async function main() {

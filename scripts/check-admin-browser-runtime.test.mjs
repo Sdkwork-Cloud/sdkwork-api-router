@@ -45,3 +45,96 @@ test('admin browser runtime smoke exposes a parseable preview build plan', async
   assert.match(plan.previewStep.args.join(' '), /run-vite-cli\.mjs preview/);
   assert.match(plan.previewStep.args.join(' '), /--port 4173/);
 });
+
+test('admin browser runtime smoke retries after a preview-port bind conflict and returns the later result', async () => {
+  const module = await import(
+    pathToFileURL(path.join(workspaceRoot, 'scripts', 'check-admin-browser-runtime.mjs')).href,
+  );
+
+  assert.equal(typeof module.runAdminBrowserRuntimeSmokeWithDependencies, 'function');
+
+  const attemptedPorts = [];
+  let readyCalls = 0;
+  let buildCalls = 0;
+  let delayCalls = 0;
+
+  const result = await module.runAdminBrowserRuntimeSmokeWithDependencies({
+    workspaceRoot,
+    adminAppDir: path.join(workspaceRoot, 'apps', 'sdkwork-router-admin'),
+    platform: 'linux',
+    env: {},
+    timeoutMs: 5_000,
+    maxAttempts: 2,
+    retryDelayMs: 0,
+    ensureReady: async () => {
+      readyCalls += 1;
+    },
+    allocatePreviewPort: async ({ attempt }) => (attempt === 1 ? 4173 : 4175),
+    runBuildStep: async () => {
+      buildCalls += 1;
+    },
+    attemptRunner: async ({ plan }) => {
+      attemptedPorts.push(plan.previewUrl);
+      if (plan.previewUrl.includes(':4173/')) {
+        throw new Error('Port 4173 is already in use');
+      }
+
+      return {
+        previewUrl: plan.previewUrl,
+        checks: [{ id: 'login' }],
+      };
+    },
+    delayImpl: async () => {
+      delayCalls += 1;
+    },
+  });
+
+  assert.equal(readyCalls, 1);
+  assert.equal(buildCalls, 1);
+  assert.equal(delayCalls, 1);
+  assert.deepEqual(attemptedPorts, [
+    'http://127.0.0.1:4173/admin/',
+    'http://127.0.0.1:4175/admin/',
+  ]);
+  assert.deepEqual(result, {
+    previewUrl: 'http://127.0.0.1:4175/admin/',
+    checks: [{ id: 'login' }],
+  });
+});
+
+test('admin browser runtime smoke surfaces non-bind failures without retrying', async () => {
+  const module = await import(
+    pathToFileURL(path.join(workspaceRoot, 'scripts', 'check-admin-browser-runtime.mjs')).href,
+  );
+
+  let allocationCalls = 0;
+  let delayCalls = 0;
+
+  await assert.rejects(
+    () => module.runAdminBrowserRuntimeSmokeWithDependencies({
+      workspaceRoot,
+      adminAppDir: path.join(workspaceRoot, 'apps', 'sdkwork-router-admin'),
+      platform: 'linux',
+      env: {},
+      timeoutMs: 5_000,
+      maxAttempts: 3,
+      retryDelayMs: 0,
+      ensureReady: async () => {},
+      allocatePreviewPort: async () => {
+        allocationCalls += 1;
+        return 4173;
+      },
+      runBuildStep: async () => {},
+      attemptRunner: async () => {
+        throw new Error('build manifest mismatch');
+      },
+      delayImpl: async () => {
+        delayCalls += 1;
+      },
+    }),
+    /build manifest mismatch/,
+  );
+
+  assert.equal(allocationCalls, 1);
+  assert.equal(delayCalls, 0);
+});

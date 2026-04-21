@@ -14,15 +14,9 @@ import type {
   PortalApiKeyGroupOption,
   PortalApiKeyUsagePreview,
 } from '../types';
+import { createPortalApiKeyPlaintextRevealSessionStore } from './plaintextRevealSessionStore';
 
 const environmentOrder = ['live', 'staging', 'test'];
-const PORTAL_API_KEY_PLAINTEXT_REVEAL_STORAGE_KEY =
-  'sdkwork-router-portal.api-keys.plaintext-reveals';
-
-type PortalApiKeyPlaintextRevealRecord = {
-  plaintext_key: string;
-  updated_at_ms: number;
-};
 
 type EnvironmentSummary = {
   environment: string;
@@ -54,55 +48,14 @@ function emptyBillingEventSummary(): BillingEventSummary {
   };
 }
 
-function storage(): Storage | null {
-  if (typeof globalThis.localStorage !== 'undefined') {
-    return globalThis.localStorage;
-  }
-
-  if (typeof window !== 'undefined' && window.localStorage) {
-    return window.localStorage;
-  }
-
-  return null;
-}
-
-function readRevealCache(): Record<string, PortalApiKeyPlaintextRevealRecord> {
-  const currentStorage = storage();
-  if (!currentStorage) {
-    return {};
-  }
-
-  const rawValue = currentStorage.getItem(PORTAL_API_KEY_PLAINTEXT_REVEAL_STORAGE_KEY);
-  if (!rawValue) {
-    return {};
-  }
-
-  try {
-    return JSON.parse(rawValue) as Record<string, PortalApiKeyPlaintextRevealRecord>;
-  } catch {
-    return {};
-  }
-}
-
-function writeRevealCache(value: Record<string, PortalApiKeyPlaintextRevealRecord>): void {
-  const currentStorage = storage();
-  if (!currentStorage) {
-    return;
-  }
-
-  currentStorage.setItem(PORTAL_API_KEY_PLAINTEXT_REVEAL_STORAGE_KEY, JSON.stringify(value));
-}
-
 export function rememberPortalApiKeyPlaintextReveal(
   hashedKey: string,
   plaintextKey: string,
 ): void {
-  const next = readRevealCache();
-  next[hashedKey] = {
-    plaintext_key: plaintextKey,
-    updated_at_ms: Date.now(),
-  };
-  writeRevealCache(next);
+  createPortalApiKeyPlaintextRevealSessionStore().rememberPlaintextReveal(
+    hashedKey,
+    plaintextKey,
+  );
 }
 
 function trimTrailingSlash(value: string): string {
@@ -116,18 +69,11 @@ function joinUrl(baseUrl: string, path: string): string {
 }
 
 export function readPortalApiKeyPlaintextReveal(hashedKey: string): string | null {
-  const reveal = readRevealCache()[hashedKey];
-  return reveal?.plaintext_key?.trim() || null;
+  return createPortalApiKeyPlaintextRevealSessionStore().readPlaintextReveal(hashedKey);
 }
 
 export function clearPortalApiKeyPlaintextReveal(hashedKey: string): void {
-  const next = readRevealCache();
-  if (!next[hashedKey]) {
-    return;
-  }
-
-  delete next[hashedKey];
-  writeRevealCache(next);
+  createPortalApiKeyPlaintextRevealSessionStore().clearPlaintextReveal(hashedKey);
 }
 
 function sortKeys(keys: GatewayApiKeyRecord[]): GatewayApiKeyRecord[] {

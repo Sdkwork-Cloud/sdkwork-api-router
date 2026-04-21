@@ -205,6 +205,11 @@ export const RELEASE_WORKFLOW_STEP_CONTRACTS = [
     'native release job must wait for governance release completion before official assets are built and published',
   ),
   createWorkflowMatchContract(
+    'native-release-build-service-binaries',
+    String.raw`native-release:[\s\S]*?Build release service binaries[\s\S]*?node scripts\/release\/run-service-release-build\.mjs --target \$\{\{\s*matrix\.target\s*\}\}`,
+    'native release job must build the official service binary set through the managed release service build runner so Windows lanes inherit the short target and temp path policy',
+  ),
+  createWorkflowMatchContract(
     'native-release-build-portal-desktop',
     String.raw`native-release:[\s\S]*?Build portal desktop release[\s\S]*?node scripts\/release\/run-desktop-release-build\.mjs --app portal --target \$\{\{\s*matrix\.target\s*\}\}`,
     'native release job must build the portal desktop product',

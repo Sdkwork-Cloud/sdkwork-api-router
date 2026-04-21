@@ -112,11 +112,12 @@ function createReleaseSyncAuditArtifactPayload(head = 'abc123') {
   };
 }
 
-function createCurrentRepoReleaseSyncGitFallback({
+function createCurrentRepoReleaseSyncGitFallback(specOrSpecs, {
   localHead = 'fed456',
   remoteHead = localHead,
   statusText = '## main...origin/main\n',
 } = {}) {
+  const specs = Array.isArray(specOrSpecs) ? specOrSpecs : [specOrSpecs];
   let gitSpawnCount = 0;
 
   return {
@@ -126,13 +127,14 @@ function createCurrentRepoReleaseSyncGitFallback({
     fallbackSpawnSyncImpl(command, args, options = {}) {
       gitSpawnCount += 1;
       assert.equal(command, process.platform === 'win32' ? 'git.exe' : 'git');
-      assert.equal(options.cwd, repoRoot);
+      const spec = specs.find((candidate) => candidate.targetDir === options.cwd);
+      assert.ok(spec, `unexpected cwd: ${options.cwd}`);
 
       const key = args.join('\u0000');
       if (key === 'rev-parse\u0000--show-toplevel') {
         return {
           status: 0,
-          stdout: `${repoRoot}\n`,
+          stdout: `${spec.expectedGitRoot}\n`,
           stderr: '',
         };
       }
@@ -148,7 +150,7 @@ function createCurrentRepoReleaseSyncGitFallback({
       if (key === 'remote\u0000get-url\u0000origin') {
         return {
           status: 0,
-          stdout: 'https://github.com/Sdkwork-Cloud/sdkwork-api-router.git\n',
+          stdout: `${spec.expectedRemoteUrl}\n`,
           stderr: '',
         };
       }
@@ -589,6 +591,11 @@ test('restore release governance latest materializer enables blocked-host govern
         path.join(repoRoot, 'scripts', 'release', 'run-release-governance-checks.mjs'),
       ).href,
     );
+    const verifyReleaseSyncModule = await import(
+      pathToFileURL(
+        path.join(repoRoot, 'scripts', 'release', 'verify-release-sync.mjs'),
+      ).href,
+    );
 
     const artifactRoot = mkdtempSync(path.join(os.tmpdir(), 'sdkwork-release-governance-restore-'));
 
@@ -639,7 +646,8 @@ test('restore release governance latest materializer enables blocked-host govern
       artifactDir: artifactRoot,
       repoRoot,
     });
-    const liveGit = createCurrentRepoReleaseSyncGitFallback({
+    const specs = verifyReleaseSyncModule.listReleaseSyncRepositorySpecs();
+    const liveGit = createCurrentRepoReleaseSyncGitFallback(specs, {
       localHead: 'fed456',
       remoteHead: 'fed456',
     });
@@ -651,7 +659,7 @@ test('restore release governance latest materializer enables blocked-host govern
         SDKWORK_CORE_GIT_REF: '',
         SDKWORK_UI_GIT_REF: '',
         SDKWORK_APPBASE_GIT_REF: '',
-        SDKWORK_CRAW_CHAT_SDK_GIT_REF: '',
+        SDKWORK_IM_SDK_GIT_REF: '',
       },
       spawnSyncImpl() {
         return {
@@ -667,6 +675,6 @@ test('restore release governance latest materializer enables blocked-host govern
     assert.equal(summary.ok, true);
     assert.equal(summary.blocked, false);
     assert.deepEqual(summary.blockedIds, []);
-    assert.equal(liveGit.getCount(), 5);
+    assert.equal(liveGit.getCount(), specs.length * 5);
   });
 });

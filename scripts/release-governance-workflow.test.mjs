@@ -125,6 +125,8 @@ on:
       - 'scripts/release/**'
       - 'scripts/strict-contract-catalog.mjs'
       - 'scripts/strict-contract-catalog.test.mjs'
+      - 'scripts/smoke-bind-retry-lib.mjs'
+      - 'scripts/smoke-bind-retry-lib.test.mjs'
       - 'scripts/release-governance-node-test-catalog.mjs'
       - 'scripts/release-governance-node-test-catalog.test.mjs'
       - 'scripts/run-release-governance-node-tests.mjs'
@@ -218,6 +220,8 @@ on:
       - 'scripts/release/**'
       - 'scripts/strict-contract-catalog.mjs'
       - 'scripts/strict-contract-catalog.test.mjs'
+      - 'scripts/smoke-bind-retry-lib.mjs'
+      - 'scripts/smoke-bind-retry-lib.test.mjs'
       - 'scripts/release-governance-node-test-catalog.mjs'
       - 'scripts/release-governance-node-test-catalog.test.mjs'
       - 'scripts/release-governance-workflow-contracts.mjs'
@@ -340,6 +344,7 @@ export function listReleaseGovernanceNodeTests() {
   return [
     'scripts/release-governance-workflow.test.mjs',
     'scripts/run-release-governance-node-tests.test.mjs',
+    'scripts/release/run-service-release-build.test.mjs',
     'scripts/release/tests/release-governance-plan-catalog.test.mjs',
     'scripts/release/tests/release-governance-runner.test.mjs',
   ];
@@ -364,6 +369,64 @@ export function runReleaseGovernanceNodeTests() {
       repoRoot: fixtureRoot,
     }),
     /repository-owned runner|run-release-governance-node-tests/i,
+  );
+});
+
+test('release governance workflow contract helper rejects workflows that do not run the managed service release runner contract test', async () => {
+  const contracts = await import(
+    pathToFileURL(
+      path.join(repoRoot, 'scripts', 'release-governance-workflow-contracts.mjs'),
+    ).href,
+  );
+
+  const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), 'sdkwork-release-governance-workflow-'));
+  mkdirSync(path.join(fixtureRoot, '.github', 'workflows'), { recursive: true });
+  mkdirSync(path.join(fixtureRoot, 'scripts'), { recursive: true });
+
+  writeFileSync(
+    path.join(fixtureRoot, '.github', 'workflows', 'release-governance.yml'),
+    read('.github/workflows/release-governance.yml'),
+    'utf8',
+  );
+  writeFileSync(
+    path.join(fixtureRoot, 'scripts', 'run-release-governance-node-tests.mjs'),
+    `
+export function listReleaseGovernanceNodeTests() {
+  return [
+    'scripts/release-governance-node-test-catalog.test.mjs',
+    'scripts/release-governance-workflow-step-contract-catalog.test.mjs',
+    'scripts/release-governance-workflow-watch-catalog.test.mjs',
+    'scripts/release-governance-workflow.test.mjs',
+    'scripts/run-release-governance-node-tests.test.mjs',
+    'scripts/strict-contract-catalog.test.mjs',
+    'scripts/smoke-bind-retry-lib.test.mjs',
+    'scripts/release/tests/installed-runtime-smoke-lib.test.mjs',
+    'scripts/release/tests/release-cli-format-catalog.test.mjs',
+    'scripts/release/tests/release-governance-plan-catalog.test.mjs',
+    'scripts/release/tests/release-governance-runner.test.mjs',
+    'scripts/release/tests/materialize-third-party-governance.test.mjs',
+  ];
+}
+
+export function createReleaseGovernanceNodeTestPlan() {
+  return {
+    command: 'node',
+    args: ['--test', '--experimental-test-isolation=none', ...listReleaseGovernanceNodeTests()],
+  };
+}
+
+export function runReleaseGovernanceNodeTests() {
+  return { status: 0 };
+}
+`,
+    'utf8',
+  );
+
+  await assert.rejects(
+    contracts.assertReleaseGovernanceWorkflowContracts({
+      repoRoot: fixtureRoot,
+    }),
+    /managed service release runner|run-service-release-build|exact governed node test set/i,
   );
 });
 
@@ -394,6 +457,8 @@ export function listReleaseGovernanceNodeTests() {
     'scripts/release-governance-workflow.test.mjs',
     'scripts/run-release-governance-node-tests.test.mjs',
     'scripts/strict-contract-catalog.test.mjs',
+    'scripts/smoke-bind-retry-lib.test.mjs',
+    'scripts/release/run-service-release-build.test.mjs',
     'scripts/release/tests/installed-runtime-smoke-lib.test.mjs',
     'scripts/release/tests/release-cli-format-catalog.test.mjs',
     'scripts/release/tests/release-governance-plan-catalog.test.mjs',

@@ -202,11 +202,12 @@ function createGovernedReleaseSyncAuditArtifactPayload() {
   return artifact;
 }
 
-function createCurrentRepoReleaseSyncGitFallback(spec, {
+function createCurrentRepoReleaseSyncGitFallback(specOrSpecs, {
   localHead = 'fed456',
   remoteHead = localHead,
   statusText = '## main...origin/main\n',
 } = {}) {
+  const specs = Array.isArray(specOrSpecs) ? specOrSpecs : [specOrSpecs];
   let gitSpawnCount = 0;
 
   return {
@@ -216,7 +217,8 @@ function createCurrentRepoReleaseSyncGitFallback(spec, {
     fallbackSpawnSyncImpl(command, args, options = {}) {
       gitSpawnCount += 1;
       assert.equal(command, process.platform === 'win32' ? 'git.exe' : 'git');
-      assert.equal(options.cwd, spec.targetDir);
+      const spec = specs.find((candidate) => candidate.targetDir === options.cwd);
+      assert.ok(spec, `unexpected cwd: ${options.cwd}`);
 
       const key = args.join('\u0000');
       if (key === 'rev-parse\u0000--show-toplevel') {
@@ -763,7 +765,7 @@ test('release governance runner strips governed release env from node test subpr
     SDKWORK_CORE_GIT_REF: 'main',
     SDKWORK_UI_GIT_REF: 'main',
     SDKWORK_APPBASE_GIT_REF: 'main',
-    SDKWORK_CRAW_CHAT_SDK_GIT_REF: 'main',
+    SDKWORK_IM_SDK_GIT_REF: 'main',
     CARGO_BUILD_JOBS: '1',
     CARGO_TARGET_DIR: 'D:/sdkwork-target/release-build',
     CMAKE_GENERATOR: 'Visual Studio 17 2022',
@@ -808,7 +810,7 @@ test('release governance runner strips governed release env from node test subpr
   assert.equal('SDKWORK_CORE_GIT_REF' in testEnv, false);
   assert.equal('SDKWORK_UI_GIT_REF' in testEnv, false);
   assert.equal('SDKWORK_APPBASE_GIT_REF' in testEnv, false);
-  assert.equal('SDKWORK_CRAW_CHAT_SDK_GIT_REF' in testEnv, false);
+  assert.equal('SDKWORK_IM_SDK_GIT_REF' in testEnv, false);
   assert.equal('CARGO_BUILD_JOBS' in testEnv, false);
   assert.equal('CARGO_TARGET_DIR' in testEnv, false);
   assert.equal('CMAKE_GENERATOR' in testEnv, false);
@@ -847,7 +849,7 @@ test('release governance runner strips governed release env from node test subpr
   assert.equal(liveEnv.SDKWORK_CORE_GIT_REF, 'main');
   assert.equal(liveEnv.SDKWORK_UI_GIT_REF, 'main');
   assert.equal(liveEnv.SDKWORK_APPBASE_GIT_REF, 'main');
-  assert.equal(liveEnv.SDKWORK_CRAW_CHAT_SDK_GIT_REF, 'main');
+  assert.equal(liveEnv.SDKWORK_IM_SDK_GIT_REF, 'main');
   assert.equal(liveEnv.CARGO_BUILD_JOBS, '1');
   assert.equal(liveEnv.CARGO_TARGET_DIR, 'D:/sdkwork-target/release-build');
   assert.equal(liveEnv.CMAKE_GENERATOR, 'Visual Studio 17 2022');
@@ -2133,8 +2135,8 @@ test('release governance runner consumes governed release sync audit input when 
   const plan = module.listReleaseGovernanceCheckPlans({
     nodeExecutable: 'node',
   });
-  const [routerSpec] = verifyReleaseSyncModule.listReleaseSyncRepositorySpecs();
-  const liveGit = createCurrentRepoReleaseSyncGitFallback(routerSpec, {
+  const specs = verifyReleaseSyncModule.listReleaseSyncRepositorySpecs();
+  const liveGit = createCurrentRepoReleaseSyncGitFallback(specs, {
     localHead: 'fed456',
     remoteHead: 'fed456',
   });
@@ -2160,7 +2162,7 @@ test('release governance runner consumes governed release sync audit input when 
   assert.equal(result.mode, 'fallback');
   assert.equal(result.ok, true);
   assert.equal(result.status, 0);
-  assert.equal(liveGit.getCount(), 5);
+  assert.equal(liveGit.getCount(), specs.length * 5);
   assert.match(result.stdout, /"releasable": true/);
   assert.match(result.stdout, /"localHead": "fed456"/);
   assert.match(result.stdout, /"id": "sdkwork-ui"/);
@@ -2181,18 +2183,18 @@ test('release governance runner replays the default release sync audit artifact 
     );
     const verifyReleaseSyncModule = await import(
       pathToFileURL(
-        path.join(repoRoot, 'scripts', 'release', 'verify-release-sync.mjs'),
-      ).href,
-    );
+      path.join(repoRoot, 'scripts', 'release', 'verify-release-sync.mjs'),
+    ).href,
+  );
 
-    const plan = module.listReleaseGovernanceCheckPlans({
-      nodeExecutable: 'node',
-    });
-    const [routerSpec] = verifyReleaseSyncModule.listReleaseSyncRepositorySpecs();
-    const liveGit = createCurrentRepoReleaseSyncGitFallback(routerSpec, {
-      localHead: 'fed456',
-      remoteHead: 'fed456',
-    });
+  const plan = module.listReleaseGovernanceCheckPlans({
+    nodeExecutable: 'node',
+  });
+  const specs = verifyReleaseSyncModule.listReleaseSyncRepositorySpecs();
+  const liveGit = createCurrentRepoReleaseSyncGitFallback(specs, {
+    localHead: 'fed456',
+    remoteHead: 'fed456',
+  });
 
     const result = await module.runReleaseGovernanceCheckPlan({
       plan: getPlanById(plan, 'release-sync-audit'),
@@ -2211,7 +2213,7 @@ test('release governance runner replays the default release sync audit artifact 
     assert.equal(result.mode, 'fallback');
     assert.equal(result.ok, true);
     assert.equal(result.status, 0);
-    assert.equal(liveGit.getCount(), 5);
+    assert.equal(liveGit.getCount(), specs.length * 5);
     assert.match(result.stdout, /"releasable": true/);
     assert.match(result.stdout, /"localHead": "fed456"/);
     assert.match(result.stdout, /"id": "sdkwork-ui"/);

@@ -6,6 +6,10 @@
   useState,
   type ReactNode,
 } from 'react';
+import {
+  persistAdminLocale,
+  readPersistedAdminLocale,
+} from './localePreferenceStore';
 
 // BEGIN CONTRACT TRANSLATIONS
 
@@ -537,7 +541,6 @@ type AdminI18nContextValue = {
   t: (text: string, values?: TranslationValues) => string;
 };
 
-const ADMIN_I18N_STORAGE_KEY = 'sdkwork-router-admin.locale.v2';
 const AdminI18nContext = createContext<AdminI18nContextValue | null>(null);
 
 export const ADMIN_LOCALE_OPTIONS: Array<{ id: AdminLocale; label: string }> = [
@@ -581,15 +584,10 @@ function resolveInitialLocale(): AdminLocale {
     return activeAdminLocale;
   }
 
-  try {
-    const persisted = window.localStorage.getItem(ADMIN_I18N_STORAGE_KEY);
-    if (persisted) {
-      const locale = normalizeLocale(persisted);
-      activeAdminLocale = locale;
-      return locale;
-    }
-  } catch {
-    // Ignore storage access failures and fall back to browser locale.
+  const persistedLocale = readPersistedAdminLocale();
+  if (persistedLocale) {
+    activeAdminLocale = persistedLocale;
+    return persistedLocale;
   }
 
   const locale = normalizeLocale(window.navigator.language);
@@ -680,13 +678,7 @@ export function AdminI18nProvider({ children }: { children: ReactNode }) {
       document.documentElement.lang = locale;
     }
 
-    if (typeof window !== 'undefined') {
-      try {
-        window.localStorage.setItem(ADMIN_I18N_STORAGE_KEY, locale);
-      } catch {
-        // Ignore storage write failures.
-      }
-    }
+    persistAdminLocale(locale);
   }, [locale]);
 
   const value = useMemo<AdminI18nContextValue>(

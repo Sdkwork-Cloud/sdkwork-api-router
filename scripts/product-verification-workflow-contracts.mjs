@@ -109,6 +109,10 @@ export async function assertProductVerificationWorkflowContracts({
     'product governance node test runner must include the root product entrypoint tests',
   );
   assert.ok(
+    governedNodeTests.includes('scripts/run-user-center-standard.test.mjs'),
+    'product governance node test runner must include the root user-center standard runner contract test',
+  );
+  assert.ok(
     governedNodeTests.includes('bin/tests/root-entrypoint-wrappers.test.mjs'),
     'product governance node test runner must include the root entrypoint wrapper contract test',
   );
@@ -116,6 +120,10 @@ export async function assertProductVerificationWorkflowContracts({
     governedNodeTests.includes('scripts/release/tests/publish-ghcr-image.test.mjs')
       && governedNodeTests.includes('scripts/release/tests/publish-ghcr-manifest.test.mjs'),
     'product governance node test runner must include the GHCR publish contract tests',
+  );
+  assert.ok(
+    governedNodeTests.includes('scripts/release/run-service-release-build.test.mjs'),
+    'product governance node test runner must include the managed service release runner contract test',
   );
   assert.deepEqual(
     governedNodeTests,

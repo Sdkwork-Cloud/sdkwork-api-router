@@ -23,6 +23,30 @@ const ROUTER_BINARY_NAME: &str = if cfg!(target_os = "windows") {
 const RUNTIME_HEALTH_TIMEOUT_OVERRIDE_ENV: &str = "SDKWORK_ROUTER_RUNTIME_HEALTH_TIMEOUT_MS";
 const RUNTIME_HEALTH_RETRY_INTERVAL: Duration = Duration::from_millis(250);
 const RUNTIME_LOG_TAIL_MAX_BYTES: usize = 1_600;
+const DESKTOP_SIDECAR_BLOCKED_SDKWORK_ENV_KEYS: &[&str] = &[
+    "SDKWORK_ADMIN_BIND",
+    "SDKWORK_ADMIN_PROXY_TARGET",
+    "SDKWORK_ADMIN_SITE_DIR",
+    "SDKWORK_ADMIN_SITE_PROXY_TARGET",
+    "SDKWORK_BOOTSTRAP_DATA_DIR",
+    "SDKWORK_BROWSER_ALLOWED_ORIGINS",
+    "SDKWORK_CONFIG_DIR",
+    "SDKWORK_CONFIG_FILE",
+    "SDKWORK_DATABASE_URL",
+    "SDKWORK_GATEWAY_BIND",
+    "SDKWORK_GATEWAY_PROXY_TARGET",
+    "SDKWORK_PORTAL_BIND",
+    "SDKWORK_PORTAL_PROXY_TARGET",
+    "SDKWORK_PORTAL_SITE_DIR",
+    "SDKWORK_PORTAL_SITE_PROXY_TARGET",
+    "SDKWORK_ROUTER_BACKGROUND",
+    "SDKWORK_ROUTER_INSTALL_MODE",
+    "SDKWORK_ROUTER_NODE_ID_PREFIX",
+    "SDKWORK_ROUTER_PORTAL_START_HIDDEN",
+    "SDKWORK_ROUTER_ROLES",
+    "SDKWORK_ROUTER_SERVICE_MODE",
+    "SDKWORK_WEB_BIND",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -165,9 +189,7 @@ impl DesktopRuntimeSupervisor {
             .stderr(Stdio::from(stderr));
 
         command.env_clear();
-        command.envs(
-            std::env::vars().filter(|(key, _)| !key.starts_with("SDKWORK_")),
-        );
+        command.envs(desktop_sidecar_child_env(std::env::vars()));
 
         #[cfg(target_os = "windows")]
         {
@@ -219,16 +241,57 @@ impl DesktopRuntimeSupervisor {
     }
 }
 
+fn is_blocked_desktop_sidecar_sdkwork_env_key(key: &str) -> bool {
+    DESKTOP_SIDECAR_BLOCKED_SDKWORK_ENV_KEYS
+        .iter()
+        .any(|blocked_key| *blocked_key == key)
+}
+
+fn desktop_sidecar_child_env<I, K, V>(parent_env: I) -> Vec<(String, String)>
+where
+    I: IntoIterator<Item = (K, V)>,
+    K: Into<String>,
+    V: Into<String>,
+{
+    parent_env
+        .into_iter()
+        .filter_map(|(key, value)| {
+            let key = key.into();
+            if key.starts_with("SDKWORK_") && is_blocked_desktop_sidecar_sdkwork_env_key(&key) {
+                return None;
+            }
+
+            Some((key, value.into()))
+        })
+        .collect()
+}
+
+fn resolve_prepared_workspace_product_roots(workspace_root: &Path) -> Vec<PathBuf> {
+    vec![
+        workspace_root
+            .join("bin")
+            .join("portal-rt")
+            .join("router-product"),
+        workspace_root
+            .join("artifacts")
+            .join("router-portal-desktop")
+            .join("resources")
+            .join("router-product"),
+    ]
+}
+
 pub fn resolve_product_resource_layout_for_paths(
     resource_root: Option<&Path>,
-    prepared_workspace_root: Option<&Path>,
+    prepared_workspace_roots: &[PathBuf],
     workspace_root: &Path,
 ) -> Result<ProductResourceLayout> {
     if let Some(layout) = resource_root.and_then(release_like_layout) {
         return Ok(layout);
     }
-    if let Some(layout) = prepared_workspace_root.and_then(release_like_layout) {
-        return Ok(layout);
+    for prepared_workspace_root in prepared_workspace_roots {
+        if let Some(layout) = release_like_layout(prepared_workspace_root.as_path()) {
+            return Ok(layout);
+        }
     }
 
     let workspace_layout = ProductResourceLayout {
@@ -272,15 +335,11 @@ fn resolve_product_resource_layout(app: &AppHandle) -> Result<ProductResourceLay
         .ok()
         .map(|path| path.join("router-product"));
     let workspace_root = workspace_root();
-    let prepared_workspace_root = workspace_root
-        .join("artifacts")
-        .join("router-portal-desktop")
-        .join("resources")
-        .join("router-product");
+    let prepared_workspace_roots = resolve_prepared_workspace_product_roots(&workspace_root);
 
     resolve_product_resource_layout_for_paths(
         resource_root.as_deref(),
-        Some(prepared_workspace_root.as_path()),
+        &prepared_workspace_roots,
         &workspace_root,
     )
 }
@@ -494,6 +553,7 @@ fn desktop_runtime_access_mode_label(access_mode: DesktopRuntimeAccessMode) -> &
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::time::Duration;
@@ -501,7 +561,8 @@ mod tests {
 
     use super::{
         create_runtime_start_failure_message, default_runtime_health_timeout, health_probe_urls,
-        release_like_layout, resolve_product_resource_layout_for_paths,
+        desktop_sidecar_child_env, release_like_layout,
+        resolve_prepared_workspace_product_roots, resolve_product_resource_layout_for_paths,
         resolve_runtime_health_timeout, DesktopRuntimePaths, PortalDesktopRuntimeSnapshot,
         ProductResourceLayout,
     };
@@ -569,7 +630,7 @@ mod tests {
 
         let layout = resolve_product_resource_layout_for_paths(
             Some(&resource_root),
-            None,
+            &[],
             &workspace_root,
         )
         .expect("resource layout should resolve");
@@ -590,7 +651,7 @@ mod tests {
 
         let layout = resolve_product_resource_layout_for_paths(
             None,
-            Some(&prepared_root),
+            &[prepared_root.clone()],
             &workspace_root,
         )
         .expect("prepared workspace layout should resolve");
@@ -599,11 +660,36 @@ mod tests {
     }
 
     #[test]
+    fn prepared_workspace_roots_prioritize_live_bin_portal_rt_staging_before_artifact_payloads() {
+        let workspace_root = unique_temp_dir("prepared-workspace-priority");
+        let live_staged_root = workspace_root
+            .join("bin")
+            .join("portal-rt")
+            .join("router-product");
+        let artifact_payload_root = workspace_root
+            .join("artifacts")
+            .join("router-portal-desktop")
+            .join("resources")
+            .join("router-product");
+
+        create_workspace_layout(&workspace_root, "router-product-service.exe");
+        create_release_like_router_product(&live_staged_root, "router-product-service.exe");
+        create_release_like_router_product(&artifact_payload_root, "router-product-service.exe");
+
+        let prepared_roots = resolve_prepared_workspace_product_roots(&workspace_root);
+        let layout =
+            resolve_product_resource_layout_for_paths(None, &prepared_roots, &workspace_root)
+                .expect("prepared workspace layout should resolve");
+
+        assert_eq!(layout.root, live_staged_root);
+    }
+
+    #[test]
     fn raw_workspace_layout_is_used_when_release_like_roots_are_missing() {
         let workspace_root = unique_temp_dir("workspace-fallback");
         create_workspace_layout(&workspace_root, "router-product-service.exe");
 
-        let layout = resolve_product_resource_layout_for_paths(None, None, &workspace_root)
+        let layout = resolve_product_resource_layout_for_paths(None, &[], &workspace_root)
             .expect("workspace layout should resolve");
 
         assert_eq!(
@@ -805,5 +891,33 @@ mod tests {
         assert!(message.contains("health probe pending"));
         assert!(message.contains("stderr_tail="));
         assert!(message.contains("ERROR bind failed on 127.0.0.1:3001"));
+    }
+
+    #[test]
+    fn desktop_sidecar_child_env_preserves_provider_credentials_but_strips_managed_runtime_overrides() {
+        let env = desktop_sidecar_child_env([
+            ("PATH".to_owned(), "C:/Windows/System32".to_owned()),
+            ("SDKWORK_OPENAI_API_KEY".to_owned(), "sk-live".to_owned()),
+            ("SDKWORK_CONFIG_DIR".to_owned(), "D:/override/config".to_owned()),
+            ("SDKWORK_DATABASE_URL".to_owned(), "postgresql://sdkwork:secret@127.0.0.1:5432/router".to_owned()),
+            ("SDKWORK_WEB_BIND".to_owned(), "0.0.0.0:3001".to_owned()),
+            ("SDKWORK_BOOTSTRAP_DATA_DIR".to_owned(), "D:/bootstrap".to_owned()),
+            ("SDKWORK_ROUTER_SERVICE_MODE".to_owned(), "1".to_owned()),
+        ]);
+        let env_map = HashMap::<_, _>::from_iter(env);
+
+        assert_eq!(
+            env_map.get("PATH").map(String::as_str),
+            Some("C:/Windows/System32")
+        );
+        assert_eq!(
+            env_map.get("SDKWORK_OPENAI_API_KEY").map(String::as_str),
+            Some("sk-live")
+        );
+        assert!(!env_map.contains_key("SDKWORK_CONFIG_DIR"));
+        assert!(!env_map.contains_key("SDKWORK_DATABASE_URL"));
+        assert!(!env_map.contains_key("SDKWORK_WEB_BIND"));
+        assert!(!env_map.contains_key("SDKWORK_BOOTSTRAP_DATA_DIR"));
+        assert!(!env_map.contains_key("SDKWORK_ROUTER_SERVICE_MODE"));
     }
 }

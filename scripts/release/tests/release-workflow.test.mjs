@@ -125,7 +125,7 @@ export function listExternalReleaseDependencySpecs() {
     { id: 'sdkwork-core', repository: 'Sdkwork-Cloud/sdkwork-core', envRefKey: 'SDKWORK_CORE_GIT_REF', defaultRef: 'main' },
     { id: 'sdkwork-ui', repository: 'Sdkwork-Cloud/sdkwork-ui', envRefKey: 'SDKWORK_UI_GIT_REF', defaultRef: 'main' },
     { id: 'sdkwork-appbase', repository: 'Sdkwork-Cloud/sdkwork-appbase', envRefKey: 'SDKWORK_APPBASE_GIT_REF', defaultRef: 'main' },
-    { id: 'sdkwork-craw-chat-sdk', repository: 'Sdkwork-Cloud/craw-chat', envRefKey: 'SDKWORK_CRAW_CHAT_SDK_GIT_REF', defaultRef: 'main' },
+    { id: 'sdkwork-im-sdk', repository: 'Sdkwork-Cloud/sdkwork-im-sdk', envRefKey: 'SDKWORK_IM_SDK_GIT_REF', defaultRef: 'main' },
   ];
 }
 export function buildExternalReleaseClonePlan() {

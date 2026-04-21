@@ -84,6 +84,17 @@ export {
   persistAdminSessionToken,
   readAdminSessionToken,
 } from './transport';
+export {
+  adminSessionTokenKey,
+  createAdminSessionStore,
+} from './sessionStore';
+export {
+  closeDesktopWindow,
+  invokeDesktopCommand,
+  isTauriDesktop,
+  minimizeDesktopWindow,
+  toggleMaximizeDesktopWindow,
+} from './desktopBridge';
 
 export function loginAdminUser(input: {
   email: string;

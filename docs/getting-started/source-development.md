@@ -322,6 +322,7 @@ Before or after local startup, the standard checks are:
 ```bash
 cargo fmt --all --check
 cargo test --workspace -q -j 1
+pnpm test:user-center-standard
 pnpm --dir apps/sdkwork-router-admin typecheck
 pnpm --dir apps/sdkwork-router-admin build
 pnpm --dir apps/sdkwork-router-portal typecheck
@@ -329,6 +330,8 @@ pnpm --dir apps/sdkwork-router-portal build
 pnpm --dir docs typecheck
 pnpm --dir docs build
 ```
+
+`pnpm test:user-center-standard` is the canonical identity-governance lane for the repository. It executes the shared `sdkwork-appbase` user-center and independent validation-plugin contracts before the router portal bridge test so local-private deployments and external `spring-ai-plus-app-api` handshakes stay aligned to the same AuthToken or AccessToken standard.
 
 ## Common Notes
 

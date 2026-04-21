@@ -1,3 +1,9 @@
+import {
+  ROUTER_PORTAL_USER_CENTER_STORAGE_PLAN,
+  createRouterPortalUserCenterSessionStore,
+  createRouterPortalUserCenterTokenStore,
+  requireRouterPortalProtectedToken,
+} from 'sdkwork-router-portal-types';
 import type {
   ApiKeyGroupRecord,
   BillingEventRecord,
@@ -61,8 +67,11 @@ import type {
   UsageRecord,
   UsageSummary,
 } from 'sdkwork-router-portal-types';
+import {
+  invokeDesktopCommand,
+  isTauriDesktop,
+} from './desktopBridge';
 
-const portalSessionTokenKey = 'sdkwork.router.portal.session-token';
 const portalSessionExpiredEvent = 'sdkwork.router.portal.session-expired';
 const portalProxyPrefix = '/api/portal';
 const gatewayProxyPrefix = '/api';
@@ -71,23 +80,16 @@ const directGatewayHealthPath = '/health';
 const standalonePortalDevPorts = new Set(['4174', '5174']);
 const standaloneGatewayBaseUrl = 'http://127.0.0.1:8080';
 
-type TauriWindowLike = Window & {
-  __TAURI__?: unknown;
-  __TAURI_INTERNALS__?: TauriInternalsLike;
-  isTauri?: boolean;
-};
-
-type TauriInternalsLike = {
-  invoke?: <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
-};
-
 let cachedPortalDesktopBaseUrl: string | null = null;
 let cachedGatewayDesktopBaseUrl: string | null = null;
 let cachedDesktopRuntimeSnapshot: PortalDesktopRuntimeSnapshot | null | undefined = undefined;
 
 export class PortalApiError extends Error {
-  constructor(message: string, readonly status: number) {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
     super(message);
+    this.status = status;
   }
 }
 
@@ -97,21 +99,12 @@ export function portalBaseUrl(): string {
   return cachedPortalDesktopBaseUrl ?? portalProxyPrefix;
 }
 
-function resolveWindow(): TauriWindowLike | null {
+function resolveWindow(): Window | null {
   if (typeof window === 'undefined') {
     return null;
   }
 
-  return window as TauriWindowLike;
-}
-
-function isDesktopRuntime(): boolean {
-  const currentWindow = resolveWindow();
-  return Boolean(
-    currentWindow?.isTauri ||
-      currentWindow?.__TAURI__ ||
-      currentWindow?.__TAURI_INTERNALS__,
-  );
+  return window;
 }
 
 function trimTrailingSlash(value: string): string {
@@ -130,24 +123,12 @@ function bindAddrUrl(bindAddr: string, path: string): string {
   return joinUrl(baseUrl, path);
 }
 
-async function invokeDesktopCommand<T>(
-  command: string,
-  args?: Record<string, unknown>,
-): Promise<T> {
-  const invoke = resolveWindow()?.__TAURI_INTERNALS__?.invoke;
-  if (typeof invoke !== 'function') {
-    throw new Error('Tauri invoke bridge is unavailable.');
-  }
-
-  return invoke<T>(command, args);
-}
-
 async function resolvePortalBaseUrl(): Promise<string> {
   if (cachedPortalDesktopBaseUrl) {
     return cachedPortalDesktopBaseUrl;
   }
 
-  if (!isDesktopRuntime()) {
+  if (!isTauriDesktop()) {
     return portalProxyPrefix;
   }
 
@@ -170,7 +151,7 @@ export async function resolveGatewayBaseUrl(): Promise<string> {
     return cachedGatewayDesktopBaseUrl;
   }
 
-  if (isDesktopRuntime()) {
+  if (isTauriDesktop()) {
     try {
       const runtimeBaseUrl = await invokeDesktopCommand<string>('runtime_base_url');
       const normalizedBaseUrl = runtimeBaseUrl?.trim();
@@ -203,7 +184,7 @@ export async function getDesktopRuntimeSnapshot(): Promise<PortalDesktopRuntimeS
     return cachedDesktopRuntimeSnapshot;
   }
 
-  if (!isDesktopRuntime()) {
+  if (!isTauriDesktop()) {
     cachedDesktopRuntimeSnapshot = null;
     return cachedDesktopRuntimeSnapshot;
   }
@@ -412,16 +393,44 @@ export async function getProductRuntimeHealthSnapshot(): Promise<PortalRuntimeHe
   };
 }
 
+export function createUserCenterSessionStore(
+  storagePlan = ROUTER_PORTAL_USER_CENTER_STORAGE_PLAN,
+) {
+  return createRouterPortalUserCenterSessionStore(storagePlan);
+}
+
+export function createUserCenterTokenStore(
+  storagePlan = ROUTER_PORTAL_USER_CENTER_STORAGE_PLAN,
+) {
+  return createRouterPortalUserCenterTokenStore(storagePlan);
+}
+
 export function readPortalSessionToken(): string | null {
-  return globalThis.localStorage?.getItem(portalSessionTokenKey) ?? null;
+  return createUserCenterSessionStore().readSessionToken();
 }
 
 export function persistPortalSessionToken(token: string): void {
-  globalThis.localStorage?.setItem(portalSessionTokenKey, token);
+  createUserCenterSessionStore().persistSessionToken(token);
 }
 
 export function clearPortalSessionToken(): void {
-  globalThis.localStorage?.removeItem(portalSessionTokenKey);
+  createUserCenterSessionStore().clearSessionToken();
+}
+
+export function readPortalTokenBundle(): ReturnType<
+  ReturnType<typeof createRouterPortalUserCenterTokenStore>['readTokenBundle']
+> {
+  return createUserCenterTokenStore().readTokenBundle();
+}
+
+export function persistPortalTokenBundle(
+  bundle: Parameters<ReturnType<typeof createRouterPortalUserCenterTokenStore>['persistTokenBundle']>[0],
+): void {
+  createUserCenterTokenStore().persistTokenBundle(bundle);
+}
+
+export function clearPortalTokenBundle(): void {
+  createUserCenterTokenStore().clearTokenBundle();
 }
 
 async function readJson<T>(response: Response): Promise<T> {
@@ -572,13 +581,96 @@ export function onPortalSessionExpired(handler: () => void): () => void {
   return () => globalThis.removeEventListener?.(portalSessionExpiredEvent, listener);
 }
 
-function requiredPortalToken(providedToken?: string): string {
-  const token = providedToken ?? readPortalSessionToken();
-  if (!token) {
-    throw new PortalApiError('Portal session token not found', 401);
-  }
-  return token;
+export {
+  closeDesktopWindow,
+  invokeDesktopCommand,
+  isTauriDesktop,
+  maximizeDesktopWindow,
+  minimizeDesktopWindow,
+} from './desktopBridge';
+
+function normalizePortalTokenValue(value: unknown): string | null {
+  const normalized = typeof value === 'string' ? value.trim() : '';
+  return normalized || null;
 }
+
+function extractPortalTokenBundle(value: unknown): Parameters<
+  ReturnType<typeof createRouterPortalUserCenterTokenStore>['persistTokenBundle']
+>[0] {
+  if (!value || typeof value !== 'object') {
+    return {};
+  }
+
+  const payload = value as Record<string, unknown>;
+  const tokenType =
+    normalizePortalTokenValue(payload.tokenType)
+    ?? normalizePortalTokenValue(payload.token_type);
+
+  return {
+    ...(normalizePortalTokenValue(payload.accessToken)
+      ?? normalizePortalTokenValue(payload.access_token)
+      ? {
+          accessToken:
+            normalizePortalTokenValue(payload.accessToken)
+            ?? normalizePortalTokenValue(payload.access_token)
+            ?? undefined,
+        }
+      : {}),
+    ...(normalizePortalTokenValue(payload.authToken)
+      ?? normalizePortalTokenValue(payload.auth_token)
+      ? {
+          authToken:
+            normalizePortalTokenValue(payload.authToken)
+            ?? normalizePortalTokenValue(payload.auth_token)
+            ?? undefined,
+        }
+      : {}),
+    ...(normalizePortalTokenValue(payload.refreshToken)
+      ?? normalizePortalTokenValue(payload.refresh_token)
+      ? {
+          refreshToken:
+            normalizePortalTokenValue(payload.refreshToken)
+            ?? normalizePortalTokenValue(payload.refresh_token)
+            ?? undefined,
+        }
+      : {}),
+    ...(normalizePortalTokenValue(payload.sessionToken)
+      ?? normalizePortalTokenValue(payload.session_token)
+      ?? normalizePortalTokenValue(payload.sessionId)
+      ?? normalizePortalTokenValue(payload.session_id)
+      ?? normalizePortalTokenValue(payload.token)
+      ? {
+          sessionToken:
+            normalizePortalTokenValue(payload.sessionToken)
+            ?? normalizePortalTokenValue(payload.session_token)
+            ?? normalizePortalTokenValue(payload.sessionId)
+            ?? normalizePortalTokenValue(payload.session_id)
+            ?? normalizePortalTokenValue(payload.token)
+            ?? undefined,
+        }
+      : {}),
+    ...(tokenType ? { tokenType } : {}),
+  };
+}
+
+function persistPortalAuthPayloadTokens(value: unknown): void {
+  const bundle = extractPortalTokenBundle(value);
+  if (
+    bundle.accessToken
+    || bundle.authToken
+    || bundle.refreshToken
+    || bundle.sessionToken
+    || bundle.tokenType
+  ) {
+    persistPortalTokenBundle(bundle);
+  }
+}
+
+const requiredPortalToken = (providedToken?: string): string => requireRouterPortalProtectedToken({
+  createError: () => new PortalApiError('Portal session token not found', 401),
+  providedToken,
+  tokenBundle: readPortalTokenBundle(),
+});
 
 async function getJson<T>(path: string, token?: string): Promise<T> {
   const response = await fetch(`${await resolvePortalBaseUrl()}${path}`, {
@@ -690,14 +782,20 @@ export function registerPortalUser(input: {
   password: string;
   display_name: string;
 }): Promise<PortalAuthSession> {
-  return postJson<typeof input, PortalAuthSession>('/auth/register', input);
+  return postJson<typeof input, PortalAuthSession>('/auth/register', input).then((session) => {
+    persistPortalAuthPayloadTokens(session);
+    return session;
+  });
 }
 
 export function loginPortalUser(input: {
   email: string;
   password: string;
 }): Promise<PortalAuthSession> {
-  return postJson<typeof input, PortalAuthSession>('/auth/login', input);
+  return postJson<typeof input, PortalAuthSession>('/auth/login', input).then((session) => {
+    persistPortalAuthPayloadTokens(session);
+    return session;
+  });
 }
 
 export function getPortalMe(token?: string): Promise<PortalUserProfile> {

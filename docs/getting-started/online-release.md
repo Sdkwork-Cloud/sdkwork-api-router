@@ -71,7 +71,7 @@ The workflow materializes referenced external release dependencies before verifi
 - `SDKWORK_CORE_GIT_REF`
 - `SDKWORK_UI_GIT_REF`
 - `SDKWORK_APPBASE_GIT_REF`
-- `SDKWORK_CRAW_CHAT_SDK_GIT_REF`
+- `SDKWORK_IM_SDK_GIT_REF`
 
 Use branch names for rolling integration or immutable commit SHAs for stricter release provenance. If a variable is omitted, the workflow falls back to `main`.
 

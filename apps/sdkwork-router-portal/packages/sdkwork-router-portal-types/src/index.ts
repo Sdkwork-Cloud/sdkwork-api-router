@@ -1,3 +1,6 @@
+export * from './userCenter';
+export * from './validation';
+
 export type PortalAnonymousRouteKey = 'login' | 'register' | 'forgot-password';
 export type PortalTopLevelRouteKey =
   | 'home'
@@ -105,7 +108,12 @@ export interface PortalUserProfile {
 }
 
 export interface PortalAuthSession {
+  access_token?: string;
+  auth_token?: string;
+  refresh_token?: string;
+  session_token?: string;
   token: string;
+  token_type?: string;
   user: PortalUserProfile;
   workspace: {
     tenant_id: string;

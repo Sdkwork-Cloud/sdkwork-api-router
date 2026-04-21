@@ -1,107 +1,26 @@
-export type GatewayRouteMode = 'sdkwork-remote' | 'custom';
-
-export type GatewayModelMappingStatus = 'active' | 'disabled';
-
-export interface GatewayModelMappingRule {
-  id: string;
-  source_channel_id: string;
-  source_channel_name: string;
-  source_model_id: string;
-  source_model_name: string;
-  target_channel_id: string;
-  target_channel_name: string;
-  target_model_id: string;
-  target_model_name: string;
-}
-
-export interface GatewayModelMappingRecord {
-  id: string;
-  name: string;
-  description: string;
-  status: GatewayModelMappingStatus;
-  effective_from: string;
-  effective_to?: string | null;
-  created_at: string;
-  rules: GatewayModelMappingRule[];
-}
-
-export interface GatewayApiKeyOverlayRecord {
-  source: 'system-generated' | 'custom';
-  route_mode: GatewayRouteMode;
-  route_provider_id?: string | null;
-  model_mapping_id?: string | null;
-  updated_at_ms: number;
-}
-
-export interface GatewayProviderSecretCacheRecord {
-  tenant_id: string;
-  provider_id: string;
-  key_reference: string;
-  secret_value: string;
-  updated_at_ms: number;
-}
-
-export interface GatewayApiKeyPlaintextRevealRecord {
-  plaintext_key: string;
-  source: 'system-generated' | 'custom';
-  updated_at_ms: number;
-}
-
-const API_ROUTER_MODEL_MAPPINGS_STORAGE_KEY =
-  'sdkwork-router-admin.api-router.model-mappings';
-const API_ROUTER_KEY_OVERLAYS_STORAGE_KEY =
-  'sdkwork-router-admin.api-router.key-overlays';
-const API_ROUTER_PROVIDER_SECRET_CACHE_STORAGE_KEY =
-  'sdkwork-router-admin.api-router.provider-secrets';
-const API_ROUTER_PLAINTEXT_REVEAL_STORAGE_KEY =
-  'sdkwork-router-admin.api-router.plaintext-reveals';
-
-let fallbackMappings: GatewayModelMappingRecord[] = [];
-let fallbackKeyOverlays: Record<string, GatewayApiKeyOverlayRecord> = {};
-let fallbackProviderSecrets: GatewayProviderSecretCacheRecord[] = [];
-let fallbackPlaintextReveals: Record<string, GatewayApiKeyPlaintextRevealRecord> = {};
-
-function storage(): Storage | null {
-  if (typeof globalThis.localStorage !== 'undefined') {
-    return globalThis.localStorage;
-  }
-
-  if (typeof window !== 'undefined' && window.localStorage) {
-    return window.localStorage;
-  }
-
-  return null;
-}
+import {
+  createGatewaySensitiveSessionStore,
+  type GatewayApiKeyPlaintextRevealRecord,
+} from './sensitiveSessionStore';
+export type { GatewayApiKeyPlaintextRevealRecord } from './sensitiveSessionStore';
+import {
+  createGatewayWorkspaceStore,
+  type GatewayApiKeyOverlayRecord,
+  type GatewayModelMappingRecord,
+  type GatewayModelMappingRule,
+  type GatewayModelMappingStatus,
+  type GatewayRouteMode,
+} from './gatewayWorkspaceStore';
+export type {
+  GatewayApiKeyOverlayRecord,
+  GatewayModelMappingRecord,
+  GatewayModelMappingRule,
+  GatewayModelMappingStatus,
+  GatewayRouteMode,
+} from './gatewayWorkspaceStore';
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
-}
-
-function readJson<T>(key: string, fallback: T): T {
-  const currentStorage = storage();
-  if (!currentStorage) {
-    return clone(fallback);
-  }
-
-  const raw = currentStorage.getItem(key);
-  if (!raw) {
-    return clone(fallback);
-  }
-
-  try {
-    return JSON.parse(raw) as T;
-  } catch {
-    return clone(fallback);
-  }
-}
-
-function writeJson(key: string, value: unknown): void {
-  const currentStorage = storage();
-  if (!currentStorage) {
-    return;
-  }
-
-  currentStorage.setItem(key, JSON.stringify(value));
 }
 
 function createUniqueSuffix(): string {
@@ -151,65 +70,19 @@ function normalizeRule(
 }
 
 function readMappings(): GatewayModelMappingRecord[] {
-  fallbackMappings = clone(
-    readJson<GatewayModelMappingRecord[]>(
-      API_ROUTER_MODEL_MAPPINGS_STORAGE_KEY,
-      fallbackMappings,
-    ),
-  );
-  return clone(fallbackMappings);
+  return createGatewayWorkspaceStore().listModelMappings();
 }
 
 function writeMappings(items: GatewayModelMappingRecord[]): void {
-  fallbackMappings = clone(items);
-  writeJson(API_ROUTER_MODEL_MAPPINGS_STORAGE_KEY, fallbackMappings);
+  createGatewayWorkspaceStore().writeModelMappings(items);
 }
 
 function readKeyOverlays(): Record<string, GatewayApiKeyOverlayRecord> {
-  fallbackKeyOverlays = clone(
-    readJson<Record<string, GatewayApiKeyOverlayRecord>>(
-      API_ROUTER_KEY_OVERLAYS_STORAGE_KEY,
-      fallbackKeyOverlays,
-    ),
-  );
-  return clone(fallbackKeyOverlays);
+  return createGatewayWorkspaceStore().readKeyOverlays();
 }
 
 function writeKeyOverlays(items: Record<string, GatewayApiKeyOverlayRecord>): void {
-  fallbackKeyOverlays = clone(items);
-  writeJson(API_ROUTER_KEY_OVERLAYS_STORAGE_KEY, fallbackKeyOverlays);
-}
-
-function readProviderSecrets(): GatewayProviderSecretCacheRecord[] {
-  fallbackProviderSecrets = clone(
-    readJson<GatewayProviderSecretCacheRecord[]>(
-      API_ROUTER_PROVIDER_SECRET_CACHE_STORAGE_KEY,
-      fallbackProviderSecrets,
-    ),
-  );
-  return clone(fallbackProviderSecrets);
-}
-
-function writeProviderSecrets(items: GatewayProviderSecretCacheRecord[]): void {
-  fallbackProviderSecrets = clone(items);
-  writeJson(API_ROUTER_PROVIDER_SECRET_CACHE_STORAGE_KEY, fallbackProviderSecrets);
-}
-
-function readPlaintextReveals(): Record<string, GatewayApiKeyPlaintextRevealRecord> {
-  fallbackPlaintextReveals = clone(
-    readJson<Record<string, GatewayApiKeyPlaintextRevealRecord>>(
-      API_ROUTER_PLAINTEXT_REVEAL_STORAGE_KEY,
-      fallbackPlaintextReveals,
-    ),
-  );
-  return clone(fallbackPlaintextReveals);
-}
-
-function writePlaintextReveals(
-  items: Record<string, GatewayApiKeyPlaintextRevealRecord>,
-): void {
-  fallbackPlaintextReveals = clone(items);
-  writeJson(API_ROUTER_PLAINTEXT_REVEAL_STORAGE_KEY, fallbackPlaintextReveals);
+  createGatewayWorkspaceStore().writeKeyOverlays(items);
 }
 
 export function listGatewayModelMappings(): GatewayModelMappingRecord[] {
@@ -394,16 +267,7 @@ export function clearGatewayApiKeyOverlay(hashedKey: string): void {
 export function readGatewayApiKeyPlaintextReveal(
   hashedKey: string,
 ): GatewayApiKeyPlaintextRevealRecord | null {
-  const reveal = readPlaintextReveals()[hashedKey];
-  if (!reveal?.plaintext_key?.trim()) {
-    return null;
-  }
-
-  return {
-    plaintext_key: reveal.plaintext_key,
-    source: reveal.source === 'custom' ? 'custom' : 'system-generated',
-    updated_at_ms: reveal.updated_at_ms ?? 0,
-  };
+  return createGatewaySensitiveSessionStore().readPlaintextReveal(hashedKey);
 }
 
 export function rememberGatewayApiKeyPlaintextReveal(input: {
@@ -411,67 +275,9 @@ export function rememberGatewayApiKeyPlaintextReveal(input: {
   plaintext_key: string;
   source?: 'system-generated' | 'custom' | null;
 }): GatewayApiKeyPlaintextRevealRecord {
-  const reveals = readPlaintextReveals();
-  const next: GatewayApiKeyPlaintextRevealRecord = {
-    plaintext_key: input.plaintext_key,
-    source: input.source === 'custom' ? 'custom' : 'system-generated',
-    updated_at_ms: Date.now(),
-  };
-
-  reveals[input.hashed_key] = next;
-  writePlaintextReveals(reveals);
-  return next;
+  return createGatewaySensitiveSessionStore().rememberPlaintextReveal(input);
 }
 
 export function clearGatewayApiKeyPlaintextReveal(hashedKey: string): void {
-  const reveals = readPlaintextReveals();
-  if (!reveals[hashedKey]) {
-    return;
-  }
-
-  delete reveals[hashedKey];
-  writePlaintextReveals(reveals);
-}
-
-export function readGatewayProviderSecretCache(
-  tenantId: string,
-  providerId: string,
-  keyReference: string,
-): GatewayProviderSecretCacheRecord | null {
-  return (
-    readProviderSecrets().find(
-      (record) =>
-        record.tenant_id === tenantId &&
-        record.provider_id === providerId &&
-        record.key_reference === keyReference,
-    ) ?? null
-  );
-}
-
-export function saveGatewayProviderSecretCache(input: {
-  tenant_id: string;
-  provider_id: string;
-  key_reference: string;
-  secret_value: string;
-}): GatewayProviderSecretCacheRecord {
-  const items = readProviderSecrets();
-  const nextRecord: GatewayProviderSecretCacheRecord = {
-    tenant_id: normalizeText(input.tenant_id),
-    provider_id: normalizeText(input.provider_id),
-    key_reference: normalizeText(input.key_reference),
-    secret_value: input.secret_value,
-    updated_at_ms: Date.now(),
-  };
-
-  const nextItems = items.filter(
-    (record) =>
-      !(
-        record.tenant_id === nextRecord.tenant_id &&
-        record.provider_id === nextRecord.provider_id &&
-        record.key_reference === nextRecord.key_reference
-      ),
-  );
-  nextItems.unshift(nextRecord);
-  writeProviderSecrets(nextItems);
-  return nextRecord;
+  createGatewaySensitiveSessionStore().clearPlaintextReveal(hashedKey);
 }

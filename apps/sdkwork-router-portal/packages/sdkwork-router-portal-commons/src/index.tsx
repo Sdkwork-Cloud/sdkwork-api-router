@@ -17,6 +17,10 @@ import {
   translatePortalText as translatePortalCoreText,
   translatePortalTextForLocale,
 } from './i18n-core';
+import {
+  persistPortalLocale,
+  readPersistedPortalLocale,
+} from './localePreferenceStore';
 
 export function cn(...inputs: ClassValue[]): string {
   return twMerge(clsx(inputs));
@@ -31,8 +35,6 @@ type PortalI18nContextValue = {
   setLocale: (locale: PortalLocale) => void;
   t: (text: string, values?: TranslationValues) => string;
 };
-
-const PORTAL_I18N_STORAGE_KEY = 'sdkwork-router-portal.locale.v1';
 
 const PORTAL_MESSAGE_KEYS = [
   ' in {region}',
@@ -910,15 +912,10 @@ function resolveInitialLocale(): PortalLocale {
 
   let locale: PortalLocale;
 
-  try {
-    const persisted = window.localStorage.getItem(PORTAL_I18N_STORAGE_KEY);
-    if (persisted) {
-      locale = normalizeLocale(persisted);
-    } else {
-      locale = normalizeLocale(window.navigator.language);
-    }
-  } catch {
-    // Ignore storage access failures and fall back to browser locale.
+  const persistedLocale = readPersistedPortalLocale();
+  if (persistedLocale) {
+    locale = persistedLocale;
+  } else {
     locale = normalizeLocale(window.navigator.language);
   }
 
@@ -965,13 +962,7 @@ export function PortalI18nProvider({ children }: { children: ReactNode }) {
   }, [locale]);
 
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        window.localStorage.setItem(PORTAL_I18N_STORAGE_KEY, locale);
-      } catch {
-        // Ignore storage write failures.
-      }
-    }
+    persistPortalLocale(locale);
 
     if (typeof document !== 'undefined') {
       document.documentElement.lang = locale;

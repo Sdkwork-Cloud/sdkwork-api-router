@@ -125,7 +125,7 @@ jobs:
           SDKWORK_CORE_GIT_REF: ${{ vars.SDKWORK_CORE_GIT_REF || 'main' }}
           SDKWORK_UI_GIT_REF: ${{ vars.SDKWORK_UI_GIT_REF || 'main' }}
           SDKWORK_APPBASE_GIT_REF: ${{ vars.SDKWORK_APPBASE_GIT_REF || 'main' }}
-          SDKWORK_CRAW_CHAT_SDK_GIT_REF: ${{ vars.SDKWORK_CRAW_CHAT_SDK_GIT_REF || 'main' }}
+          SDKWORK_IM_SDK_GIT_REF: ${{ vars.SDKWORK_IM_SDK_GIT_REF || 'main' }}
         run: node scripts/release/materialize-external-deps.mjs
 
       - name: Install product verification workspace dependencies
@@ -177,7 +177,7 @@ jobs:
           SDKWORK_CORE_GIT_REF: ${{ vars.SDKWORK_CORE_GIT_REF || 'main' }}
           SDKWORK_UI_GIT_REF: ${{ vars.SDKWORK_UI_GIT_REF || 'main' }}
           SDKWORK_APPBASE_GIT_REF: ${{ vars.SDKWORK_APPBASE_GIT_REF || 'main' }}
-          SDKWORK_CRAW_CHAT_SDK_GIT_REF: ${{ vars.SDKWORK_CRAW_CHAT_SDK_GIT_REF || 'main' }}
+          SDKWORK_IM_SDK_GIT_REF: ${{ vars.SDKWORK_IM_SDK_GIT_REF || 'main' }}
         run: node scripts/release/materialize-external-deps.mjs
 
       - name: Install governance workspace dependencies
@@ -226,7 +226,7 @@ jobs:
           SDKWORK_CORE_GIT_REF: ${{ vars.SDKWORK_CORE_GIT_REF || 'main' }}
           SDKWORK_UI_GIT_REF: ${{ vars.SDKWORK_UI_GIT_REF || 'main' }}
           SDKWORK_APPBASE_GIT_REF: ${{ vars.SDKWORK_APPBASE_GIT_REF || 'main' }}
-          SDKWORK_CRAW_CHAT_SDK_GIT_REF: ${{ vars.SDKWORK_CRAW_CHAT_SDK_GIT_REF || 'main' }}
+          SDKWORK_IM_SDK_GIT_REF: ${{ vars.SDKWORK_IM_SDK_GIT_REF || 'main' }}
         run: node scripts/release/materialize-release-sync-audit.mjs
 
       - name: Upload release sync audit governance artifact
@@ -321,7 +321,7 @@ jobs:
           SDKWORK_CORE_GIT_REF: ${{ vars.SDKWORK_CORE_GIT_REF || 'main' }}
           SDKWORK_UI_GIT_REF: ${{ vars.SDKWORK_UI_GIT_REF || 'main' }}
           SDKWORK_APPBASE_GIT_REF: ${{ vars.SDKWORK_APPBASE_GIT_REF || 'main' }}
-          SDKWORK_CRAW_CHAT_SDK_GIT_REF: ${{ vars.SDKWORK_CRAW_CHAT_SDK_GIT_REF || 'main' }}
+          SDKWORK_IM_SDK_GIT_REF: ${{ vars.SDKWORK_IM_SDK_GIT_REF || 'main' }}
           SDKWORK_RELEASE_WINDOW_SNAPSHOT_PATH: docs/release/release-window-snapshot-latest.json
           SDKWORK_RELEASE_SYNC_AUDIT_PATH: docs/release/release-sync-audit-latest.json
         run: node scripts/release/run-release-governance-checks.mjs --format json
@@ -388,7 +388,7 @@ jobs:
           SDKWORK_CORE_GIT_REF: ${{ vars.SDKWORK_CORE_GIT_REF || 'main' }}
           SDKWORK_UI_GIT_REF: ${{ vars.SDKWORK_UI_GIT_REF || 'main' }}
           SDKWORK_APPBASE_GIT_REF: ${{ vars.SDKWORK_APPBASE_GIT_REF || 'main' }}
-          SDKWORK_CRAW_CHAT_SDK_GIT_REF: ${{ vars.SDKWORK_CRAW_CHAT_SDK_GIT_REF || 'main' }}
+          SDKWORK_IM_SDK_GIT_REF: ${{ vars.SDKWORK_IM_SDK_GIT_REF || 'main' }}
         run: node scripts/release/materialize-external-deps.mjs
 
       - name: Install Rust toolchain
@@ -416,18 +416,8 @@ jobs:
           pnpm --dir apps/sdkwork-router-admin install --frozen-lockfile
           pnpm --dir apps/sdkwork-router-portal install --frozen-lockfile
 
-      - name: Build release service binaries on Windows
-        if: matrix.platform == 'windows'
-        env:
-          CMAKE_GENERATOR: Visual Studio 17 2022
-          HOST_CMAKE_GENERATOR: Visual Studio 17 2022
-        shell: bash
-        run: cargo build --release --target ${{ matrix.target }} -p admin-api-service -p gateway-service -p portal-api-service -p router-web-service -p router-product-service
-
-      - name: Build release service binaries on Unix
-        if: matrix.platform != 'windows'
-        shell: bash
-        run: cargo build --release --target ${{ matrix.target }} -p admin-api-service -p gateway-service -p portal-api-service -p router-web-service -p router-product-service
+      - name: Build release service binaries
+        run: node scripts/release/run-service-release-build.mjs --target ${{ matrix.target }}
 
       - name: Build portal desktop release
         shell: bash

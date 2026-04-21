@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
@@ -177,27 +178,41 @@ test('release sync audit exposes strict repository spec and live refresh lookup 
   assert.deepEqual(
     module.listReleaseSyncRepositorySpecsByIds([
       'sdkwork-api-router',
-      'sdkwork-craw-chat-sdk',
+      'sdkwork-im-sdk',
     ]).map(({ id }) => id),
     [
       'sdkwork-api-router',
-      'sdkwork-craw-chat-sdk',
+      'sdkwork-im-sdk',
     ],
   );
 
   assert.deepEqual(
     module.listReleaseSyncLiveRefreshRepositoryIds(),
-    ['sdkwork-api-router'],
+    [
+      'sdkwork-api-router',
+      'sdkwork-core',
+      'sdkwork-ui',
+      'sdkwork-appbase',
+      'sdkwork-im-sdk',
+    ],
   );
   assert.equal(
     module.findReleaseSyncLiveRefreshRepositoryId('sdkwork-api-router'),
     'sdkwork-api-router',
   );
+  assert.equal(
+    module.findReleaseSyncLiveRefreshRepositoryId('sdkwork-ui'),
+    'sdkwork-ui',
+  );
   assert.deepEqual(
     module.listReleaseSyncLiveRefreshRepositoryIdsByIds([
       'sdkwork-api-router',
+      'sdkwork-ui',
     ]),
-    ['sdkwork-api-router'],
+    [
+      'sdkwork-api-router',
+      'sdkwork-ui',
+    ],
   );
 
   assert.throws(
@@ -205,8 +220,8 @@ test('release sync audit exposes strict repository spec and live refresh lookup 
     /missing release sync repository spec.*missing-release-sync-repository/i,
   );
   assert.throws(
-    () => module.findReleaseSyncLiveRefreshRepositoryId('sdkwork-ui'),
-    /missing release sync live refresh repository id.*sdkwork-ui/i,
+    () => module.findReleaseSyncLiveRefreshRepositoryId('missing-release-sync-repository'),
+    /missing release sync live refresh repository id.*missing-release-sync-repository/i,
   );
 });
 
@@ -235,19 +250,19 @@ test('release sync audit exposes repository specs and blocks non-standalone, dir
       'sdkwork-core',
       'sdkwork-ui',
       'sdkwork-appbase',
-      'sdkwork-craw-chat-sdk',
+      'sdkwork-im-sdk',
     ],
   );
   assert.equal(specs[0].envRefKey, 'SDKWORK_API_ROUTER_GIT_REF');
   assert.equal(specs[0].defaultRef, 'main');
-  assert.equal(specs[4].envRefKey, 'SDKWORK_CRAW_CHAT_SDK_GIT_REF');
+  assert.equal(specs[4].envRefKey, 'SDKWORK_IM_SDK_GIT_REF');
   assert.match(
     specs[4].targetDir.replaceAll('\\', '/'),
-    /\/craw-chat\/sdks\/sdkwork-craw-chat-sdk\/sdkwork-craw-chat-sdk-typescript\/composed$/,
+    /\/craw-chat\/sdks\/sdkwork-im-sdk$/,
   );
   assert.match(
     specs[4].expectedGitRoot.replaceAll('\\', '/'),
-    /\/craw-chat$/,
+    /\/craw-chat\/sdks\/sdkwork-im-sdk$/,
   );
 
   assert.equal(
@@ -461,7 +476,7 @@ test('release sync audit consumes governed JSON input without spawning git', asy
   assert.deepEqual(summary, artifact.summary);
 });
 
-test('release sync audit refreshes the current repository live while preserving governed external reports', async () => {
+test('release sync audit refreshes only explicitly requested governed repositories live while preserving the remaining governed reports', async () => {
   const module = await import(
     pathToFileURL(
       path.join(repoRoot, 'scripts', 'release', 'verify-release-sync.mjs'),
@@ -476,6 +491,7 @@ test('release sync audit refreshes the current repository live while preserving 
   });
 
   const summary = module.auditReleaseSyncRepositories({
+    specs: [routerSpec],
     env: {
       SDKWORK_RELEASE_SYNC_AUDIT_JSON: JSON.stringify(artifact),
     },
@@ -490,6 +506,156 @@ test('release sync audit refreshes the current repository live while preserving 
   assert.equal(summary.reports[1].id, 'sdkwork-ui');
   assert.equal(summary.reports[1].localHead, 'ui123');
   assert.equal(summary.reports[1].remoteHead, 'ui123');
+});
+
+test('release sync audit refreshes every governed repository live when governed input is provided', async () => {
+  const module = await import(
+    pathToFileURL(
+      path.join(repoRoot, 'scripts', 'release', 'verify-release-sync.mjs'),
+    ).href,
+  );
+
+  const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), 'sdkwork-release-sync-live-'));
+  const routerDir = path.join(fixtureRoot, 'sdkwork-api-router');
+  const uiDir = path.join(fixtureRoot, 'sdkwork-ui');
+  mkdirSync(routerDir, { recursive: true });
+  mkdirSync(uiDir, { recursive: true });
+
+  const specs = [
+    {
+      id: 'sdkwork-api-router',
+      targetDir: routerDir,
+      expectedGitRoot: routerDir,
+      expectedRemoteUrl: 'https://github.com/Sdkwork-Cloud/sdkwork-api-router.git',
+      envRefKey: 'SDKWORK_API_ROUTER_GIT_REF',
+      defaultRef: 'main',
+    },
+    {
+      id: 'sdkwork-ui',
+      targetDir: uiDir,
+      expectedGitRoot: uiDir,
+      expectedRemoteUrl: 'https://github.com/Sdkwork-Cloud/sdkwork-ui.git',
+      envRefKey: 'SDKWORK_UI_GIT_REF',
+      defaultRef: 'main',
+    },
+  ];
+  const liveHeads = new Map([
+    ['sdkwork-api-router', 'live-router-head'],
+    ['sdkwork-ui', 'live-ui-head'],
+  ]);
+  let gitSpawnCount = 0;
+
+  const summary = module.auditReleaseSyncRepositories({
+    specs,
+    env: {
+      SDKWORK_RELEASE_SYNC_AUDIT_JSON: JSON.stringify({
+        generatedAt: '2026-04-08T13:00:00Z',
+        source: {
+          kind: 'release-sync-audit-fixture',
+          provenance: 'synthetic-test',
+        },
+        summary: {
+          releasable: true,
+          reports: [
+            {
+              id: 'sdkwork-api-router',
+              targetDir: routerDir,
+              expectedGitRoot: routerDir,
+              topLevel: routerDir,
+              remoteUrl: 'https://github.com/Sdkwork-Cloud/sdkwork-api-router.git',
+              localHead: 'stale-router-head',
+              remoteHead: 'stale-router-head',
+              expectedRef: 'main',
+              branch: 'main',
+              upstream: 'origin/main',
+              ahead: 0,
+              behind: 0,
+              isDirty: false,
+              reasons: [],
+              releasable: true,
+            },
+            {
+              id: 'sdkwork-ui',
+              targetDir: uiDir,
+              expectedGitRoot: uiDir,
+              topLevel: uiDir,
+              remoteUrl: 'https://github.com/Sdkwork-Cloud/sdkwork-ui.git',
+              localHead: 'stale-ui-head',
+              remoteHead: 'stale-ui-head',
+              expectedRef: 'main',
+              branch: 'main',
+              upstream: 'origin/main',
+              ahead: 0,
+              behind: 0,
+              isDirty: false,
+              reasons: [],
+              releasable: true,
+            },
+          ],
+        },
+      }),
+    },
+    spawnSyncImpl(command, args, options = {}) {
+      gitSpawnCount += 1;
+      assert.equal(command, process.platform === 'win32' ? 'git.exe' : 'git');
+
+      const spec = specs.find((candidate) => candidate.targetDir === options.cwd);
+      assert.ok(spec, `unexpected cwd: ${options.cwd}`);
+      const liveHead = liveHeads.get(spec.id);
+      const key = args.join('\u0000');
+
+      if (key === 'rev-parse\u0000--show-toplevel') {
+        return {
+          status: 0,
+          stdout: `${spec.expectedGitRoot}\n`,
+          stderr: '',
+        };
+      }
+
+      if (key === 'status\u0000--short\u0000--branch') {
+        return {
+          status: 0,
+          stdout: '## main...origin/main\n',
+          stderr: '',
+        };
+      }
+
+      if (key === 'remote\u0000get-url\u0000origin') {
+        return {
+          status: 0,
+          stdout: `${spec.expectedRemoteUrl}\n`,
+          stderr: '',
+        };
+      }
+
+      if (key === 'rev-parse\u0000HEAD') {
+        return {
+          status: 0,
+          stdout: `${liveHead}\n`,
+          stderr: '',
+        };
+      }
+
+      if (key === 'ls-remote\u0000origin\u0000main') {
+        return {
+          status: 0,
+          stdout: `${liveHead}\trefs/heads/main\n`,
+          stderr: '',
+        };
+      }
+
+      throw new Error(`unexpected command: ${command} ${args.join(' ')}`);
+    },
+  });
+
+  assert.equal(gitSpawnCount, 10);
+  assert.equal(summary.releasable, true);
+  assert.equal(summary.reports[0].id, 'sdkwork-api-router');
+  assert.equal(summary.reports[0].localHead, 'live-router-head');
+  assert.equal(summary.reports[0].remoteHead, 'live-router-head');
+  assert.equal(summary.reports[1].id, 'sdkwork-ui');
+  assert.equal(summary.reports[1].localHead, 'live-ui-head');
+  assert.equal(summary.reports[1].remoteHead, 'live-ui-head');
 });
 
 test('release sync audit can replay the default latest artifact without live refresh when specs are explicitly empty', async () => {
@@ -526,36 +692,157 @@ test('release sync audit can replay the default latest artifact without live ref
   );
 });
 
-test('release sync audit refreshes the current repository live when replaying the default latest artifact', async () => {
+test('release sync audit refreshes every governed repository live when replaying the default latest artifact', async () => {
   const module = await import(
     pathToFileURL(
       path.join(repoRoot, 'scripts', 'release', 'verify-release-sync.mjs'),
     ).href,
   );
 
-  const artifact = createGovernedReleaseSyncAuditArtifactPayload();
-  const [routerSpec] = module.listReleaseSyncRepositorySpecs();
-  const liveGit = createLiveCurrentRepoGitSpawn(routerSpec, {
-    localHead: 'fed456',
-    remoteHead: 'fed456',
-  });
+  const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), 'sdkwork-release-sync-default-live-'));
+  const routerDir = path.join(fixtureRoot, 'sdkwork-api-router');
+  const uiDir = path.join(fixtureRoot, 'sdkwork-ui');
+  mkdirSync(routerDir, { recursive: true });
+  mkdirSync(uiDir, { recursive: true });
+
+  const artifact = {
+    generatedAt: '2026-04-08T13:00:00Z',
+    source: {
+      kind: 'release-sync-audit-fixture',
+      provenance: 'synthetic-test',
+    },
+    summary: {
+      releasable: true,
+      reports: [
+        {
+          id: 'sdkwork-api-router',
+          targetDir: routerDir,
+          expectedGitRoot: routerDir,
+          topLevel: routerDir,
+          remoteUrl: 'https://github.com/Sdkwork-Cloud/sdkwork-api-router.git',
+          localHead: 'stale-router-head',
+          remoteHead: 'stale-router-head',
+          expectedRef: 'main',
+          branch: 'main',
+          upstream: 'origin/main',
+          ahead: 0,
+          behind: 0,
+          isDirty: false,
+          reasons: [],
+          releasable: true,
+        },
+        {
+          id: 'sdkwork-ui',
+          targetDir: uiDir,
+          expectedGitRoot: uiDir,
+          topLevel: uiDir,
+          remoteUrl: 'https://github.com/Sdkwork-Cloud/sdkwork-ui.git',
+          localHead: 'stale-ui-head',
+          remoteHead: 'stale-ui-head',
+          expectedRef: 'main',
+          branch: 'main',
+          upstream: 'origin/main',
+          ahead: 0,
+          behind: 0,
+          isDirty: false,
+          reasons: [],
+          releasable: true,
+        },
+      ],
+    },
+  };
+  const specs = [
+    {
+      id: 'sdkwork-api-router',
+      targetDir: routerDir,
+      expectedGitRoot: routerDir,
+      expectedRemoteUrl: 'https://github.com/Sdkwork-Cloud/sdkwork-api-router.git',
+      envRefKey: 'SDKWORK_API_ROUTER_GIT_REF',
+      defaultRef: 'main',
+    },
+    {
+      id: 'sdkwork-ui',
+      targetDir: uiDir,
+      expectedGitRoot: uiDir,
+      expectedRemoteUrl: 'https://github.com/Sdkwork-Cloud/sdkwork-ui.git',
+      envRefKey: 'SDKWORK_UI_GIT_REF',
+      defaultRef: 'main',
+    },
+  ];
+  const liveHeads = new Map([
+    ['sdkwork-api-router', 'fed456'],
+    ['sdkwork-ui', 'ui789'],
+  ]);
+  let gitSpawnCount = 0;
 
   withTemporaryFile(
     releaseSyncAuditPath,
     `${JSON.stringify(artifact, null, 2)}\n`,
     () => {
       const summary = module.auditReleaseSyncRepositories({
+        specs,
         env: {},
-        spawnSyncImpl: liveGit.spawnSyncImpl,
+        spawnSyncImpl(command, args, options = {}) {
+          gitSpawnCount += 1;
+          assert.equal(command, process.platform === 'win32' ? 'git.exe' : 'git');
+
+          const spec = specs.find((candidate) => candidate.targetDir === options.cwd);
+          assert.ok(spec, `unexpected cwd: ${options.cwd}`);
+          const liveHead = liveHeads.get(spec.id);
+          const key = args.join('\u0000');
+
+          if (key === 'rev-parse\u0000--show-toplevel') {
+            return {
+              status: 0,
+              stdout: `${spec.expectedGitRoot}\n`,
+              stderr: '',
+            };
+          }
+
+          if (key === 'status\u0000--short\u0000--branch') {
+            return {
+              status: 0,
+              stdout: '## main...origin/main\n',
+              stderr: '',
+            };
+          }
+
+          if (key === 'remote\u0000get-url\u0000origin') {
+            return {
+              status: 0,
+              stdout: `${spec.expectedRemoteUrl}\n`,
+              stderr: '',
+            };
+          }
+
+          if (key === 'rev-parse\u0000HEAD') {
+            return {
+              status: 0,
+              stdout: `${liveHead}\n`,
+              stderr: '',
+            };
+          }
+
+          if (key === 'ls-remote\u0000origin\u0000main') {
+            return {
+              status: 0,
+              stdout: `${liveHead}\trefs/heads/main\n`,
+              stderr: '',
+            };
+          }
+
+          throw new Error(`unexpected command: ${command} ${args.join(' ')}`);
+        },
       });
 
-      assert.equal(liveGit.getCount(), 5);
+      assert.equal(gitSpawnCount, 10);
       assert.equal(summary.releasable, true);
       assert.equal(summary.reports[0].id, 'sdkwork-api-router');
       assert.equal(summary.reports[0].localHead, 'fed456');
       assert.equal(summary.reports[0].remoteHead, 'fed456');
       assert.equal(summary.reports[1].id, 'sdkwork-ui');
-      assert.equal(summary.reports[1].localHead, 'ui123');
+      assert.equal(summary.reports[1].localHead, 'ui789');
+      assert.equal(summary.reports[1].remoteHead, 'ui789');
     },
   );
 });
@@ -675,21 +962,19 @@ test('release sync audit specs can remap governed external repositories into a d
     path.join(governedRoot, 'sdkwork-ui'),
   );
 
-  const sdkworkCrawChatSdk = specs.find((spec) => spec.id === 'sdkwork-craw-chat-sdk');
-  assert.ok(sdkworkCrawChatSdk);
+  const sdkworkImSdk = specs.find((spec) => spec.id === 'sdkwork-im-sdk');
+  assert.ok(sdkworkImSdk);
   assert.equal(
-    sdkworkCrawChatSdk.expectedGitRoot,
-    path.join(governedRoot, 'craw-chat'),
+    sdkworkImSdk.expectedGitRoot,
+    path.join(governedRoot, 'craw-chat', 'sdks', 'sdkwork-im-sdk'),
   );
   assert.equal(
-    sdkworkCrawChatSdk.targetDir,
+    sdkworkImSdk.targetDir,
     path.join(
       governedRoot,
       'craw-chat',
       'sdks',
-      'sdkwork-craw-chat-sdk',
-      'sdkwork-craw-chat-sdk-typescript',
-      'composed',
+      'sdkwork-im-sdk',
     ),
   );
 });

@@ -12,6 +12,10 @@ test('portal package exposes product-grade server plan and integrated product ch
   });
 
   assert.equal(
+    packageJson.default.scripts['test:user-center-standard'],
+    'node ../../scripts/run-user-center-standard.mjs',
+  );
+  assert.equal(
     packageJson.default.scripts['product:start'],
     'node ../../scripts/run-router-product.mjs',
   );
@@ -43,11 +47,15 @@ test('product check script plans portal and admin regression tests before build 
 
   assert.deepEqual(labels, [
     'portal typecheck',
+    'portal user-center standard',
     'portal regression tests',
     'portal browser runtime smoke',
     'admin typecheck',
     'admin regression tests',
     'admin browser runtime smoke',
+    'desktop tauri capability audit',
+    'browser storage governance audit',
+    'product source tracking audit',
     'server development workspace smoke',
     'portal desktop runtime rust tests',
     'docs bootstrap safety',
@@ -59,12 +67,28 @@ test('product check script plans portal and admin regression tests before build 
   ]);
   assert.equal(stepByLabel.get('portal typecheck')?.command, process.execPath);
   assert.match(stepByLabel.get('portal typecheck')?.args.join(' ') ?? '', /run-tsc-cli\.mjs --noEmit/);
+  assert.deepEqual(
+    stepByLabel.get('portal user-center standard')?.args,
+    [path.join(workspaceRoot, 'scripts', 'run-user-center-standard.mjs')],
+  );
   assert.deepEqual(stepByLabel.get('portal regression tests')?.args, ['--test', 'tests/*.mjs']);
   assert.match(stepByLabel.get('portal browser runtime smoke')?.args.join(' ') ?? '', /check-portal-browser-runtime\.mjs/);
   assert.equal(stepByLabel.get('admin typecheck')?.command, process.execPath);
   assert.match(stepByLabel.get('admin typecheck')?.args.join(' ') ?? '', /run-tsc-cli\.mjs --noEmit/);
   assert.deepEqual(stepByLabel.get('admin regression tests')?.args, ['--test', 'tests/*.mjs']);
   assert.match(stepByLabel.get('admin browser runtime smoke')?.args.join(' ') ?? '', /check-admin-browser-runtime\.mjs/);
+  assert.match(
+    stepByLabel.get('desktop tauri capability audit')?.args.join(' ') ?? '',
+    /check-tauri-capabilities\.mjs/,
+  );
+  assert.match(
+    stepByLabel.get('browser storage governance audit')?.args.join(' ') ?? '',
+    /check-browser-storage-governance\.mjs/,
+  );
+  assert.match(
+    stepByLabel.get('product source tracking audit')?.args.join(' ') ?? '',
+    /check-product-source-tracking\.mjs/,
+  );
   assert.match(
     stepByLabel.get('server development workspace smoke')?.args.join(' ') ?? '',
     /check-server-dev-workspace\.mjs/,

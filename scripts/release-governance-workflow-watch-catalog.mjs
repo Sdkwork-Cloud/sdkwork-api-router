@@ -29,6 +29,14 @@ export const RELEASE_GOVERNANCE_WORKFLOW_WATCH_REQUIREMENTS = [
     'release-governance workflow must watch the shared strict contract catalog contract test',
   ),
   createWatchRequirement(
+    'scripts/smoke-bind-retry-lib.mjs',
+    'release-governance workflow must watch the shared bind-retry smoke helper implementation',
+  ),
+  createWatchRequirement(
+    'scripts/smoke-bind-retry-lib.test.mjs',
+    'release-governance workflow must watch the shared bind-retry smoke helper contract test',
+  ),
+  createWatchRequirement(
     'scripts/release-governance-node-test-catalog.mjs',
     'release-governance workflow must watch the governed node test catalog module',
   ),

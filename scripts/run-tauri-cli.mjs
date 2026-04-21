@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import fs from 'node:fs';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -22,6 +22,10 @@ const BACKGROUND_LAUNCH_ENV = 'SDKWORK_ROUTER_BACKGROUND';
 
 function normalizeCliArgs(args = []) {
   return args.filter((arg) => arg !== '--');
+}
+
+function normalizeWorkspaceRelativePath(candidate = '') {
+  return path.relative(rootDir, path.resolve(candidate)).replaceAll('\\', '/');
 }
 
 function shouldLaunchInBackground(commandName, args = [], env = process.env) {
@@ -105,6 +109,19 @@ function withCargoToolchainOnPath(baseEnv = process.env, platform = process.plat
   return env;
 }
 
+function resolveLocalTauriCliCommand({
+  cwd = process.cwd(),
+  platform = process.platform,
+} = {}) {
+  const localBinName = platform === 'win32' ? 'tauri.CMD' : 'tauri';
+  const localBinPath = path.join(cwd, 'node_modules', '.bin', localBinName);
+  if (fs.existsSync(localBinPath)) {
+    return localBinPath;
+  }
+
+  return platform === 'win32' ? 'tauri.cmd' : 'tauri';
+}
+
 export function resolveManagedWindowsTauriTargetDir({
   env = process.env,
   cwd = process.cwd(),
@@ -160,6 +177,38 @@ function extractTargetTriple(args, env = process.env) {
   return String(env?.[DESKTOP_TARGET_ENV_VAR] ?? '').trim();
 }
 
+function shouldPreflightPortalDesktopRuntime({
+  commandName,
+  cwd = process.cwd(),
+} = {}) {
+  return commandName === 'dev'
+    && normalizeWorkspaceRelativePath(cwd) === 'apps/sdkwork-router-portal';
+}
+
+function createTauriCliPreflightSteps({
+  commandName,
+  cwd = process.cwd(),
+  env = process.env,
+  platform = process.platform,
+} = {}) {
+  if (!shouldPreflightPortalDesktopRuntime({
+    commandName,
+    cwd,
+  })) {
+    return [];
+  }
+
+  return [{
+    label: 'portal desktop runtime preflight',
+    command: process.execPath,
+    args: [path.join(rootDir, 'scripts', 'prepare-router-portal-desktop-runtime.mjs')],
+    cwd: rootDir,
+    env,
+    shell: false,
+    windowsHide: platform === 'win32',
+  }];
+}
+
 export function createTauriCliPlan({
   commandName,
   args = [],
@@ -198,18 +247,48 @@ export function createTauriCliPlan({
     }
   }
 
+  const finalEnv = withSupportedWindowsCmakeGenerator(
+    withCargoToolchainOnPath(managedEnv, platform),
+    platform,
+  );
+
   return {
-    command: platform === 'win32' ? 'tauri.cmd' : 'tauri',
+    command: resolveLocalTauriCliCommand({
+      cwd,
+      platform,
+    }),
     args: [commandName, ...args],
     cwd,
-    env: withSupportedWindowsCmakeGenerator(
-      withCargoToolchainOnPath(managedEnv, platform),
-      platform,
-    ),
+    env: finalEnv,
     shell: platform === 'win32',
     detached: background,
     windowsHide: platform === 'win32',
+    preflightSteps: createTauriCliPreflightSteps({
+      commandName,
+      cwd,
+      env: finalEnv,
+      platform,
+    }),
   };
+}
+
+function runPreflightSteps(preflightSteps = []) {
+  for (const step of preflightSteps) {
+    const result = spawnSync(step.command, step.args, {
+      cwd: step.cwd,
+      env: step.env,
+      stdio: 'inherit',
+      shell: step.shell ?? false,
+      windowsHide: step.windowsHide ?? process.platform === 'win32',
+    });
+
+    if (result.error) {
+      throw new Error(`${step.label} failed: ${result.error.message}`);
+    }
+    if ((result.status ?? 1) !== 0) {
+      throw new Error(`${step.label} exited with code ${result.status ?? 1}`);
+    }
+  }
 }
 
 function runCli() {
@@ -218,6 +297,12 @@ function runCli() {
     commandName,
     args,
   });
+  try {
+    runPreflightSteps(plan.preflightSteps ?? []);
+  } catch (error) {
+    console.error(`[run-tauri-cli] ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  }
   const child = spawn(plan.command, plan.args, {
     cwd: plan.cwd,
     env: plan.env,

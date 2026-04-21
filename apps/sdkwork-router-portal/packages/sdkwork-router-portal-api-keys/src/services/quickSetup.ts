@@ -1,5 +1,9 @@
 import { translatePortalText } from 'sdkwork-router-portal-commons/i18n-core';
-import { resolveGatewayBaseUrl as resolveGatewayBaseUrlFromPortalApi } from 'sdkwork-router-portal-portal-api';
+import {
+  invokeDesktopCommand,
+  isTauriDesktop,
+  resolveGatewayBaseUrl as resolveGatewayBaseUrlFromPortalApi,
+} from 'sdkwork-router-portal-portal-api';
 
 export type ApiKeySetupClientId =
   | 'codex'
@@ -82,25 +86,7 @@ export interface ApiKeyQuickSetupInput {
   }>;
 }
 
-type TauriWindowLike = Window & {
-  __TAURI__?: unknown;
-  __TAURI_INTERNALS__?: TauriInternalsLike;
-  isTauri?: boolean;
-};
-
-type TauriInternalsLike = {
-  invoke?: <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
-};
-
 const DEFAULT_GATEWAY_BASE_URL = 'http://127.0.0.1:8080';
-
-function resolveWindow(): TauriWindowLike | null {
-  if (typeof window === 'undefined') {
-    return null;
-  }
-
-  return window as TauriWindowLike;
-}
 
 function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/g, '');
@@ -125,24 +111,6 @@ function buildProviderId(hashedKey: string, clientId: ApiKeySetupClientId): stri
   return `api-key-${clientId}-${hashedKey.slice(0, 12)}`;
 }
 
-function isDesktopRuntime(): boolean {
-  const currentWindow = resolveWindow();
-  return Boolean(
-    currentWindow?.isTauri ||
-      currentWindow?.__TAURI__ ||
-      currentWindow?.__TAURI_INTERNALS__,
-  );
-}
-
-async function invokeDesktopCommand<T>(command: string, args?: Record<string, unknown>): Promise<T> {
-  const invoke = resolveWindow()?.__TAURI_INTERNALS__?.invoke;
-  if (typeof invoke !== 'function') {
-    throw new Error(translatePortalText('Tauri invoke bridge is unavailable.'));
-  }
-
-  return invoke<T>(command, args);
-}
-
 export async function resolveGatewayBaseUrl(): Promise<string> {
   try {
     return await resolveGatewayBaseUrlFromPortalApi();
@@ -152,7 +120,7 @@ export async function resolveGatewayBaseUrl(): Promise<string> {
 }
 
 export async function listApiKeyInstances(): Promise<ApiKeySetupInstance[]> {
-  if (!isDesktopRuntime()) {
+  if (!isTauriDesktop()) {
     return [];
   }
 

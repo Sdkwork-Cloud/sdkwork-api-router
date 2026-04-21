@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -17,6 +18,7 @@ const sdkworkUiSourceRoot = path.resolve(
 const defaultAdminProxyTarget = 'http://127.0.0.1:9981';
 const donorRoots = resolveWorkspaceDonorRoots(configDir);
 const normalizedConfigDir = path.resolve(configDir);
+const appRequire = createRequire(path.join(configDir, 'package.json'));
 const zustandPackageRoot = resolveReadablePackageRoot({
   appRoot: configDir,
   donorRoots,
@@ -165,6 +167,14 @@ function shouldSkipReadableExternalFallback(specifier: string) {
     || specifier.startsWith('sdkwork-router-admin-');
 }
 
+function canCurrentAppResolveBareSpecifier(specifier: string) {
+  try {
+    return typeof appRequire.resolve(specifier) === 'string';
+  } catch {
+    return false;
+  }
+}
+
 function manualChunks(id: string) {
   if (!id.includes('node_modules')) {
     return undefined;
@@ -209,6 +219,10 @@ function readableExternalFallbackPlugin() {
         return null;
       }
 
+      if (canCurrentAppResolveBareSpecifier(source)) {
+        return null;
+      }
+
       try {
         const resolution = findReadableModuleResolution({
           appRoot: normalizedConfigDir,
@@ -216,12 +230,10 @@ function readableExternalFallbackPlugin() {
           specifier: source,
         });
 
-        return resolution.candidateRoot === normalizedConfigDir
-          ? null
-          : normalizeAliasPath(resolveReadableFallbackModulePath({
-            specifier: source,
-            resolution,
-          }));
+        return normalizeAliasPath(resolveReadableFallbackModulePath({
+          specifier: source,
+          resolution,
+        }));
       } catch {
         return null;
       }

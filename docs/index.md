@@ -108,10 +108,10 @@ Run the full stack with the portal desktop shell and shared Pingora host:
 node scripts/dev/start-workspace.mjs --tauri
 ```
 
-Compile the standalone release binaries:
+Build the official release service binary set:
 
 ```bash
-cargo build --release -p admin-api-service -p gateway-service -p portal-api-service -p router-web-service
+node scripts/release/run-service-release-build.mjs --target <triple>
 ```
 
 Build the admin app:

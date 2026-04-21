@@ -140,7 +140,7 @@ const defaultReleaseSyncAuditPath = path.join(
 const releaseGovernanceTestEnvPatterns = [
   /^SDKWORK_RELEASE_/,
   /^SDKWORK_SLO_GOVERNANCE_EVIDENCE_/,
-  /^SDKWORK_(API_ROUTER|CORE|UI|APPBASE|CRAW_CHAT_SDK)_GIT_REF$/,
+  /^SDKWORK_(API_ROUTER|CORE|UI|APPBASE|IM_SDK)_GIT_REF$/,
 ];
 const releaseGovernanceTestEnvKeys = new Set([
   'CARGO_BUILD_JOBS',

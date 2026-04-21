@@ -185,7 +185,7 @@ export async function assertReleaseWorkflowContracts({
   assert.equal(specs.length, 4);
   assert.deepEqual(
     specs.map((spec) => spec.id),
-    ['sdkwork-core', 'sdkwork-ui', 'sdkwork-appbase', 'sdkwork-craw-chat-sdk'],
+    ['sdkwork-core', 'sdkwork-ui', 'sdkwork-appbase', 'sdkwork-im-sdk'],
   );
 
   const coverage = helper.auditExternalReleaseDependencyCoverage();

@@ -7,6 +7,7 @@
     "app:update-create": "node ../../../scripts/app-update-create.mjs",
     "dev": "node ../../scripts/dev/run-vite-cli.mjs --host 0.0.0.0",
     "build": "node ../../scripts/dev/run-vite-cli.mjs build",
+    "test:user-center-standard": "node ../../scripts/run-user-center-standard.mjs",
     "typecheck": "tsc --noEmit",
     "preview": "node ../../scripts/dev/run-vite-cli.mjs preview --host 0.0.0.0 --port 4174 --strictPort",
     "product:start": "node ../../scripts/run-router-product.mjs",

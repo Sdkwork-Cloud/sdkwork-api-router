@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-04-18T05:26:12.891Z",
+  "generatedAt": "2026-04-21T03:48:53.613Z",
   "source": {
     "kind": "release-sync-audit-live-git"
   },
@@ -13,8 +13,8 @@
         "expectedGitRoot": "D:\\javasource\\spring-ai-plus\\spring-ai-plus-business\\apps\\sdkwork-api-router",
         "topLevel": "D:/javasource/spring-ai-plus/spring-ai-plus-business/apps/sdkwork-api-router",
         "remoteUrl": "git@github.com:Sdkwork-Cloud/sdkwork-api-router.git",
-        "localHead": "376afa74b89471d095e4465132dbdeb8db082ac0",
-        "remoteHead": "376afa74b89471d095e4465132dbdeb8db082ac0",
+        "localHead": "141d675aad0b796784501e444033da83d5c122d5",
+        "remoteHead": "141d675aad0b796784501e444033da83d5c122d5",
         "expectedRef": "main",
         "branch": "main",
         "upstream": "origin/main",
@@ -28,71 +28,85 @@
       },
       {
         "id": "sdkwork-core",
-        "targetDir": "D:\\javasource\\spring-ai-plus\\spring-ai-plus-business\\apps\\sdkwork-api-router\\artifacts\\external-release-deps\\sdkwork-core",
-        "expectedGitRoot": "D:\\javasource\\spring-ai-plus\\spring-ai-plus-business\\apps\\sdkwork-api-router\\artifacts\\external-release-deps\\sdkwork-core",
-        "topLevel": "D:/javasource/spring-ai-plus/spring-ai-plus-business/apps/sdkwork-api-router/artifacts/external-release-deps/sdkwork-core",
-        "remoteUrl": "https://github.com/Sdkwork-Cloud/sdkwork-core.git",
-        "localHead": "b30bab1f67a696e903a753000282018ace673e13",
-        "remoteHead": "b30bab1f67a696e903a753000282018ace673e13",
+        "targetDir": "D:\\javasource\\spring-ai-plus\\spring-ai-plus-business\\apps\\sdkwork-core",
+        "expectedGitRoot": "D:\\javasource\\spring-ai-plus\\spring-ai-plus-business\\apps\\sdkwork-core",
+        "topLevel": "D:/javasource/spring-ai-plus",
+        "remoteUrl": "git@github.com:Sdkwork-Cloud/spring-ai-plus2.git",
+        "localHead": "f77dd6cd41f8e96943477224215ed54235755a05",
+        "remoteHead": "f77dd6cd41f8e96943477224215ed54235755a05",
         "expectedRef": "main",
         "branch": "main",
         "upstream": "origin/main",
         "ahead": 0,
         "behind": 0,
-        "isDirty": false,
-        "reasons": [],
-        "releasable": true
+        "isDirty": true,
+        "reasons": [
+          "not-standalone-root",
+          "dirty-working-tree",
+          "remote-url-mismatch"
+        ],
+        "releasable": false
       },
       {
         "id": "sdkwork-ui",
-        "targetDir": "D:\\javasource\\spring-ai-plus\\spring-ai-plus-business\\apps\\sdkwork-api-router\\artifacts\\external-release-deps\\sdkwork-ui",
-        "expectedGitRoot": "D:\\javasource\\spring-ai-plus\\spring-ai-plus-business\\apps\\sdkwork-api-router\\artifacts\\external-release-deps\\sdkwork-ui",
-        "topLevel": "D:/javasource/spring-ai-plus/spring-ai-plus-business/apps/sdkwork-api-router/artifacts/external-release-deps/sdkwork-ui",
-        "remoteUrl": "https://github.com/Sdkwork-Cloud/sdkwork-ui.git",
-        "localHead": "4f3ff3678dde945a22f699d8cca6be69412c646e",
+        "targetDir": "D:\\javasource\\spring-ai-plus\\spring-ai-plus-business\\apps\\sdkwork-ui",
+        "expectedGitRoot": "D:\\javasource\\spring-ai-plus\\spring-ai-plus-business\\apps\\sdkwork-ui",
+        "topLevel": "D:/javasource/spring-ai-plus/spring-ai-plus-business/apps/sdkwork-ui",
+        "remoteUrl": "git@github.com:Sdkwork-Cloud/sdkwork-ui.git",
+        "localHead": "97aadfef31f0c295e74d416924125ffa8b9545b8",
         "remoteHead": "4f3ff3678dde945a22f699d8cca6be69412c646e",
         "expectedRef": "main",
-        "branch": "main",
-        "upstream": "origin/main",
+        "branch": "HEAD (no branch)",
+        "upstream": "",
         "ahead": 0,
         "behind": 0,
-        "isDirty": false,
-        "reasons": [],
-        "releasable": true
+        "isDirty": true,
+        "reasons": [
+          "dirty-working-tree",
+          "branch-not-synced",
+          "head-mismatch"
+        ],
+        "releasable": false
       },
       {
         "id": "sdkwork-appbase",
-        "targetDir": "D:\\javasource\\spring-ai-plus\\spring-ai-plus-business\\apps\\sdkwork-api-router\\artifacts\\external-release-deps\\sdkwork-appbase",
-        "expectedGitRoot": "D:\\javasource\\spring-ai-plus\\spring-ai-plus-business\\apps\\sdkwork-api-router\\artifacts\\external-release-deps\\sdkwork-appbase",
-        "topLevel": "D:/javasource/spring-ai-plus/spring-ai-plus-business/apps/sdkwork-api-router/artifacts/external-release-deps/sdkwork-appbase",
+        "targetDir": "D:\\javasource\\spring-ai-plus\\spring-ai-plus-business\\apps\\sdkwork-appbase",
+        "expectedGitRoot": "D:\\javasource\\spring-ai-plus\\spring-ai-plus-business\\apps\\sdkwork-appbase",
+        "topLevel": "D:/javasource/spring-ai-plus/spring-ai-plus-business/apps/sdkwork-appbase",
         "remoteUrl": "https://github.com/Sdkwork-Cloud/sdkwork-appbase.git",
-        "localHead": "68131f684485efb284d85e8123fe13d9832a536d",
+        "localHead": "5be58707a1aaf1f4a15b13af385d894c59cf6103",
         "remoteHead": "68131f684485efb284d85e8123fe13d9832a536d",
         "expectedRef": "main",
-        "branch": "main",
-        "upstream": "origin/main",
+        "branch": "feature/sdkwork-sdk-downloader",
+        "upstream": "",
         "ahead": 0,
         "behind": 0,
-        "isDirty": false,
-        "reasons": [],
-        "releasable": true
+        "isDirty": true,
+        "reasons": [
+          "dirty-working-tree",
+          "branch-not-synced",
+          "head-mismatch"
+        ],
+        "releasable": false
       },
       {
-        "id": "sdkwork-craw-chat-sdk",
-        "targetDir": "D:\\javasource\\spring-ai-plus\\spring-ai-plus-business\\apps\\sdkwork-api-router\\artifacts\\external-release-deps\\craw-chat\\sdks\\sdkwork-craw-chat-sdk\\sdkwork-craw-chat-sdk-typescript\\composed",
-        "expectedGitRoot": "D:\\javasource\\spring-ai-plus\\spring-ai-plus-business\\apps\\sdkwork-api-router\\artifacts\\external-release-deps\\craw-chat",
-        "topLevel": "D:/javasource/spring-ai-plus/spring-ai-plus-business/apps/sdkwork-api-router/artifacts/external-release-deps/craw-chat",
-        "remoteUrl": "https://github.com/Sdkwork-Cloud/craw-chat.git",
-        "localHead": "61f3eb11160b16bfae5b3fb77d36a720074ee698",
-        "remoteHead": "61f3eb11160b16bfae5b3fb77d36a720074ee698",
+        "id": "sdkwork-im-sdk",
+        "targetDir": "D:\\javasource\\spring-ai-plus\\spring-ai-plus-business\\apps\\craw-chat\\sdks\\sdkwork-im-sdk",
+        "expectedGitRoot": "D:\\javasource\\spring-ai-plus\\spring-ai-plus-business\\apps\\craw-chat\\sdks\\sdkwork-im-sdk",
+        "topLevel": "D:/javasource/spring-ai-plus/spring-ai-plus-business/apps/craw-chat/sdks/sdkwork-im-sdk",
+        "remoteUrl": "https://github.com/Sdkwork-Cloud/sdkwork-im-sdk.git",
+        "localHead": "d3c24f23e428ae625cc9348d7c909f3f3d4717ec",
+        "remoteHead": "d3c24f23e428ae625cc9348d7c909f3f3d4717ec",
         "expectedRef": "main",
         "branch": "main",
         "upstream": "origin/main",
         "ahead": 0,
         "behind": 0,
-        "isDirty": false,
-        "reasons": [],
-        "releasable": true
+        "isDirty": true,
+        "reasons": [
+          "dirty-working-tree"
+        ],
+        "releasable": false
       }
     ]
   }

@@ -25,6 +25,8 @@ test('release governance workflow watch catalog publishes the exact governed wat
       'scripts/release/**',
       'scripts/strict-contract-catalog.mjs',
       'scripts/strict-contract-catalog.test.mjs',
+      'scripts/smoke-bind-retry-lib.mjs',
+      'scripts/smoke-bind-retry-lib.test.mjs',
       'scripts/release-governance-node-test-catalog.mjs',
       'scripts/release-governance-node-test-catalog.test.mjs',
       'scripts/release-governance-workflow-contracts.mjs',

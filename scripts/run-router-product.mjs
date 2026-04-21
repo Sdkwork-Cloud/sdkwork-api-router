@@ -103,11 +103,19 @@ function appendForwardArgs(args, extraArgs) {
     return args;
   }
 
-  return [...args, '--', ...extraArgs];
+  return [...args, ...extraArgs];
 }
 
 function isForwardedHelpRequest(extraArgs = []) {
   return extraArgs.length === 1 && (extraArgs[0] === '--help' || extraArgs[0] === '-h');
+}
+
+function withDryRunArg(args = []) {
+  return args.includes('--dry-run') ? args : [...args, '--dry-run'];
+}
+
+function shouldExpandDryRunStep(settings, step) {
+  return settings.mode === 'server' && step.command === process.execPath;
 }
 
 export function createRouterProductLaunchPlan({
@@ -148,14 +156,27 @@ export function createRouterProductLaunchPlan({
   let launchEnv = env;
   let launchShell = shell;
   let launchWindowsHide = platform === 'win32';
+  let launchCwd = workspaceRoot;
   switch (mode) {
     case 'desktop':
       label = 'portal desktop runtime';
-      launchArgs = appendForwardArgs(['--dir', portalRelativeDir, 'tauri:dev'], extraArgs);
+      launchCommand = nodeCommand;
+      launchShell = false;
+      launchCwd = portalAbsoluteDir;
+      launchArgs = appendForwardArgs([
+        path.join(workspaceRoot, 'scripts', 'run-tauri-cli.mjs'),
+        'dev',
+      ], extraArgs);
       break;
     case 'service':
       label = 'portal service runtime';
-      launchArgs = appendForwardArgs(['--dir', portalRelativeDir, 'tauri:dev'], extraArgs);
+      launchCommand = nodeCommand;
+      launchShell = false;
+      launchCwd = portalAbsoluteDir;
+      launchArgs = appendForwardArgs([
+        path.join(workspaceRoot, 'scripts', 'run-tauri-cli.mjs'),
+        'dev',
+      ], extraArgs);
       launchEnv = {
         ...env,
         SDKWORK_ROUTER_BACKGROUND: '1',
@@ -195,7 +216,14 @@ export function createRouterProductLaunchPlan({
       break;
     case 'browser':
       label = 'portal browser runtime';
-      launchArgs = appendForwardArgs(['--dir', portalRelativeDir, 'dev'], extraArgs);
+      launchCommand = nodeCommand;
+      launchShell = false;
+      launchCwd = portalAbsoluteDir;
+      launchArgs = appendForwardArgs([
+        path.join(workspaceRoot, 'scripts', 'dev', 'run-vite-cli.mjs'),
+        '--host',
+        '0.0.0.0',
+      ], extraArgs);
       break;
     default:
       throw new Error(
@@ -207,7 +235,7 @@ export function createRouterProductLaunchPlan({
     label,
     command: launchCommand,
     args: launchArgs,
-    cwd: workspaceRoot,
+    cwd: launchCwd,
     env: launchEnv,
     shell: launchShell,
     windowsHide: launchWindowsHide,
@@ -291,6 +319,14 @@ async function main() {
       console.error(`[run-router-product] ${rendered}`);
     }
     if (settings.dryRun) {
+      if (shouldExpandDryRunStep(settings, step)) {
+        // Expand the nested workspace launcher so root dry-runs show the full product plan.
+        // eslint-disable-next-line no-await-in-loop
+        await runStep({
+          ...step,
+          args: withDryRunArg(step.args),
+        });
+      }
       continue;
     }
     // eslint-disable-next-line no-await-in-loop

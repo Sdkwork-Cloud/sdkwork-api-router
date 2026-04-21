@@ -17,6 +17,12 @@ export function findReadableModuleResolution(options: {
   donorRoots?: string[];
   specifier: string;
   resolveFromRoot?: (root: string, specifier: string) => string;
+  fileExists?: (filePath: string) => boolean;
+  readDir?: (
+    directoryPath: string,
+    options: { withFileTypes: true },
+  ) => Array<{ isDirectory(): boolean; name: string }>;
+  readPackageJson?: (packageRoot: string) => Record<string, unknown>;
   isReadable?: (filePath: string) => boolean;
 }): ReadableModuleResolution;
 
@@ -71,6 +77,12 @@ export function resolveReadableModuleSpecifier(options: {
   donorRoots?: string[];
   specifier: string;
   resolveFromRoot?: (root: string, specifier: string) => string;
+  fileExists?: (filePath: string) => boolean;
+  readDir?: (
+    directoryPath: string,
+    options: { withFileTypes: true },
+  ) => Array<{ isDirectory(): boolean; name: string }>;
+  readPackageJson?: (packageRoot: string) => Record<string, unknown>;
   isReadable?: (filePath: string) => boolean;
 }): string;
 

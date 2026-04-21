@@ -30,7 +30,7 @@ export async function assertReleaseSyncAuditContracts({
       'sdkwork-core',
       'sdkwork-ui',
       'sdkwork-appbase',
-      'sdkwork-craw-chat-sdk',
+      'sdkwork-im-sdk',
     ],
   );
 

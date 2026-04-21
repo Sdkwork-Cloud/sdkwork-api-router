@@ -264,6 +264,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\bin\install.ps1 -Mode syst
 ## Verification
 
 ```bash
+pnpm test:user-center-standard
 node --test bin/tests/router-runtime-tooling.test.mjs
 node --test scripts/release/tests/release-workflow.test.mjs scripts/release/tests/run-unix-installed-runtime-smoke.test.mjs scripts/release/tests/run-windows-installed-runtime-smoke.test.mjs scripts/release/tests/deployment-assets.test.mjs
 node --test scripts/release-governance-workflow.test.mjs
@@ -271,6 +272,8 @@ node --test scripts/product-verification-workflow.test.mjs
 node --test scripts/rust-verification-workflow.test.mjs
 node --test scripts/release-flow-contract.test.mjs scripts/prepare-router-portal-desktop-runtime.test.mjs apps/sdkwork-router-portal/tests/portal-desktop-api-base.test.mjs apps/sdkwork-router-portal/tests/portal-desktop-sidecar-runtime.test.mjs
 ```
+
+Run `pnpm test:user-center-standard` before release-facing packaging when a change touches login, token transport, or user-center deployment wiring. The command now freezes the shared `sdkwork-appbase` contracts first and then proves the router portal adapter still honors the governed AuthToken or AccessToken and secret-handshake bridge.
 
 ## Next Steps
 

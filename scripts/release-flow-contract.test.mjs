@@ -73,8 +73,8 @@ test('repository exposes a native platform and architecture release workflow', (
   assert.match(workflow, /target:\s*x86_64-apple-darwin/);
   assert.match(workflow, /target:\s*aarch64-apple-darwin/);
   assert.match(workflow, /ubuntu-24\.04-arm/);
-  assert.match(workflow, /cargo build --release --target \$\{\{ matrix\.target \}\}/);
-  assert.match(workflow, /router-product-service/);
+  assert.match(workflow, /Build release service binaries/);
+  assert.match(workflow, /node scripts\/release\/run-service-release-build\.mjs --target \$\{\{ matrix\.target \}\}/);
   assert.match(workflow, /node scripts\/release\/run-desktop-release-build\.mjs --app portal --target \$\{\{ matrix\.target \}\}/);
   assert.match(workflow, /node scripts\/release\/package-release-assets\.mjs native --platform \$\{\{ matrix\.platform \}\} --arch \$\{\{ matrix\.arch \}\} --target \$\{\{ matrix\.target \}\}/);
   assert.match(workflow, /release-assets-native-\$\{\{ matrix\.platform \}\}-\$\{\{ matrix\.arch \}\}/);
@@ -242,16 +242,19 @@ test('desktop tauri configs enable bundling for native release packaging', () =>
 test('release target helpers and desktop release runner resolve explicit target triples', async () => {
   const helperPath = path.join(rootDir, 'scripts', 'release', 'desktop-targets.mjs');
   const runnerPath = path.join(rootDir, 'scripts', 'release', 'run-desktop-release-build.mjs');
+  const serviceRunnerPath = path.join(rootDir, 'scripts', 'release', 'run-service-release-build.mjs');
   const packagerPath = path.join(rootDir, 'scripts', 'release', 'package-release-assets.mjs');
   const tauriRunnerPath = path.join(rootDir, 'scripts', 'run-tauri-cli.mjs');
   const workspaceTargetDirPath = path.join(rootDir, 'scripts', 'workspace-target-dir.mjs');
 
   assert.equal(existsSync(helperPath), true, 'missing scripts/release/desktop-targets.mjs');
   assert.equal(existsSync(runnerPath), true, 'missing scripts/release/run-desktop-release-build.mjs');
+  assert.equal(existsSync(serviceRunnerPath), true, 'missing scripts/release/run-service-release-build.mjs');
   assert.equal(existsSync(packagerPath), true, 'missing scripts/release/package-release-assets.mjs');
 
   const helper = await import(pathToFileURL(helperPath).href);
   const runner = await import(pathToFileURL(runnerPath).href);
+  const serviceRunner = await import(pathToFileURL(serviceRunnerPath).href);
   const packager = await import(pathToFileURL(packagerPath).href);
   const tauriRunner = await import(pathToFileURL(tauriRunnerPath).href);
   const workspaceTargetDir = await import(pathToFileURL(workspaceTargetDirPath).href);
@@ -268,6 +271,9 @@ test('release target helpers and desktop release runner resolve explicit target 
   assert.equal(typeof helper.resolveDesktopReleaseTarget, 'function');
   assert.equal(typeof runner.createDesktopReleaseBuildPlan, 'function');
   assert.equal(typeof runner.buildDesktopReleaseFailureAnnotation, 'function');
+  assert.equal(typeof serviceRunner.parseCliArgs, 'function');
+  assert.equal(typeof serviceRunner.createServiceReleaseBuildPlan, 'function');
+  assert.equal(typeof serviceRunner.buildServiceReleaseBuildFailureAnnotation, 'function');
   assert.equal(typeof runner.resolveDesktopAppDir, 'function');
   assert.equal(typeof runner.resolveDesktopReleaseBundles, 'function');
   assert.equal(typeof tauriRunner.resolveManagedWindowsTauriTargetDir, 'function');
@@ -807,6 +813,71 @@ test('tauri build wrapper follows the managed workspace target policy on Windows
   } finally {
     rmSync(managedWindowsTargetRoot, { recursive: true, force: true });
   }
+});
+
+test('tauri dev wrapper preflights the portal desktop sidecar payload without affecting other desktop apps', async () => {
+  const tauriRunnerPath = path.join(rootDir, 'scripts', 'run-tauri-cli.mjs');
+  const tauriRunner = await import(pathToFileURL(tauriRunnerPath).href);
+  const portalAppDir = path.join(rootDir, 'apps', 'sdkwork-router-portal');
+  const adminAppDir = path.join(rootDir, 'apps', 'sdkwork-router-admin');
+  const prepareScriptPath = path.join(rootDir, 'scripts', 'prepare-router-portal-desktop-runtime.mjs');
+
+  const portalPlan = tauriRunner.createTauriCliPlan({
+    commandName: 'dev',
+    cwd: portalAppDir,
+    env: {},
+    platform: 'linux',
+  });
+  const adminPlan = tauriRunner.createTauriCliPlan({
+    commandName: 'dev',
+    cwd: adminAppDir,
+    env: {},
+    platform: 'linux',
+  });
+
+  assert.deepEqual(
+    portalPlan.preflightSteps?.map((step) => ({
+      command: step.command,
+      args: step.args,
+      cwd: step.cwd,
+      shell: step.shell,
+    })),
+    [{
+      command: process.execPath,
+      args: [prepareScriptPath],
+      cwd: rootDir,
+      shell: false,
+    }],
+  );
+  assert.deepEqual(adminPlan.preflightSteps ?? [], []);
+});
+
+test('tauri wrapper resolves the local app cli binary instead of depending on a pnpm-injected PATH entry', async () => {
+  const tauriRunnerPath = path.join(rootDir, 'scripts', 'run-tauri-cli.mjs');
+  const tauriRunner = await import(pathToFileURL(tauriRunnerPath).href);
+  const portalAppDir = path.join(rootDir, 'apps', 'sdkwork-router-portal');
+
+  const windowsPlan = tauriRunner.createTauriCliPlan({
+    commandName: 'dev',
+    cwd: portalAppDir,
+    env: {},
+    platform: 'win32',
+  });
+  const linuxPlan = tauriRunner.createTauriCliPlan({
+    commandName: 'dev',
+    cwd: portalAppDir,
+    env: {},
+    platform: 'linux',
+  });
+
+  assert.equal(
+    windowsPlan.command.replaceAll('\\', '/'),
+    path.join(portalAppDir, 'node_modules', '.bin', 'tauri.CMD').replaceAll('\\', '/'),
+  );
+  assert.equal(
+    linuxPlan.command.replaceAll('\\', '/'),
+    path.join(portalAppDir, 'node_modules', '.bin', 'tauri').replaceAll('\\', '/'),
+  );
 });
 
 test('native desktop packager writes one canonical installer, checksum, and manifest for the official portal desktop product', async () => {

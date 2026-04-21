@@ -124,7 +124,7 @@ test('browser runtime smoke plan preserves setup scripts, forbidden texts, and e
 
   const setupScript = module.createMockFetchSetupScript({
     localStorageEntries: {
-      'sdkwork.router.portal.session-token': 'portal-token',
+      'sdkwork-router-portal.user-center.session-token': 'portal-token',
     },
     exactResponses: {
       '/api/portal/workspace': {
@@ -153,7 +153,7 @@ test('browser runtime smoke plan preserves setup scripts, forbidden texts, and e
     '/api/admin/billing/accounts/646979632893840957/ledger',
   ]);
   assert.equal(plan.setupScript, setupScript);
-  assert.match(setupScript, /sdkwork\.router\.portal\.session-token/);
+  assert.match(setupScript, /sdkwork-router-portal\.user-center\.session-token/);
   assert.match(setupScript, /\/api\/portal\/workspace/);
   assert.match(setupScript, /646979632893840957/);
 });
@@ -253,4 +253,88 @@ test('browser runtime smoke timeout diagnostics include recent JavaScript except
   assert.match(message, /JavaScript exceptions observed before timeout/i);
   assert.match(message, /fullWidthClassName/);
   assert.match(message, /TypeError: Cannot read properties of undefined/);
+});
+
+test('browser runtime smoke retries after a devtools bind conflict and returns the later result', async () => {
+  const module = await import(
+    pathToFileURL(path.join(repoRoot, 'scripts', 'browser-runtime-smoke.mjs')).href,
+  );
+
+  assert.equal(typeof module.runBrowserRuntimeSmokeWithDependencies, 'function');
+
+  const attemptedPorts = [];
+  let delayCalls = 0;
+
+  const result = await module.runBrowserRuntimeSmokeWithDependencies({
+    url: 'http://127.0.0.1:4174/portal/',
+    expectedTexts: ['Unified AI gateway workspace'],
+    expectedSelectors: [],
+    browserPath: '/usr/bin/google-chrome',
+    platform: 'linux',
+    env: {},
+    timeoutMs: 5_000,
+    maxAttempts: 2,
+    retryDelayMs: 0,
+    allocateRemoteDebuggingPort: async ({ attempt }) => (attempt === 1 ? 9222 : 9223),
+    createUserDataDir: ({ attempt }) => `tmp/browser-smoke-${attempt}`,
+    attemptRunner: async ({ plan }) => {
+      attemptedPorts.push(plan.remoteDebuggingPort);
+      if (plan.remoteDebuggingPort === 9222) {
+        throw new Error('DevTools listener failed: Address already in use');
+      }
+
+      return {
+        ok: true,
+        remoteDebuggingPort: plan.remoteDebuggingPort,
+      };
+    },
+    delayImpl: async () => {
+      delayCalls += 1;
+    },
+  });
+
+  assert.deepEqual(attemptedPorts, [9222, 9223]);
+  assert.equal(delayCalls, 1);
+  assert.deepEqual(result, {
+    ok: true,
+    remoteDebuggingPort: 9223,
+  });
+});
+
+test('browser runtime smoke surfaces non-bind failures without retrying', async () => {
+  const module = await import(
+    pathToFileURL(path.join(repoRoot, 'scripts', 'browser-runtime-smoke.mjs')).href,
+  );
+
+  let allocationCalls = 0;
+  let delayCalls = 0;
+
+  await assert.rejects(
+    () => module.runBrowserRuntimeSmokeWithDependencies({
+      url: 'http://127.0.0.1:4174/portal/',
+      expectedTexts: ['Unified AI gateway workspace'],
+      expectedSelectors: [],
+      browserPath: '/usr/bin/google-chrome',
+      platform: 'linux',
+      env: {},
+      timeoutMs: 5_000,
+      maxAttempts: 3,
+      retryDelayMs: 0,
+      allocateRemoteDebuggingPort: async () => {
+        allocationCalls += 1;
+        return 9222;
+      },
+      createUserDataDir: () => 'tmp/browser-smoke',
+      attemptRunner: async () => {
+        throw new Error('page markers never rendered');
+      },
+      delayImpl: async () => {
+        delayCalls += 1;
+      },
+    }),
+    /page markers never rendered/,
+  );
+
+  assert.equal(allocationCalls, 1);
+  assert.equal(delayCalls, 0);
 });

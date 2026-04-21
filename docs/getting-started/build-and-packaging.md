@@ -17,8 +17,8 @@ Everything else in this repository is either a build input, a developer-facing w
 
 | Target | Command | Output |
 |---|---|---|
-| product host runtime | `cargo build --release -p router-product-service` | `target/release/router-product-service` |
-| standalone service binaries | `cargo build --release -p gateway-service -p admin-api-service -p portal-api-service -p router-web-service` | `target/release/` |
+| official release service binary set | `node scripts/release/run-service-release-build.mjs --target <triple>` | `$CARGO_TARGET_DIR/<triple>/release/` |
+| raw product host runtime (engineering) | `cargo build --release -p router-product-service` | `target/release/router-product-service` |
 | admin browser app | `pnpm --dir apps/sdkwork-router-admin build` | `apps/sdkwork-router-admin/dist/` |
 | portal browser app | `pnpm --dir apps/sdkwork-router-portal build` | `apps/sdkwork-router-portal/dist/` |
 | portal desktop sidecar payload | `node scripts/prepare-router-portal-desktop-runtime.mjs` | `bin/portal-rt/router-product/` |
@@ -27,10 +27,21 @@ Everything else in this repository is either a build input, a developer-facing w
 
 ## Build Server Product Inputs
 
-Compile the server-facing Rust binaries:
+Build the official server-facing Rust release binary set with the governed repository runner:
 
 ```bash
-cargo build --release -p router-product-service -p gateway-service -p admin-api-service -p portal-api-service -p router-web-service
+node scripts/release/run-service-release-build.mjs --target <triple>
+```
+
+That runner builds the full official binary set, including `router-product-service`, `gateway-service`, `admin-api-service`, `portal-api-service`, and `router-web-service`.
+It reuses the managed release build plan, so Linux and macOS keep the normal `target/<triple>/release/` layout while Windows automatically switches to a managed short-path `CARGO_TARGET_DIR` plus short `TEMP` and `TMP` directories.
+The script prints the resolved release directory at the end of the build so packaging or operator checks can consume the actual path without guessing.
+
+If you only need an ad hoc engineering build from a source checkout, the raw Cargo path still works:
+
+```bash
+cargo build --release -p router-product-service
+cargo build --release -p gateway-service -p admin-api-service -p portal-api-service -p router-web-service
 ```
 
 Then build the browser assets bundled into the server product:

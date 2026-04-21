@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -63,4 +63,19 @@ test('admin vite config pins source-linked style and icon runtime packages to go
   assert.match(viteConfig, /replacement:\s*lucideReactPackageRoot/);
   assert.match(viteConfig, /find:\s*\/\^lucide-react\\\/dist\\\/esm\\\/icons\\\/\//);
   assert.match(viteConfig, /replacement:\s*lucideReactIconsRoot/);
+});
+
+test('admin typecheck uses the real lucide-react package typings instead of a local shim', () => {
+  const packageJson = JSON.parse(read('package.json'));
+
+  assert.equal(
+    packageJson.dependencies?.['lucide-react'],
+    '0.554.0',
+    'admin app must declare the governed lucide-react runtime dependency directly',
+  );
+  assert.equal(
+    existsSync(path.join(appRoot, 'src', 'types', 'lucide-react-shim.d.ts')),
+    false,
+    'admin app must not shadow lucide-react with a hand-written ambient shim',
+  );
 });

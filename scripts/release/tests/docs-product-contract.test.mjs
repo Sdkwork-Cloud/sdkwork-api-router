@@ -27,7 +27,7 @@ test('official packaging docs describe only the server and portal desktop produc
   assert.match(buildAndPackaging, /pnpm --dir apps\/sdkwork-router-portal tauri:build/);
   assert.match(
     buildAndPackaging,
-    /cargo build --release -p router-product-service -p gateway-service -p admin-api-service -p portal-api-service -p router-web-service/,
+    /node scripts\/release\/run-service-release-build\.mjs --target <triple>/,
   );
   assert.match(buildAndPackaging, /sdkwork-api-router-product-server-<platform>-<arch>\.tar\.gz/i);
   assert.match(buildAndPackaging, /sdkwork-api-router-product-server-<platform>-<arch>\.tar\.gz\.sha256\.txt/i);
@@ -88,7 +88,7 @@ test('official packaging docs describe only the server and portal desktop produc
   assert.match(buildAndTooling, /--skip-docs/);
   assert.match(
     buildAndTooling,
-    /cargo build --release -p admin-api-service -p gateway-service -p portal-api-service -p router-web-service/,
+    /node scripts\/release\/run-service-release-build\.mjs --target <triple>/,
   );
   assert.match(buildAndTooling, /start-portal\.mjs` \| raw source dev \| start the portal app only \| browser or Tauri \|/);
   assert.doesNotMatch(scriptLifecycle, /optional docs and console browser assets/);
@@ -100,7 +100,7 @@ test('official packaging docs describe only the server and portal desktop produc
   assert.doesNotMatch(functionalModules, /\| console \| browser and desktop UI shell \| `console\/` \|/);
   assert.match(
     index,
-    /cargo build --release -p admin-api-service -p gateway-service -p portal-api-service -p router-web-service/,
+    /node scripts\/release\/run-service-release-build\.mjs --target <triple>/,
   );
   assert.match(index, /\| apps\/sdkwork-router-portal \| browser or Tauri \| standalone developer self-service portal \|/);
 });
@@ -138,7 +138,7 @@ test('localized product docs follow the same official packaging contract', () =>
   assert.match(zhIndex, /sdkwork-router-portal-desktop/);
   assert.match(
     zhIndex,
-    /cargo build --release -p admin-api-service -p gateway-service -p portal-api-service -p router-web-service/,
+    /node scripts\/release\/run-service-release-build\.mjs --target <triple>/,
   );
 
   assert.match(zhInstallation, /^# 安装准备/m);
@@ -152,7 +152,7 @@ test('localized product docs follow the same official packaging contract', () =>
   assert.match(zhBuildAndPackaging, /sdkwork-router-portal-desktop/);
   assert.match(
     zhBuildAndPackaging,
-    /cargo build --release -p router-product-service -p gateway-service -p admin-api-service -p portal-api-service -p router-web-service/,
+    /node scripts\/release\/run-service-release-build\.mjs --target <triple>/,
   );
   assert.match(zhBuildAndPackaging, /sdkwork-api-router-product-server-<platform>-<arch>\.tar\.gz/);
   assert.match(zhBuildAndPackaging, /sdkwork-api-router-product-server-<platform>-<arch>\.tar\.gz\.sha256\.txt/);
@@ -211,7 +211,7 @@ test('localized product docs follow the same official packaging contract', () =>
   assert.match(zhBuildAndTooling, /--skip-docs/);
   assert.match(
     zhBuildAndTooling,
-    /cargo build --release -p admin-api-service -p gateway-service -p portal-api-service -p router-web-service/,
+    /node scripts\/release\/run-service-release-build\.mjs --target <triple>/,
   );
   assert.match(zhBuildAndTooling, /product gate/i);
   assert.match(zhBuildAndTooling, /浏览器或 Tauri/);

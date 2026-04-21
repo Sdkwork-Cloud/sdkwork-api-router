@@ -15,6 +15,14 @@ test('root workspace package exposes packaged desktop and server dev entrypoints
   assert.equal(rootPackage.private, true);
   assert.equal(rootPackage.packageManager, 'pnpm@10.30.2');
   assert.equal(
+    rootPackage.scripts['product:check'],
+    'node scripts/run-router-product.mjs check',
+  );
+  assert.equal(
+    rootPackage.scripts['test:user-center-standard'],
+    'node scripts/run-user-center-standard.mjs',
+  );
+  assert.equal(
     rootPackage.scripts['tauri:dev'],
     'node scripts/run-router-product.mjs desktop',
   );
@@ -52,6 +60,25 @@ test('router product launcher forwards mode-specific help to the selected runtim
   assert.doesNotMatch(result.stderr, /\[run-router-product\]/);
 });
 
+test('router product server dry-run expands the nested workspace launch plan', () => {
+  const result = spawnSync(
+    process.execPath,
+    [path.join(workspaceRoot, 'scripts', 'run-router-product.mjs'), 'server', '--dry-run'],
+    {
+      cwd: workspaceRoot,
+      encoding: 'utf8',
+    },
+  );
+
+  assert.equal(result.status, 0);
+  assert.match(result.stderr, /\[run-router-product\].*scripts[\\/]+dev[\\/]+start-workspace\.mjs --proxy-dev/);
+  assert.match(result.stdout, /\[start-workspace\] unified launch settings/);
+  assert.match(result.stdout, /\[start-workspace\] backend:/);
+  assert.match(result.stdout, /\[start-workspace\] admin-browser:/);
+  assert.match(result.stdout, /\[start-workspace\] portal-browser:/);
+  assert.match(result.stdout, /\[start-workspace\] web-proxy-dev:/);
+});
+
 test('router product launcher still prints root help when no mode is selected', () => {
   const result = spawnSync(
     process.execPath,
@@ -87,7 +114,13 @@ test('router product launcher defaults to desktop mode and installs dependencies
   assert.equal(plan[0].shell, true);
   assert.equal(plan[0].windowsHide, true);
   assert.equal(plan[1].label, 'portal desktop runtime');
-  assert.deepEqual(plan[1].args, ['--dir', 'apps/sdkwork-router-portal', 'tauri:dev']);
+  assert.equal(plan[1].command, process.execPath);
+  assert.equal(plan[1].cwd, path.join(workspaceRoot, 'apps', 'sdkwork-router-portal'));
+  assert.deepEqual(plan[1].args, [
+    path.join(workspaceRoot, 'scripts', 'run-tauri-cli.mjs'),
+    'dev',
+  ]);
+  assert.equal(plan[1].shell, false);
   assert.equal(plan[1].windowsHide, true);
 });
 
@@ -174,11 +207,42 @@ test('router product launcher enables hidden tray service mode for desktop start
 
   assert.equal(plan.length, 1);
   assert.equal(plan[0].label, 'portal service runtime');
+  assert.equal(plan[0].command, process.execPath);
+  assert.equal(plan[0].cwd, path.join(workspaceRoot, 'apps', 'sdkwork-router-portal'));
   assert.equal(plan[0].env.SDKWORK_ROUTER_BACKGROUND, '1');
   assert.equal(plan[0].env.SDKWORK_ROUTER_PORTAL_START_HIDDEN, '1');
   assert.equal(plan[0].env.SDKWORK_ROUTER_SERVICE_MODE, '1');
-  assert.deepEqual(plan[0].args, ['--dir', 'apps/sdkwork-router-portal', 'tauri:dev']);
+  assert.deepEqual(plan[0].args, [
+    path.join(workspaceRoot, 'scripts', 'run-tauri-cli.mjs'),
+    'dev',
+  ]);
+  assert.equal(plan[0].shell, false);
   assert.equal(plan[0].windowsHide, false);
+});
+
+test('router product launcher forwards desktop mode arguments directly into the shared tauri wrapper', async () => {
+  const module = await import(
+    pathToFileURL(path.join(workspaceRoot, 'scripts', 'run-router-product.mjs')).href
+  );
+
+  const plan = module.createRouterProductLaunchPlan({
+    workspaceRoot,
+    mode: 'desktop',
+    install: false,
+    platform: 'linux',
+    env: {},
+    extraArgs: ['--help'],
+  });
+
+  assert.equal(plan.length, 1);
+  assert.equal(plan[0].command, process.execPath);
+  assert.equal(plan[0].cwd, path.join(workspaceRoot, 'apps', 'sdkwork-router-portal'));
+  assert.deepEqual(plan[0].args, [
+    path.join(workspaceRoot, 'scripts', 'run-tauri-cli.mjs'),
+    'dev',
+    '--help',
+  ]);
+  assert.equal(plan[0].shell, false);
 });
 
 test('router product launcher exposes machine-readable plan mode through the unified entrypoint', async () => {
@@ -206,4 +270,31 @@ test('router product launcher exposes machine-readable plan mode through the uni
     '--roles',
     'web',
   ]);
+});
+
+test('router product launcher exposes product check mode through the unified root entrypoint', async () => {
+  const module = await import(
+    pathToFileURL(path.join(workspaceRoot, 'scripts', 'run-router-product.mjs')).href
+  );
+
+  const plan = module.createRouterProductLaunchPlan({
+    workspaceRoot,
+    mode: 'check',
+    install: false,
+    platform: 'linux',
+    env: {},
+    extraArgs: [],
+  });
+
+  assert.equal(plan.length, 1);
+  assert.equal(plan[0].label, 'portal product check');
+  assert.equal(plan[0].command, 'pnpm');
+  assert.deepEqual(plan[0].args, [
+    '--dir',
+    'apps/sdkwork-router-portal',
+    'product:check',
+  ]);
+  assert.equal(plan[0].cwd, workspaceRoot);
+  assert.equal(plan[0].shell, false);
+  assert.equal(plan[0].windowsHide, false);
 });

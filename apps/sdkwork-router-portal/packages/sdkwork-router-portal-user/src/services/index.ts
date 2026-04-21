@@ -1,5 +1,8 @@
 import { formatDateTime } from 'sdkwork-router-portal-commons/format-core';
 import { translatePortalText } from 'sdkwork-router-portal-commons/i18n-core';
+import {
+  ROUTER_PORTAL_USER_CENTER_STORAGE_PLAN,
+} from 'sdkwork-router-portal-types';
 import type { PortalWorkspaceSummary } from 'sdkwork-router-portal-types';
 
 import type {
@@ -11,8 +14,10 @@ import type {
   UserPrivacyPreferenceItem,
   UserSecurityItem,
 } from '../types';
+import { createPortalUserPreferenceSessionStore } from './preferenceSessionStore';
 
-const PORTAL_USER_CENTER_STORAGE_KEY = 'sdkwork-router-portal.user-center.v1';
+const PORTAL_USER_CENTER_STORAGE_KEY =
+  ROUTER_PORTAL_USER_CENTER_STORAGE_PLAN.preferencesKey;
 
 export function passwordsMatch(left: string, right: string): boolean {
   return left === right;
@@ -30,18 +35,6 @@ function hasNumber(value: string): boolean {
   return /\d/.test(value);
 }
 
-function storage(): Storage | null {
-  if (typeof globalThis.localStorage !== 'undefined') {
-    return globalThis.localStorage;
-  }
-
-  if (typeof window !== 'undefined' && window.localStorage) {
-    return window.localStorage;
-  }
-
-  return null;
-}
-
 function buildPreferenceScope(workspace: PortalWorkspaceSummary | null): string {
   if (!workspace) {
     return 'anonymous';
@@ -52,6 +45,12 @@ function buildPreferenceScope(workspace: PortalWorkspaceSummary | null): string 
     workspace.tenant.id,
     workspace.project.id,
   ].join(':');
+}
+
+function createPreferenceSessionStore() {
+  return createPortalUserPreferenceSessionStore({
+    storageKey: PORTAL_USER_CENTER_STORAGE_KEY,
+  });
 }
 
 export function createDefaultPortalUserPreferenceState(): PortalUserPreferenceState {
@@ -89,32 +88,11 @@ function normalizePreferenceState(
 }
 
 function readPreferenceCache(): Record<string, PortalUserPreferenceState> {
-  const currentStorage = storage();
-
-  if (!currentStorage) {
-    return {};
-  }
-
-  const rawValue = currentStorage.getItem(PORTAL_USER_CENTER_STORAGE_KEY);
-  if (!rawValue) {
-    return {};
-  }
-
-  try {
-    return JSON.parse(rawValue) as Record<string, PortalUserPreferenceState>;
-  } catch {
-    return {};
-  }
+  return createPreferenceSessionStore().readPreferenceCache();
 }
 
 function writePreferenceCache(value: Record<string, PortalUserPreferenceState>): void {
-  const currentStorage = storage();
-
-  if (!currentStorage) {
-    return;
-  }
-
-  currentStorage.setItem(PORTAL_USER_CENTER_STORAGE_KEY, JSON.stringify(value));
+  createPreferenceSessionStore().writePreferenceCache(value);
 }
 
 export function readPortalUserPreferenceState(

@@ -2,7 +2,6 @@
 
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
@@ -22,6 +21,14 @@ import {
   withManagedWorkspaceTargetDir,
   withManagedWorkspaceTempDir,
 } from './workspace-target-dir.mjs';
+import {
+  allocateAvailableTcpPorts,
+  createChildFailureWatcher,
+  raceAgainstChildFailure,
+  resolvePositiveInteger,
+  runWithBindConflictRetry,
+  isBindConflictError,
+} from './smoke-bind-retry-lib.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -87,34 +94,9 @@ function killProcessTree(child, platform = process.platform) {
   child.kill('SIGTERM');
 }
 
-async function findAvailablePort() {
-  return await new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.unref();
-    server.on('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address();
-      const port = typeof address === 'object' && address ? address.port : 0;
-      server.close((error) => {
-        if (error) {
-          reject(error);
-          return;
-        }
-        resolve(port);
-      });
-    });
-  });
-}
-
 async function allocateSmokeBinds() {
-  const [gatewayPort, adminPort, portalPort, webPort, adminSitePort, portalSitePort] = await Promise.all([
-    findAvailablePort(),
-    findAvailablePort(),
-    findAvailablePort(),
-    findAvailablePort(),
-    findAvailablePort(),
-    findAvailablePort(),
-  ]);
+  const [gatewayPort, adminPort, portalPort, webPort, adminSitePort, portalSitePort] =
+    await allocateAvailableTcpPorts(6);
 
   return {
     gatewayBind: `127.0.0.1:${gatewayPort}`,
@@ -125,6 +107,8 @@ async function allocateSmokeBinds() {
     portalSiteTarget: `127.0.0.1:${portalSitePort}`,
   };
 }
+
+export const isServerDevWorkspaceBindConflictError = isBindConflictError;
 
 async function waitForHttpCheck(check, timeoutMs = DEFAULT_TIMEOUT_MS) {
   const deadline = Date.now() + timeoutMs;
@@ -314,17 +298,24 @@ export async function runServerDevWorkspaceSmoke({
   workspaceRoot = path.resolve(__dirname, '..'),
   platform = process.platform,
   env = process.env,
-  timeoutMs = Number.parseInt(
-    String(env.SDKWORK_SERVER_DEV_WORKSPACE_SMOKE_TIMEOUT_MS ?? DEFAULT_TIMEOUT_MS),
-    10,
-  ) || DEFAULT_TIMEOUT_MS,
+  timeoutMs = resolvePositiveInteger(
+    env.SDKWORK_SERVER_DEV_WORKSPACE_SMOKE_TIMEOUT_MS,
+    DEFAULT_TIMEOUT_MS,
+  ),
 } = {}) {
-  const baseEnv = managedWorkspaceEnv({
+  return await runServerDevWorkspaceSmokeWithDependencies({
     workspaceRoot,
     platform,
     env,
+    timeoutMs,
   });
+}
 
+async function ensureServerDevWorkspaceReady({
+  workspaceRoot,
+  platform,
+  env,
+}) {
   for (const appRoot of [
     path.join(workspaceRoot, 'apps', 'sdkwork-router-admin'),
     path.join(workspaceRoot, 'apps', 'sdkwork-router-portal'),
@@ -336,18 +327,26 @@ export async function runServerDevWorkspaceSmoke({
       verifyInstalled: () => checkFrontendViteConfig({
         appRoot,
         command: 'serve',
-        env: baseEnv,
+        env,
         platform,
       }),
       platform,
-      env: baseEnv,
+      env,
     });
   }
+}
 
+async function runServerDevWorkspaceSmokeAttempt({
+  workspaceRoot,
+  platform,
+  env,
+  timeoutMs,
+  binds,
+}) {
+  const baseEnv = env;
   const runtimeRoot = mkdtempSync(path.join(os.tmpdir(), 'sdkwork-server-dev-workspace-'));
   const stopFile = path.join(runtimeRoot, 'workspace.stop');
   const databaseUrl = sqliteUrlForPath(path.join(runtimeRoot, 'sdkwork-api-router.db'));
-  const binds = await allocateSmokeBinds();
   const plan = createServerDevWorkspaceSmokePlan({
     workspaceRoot,
     platform,
@@ -375,6 +374,9 @@ export async function runServerDevWorkspaceSmoke({
   });
   let stdout = '';
   let stderr = '';
+  const childFailureWatcher = createChildFailureWatcher(child, {
+    label: 'server development workspace',
+  });
 
   child.stdout?.on('data', (chunk) => {
     stdout += String(chunk);
@@ -387,23 +389,29 @@ export async function runServerDevWorkspaceSmoke({
     const healthChecks = [];
     for (const check of plan.healthChecks) {
       // eslint-disable-next-line no-await-in-loop
-      healthChecks.push(await waitForHttpCheck(check, timeoutMs));
+      healthChecks.push(await raceAgainstChildFailure(
+        waitForHttpCheck(check, timeoutMs),
+        childFailureWatcher,
+      ));
     }
 
     const routeChecks = [];
     for (const routeCheck of plan.routeChecks) {
       // eslint-disable-next-line no-await-in-loop
-      routeChecks.push(await runBrowserRuntimeSmoke({
-        url: routeCheck.url,
-        expectedTexts: routeCheck.expectedTexts,
-        expectedSelectors: routeCheck.expectedSelectors,
-        forbiddenTexts: routeCheck.forbiddenTexts,
-        expectedRequestIncludes: routeCheck.expectedRequestIncludes,
-        setupScript: routeCheck.setupScript,
-        timeoutMs,
-        platform,
-        env: baseEnv,
-      }));
+      routeChecks.push(await raceAgainstChildFailure(
+        runBrowserRuntimeSmoke({
+          url: routeCheck.url,
+          expectedTexts: routeCheck.expectedTexts,
+          expectedSelectors: routeCheck.expectedSelectors,
+          forbiddenTexts: routeCheck.forbiddenTexts,
+          expectedRequestIncludes: routeCheck.expectedRequestIncludes,
+          setupScript: routeCheck.setupScript,
+          timeoutMs,
+          platform,
+          env: baseEnv,
+        }),
+        childFailureWatcher,
+      ));
     }
 
     return {
@@ -427,6 +435,8 @@ export async function runServerDevWorkspaceSmoke({
       `${message}\nserver stdout:\n${truncateText(stdout)}\nserver stderr:\n${truncateText(stderr)}`,
     );
   } finally {
+    childFailureWatcher.stop();
+
     try {
       writeFileSync(stopFile, 'stop\n', 'utf8');
     } catch {
@@ -441,6 +451,63 @@ export async function runServerDevWorkspaceSmoke({
 
     rmSync(runtimeRoot, { recursive: true, force: true });
   }
+}
+
+export async function runServerDevWorkspaceSmokeWithDependencies({
+  workspaceRoot = path.resolve(__dirname, '..'),
+  platform = process.platform,
+  env = process.env,
+  timeoutMs = resolvePositiveInteger(
+    env.SDKWORK_SERVER_DEV_WORKSPACE_SMOKE_TIMEOUT_MS,
+    DEFAULT_TIMEOUT_MS,
+  ),
+  maxAttempts = resolvePositiveInteger(
+    env.SDKWORK_SERVER_DEV_WORKSPACE_SMOKE_BIND_RETRY_ATTEMPTS,
+    3,
+  ),
+  retryDelayMs = resolvePositiveInteger(
+    env.SDKWORK_SERVER_DEV_WORKSPACE_SMOKE_BIND_RETRY_DELAY_MS,
+    250,
+  ),
+  prepareEnv = ({ workspaceRoot: targetWorkspaceRoot, platform: targetPlatform, env: sourceEnv }) => managedWorkspaceEnv({
+    workspaceRoot: targetWorkspaceRoot,
+    platform: targetPlatform,
+    env: sourceEnv,
+  }),
+  ensureReady = ensureServerDevWorkspaceReady,
+  allocateBinds = allocateSmokeBinds,
+  attemptRunner = runServerDevWorkspaceSmokeAttempt,
+  delayImpl = delay,
+} = {}) {
+  const baseEnv = prepareEnv({
+    workspaceRoot,
+    platform,
+    env,
+  });
+
+  await ensureReady({
+    workspaceRoot,
+    platform,
+    env: baseEnv,
+  });
+
+  return await runWithBindConflictRetry({
+    label: 'check-server-dev-workspace',
+    maxAttempts,
+    retryDelayMs,
+    delayImpl,
+    allocate: async ({ attempt, maxAttempts: attemptLimit }) =>
+      await allocateBinds({ attempt, maxAttempts: attemptLimit }),
+    run: async ({ allocation: binds }) =>
+      await attemptRunner({
+        workspaceRoot,
+        platform,
+        env: baseEnv,
+        timeoutMs,
+        binds,
+      }),
+    shouldRetry: isServerDevWorkspaceBindConflictError,
+  });
 }
 
 async function main() {

@@ -76,6 +76,9 @@ test('check-router-product exposes Windows-safe pnpm and rust runner plans witho
   assert.equal(stepByLabel.get('admin typecheck')?.command, process.execPath);
   assert.match(stepByLabel.get('admin typecheck')?.args.join(' ') ?? '', /run-tsc-cli\.mjs --noEmit/);
   assert.match(stepByLabel.get('admin browser runtime smoke')?.args.join(' ') ?? '', /check-admin-browser-runtime\.mjs/);
+  assert.match(stepByLabel.get('desktop tauri capability audit')?.args.join(' ') ?? '', /check-tauri-capabilities\.mjs/);
+  assert.match(stepByLabel.get('browser storage governance audit')?.args.join(' ') ?? '', /check-browser-storage-governance\.mjs/);
+  assert.match(stepByLabel.get('product source tracking audit')?.args.join(' ') ?? '', /check-product-source-tracking\.mjs/);
   assert.match(stepByLabel.get('server development workspace smoke')?.args.join(' ') ?? '', /check-server-dev-workspace\.mjs/);
   const portalDesktopRustTests = stepByLabel.get('portal desktop runtime rust tests');
   const portalDesktopRustRunner = module.resolveRustRunner(
@@ -170,6 +173,84 @@ test('workspace TypeScript app configs keep ignoreDeprecations compatible with t
       tsconfig.compilerOptions?.ignoreDeprecations,
       '5.0',
       `${appRoot} must keep ignoreDeprecations aligned with the pinned TypeScript 5.x compiler`,
+    );
+  }
+});
+
+test('workspace frontend TypeScript aliases and shared UI package exports resolve to real type-bearing files', () => {
+  const sharedUiRoot = path.resolve(
+    workspaceRoot,
+    '..',
+    'sdkwork-ui',
+    'sdkwork-ui-pc-react',
+  );
+  const expectedSourceRoot = path.join(sharedUiRoot, 'src');
+
+  for (const appRoot of [
+    'apps/sdkwork-router-portal',
+    'apps/sdkwork-router-admin',
+  ]) {
+    const tsconfigPath = path.join(workspaceRoot, appRoot, 'tsconfig.json');
+    const tsconfigDir = path.dirname(tsconfigPath);
+    const tsconfig = readJson(path.join(appRoot, 'tsconfig.json'));
+    const compilerPaths = tsconfig.compilerOptions?.paths ?? {};
+    const packageEntryAlias = compilerPaths['@sdkwork/ui-pc-react']?.[0];
+    const themeEntryAlias = compilerPaths['@sdkwork/ui-pc-react/theme']?.[0];
+    const wildcardAlias = compilerPaths['@sdkwork/ui-pc-react/*']?.[0];
+
+    assert.equal(
+      packageEntryAlias,
+      '../../../sdkwork-ui/sdkwork-ui-pc-react/src/index.ts',
+      `${appRoot} must source-link @sdkwork/ui-pc-react to the workspace source entry`,
+    );
+    assert.equal(
+      themeEntryAlias,
+      '../../../sdkwork-ui/sdkwork-ui-pc-react/src/theme/index.ts',
+      `${appRoot} must source-link @sdkwork/ui-pc-react/theme to the workspace source entry`,
+    );
+    assert.equal(
+      wildcardAlias,
+      '../../../sdkwork-ui/sdkwork-ui-pc-react/src/*',
+      `${appRoot} must source-link @sdkwork/ui-pc-react/* to the workspace source tree`,
+    );
+    assert.equal(
+      existsSync(path.resolve(tsconfigDir, packageEntryAlias)),
+      true,
+      `${appRoot} package entry alias must resolve to an existing source file`,
+    );
+    assert.equal(
+      existsSync(path.resolve(tsconfigDir, themeEntryAlias)),
+      true,
+      `${appRoot} theme alias must resolve to an existing source file`,
+    );
+    assert.equal(
+      path.resolve(tsconfigDir, wildcardAlias.replace(/\/\*$/, '')),
+      expectedSourceRoot,
+      `${appRoot} wildcard alias must point at the shared UI source root`,
+    );
+  }
+
+  const sharedUiPackage = readJson(path.join('..', 'sdkwork-ui', 'sdkwork-ui-pc-react', 'package.json'));
+  assert.equal(
+    sharedUiPackage.types,
+    './dist/index.d.ts',
+    '@sdkwork/ui-pc-react must publish its root types from dist/index.d.ts',
+  );
+
+  for (const [subpath, exportDefinition] of Object.entries(sharedUiPackage.exports ?? {})) {
+    if (typeof exportDefinition !== 'object' || exportDefinition === null || typeof exportDefinition.types !== 'string') {
+      continue;
+    }
+
+    assert.doesNotMatch(
+      exportDefinition.types,
+      /(^|\/)dist\/src(\/|$)/,
+      `@sdkwork/ui-pc-react export ${subpath} must not reference the removed dist/src declaration tree`,
+    );
+    assert.equal(
+      existsSync(path.resolve(sharedUiRoot, exportDefinition.types)),
+      true,
+      `@sdkwork/ui-pc-react export ${subpath} must point at an existing declaration file`,
     );
   }
 });

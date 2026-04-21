@@ -49,7 +49,7 @@ test('app root exposes standalone browser and tauri scripts', () => {
   assert.match(packageJsonSource, /run-vite-cli\.mjs preview --host 0\.0\.0\.0 --port 4173 --strictPort/);
 });
 
-test('admin typecheck stays on the repo-owned readable TypeScript launcher and official shared-ui dist type entrypoints', () => {
+test('admin typecheck stays on the repo-owned readable TypeScript launcher and source-links shared-ui workspace entrypoints', () => {
   const packageJsonSource = read('package.json');
   const tsconfig = read('tsconfig.json');
   const viteEnv = read('src/vite-env.d.ts');
@@ -57,21 +57,22 @@ test('admin typecheck stays on the repo-owned readable TypeScript launcher and o
   assert.match(packageJsonSource, /"typecheck": "node \.\.\/\.\.\/scripts\/dev\/run-tsc-cli\.mjs --noEmit"/);
   assert.equal(existsSync(path.join(appRoot, 'src', 'types', 'node-runtime-shim.d.ts')), true);
   assert.equal(existsSync(path.join(appRoot, 'src', 'types', 'vite-client-shim.d.ts')), true);
+  assert.equal(existsSync(path.join(appRoot, 'src', 'types', 'lucide-react-shim.d.ts')), false);
   assert.equal(existsSync(path.join(appRoot, 'src', 'types', 'vite-runtime-lib-shim.d.ts')), false);
   assert.equal(existsSync(path.join(appRoot, 'src', 'types', 'sdkwork-ui-pc-react-shim.d.ts')), false);
   assert.doesNotMatch(tsconfig, /"types"\s*:\s*\[\s*"node"\s*,\s*"vite\/client"\s*\]/);
   assert.doesNotMatch(tsconfig, /sdkwork-ui-pc-react-shim\.d\.ts/);
   assert.match(
     tsconfig,
-    /"@sdkwork\/ui-pc-react"\s*:\s*\[\s*"\.\.\/\.\.\/\.\.\/sdkwork-ui\/sdkwork-ui-pc-react\/dist\/src\/index\.d\.ts"\s*\]/,
+    /"@sdkwork\/ui-pc-react"\s*:\s*\[\s*"\.\.\/\.\.\/\.\.\/sdkwork-ui\/sdkwork-ui-pc-react\/src\/index\.ts"\s*\]/,
   );
   assert.match(
     tsconfig,
-    /"@sdkwork\/ui-pc-react\/theme"\s*:\s*\[\s*"\.\.\/\.\.\/\.\.\/sdkwork-ui\/sdkwork-ui-pc-react\/dist\/src\/theme\/index\.d\.ts"\s*\]/,
+    /"@sdkwork\/ui-pc-react\/theme"\s*:\s*\[\s*"\.\.\/\.\.\/\.\.\/sdkwork-ui\/sdkwork-ui-pc-react\/src\/theme\/index\.ts"\s*\]/,
   );
   assert.match(
     tsconfig,
-    /"@sdkwork\/ui-pc-react\/\*"\s*:\s*\[\s*"\.\.\/\.\.\/\.\.\/sdkwork-ui\/sdkwork-ui-pc-react\/dist\/src\/\*"\s*\]/,
+    /"@sdkwork\/ui-pc-react\/\*"\s*:\s*\[\s*"\.\.\/\.\.\/\.\.\/sdkwork-ui\/sdkwork-ui-pc-react\/src\/\*"\s*\]/,
   );
   assert.match(viteEnv, /types\/vite-client-shim\.d\.ts/);
   assert.match(viteEnv, /types\/node-runtime-shim\.d\.ts/);

@@ -95,17 +95,17 @@ test('external release dependency catalogs expose strict governed lookup helpers
       'sdkwork-core',
       'sdkwork-ui',
       'sdkwork-appbase',
-      'sdkwork-craw-chat-sdk',
+      'sdkwork-im-sdk',
     ],
   );
   assert.deepEqual(
     module.listExternalReleaseDependencySpecsByIds([
       'sdkwork-ui',
-      'sdkwork-craw-chat-sdk',
+      'sdkwork-im-sdk',
     ]).map(({ id }) => id),
     [
       'sdkwork-ui',
-      'sdkwork-craw-chat-sdk',
+      'sdkwork-im-sdk',
     ],
   );
 
@@ -251,7 +251,7 @@ test('external release dependency materializer rejects an occupied target that i
   );
 });
 
-test('external release dependency materializer accepts a governed nested package checkout inside the craw-chat repository', async () => {
+test('external release dependency materializer accepts the governed sdkwork-im-sdk repository nested inside the craw-chat workspace', async () => {
   const module = await import(
     pathToFileURL(
       path.join(repoRoot, 'scripts', 'release', 'materialize-external-deps.mjs'),
@@ -259,21 +259,19 @@ test('external release dependency materializer accepts a governed nested package
   );
 
   const spec = createExternalReleaseSpec({
-    id: 'sdkwork-craw-chat-sdk',
-    repository: 'Sdkwork-Cloud/craw-chat',
-    envRefKey: 'SDKWORK_CRAW_CHAT_SDK_GIT_REF',
+    id: 'sdkwork-im-sdk',
+    repository: 'Sdkwork-Cloud/sdkwork-im-sdk',
+    envRefKey: 'SDKWORK_IM_SDK_GIT_REF',
     targetDir: path.join(
       repoRoot,
       '..',
       'craw-chat',
       'sdks',
-      'sdkwork-craw-chat-sdk',
-      'sdkwork-craw-chat-sdk-typescript',
-      'composed',
+      'sdkwork-im-sdk',
     ),
-    expectedGitRoot: path.join(repoRoot, '..', 'craw-chat'),
-    cloneTargetDir: path.join(repoRoot, '..', 'craw-chat'),
-    requiredPaths: ['package.json'],
+    expectedGitRoot: path.join(repoRoot, '..', 'craw-chat', 'sdks', 'sdkwork-im-sdk'),
+    cloneTargetDir: path.join(repoRoot, '..', 'craw-chat', 'sdks', 'sdkwork-im-sdk'),
+    requiredPaths: ['sdkwork-im-sdk-typescript/package.json'],
   });
 
   const result = module.materializeExternalReleaseDependency({
@@ -283,13 +281,13 @@ test('external release dependency materializer accepts a governed nested package
     spawnSyncImpl: createGitAuditSpawn({
       cwd: spec.targetDir,
       topLevel: spec.expectedGitRoot,
-      remoteUrl: 'git@github.com:Sdkwork-Cloud/craw-chat.git',
+      remoteUrl: 'git@github.com:Sdkwork-Cloud/sdkwork-im-sdk.git',
     }),
   });
 
   assert.deepEqual(result, {
-    id: 'sdkwork-craw-chat-sdk',
-    repository: 'Sdkwork-Cloud/craw-chat',
+    id: 'sdkwork-im-sdk',
+    repository: 'Sdkwork-Cloud/sdkwork-im-sdk',
     ref: 'main',
     status: 'ready',
     skipped: true,
@@ -326,25 +324,23 @@ test('external release dependency specs can be remapped into a dedicated governe
     path.join(governedRoot, 'sdkwork-ui'),
   );
 
-  const sdkworkCrawChatSdk = specs.find((spec) => spec.id === 'sdkwork-craw-chat-sdk');
-  assert.ok(sdkworkCrawChatSdk);
+  const sdkworkImSdk = specs.find((spec) => spec.id === 'sdkwork-im-sdk');
+  assert.ok(sdkworkImSdk);
   assert.equal(
-    sdkworkCrawChatSdk.cloneTargetDir,
-    path.join(governedRoot, 'craw-chat'),
+    sdkworkImSdk.cloneTargetDir,
+    path.join(governedRoot, 'craw-chat', 'sdks', 'sdkwork-im-sdk'),
   );
   assert.equal(
-    sdkworkCrawChatSdk.expectedGitRoot,
-    path.join(governedRoot, 'craw-chat'),
+    sdkworkImSdk.expectedGitRoot,
+    path.join(governedRoot, 'craw-chat', 'sdks', 'sdkwork-im-sdk'),
   );
   assert.equal(
-    sdkworkCrawChatSdk.targetDir,
+    sdkworkImSdk.targetDir,
     path.join(
       governedRoot,
       'craw-chat',
       'sdks',
-      'sdkwork-craw-chat-sdk',
-      'sdkwork-craw-chat-sdk-typescript',
-      'composed',
+      'sdkwork-im-sdk',
     ),
   );
 });

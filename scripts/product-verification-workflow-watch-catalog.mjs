@@ -13,6 +13,10 @@ export const PRODUCT_VERIFICATION_WORKFLOW_WATCH_REQUIREMENTS = [
     'product verification workflow must watch its own workflow file',
   ),
   createWatchRequirement(
+    '.github/workflows/user-center-upstream-sync.yml',
+    'product verification workflow must watch the user-center upstream sync workflow because it governs cross-repository identity standard propagation',
+  ),
+  createWatchRequirement(
     '.github/workflows/release.yml',
     'product verification workflow must watch the release workflow because release packaging contract changes are product-surface changes',
   ),
@@ -78,6 +82,22 @@ export const PRODUCT_VERIFICATION_WORKFLOW_WATCH_REQUIREMENTS = [
     'scripts/check-server-dev-workspace.test.mjs',
     'product verification workflow must watch the combined server development workspace smoke contract test',
   ),
+  createWatchRequirement(
+    'scripts/check-browser-storage-governance.mjs',
+    'product verification workflow must watch the browser storage governance audit entrypoint',
+  ),
+  createWatchRequirement(
+    'scripts/check-browser-storage-governance.test.mjs',
+    'product verification workflow must watch the browser storage governance audit contract test',
+  ),
+  createWatchRequirement(
+    'scripts/check-product-source-tracking.mjs',
+    'product verification workflow must watch the product source tracking audit entrypoint',
+  ),
+  createWatchRequirement(
+    'scripts/check-product-source-tracking.test.mjs',
+    'product verification workflow must watch the product source tracking audit contract test',
+  ),
   createWatchRequirement('scripts/check-router-product.mjs', 'product verification workflow must watch the product verification gate entrypoint'),
   createWatchRequirement('scripts/check-router-product.test.mjs', 'product verification workflow must watch the product verification gate contract test'),
   createWatchRequirement('scripts/check-rust-dependency-audit.mjs', 'product verification workflow must watch the Rust dependency audit entrypoint'),
@@ -92,6 +112,14 @@ export const PRODUCT_VERIFICATION_WORKFLOW_WATCH_REQUIREMENTS = [
   createWatchRequirement(
     'scripts/prepare-router-portal-desktop-runtime.test.mjs',
     'product verification workflow must watch the portal desktop runtime helper staging contract test',
+  ),
+  createWatchRequirement(
+    'scripts/smoke-bind-retry-lib.mjs',
+    'product verification workflow must watch the shared bind-retry smoke helper implementation',
+  ),
+  createWatchRequirement(
+    'scripts/smoke-bind-retry-lib.test.mjs',
+    'product verification workflow must watch the shared bind-retry smoke helper contract test',
   ),
   createWatchRequirement(
     'scripts/product-governance-node-test-catalog.mjs',
@@ -156,6 +184,26 @@ export const PRODUCT_VERIFICATION_WORKFLOW_WATCH_REQUIREMENTS = [
   createWatchRequirement(
     'scripts/run-router-product-service.test.mjs',
     'product verification workflow must watch the shared product service launcher contract test',
+  ),
+  createWatchRequirement(
+    'scripts/run-user-center-standard.mjs',
+    'product verification workflow must watch the root user-center standard runner entrypoint',
+  ),
+  createWatchRequirement(
+    'scripts/run-user-center-standard.test.mjs',
+    'product verification workflow must watch the root user-center standard runner contract test',
+  ),
+  createWatchRequirement(
+    'scripts/user-center-upstream-sync-payload.mjs',
+    'product verification workflow must watch the upstream sync payload validator entrypoint',
+  ),
+  createWatchRequirement(
+    'scripts/user-center-upstream-sync-payload.test.mjs',
+    'product verification workflow must watch the upstream sync payload validator contract test',
+  ),
+  createWatchRequirement(
+    'scripts/user-center-upstream-sync-workflow.test.mjs',
+    'product verification workflow must watch the upstream sync workflow contract test',
   ),
   createWatchRequirement(
     'scripts/run-tauri-cli.mjs',

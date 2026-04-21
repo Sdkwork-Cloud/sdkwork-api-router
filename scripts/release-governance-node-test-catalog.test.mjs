@@ -26,6 +26,8 @@ test('release governance node test catalog publishes the exact governed test fil
       'scripts/release-governance-workflow.test.mjs',
       'scripts/run-release-governance-node-tests.test.mjs',
       'scripts/strict-contract-catalog.test.mjs',
+      'scripts/smoke-bind-retry-lib.test.mjs',
+      'scripts/release/run-service-release-build.test.mjs',
       'scripts/release/tests/installed-runtime-smoke-lib.test.mjs',
       'scripts/release/tests/release-cli-format-catalog.test.mjs',
       'scripts/release/tests/release-governance-plan-catalog.test.mjs',

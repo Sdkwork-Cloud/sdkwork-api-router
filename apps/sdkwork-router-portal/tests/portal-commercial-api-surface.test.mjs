@@ -20,6 +20,19 @@ function loadPortalApi() {
   );
 }
 
+function loadPortalUserCenterBridge() {
+  const load = jiti(import.meta.url, { moduleCache: false });
+  return load(
+    path.join(
+      appRoot,
+      'packages',
+      'sdkwork-router-portal-types',
+      'src',
+      'userCenter.ts',
+    ),
+  );
+}
+
 function loadBillingRepository() {
   const load = jiti(import.meta.url, { moduleCache: false });
   return load(
@@ -67,10 +80,13 @@ function installPortalApiTestEnvironment(responseMap = {}) {
   const previousFetch = globalThis.fetch;
   const previousLocalStorage = globalThis.localStorage;
   const previousWindow = globalThis.window;
+  const { ROUTER_PORTAL_USER_CENTER_STORAGE_PLAN } = loadPortalUserCenterBridge();
 
   globalThis.localStorage = {
     getItem(key) {
-      return key === 'sdkwork.router.portal.session-token' ? 'portal-session-token' : null;
+      return key === ROUTER_PORTAL_USER_CENTER_STORAGE_PLAN.sessionTokenKey
+        ? 'portal-session-token'
+        : null;
     },
     setItem() {},
     removeItem() {},
@@ -218,6 +234,7 @@ test('portal commercial api client preserves unsafe commercial ids across accoun
   const previousFetch = globalThis.fetch;
   const previousLocalStorage = globalThis.localStorage;
   const previousWindow = globalThis.window;
+  const { ROUTER_PORTAL_USER_CENTER_STORAGE_PLAN } = loadPortalUserCenterBridge();
 
   const responses = [
     jsonTextResponse(
@@ -408,7 +425,9 @@ test('portal commercial api client preserves unsafe commercial ids across accoun
 
   globalThis.localStorage = {
     getItem(key) {
-      return key === 'sdkwork.router.portal.session-token' ? 'portal-session-token' : null;
+      return key === ROUTER_PORTAL_USER_CENTER_STORAGE_PLAN.sessionTokenKey
+        ? 'portal-session-token'
+        : null;
     },
     setItem() {},
     removeItem() {},

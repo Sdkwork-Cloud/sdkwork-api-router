@@ -990,7 +990,7 @@ export function renderRuntimeEnvTemplate({
   ].join('\n');
 }
 
-function renderRouterConfigTemplate({
+export function renderRuntimeConfigTemplate({
   installRoot,
   mode = 'portable',
   platform = process.platform,
@@ -1700,7 +1700,7 @@ export function createInstallPlan({
     {
       type: 'text',
       targetPath: layout.configFile,
-      contents: renderRouterConfigTemplate({
+      contents: renderRuntimeConfigTemplate({
         installRoot: layout.installRoot,
         mode: normalizedMode,
         platform: runtimePlatform,
