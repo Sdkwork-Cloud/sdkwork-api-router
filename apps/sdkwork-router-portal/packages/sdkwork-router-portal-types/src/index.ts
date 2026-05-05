@@ -1,4 +1,5 @@
 export * from './userCenter';
+export * from './userCenterRuntime';
 export * from './validation';
 
 export type PortalAnonymousRouteKey = 'login' | 'register' | 'forgot-password';

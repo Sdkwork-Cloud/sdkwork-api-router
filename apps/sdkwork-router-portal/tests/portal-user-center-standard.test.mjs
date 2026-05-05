@@ -1,4 +1,4 @@
-import assert from 'node:assert/strict';
+﻿import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
@@ -84,6 +84,20 @@ async function loadPortalValidationBridge() {
   );
 }
 
+async function loadPortalUserCenterRuntimeBridge() {
+  return import(
+    pathToFileURL(
+      path.join(
+        appRoot,
+        'packages',
+        'sdkwork-router-portal-types',
+        'src',
+        'userCenterRuntime.ts',
+      ),
+    ).href,
+  );
+}
+
 function storageDouble() {
   const store = new Map();
 
@@ -114,6 +128,23 @@ function throwingStorageDouble() {
   };
 }
 
+function runtimeResponseDouble(payload, { headers = {}, ok = true, status = 200 } = {}) {
+  const normalizedHeaders = new Map(
+    Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value]),
+  );
+
+  return {
+    headers: {
+      get(name) {
+        return normalizedHeaders.get(name.toLowerCase()) ?? null;
+      },
+    },
+    json: async () => payload,
+    ok,
+    status,
+  };
+}
+
 const DEFAULT_AUTH_TOKEN_HEADERS = {
   accessTokenHeaderName: 'Access-Token',
   authorizationHeaderName: 'Authorization',
@@ -137,6 +168,17 @@ const DEFAULT_HANDSHAKE_HEADER_NAMES = {
   signedAtHeaderName: 'x-sdkwork-user-center-signed-at',
 };
 const DEFAULT_HANDSHAKE_FRESHNESS_WINDOW_MS = 30000;
+
+function createStandardUserCenterAuthEnvNames(prefix) {
+  return [
+    `${prefix}AUTHORIZATION_HEADER_NAME`,
+    `${prefix}ACCESS_TOKEN_HEADER_NAME`,
+    `${prefix}REFRESH_TOKEN_HEADER_NAME`,
+    `${prefix}SESSION_HEADER_NAME`,
+    `${prefix}AUTHORIZATION_SCHEME`,
+    `${prefix}ALLOW_AUTHORIZATION_FALLBACK_TO_ACCESS_TOKEN`,
+  ];
+}
 
 function createLocalAuthContract() {
   return {
@@ -212,7 +254,7 @@ function createExternalAppApiIntegration({
     authMode: 'upstream-app-api-token-bridge',
     enabled,
     handshakeEnabled,
-    kind: 'spring-ai-plus-app-api',
+    kind: 'sdkwork-cloud-app-api',
     providerKey,
     secretResolverKind: 'upstream-secret-bridge',
     sessionTransport: 'header',
@@ -221,10 +263,10 @@ function createExternalAppApiIntegration({
   };
 }
 
-test('router portal user-center bridge aligns to the sdkwork-appbase canonical package through the public barrel', () => {
+test('router portal user-center bridge aligns to the sdkwork-appbase canonical core package through the public barrel', () => {
   const upstreamIndexPath = path.join(
     appbaseRoot,
-    'packages/pc-react/identity/sdkwork-user-center-pc-react/src/index.ts',
+    'packages/pc-react/identity/sdkwork-user-center-core-pc-react/src/index.ts',
   );
   const bridgePath = path.join(
     appRoot,
@@ -235,19 +277,22 @@ test('router portal user-center bridge aligns to the sdkwork-appbase canonical p
   assert.equal(existsSync(bridgePath), true);
 
   const upstreamIndexSource = readAppbase(
-    'packages/pc-react/identity/sdkwork-user-center-pc-react/src/index.ts',
+    'packages/pc-react/identity/sdkwork-user-center-core-pc-react/src/index.ts',
   );
   const upstreamConfigSource = readAppbase(
-    'packages/pc-react/identity/sdkwork-user-center-pc-react/src/domain/userCenterConfig.ts',
+    'packages/pc-react/identity/sdkwork-user-center-core-pc-react/src/domain/userCenterConfig.ts',
   );
   const upstreamTypesSource = readAppbase(
-    'packages/pc-react/identity/sdkwork-user-center-pc-react/src/types/userCenterTypes.ts',
+    'packages/pc-react/identity/sdkwork-user-center-core-pc-react/src/types/userCenterTypes.ts',
   );
   const bridgeSource = read('packages/sdkwork-router-portal-types/src/userCenter.ts');
 
-  assert.match(upstreamIndexSource, /@sdkwork\/user-center-pc-react/);
+  assert.match(upstreamIndexSource, /@sdkwork\/user-center-core-pc-react/);
   assert.match(upstreamConfigSource, /USER_CENTER_STANDARD_ENTITY_NAMES/);
-  assert.match(upstreamTypesSource, /export type UserCenterIntegrationKind = "builtin-local" \| "spring-ai-plus-app-api";/);
+  assert.match(
+    upstreamTypesSource,
+    /export type UserCenterIntegrationKind =[\s\S]*"builtin-local"[\s\S]*"sdkwork-cloud-app-api"[\s\S]*"external-user-center";/u,
+  );
   assert.match(upstreamTypesSource, /export interface UserCenterStorageTopology/);
 
   for (const exportName of [
@@ -274,11 +319,11 @@ test('router portal user-center bridge aligns to the sdkwork-appbase canonical p
   }
 
   assert.match(bridgeSource, /USER_CENTER_SOURCE_PACKAGE_NAME/);
-  assert.match(bridgeSource, /sdkwork-user-center-pc-react\/src\/index\.ts/);
-  assert.doesNotMatch(bridgeSource, /sdkwork-user-center-pc-react\/src\/domain\//);
-  assert.doesNotMatch(bridgeSource, /sdkwork-user-center-pc-react\/src\/types\//);
+  assert.match(bridgeSource, /sdkwork-user-center-core-pc-react\/src\/index\.ts/);
+  assert.doesNotMatch(bridgeSource, /sdkwork-user-center-core-pc-react\/src\/domain\//);
+  assert.doesNotMatch(bridgeSource, /sdkwork-user-center-core-pc-react\/src\/types\//);
   assert.match(bridgeSource, /USER_CENTER_STANDARD_ENTITY_NAMES/);
-  assert.match(bridgeSource, /USER_CENTER_DEFAULT_LOCAL_API_BASE_PATH/);
+  assert.match(bridgeSource, /ROUTER_PORTAL_USER_CENTER_LOCAL_API_BASE_PATH/);
   assert.match(bridgeSource, /createUserCenterBridgeConfig/);
   assert.match(bridgeSource, /createUserCenterStoragePlan/);
   assert.doesNotMatch(bridgeSource, /function normalizeIdentifier/);
@@ -290,12 +335,44 @@ test('router portal user-center bridge aligns to the sdkwork-appbase canonical p
   assert.match(bridgeSource, /storagePlan:\s*bridgeConfig\.storagePlan/);
 });
 
+test('router portal user-center runtime bridge aligns to the canonical runtime client and validation preflight standard', () => {
+  const runtimeBridgePath = path.join(
+    appRoot,
+    'packages/sdkwork-router-portal-types/src/userCenterRuntime.ts',
+  );
+  const runtimeBridgeSource = read('packages/sdkwork-router-portal-types/src/userCenterRuntime.ts');
+  const indexSource = read('packages/sdkwork-router-portal-types/src/index.ts');
+
+  assert.equal(existsSync(runtimeBridgePath), true);
+
+  for (const exportName of [
+    'ROUTER_PORTAL_CANONICAL_USER_CENTER_SQLITE_PATH',
+    'ROUTER_PORTAL_CANONICAL_USER_CENTER_DATABASE_KEY',
+    'ROUTER_PORTAL_CANONICAL_USER_CENTER_MIGRATION_NAMESPACE',
+    'ROUTER_PORTAL_CANONICAL_USER_CENTER_TABLE_PREFIX',
+    'createRouterPortalCanonicalUserCenterConfig',
+    'createRouterPortalUserCenterRuntimeClient',
+  ]) {
+    assert.match(runtimeBridgeSource, new RegExp(`export\\s+(?:const|function)\\s+${exportName}`));
+  }
+
+  assert.match(runtimeBridgeSource, /sdkwork-user-center-core-pc-react\/src\/index\.ts/);
+  assert.match(runtimeBridgeSource, /from '\.\/userCenter'/);
+  assert.match(runtimeBridgeSource, /from '\.\/validation'/);
+  assert.match(runtimeBridgeSource, /createRouterPortalUserCenterValidationInteropContract/);
+  assert.match(runtimeBridgeSource, /validationInteropContract/);
+  assert.match(indexSource, /export \* from '\.\/userCenterRuntime';/);
+});
+
 test('router portal packages restrict canonical appbase user-center imports to the local bridge module', () => {
   const directImportPattern =
-    /sdkwork-appbase[\\/]packages[\\/]pc-react[\\/]identity[\\/]sdkwork-user-center-pc-react[\\/]src[\\/]index\.ts/u;
+    /sdkwork-appbase[\\/]packages[\\/]pc-react[\\/]identity[\\/]sdkwork-user-center-core-pc-react[\\/]src[\\/]index\.ts/u;
   const allowedImporters = new Set([
     normalizeTestPath(
       path.join(appRoot, 'packages', 'sdkwork-router-portal-types', 'src', 'userCenter.ts'),
+    ),
+    normalizeTestPath(
+      path.join(appRoot, 'packages', 'sdkwork-router-portal-types', 'src', 'userCenterRuntime.ts'),
     ),
   ]);
 
@@ -305,6 +382,149 @@ test('router portal packages restrict canonical appbase user-center imports to t
     .filter((filePath) => !allowedImporters.has(filePath));
 
   assert.deepEqual(offenders, []);
+});
+
+test('router portal runtime bridge materializes canonical runtime config and lets upstream preflight fail closed before requests', async () => {
+  const runtimeBridge = await loadPortalUserCenterRuntimeBridge();
+  const validationBridge = await loadPortalValidationBridge();
+
+  const runtimeConfig = runtimeBridge.createRouterPortalCanonicalUserCenterConfig({
+    mode: 'app-api-hub',
+    provider: {
+      baseUrl: 'https://api.sdkwork.local/router',
+      kind: 'sdkwork-cloud-app-api',
+      providerKey: 'router-remote',
+    },
+  });
+
+  assert.equal(runtimeConfig.storage.dialect, 'sqlite');
+  assert.equal(
+    runtimeConfig.storage.sqlitePath,
+    runtimeBridge.ROUTER_PORTAL_CANONICAL_USER_CENTER_SQLITE_PATH,
+  );
+  assert.equal(
+    runtimeConfig.storageTopology.databaseKey,
+    runtimeBridge.ROUTER_PORTAL_CANONICAL_USER_CENTER_DATABASE_KEY,
+  );
+  assert.equal(
+    runtimeConfig.storageTopology.migrationNamespace,
+    runtimeBridge.ROUTER_PORTAL_CANONICAL_USER_CENTER_MIGRATION_NAMESPACE,
+  );
+  assert.equal(
+    runtimeConfig.storageTopology.tablePrefix,
+    runtimeBridge.ROUTER_PORTAL_CANONICAL_USER_CENTER_TABLE_PREFIX,
+  );
+
+  let requestCount = 0;
+  const client = runtimeBridge.createRouterPortalUserCenterRuntimeClient(
+    {
+      mode: 'app-api-hub',
+      provider: {
+        baseUrl: 'https://api.sdkwork.local/router',
+        kind: 'sdkwork-cloud-app-api',
+        providerKey: 'router-remote',
+      },
+    },
+    {
+      fetch: async () => {
+        requestCount += 1;
+        return runtimeResponseDouble({
+          code: '2000',
+          data: {
+            ok: true,
+          },
+        });
+      },
+      validationInteropContract: {
+        ...validationBridge.createRouterPortalUserCenterValidationInteropContract({
+          mode: 'app-api-hub',
+          provider: {
+            baseUrl: 'https://api.sdkwork.local/router',
+            kind: 'sdkwork-cloud-app-api',
+            providerKey: 'router-remote',
+          },
+        }),
+        tokenHeaders: {
+          ...DEFAULT_AUTH_TOKEN_HEADERS,
+          authorizationHeaderName: 'Auth-Token',
+        },
+      },
+    },
+  );
+
+  await assert.rejects(() => client.getProfile(), /tokenHeaders\.authorizationHeaderName/u);
+  assert.equal(requestCount, 0);
+});
+
+test('router portal runtime bridge resolves browser runtime overrides into the canonical local/app-api/external user-center modes', async () => {
+  const runtimeBridge = await loadPortalUserCenterRuntimeBridge();
+  const previousWindow = globalThis.window;
+
+  try {
+    globalThis.window = {
+      __ROUTER_PORTAL_USER_CENTER_MODE__: ' sdkwork-cloud-app-api ',
+      __ROUTER_PORTAL_USER_CENTER_APP_API_BASE_URL__:
+        ' https://api.sdkwork.local/router-runtime/ ',
+      __ROUTER_PORTAL_USER_CENTER_PROVIDER_KEY__: ' Router Runtime Remote ',
+      __ROUTER_PORTAL_USER_CENTER_LOCAL_API_BASE_PATH__: ' /gateway/user-center ',
+    };
+
+    const upstreamConfig = runtimeBridge.createRouterPortalCanonicalUserCenterConfig();
+
+    assert.equal(upstreamConfig.mode, 'app-api-hub');
+    assert.equal(upstreamConfig.provider.kind, 'sdkwork-cloud-app-api');
+    assert.equal(
+      upstreamConfig.provider.baseUrl,
+      'https://api.sdkwork.local/router-runtime',
+    );
+    assert.equal(upstreamConfig.provider.providerKey, 'router-runtime-remote');
+    assert.equal(
+      upstreamConfig.integration.builtinLocal.localApiBasePath,
+      '/gateway/user-center',
+    );
+
+    globalThis.window = {
+      __ROUTER_PORTAL_USER_CENTER_MODE__: ' external-user-center ',
+      __ROUTER_PORTAL_USER_CENTER_EXTERNAL_BASE_URL__:
+        ' https://identity.vendor.local/router-runtime/ ',
+      __ROUTER_PORTAL_USER_CENTER_PROVIDER_KEY__: ' Router Vendor SSO ',
+      __ROUTER_PORTAL_USER_CENTER_LOCAL_API_BASE_PATH__: ' /external/user-center ',
+    };
+
+    const externalConfig = runtimeBridge.createRouterPortalCanonicalUserCenterConfig();
+
+    assert.equal(externalConfig.mode, 'external-hub');
+    assert.equal(externalConfig.provider.kind, 'external-user-center');
+    assert.equal(
+      externalConfig.provider.baseUrl,
+      'https://identity.vendor.local/router-runtime',
+    );
+    assert.equal(externalConfig.provider.providerKey, 'router-vendor-sso');
+    assert.equal(externalConfig.integration.activeKind, 'external-user-center');
+    assert.equal(externalConfig.auth.mode, 'upstream-external-token-bridge');
+    assert.equal(
+      externalConfig.integration.builtinLocal.localApiBasePath,
+      '/external/user-center',
+    );
+
+    globalThis.window = {
+      __ROUTER_PORTAL_USER_CENTER_MODE__: ' builtin-local ',
+      __ROUTER_PORTAL_USER_CENTER_PROVIDER_KEY__: ' router-local-window ',
+      __ROUTER_PORTAL_USER_CENTER_LOCAL_API_BASE_PATH__: ' /window/user-center ',
+    };
+
+    const localConfig = runtimeBridge.createRouterPortalCanonicalUserCenterConfig();
+
+    assert.equal(localConfig.mode, 'local-native');
+    assert.equal(localConfig.provider.kind, 'builtin-local');
+    assert.equal(localConfig.provider.providerKey, 'router-local-window');
+    assert.equal(
+      localConfig.integration.builtinLocal.localApiBasePath,
+      '/window/user-center',
+    );
+  } finally {
+    globalThis.window = previousWindow;
+  }
 });
 
 test('router portal validation bridge aligns to the canonical validation package and depends on the local user-center bridge', () => {
@@ -370,7 +590,7 @@ test('router portal user-center bridge materializes canonical integration and st
   const localConfig = bridge.createRouterPortalUserCenterConfig();
 
   assert.equal(localConfig.mode, 'local-native');
-  assert.equal(localConfig.provider.kind, 'local');
+  assert.equal(localConfig.provider.kind, 'builtin-local');
   assert.equal(localConfig.provider.providerKey, 'sdkwork-router-portal-local');
   assert.deepEqual(localConfig.auth, createLocalAuthContract());
   assert.equal(localConfig.integration.activeKind, 'builtin-local');
@@ -386,7 +606,7 @@ test('router portal user-center bridge materializes canonical integration and st
       providerKey: 'sdkwork-router-portal-app-api',
     }),
   );
-  assert.equal(localConfig.localApi.sessionLogin, '/api/app/v1/user-center/session/login');
+  assert.equal(localConfig.localApi.sessionLogin, '/api/app/v1/user-center/auth/login');
   assert.equal(localConfig.storagePlan.sessionHeaderName, 'x-sdkwork-user-center-session-id');
   assert.equal(localConfig.storagePlan.storageScope, 'sdkwork-router-portal.user-center');
   assert.equal(
@@ -409,20 +629,20 @@ test('router portal user-center bridge materializes canonical integration and st
     mode: 'app-api-hub',
     provider: {
       baseUrl: ' https://app-api.example.com/tenant-edge/ ',
-      kind: 'spring-ai-plus-app-api',
+      kind: 'sdkwork-cloud-app-api',
       providerKey: ' Tenant Edge App API ',
     },
   });
 
   assert.equal(remoteConfig.mode, 'app-api-hub');
-  assert.equal(remoteConfig.provider.kind, 'spring-ai-plus-app-api');
+  assert.equal(remoteConfig.provider.kind, 'sdkwork-cloud-app-api');
   assert.equal(remoteConfig.provider.providerKey, 'tenant-edge-app-api');
   assert.equal(remoteConfig.provider.baseUrl, 'https://app-api.example.com/tenant-edge');
   assert.deepEqual(
     remoteConfig.auth,
     createUpstreamAuthContract('sdkwork-router-portal', 'tenant-edge-app-api'),
   );
-  assert.equal(remoteConfig.integration.activeKind, 'spring-ai-plus-app-api');
+  assert.equal(remoteConfig.integration.activeKind, 'sdkwork-cloud-app-api');
   assert.deepEqual(
     remoteConfig.integration.builtinLocal,
     createBuiltinLocalIntegration('/api/app/v1/user-center'),
@@ -491,6 +711,7 @@ test('router portal user-center bridge materializes canonical integration and st
       'VITE_ROUTER_PORTAL_USER_CENTER_MODE',
       'VITE_ROUTER_PORTAL_USER_CENTER_PROVIDER_KEY',
       'VITE_ROUTER_PORTAL_USER_CENTER_LOCAL_API_BASE_PATH',
+      ...createStandardUserCenterAuthEnvNames('VITE_ROUTER_PORTAL_USER_CENTER_'),
     ],
   );
   assert.deepEqual(
@@ -499,6 +720,7 @@ test('router portal user-center bridge materializes canonical integration and st
       'ROUTER_PORTAL_USER_CENTER_MODE',
       'ROUTER_PORTAL_USER_CENTER_PROVIDER_KEY',
       'ROUTER_PORTAL_USER_CENTER_LOCAL_API_BASE_PATH',
+      ...createStandardUserCenterAuthEnvNames('ROUTER_PORTAL_USER_CENTER_'),
       'ROUTER_PORTAL_USER_CENTER_SQLITE_PATH',
       'ROUTER_PORTAL_USER_CENTER_DATABASE_URL',
       'ROUTER_PORTAL_USER_CENTER_SCHEMA_NAME',
@@ -529,12 +751,12 @@ test('router portal user-center bridge materializes canonical integration and st
     mode: 'app-api-hub',
     provider: {
       baseUrl: 'https://app-api.example.com/tenant-edge',
-      kind: 'spring-ai-plus-app-api',
+      kind: 'sdkwork-cloud-app-api',
       providerKey: 'tenant-edge-app-api',
     },
   });
 
-  assert.equal(remotePlugin.portalDeployment.activeKind, 'spring-ai-plus-app-api');
+  assert.equal(remotePlugin.portalDeployment.activeKind, 'sdkwork-cloud-app-api');
   assert.equal(remotePlugin.portalDeployment.externalAppApi.providerKey, 'tenant-edge-app-api');
   assert.equal(remotePlugin.portalDeployment.externalAppApi.handshakeEnabled, true);
   assert.equal(
@@ -544,8 +766,8 @@ test('router portal user-center bridge materializes canonical integration and st
   assert.deepEqual(
     remotePlugin.portalDeployment.externalAppApi.artifacts.map((artifact) => artifact.fileName),
     [
-      'router-portal.spring-ai-plus-app-api.runtime.env.example',
-      'router-portal.spring-ai-plus-app-api.gateway.env.example',
+      'router-portal.sdkwork-cloud-app-api.runtime.env.example',
+      'router-portal.sdkwork-cloud-app-api.gateway.env.example',
     ],
   );
   assert.deepEqual(
@@ -554,6 +776,7 @@ test('router portal user-center bridge materializes canonical integration and st
       'VITE_ROUTER_PORTAL_USER_CENTER_MODE',
       'VITE_ROUTER_PORTAL_USER_CENTER_PROVIDER_KEY',
       'VITE_ROUTER_PORTAL_USER_CENTER_LOCAL_API_BASE_PATH',
+      ...createStandardUserCenterAuthEnvNames('VITE_ROUTER_PORTAL_USER_CENTER_'),
     ],
   );
   assert.deepEqual(
@@ -562,6 +785,7 @@ test('router portal user-center bridge materializes canonical integration and st
       'ROUTER_PORTAL_USER_CENTER_MODE',
       'ROUTER_PORTAL_USER_CENTER_PROVIDER_KEY',
       'ROUTER_PORTAL_USER_CENTER_LOCAL_API_BASE_PATH',
+      ...createStandardUserCenterAuthEnvNames('ROUTER_PORTAL_USER_CENTER_'),
       'ROUTER_PORTAL_USER_CENTER_APP_API_BASE_URL',
       'ROUTER_PORTAL_USER_CENTER_APP_ID',
       'ROUTER_PORTAL_USER_CENTER_SECRET_ID',
@@ -591,7 +815,7 @@ test('router portal user-center bridge materializes canonical integration and st
   );
   assert.match(
     remotePlugin.portalDeployment.externalAppApi.runtimeEnvArtifact.content,
-    /VITE_ROUTER_PORTAL_USER_CENTER_MODE=spring-ai-plus-app-api/,
+    /VITE_ROUTER_PORTAL_USER_CENTER_MODE=sdkwork-cloud-app-api/,
   );
   assert.doesNotMatch(
     remotePlugin.portalDeployment.externalAppApi.runtimeEnvArtifact.content,
@@ -608,6 +832,93 @@ test('router portal user-center bridge materializes canonical integration and st
   assert.match(
     remotePlugin.portalDeployment.externalAppApi.gatewayEnvArtifact.content,
     /ROUTER_PORTAL_USER_CENTER_APP_API_BASE_URL=https:\/\/app-api\.example\.com\/tenant-edge/,
+  );
+
+  const externalPlugin = bridge.createRouterPortalUserCenterPluginDefinition({
+    mode: 'external-hub',
+    provider: {
+      baseUrl: 'https://identity.vendor.local/router-tenant',
+      kind: 'external-user-center',
+      providerKey: 'router-tenant-sso',
+    },
+  });
+
+  assert.equal(externalPlugin.portalDeployment.activeKind, 'external-user-center');
+  assert.equal(externalPlugin.portalDeployment.externalUserCenter?.providerKey, 'router-tenant-sso');
+  assert.equal(externalPlugin.portalDeployment.externalUserCenter?.handshakeEnabled, true);
+  assert.equal(
+    externalPlugin.portalDeployment.externalUserCenter?.standard.handshake.freshnessWindowMs,
+    30000,
+  );
+  assert.deepEqual(
+    externalPlugin.portalDeployment.externalUserCenter?.artifacts.map((artifact) => artifact.fileName),
+    [
+      'router-portal.external-user-center.runtime.env.example',
+      'router-portal.external-user-center.gateway.env.example',
+    ],
+  );
+  assert.deepEqual(
+    externalPlugin.portalDeployment.externalUserCenter?.runtimeEnvArtifact.variables.map((entry) => entry.envName),
+    [
+      'VITE_ROUTER_PORTAL_USER_CENTER_MODE',
+      'VITE_ROUTER_PORTAL_USER_CENTER_PROVIDER_KEY',
+      'VITE_ROUTER_PORTAL_USER_CENTER_LOCAL_API_BASE_PATH',
+      ...createStandardUserCenterAuthEnvNames('VITE_ROUTER_PORTAL_USER_CENTER_'),
+    ],
+  );
+  assert.deepEqual(
+    externalPlugin.portalDeployment.externalUserCenter?.gatewayEnvArtifact.variables.map((entry) => entry.envName),
+    [
+      'ROUTER_PORTAL_USER_CENTER_MODE',
+      'ROUTER_PORTAL_USER_CENTER_PROVIDER_KEY',
+      'ROUTER_PORTAL_USER_CENTER_LOCAL_API_BASE_PATH',
+      ...createStandardUserCenterAuthEnvNames('ROUTER_PORTAL_USER_CENTER_'),
+      'ROUTER_PORTAL_USER_CENTER_EXTERNAL_BASE_URL',
+      'ROUTER_PORTAL_USER_CENTER_APP_ID',
+      'ROUTER_PORTAL_USER_CENTER_SECRET_ID',
+      'ROUTER_PORTAL_USER_CENTER_SHARED_SECRET',
+      'ROUTER_PORTAL_USER_CENTER_HANDSHAKE_FRESHNESS_WINDOW_MS',
+      'ROUTER_PORTAL_USER_CENTER_SQLITE_PATH',
+      'ROUTER_PORTAL_USER_CENTER_DATABASE_URL',
+      'ROUTER_PORTAL_USER_CENTER_SCHEMA_NAME',
+      'ROUTER_PORTAL_USER_CENTER_TABLE_PREFIX',
+    ],
+  );
+  assert.deepEqual(
+    externalPlugin.portalDeployment.externalUserCenter?.gatewayEnvArtifact.variables
+      .filter((entry) => entry.required)
+      .map((entry) => entry.envName),
+    [
+      'ROUTER_PORTAL_USER_CENTER_EXTERNAL_BASE_URL',
+      'ROUTER_PORTAL_USER_CENTER_SECRET_ID',
+      'ROUTER_PORTAL_USER_CENTER_SHARED_SECRET',
+    ],
+  );
+  assert.equal(
+    externalPlugin.portalDeployment.externalUserCenter?.runtimeEnvArtifact.variables.some(
+      (entry) => entry.envName === 'VITE_ROUTER_PORTAL_USER_CENTER_SHARED_SECRET',
+    ),
+    false,
+  );
+  assert.match(
+    externalPlugin.portalDeployment.externalUserCenter?.runtimeEnvArtifact.content ?? '',
+    /VITE_ROUTER_PORTAL_USER_CENTER_MODE=external-user-center/,
+  );
+  assert.doesNotMatch(
+    externalPlugin.portalDeployment.externalUserCenter?.runtimeEnvArtifact.content ?? '',
+    /SHARED_SECRET/,
+  );
+  assert.match(
+    externalPlugin.portalDeployment.externalUserCenter?.gatewayEnvArtifact.content ?? '',
+    /ROUTER_PORTAL_USER_CENTER_SHARED_SECRET=<required-secret>/,
+  );
+  assert.match(
+    externalPlugin.portalDeployment.externalUserCenter?.gatewayEnvArtifact.content ?? '',
+    /ROUTER_PORTAL_USER_CENTER_HANDSHAKE_FRESHNESS_WINDOW_MS=30000/,
+  );
+  assert.match(
+    externalPlugin.portalDeployment.externalUserCenter?.gatewayEnvArtifact.content ?? '',
+    /ROUTER_PORTAL_USER_CENTER_EXTERNAL_BASE_URL=https:\/\/identity\.vendor\.local\/router-tenant/,
   );
 });
 
@@ -630,8 +941,8 @@ test('router portal auth token helpers and user preferences consume the shared u
   assert.match(portalApi, /ROUTER_PORTAL_USER_CENTER_STORAGE_PLAN/);
   assert.match(portalApi, /createRouterPortalUserCenterSessionStore/);
   assert.match(portalApi, /createRouterPortalUserCenterTokenStore/);
-  assert.doesNotMatch(portalApi, /sdkwork-user-center-pc-react\/src\/index\.ts/);
-  assert.doesNotMatch(portalApi, /sdkwork-user-center-pc-react\/src\/domain\//);
+  assert.doesNotMatch(portalApi, /sdkwork-user-center-core-pc-react\/src\/index\.ts/);
+  assert.doesNotMatch(portalApi, /sdkwork-user-center-core-pc-react\/src\/domain\//);
   assert.match(portalApi, /readPortalTokenBundle/);
   assert.match(portalApi, /persistPortalTokenBundle/);
   assert.match(portalApi, /clearPortalTokenBundle/);
@@ -651,7 +962,7 @@ test('router portal validation bridge materializes canonical validation policy a
     mode: 'app-api-hub',
     provider: {
       baseUrl: 'https://app-api.example.com/tenant-edge',
-      kind: 'spring-ai-plus-app-api',
+      kind: 'sdkwork-cloud-app-api',
       providerKey: 'tenant-edge-app-api',
     },
   });
@@ -707,7 +1018,7 @@ test('router portal validation bridge materializes canonical validation policy a
     mode: 'app-api-hub',
     provider: {
       baseUrl: 'https://app-api.example.com/tenant-edge',
-      kind: 'spring-ai-plus-app-api',
+      kind: 'sdkwork-cloud-app-api',
       providerKey: 'tenant-edge-app-api',
     },
   });
@@ -717,7 +1028,7 @@ test('router portal validation bridge materializes canonical validation policy a
     peerContract: interopContract,
     provider: {
       baseUrl: 'https://app-api.example.com/tenant-edge',
-      kind: 'spring-ai-plus-app-api',
+      kind: 'sdkwork-cloud-app-api',
       providerKey: 'tenant-edge-app-api',
     },
   });
@@ -737,7 +1048,7 @@ test('router portal validation bridge materializes canonical validation policy a
       peerContract: interopContract,
       provider: {
         baseUrl: 'https://app-api.example.com/tenant-edge',
-        kind: 'spring-ai-plus-app-api',
+        kind: 'sdkwork-cloud-app-api',
         providerKey: 'tenant-edge-app-api',
       },
     }),
@@ -758,7 +1069,7 @@ test('router portal validation bridge materializes canonical validation policy a
       peerContract: mismatchedPeerContract,
       provider: {
         baseUrl: 'https://app-api.example.com/tenant-edge',
-        kind: 'spring-ai-plus-app-api',
+        kind: 'sdkwork-cloud-app-api',
         providerKey: 'tenant-edge-app-api',
       },
     }).diff,
@@ -779,7 +1090,7 @@ test('router portal validation bridge materializes canonical validation policy a
       peerContract: mismatchedPeerContract,
       provider: {
         baseUrl: 'https://app-api.example.com/tenant-edge',
-        kind: 'spring-ai-plus-app-api',
+        kind: 'sdkwork-cloud-app-api',
         providerKey: 'tenant-edge-app-api',
       },
     }),
@@ -958,4 +1269,50 @@ test('router portal-api session helpers reject malformed tokens and fail closed 
     globalThis.sessionStorage = previousSessionStorage;
     globalThis.localStorage = previousLocalStorage;
   }
+});
+
+test('router portal server user-center bridge exposes canonical server and server-validation plugins', async () => {
+  const bridge = await loadPortalUserCenterBridge();
+  const validationBridge = await loadPortalValidationBridge();
+  const bridgeSource = read('packages/sdkwork-router-portal-types/src/userCenter.ts');
+  const validationSource = read('packages/sdkwork-router-portal-types/src/validation.ts');
+
+  assert.match(bridgeSource, /createUserCenterServerPluginDefinition/u);
+  assert.match(validationSource, /createUserCenterServerValidationPluginDefinition/u);
+
+  const localServerPlugin = bridge.createRouterPortalUserCenterServerPluginDefinition();
+  assert.equal(localServerPlugin.capability, 'user-center-server');
+  assert.equal(localServerPlugin.server.authority.activeIntegrationKind, 'builtin-local');
+  assert.equal(localServerPlugin.server.manifests.server.host, 'server');
+  assert.equal(localServerPlugin.server.authority.localAuthority.enabled, true);
+
+  const externalServerPlugin = bridge.createRouterPortalUserCenterServerPluginDefinition({
+    mode: 'external-hub',
+    provider: {
+      baseUrl: 'https://identity.vendor.local/router',
+      kind: 'external-user-center',
+      providerKey: 'router-sso',
+    },
+  });
+  assert.equal(
+    externalServerPlugin.server.authority.activeIntegrationKind,
+    'external-user-center',
+  );
+  assert.equal(
+    externalServerPlugin.server.deployment.externalUserCenter.providerKey,
+    'router-sso',
+  );
+
+  const serverValidation =
+    validationBridge.createRouterPortalUserCenterServerValidationPluginDefinition({
+      mode: 'app-api-hub',
+      provider: {
+        baseUrl: 'https://app-api.sdkwork.local/router',
+        kind: 'sdkwork-cloud-app-api',
+        providerKey: 'router-app-api',
+      },
+    });
+  assert.equal(serverValidation.capability, 'user-center-server-validation');
+  assert.equal(serverValidation.dependency.capability, 'user-center-server');
+  assert.equal(serverValidation.middleware.handshake.required, true);
 });

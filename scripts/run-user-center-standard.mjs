@@ -30,6 +30,26 @@ export function resolveUserCenterStandardTestFile({
   );
 }
 
+export function resolveServerUserCenterContractTestFile({
+  workspaceRoot: resolvedWorkspaceRoot = workspaceRoot,
+} = {}) {
+  return path.join(
+    resolvedWorkspaceRoot,
+    'scripts',
+    'router-product-service-user-center-contract.test.mjs',
+  );
+}
+
+export function resolveServerUserCenterEntrypointContractTestFile({
+  workspaceRoot: resolvedWorkspaceRoot = workspaceRoot,
+} = {}) {
+  return path.join(
+    resolvedWorkspaceRoot,
+    'scripts',
+    'server-user-center-entrypoint-contract.test.mjs',
+  );
+}
+
 export function resolveSdkworkAppbaseContractsRunner({
   workspaceRoot: resolvedWorkspaceRoot = workspaceRoot,
   sdkworkAppbaseRoot = process.env.SDKWORK_APPBASE_ROOT,
@@ -95,6 +115,26 @@ export function createUserCenterStandardCommandPlan({
     {
       ...portalPlan,
       label: 'router portal user-center standard',
+    },
+    {
+      label: 'router product service user-center contract',
+      command: nodeExecutable,
+      args: [resolveServerUserCenterContractTestFile({ workspaceRoot: resolvedWorkspaceRoot })],
+      cwd,
+      env,
+      shell: false,
+      windowsHide: platform === 'win32',
+    },
+    {
+      label: 'router deployment user-center entrypoint contract',
+      command: nodeExecutable,
+      args: [resolveServerUserCenterEntrypointContractTestFile({
+        workspaceRoot: resolvedWorkspaceRoot,
+      })],
+      cwd,
+      env,
+      shell: false,
+      windowsHide: platform === 'win32',
     },
   ];
 }

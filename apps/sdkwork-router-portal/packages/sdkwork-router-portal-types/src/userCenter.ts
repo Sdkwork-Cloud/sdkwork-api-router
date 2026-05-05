@@ -1,20 +1,22 @@
 import {
-  USER_CENTER_DEFAULT_LOCAL_API_BASE_PATH,
   USER_CENTER_SESSION_HEADER_NAME,
   USER_CENTER_SOURCE_PACKAGE_NAME,
   createUserCenterDeploymentEnvArtifact,
   createUserCenterHandshakeSigningMessage,
   createUserCenterHandshakeVerificationContext,
   createUserCenterPluginDefinition,
+  createUserCenterServerPluginDefinition,
   createUserCenterLocalApiRoutes,
   createUserCenterBridgeConfig,
   createUserCenterSignedHandshakeHeaders,
   createUserCenterSessionStore,
   createUserCenterStoragePlan,
   createUserCenterTokenStore,
+  mapUserCenterDeploymentVariablesToEnvironmentVariables,
+  mergeUserCenterDeploymentVariables,
   selectUserCenterDeploymentVariables,
   USER_CENTER_STANDARD_ENTITY_NAMES,
-} from "../../../../../../sdkwork-appbase/packages/pc-react/identity/sdkwork-user-center-pc-react/src/index.ts";
+} from "../../../../../../sdkwork-appbase/packages/pc-react/identity/sdkwork-user-center-core-pc-react/src/index.ts";
 import type {
   UserCenterBridgeConfig,
   UserCenterBridgeConfigInput,
@@ -40,6 +42,8 @@ import type {
   UserCenterRoutes,
   UserCenterSessionTransport,
   UserCenterSessionStore,
+  UserCenterServerPluginDefinition,
+  UserCenterServerPluginDefinitionOptions,
   UserCenterStandardEntityName,
   UserCenterStorageEntityBinding,
   UserCenterStorageEntityBindingInput,
@@ -48,7 +52,7 @@ import type {
   UserCenterStorageTopologyInput,
   UserCenterTokenStore,
   UserCenterUserSystemScope,
-} from "../../../../../../sdkwork-appbase/packages/pc-react/identity/sdkwork-user-center-pc-react/src/index.ts";
+} from "../../../../../../sdkwork-appbase/packages/pc-react/identity/sdkwork-user-center-core-pc-react/src/index.ts";
 
 export type RouterPortalUserCenterMode = UserCenterMode;
 export type RouterPortalUserCenterProviderKind = UserCenterProviderKind;
@@ -76,6 +80,7 @@ export type RouterPortalUserCenterHandshakeVerificationContext =
 export type RouterPortalUserCenterRuntimeConfig = UserCenterBridgeConfig;
 export type RouterPortalUserCenterSessionStore = UserCenterSessionStore;
 export type RouterPortalUserCenterTokenStore = UserCenterTokenStore;
+export type RouterPortalUserCenterServerPluginDefinition = UserCenterServerPluginDefinition;
 export type RouterPortalUserCenterPluginCapability = Extract<
   UserCenterPluginCapabilityName,
   "auth" | "user"
@@ -92,6 +97,10 @@ export type CreateRouterPortalUserCenterHandshakeVerificationContextOptions =
 export type CreateRouterPortalUserCenterPluginDefinitionOptions =
   Omit<UserCenterPluginDefinitionOptions, "capabilities" | "namespace" | "routes"> & {
     capabilities?: readonly RouterPortalUserCenterPluginCapability[];
+    routes?: Partial<RouterPortalUserCenterRoutes>;
+  };
+export type CreateRouterPortalUserCenterServerPluginDefinitionOptions =
+  Omit<UserCenterServerPluginDefinitionOptions, "namespace" | "routes"> & {
     routes?: Partial<RouterPortalUserCenterRoutes>;
   };
 
@@ -112,6 +121,7 @@ export interface RouterPortalUserCenterPortalDeploymentProfileSet {
   activeKind: UserCenterDeploymentProfileSet["activeKind"];
   builtinLocal: RouterPortalUserCenterPortalDeploymentProfile;
   externalAppApi: RouterPortalUserCenterPortalDeploymentProfile;
+  externalUserCenter?: RouterPortalUserCenterPortalDeploymentProfile;
 }
 
 export interface RouterPortalUserCenterPluginDefinition extends UserCenterPluginDefinition {
@@ -126,6 +136,7 @@ export const ROUTER_PORTAL_USER_CENTER_PLUGIN_PACKAGES = [
   "sdkwork-router-portal-auth",
   "sdkwork-router-portal-user",
 ] as const;
+export const ROUTER_PORTAL_USER_CENTER_LOCAL_API_BASE_PATH = "/api/app/v1/user-center";
 export const ROUTER_PORTAL_USER_CENTER_STORAGE_PLAN = createUserCenterStoragePlan(
   ROUTER_PORTAL_USER_CENTER_NAMESPACE,
 );
@@ -134,7 +145,9 @@ export const ROUTER_PORTAL_USER_CENTER_ROUTES: RouterPortalUserCenterRoutes = {
   userRoutePath: "/console/user",
   vipRoutePath: "/console/account",
 };
-export const ROUTER_PORTAL_USER_CENTER_LOCAL_API = createUserCenterLocalApiRoutes();
+export const ROUTER_PORTAL_USER_CENTER_LOCAL_API = createUserCenterLocalApiRoutes(
+  ROUTER_PORTAL_USER_CENTER_LOCAL_API_BASE_PATH,
+);
 export const ROUTER_PORTAL_USER_CENTER_RUNTIME_ENV_PREFIX = "VITE_ROUTER_PORTAL_USER_CENTER_";
 export const ROUTER_PORTAL_USER_CENTER_GATEWAY_ENV_PREFIX = "ROUTER_PORTAL_USER_CENTER_";
 export const ROUTER_PORTAL_USER_CENTER_RUNTIME_ENV_ARTIFACT_BASENAME = "runtime.env.example";
@@ -159,7 +172,7 @@ function createRouterPortalUserCenterBasePluginArtifacts(
     auth: options.auth,
     capabilities: options.capabilities ?? ["auth", "user"],
     host: options.host,
-    localApiBasePath: options.localApiBasePath ?? USER_CENTER_DEFAULT_LOCAL_API_BASE_PATH,
+    localApiBasePath: options.localApiBasePath ?? ROUTER_PORTAL_USER_CENTER_LOCAL_API_BASE_PATH,
     mode: options.mode,
     namespace: ROUTER_PORTAL_USER_CENTER_NAMESPACE,
     packageNames: options.packageNames ?? [...ROUTER_PORTAL_USER_CENTER_PLUGIN_PACKAGES],
@@ -180,44 +193,14 @@ function createRouterPortalUserCenterBasePluginArtifacts(
   };
 }
 
-function createRouterPortalUserCenterEnvName(prefix: string, canonicalName: string): string {
-  const suffix = canonicalName.replace(/^SDKWORK_USER_CENTER_/, "");
-  return `${prefix}${suffix}`;
-}
-
 function mapRouterPortalUserCenterEnvironmentVariables(
   variables: readonly UserCenterDeploymentVariable[],
   prefix: string,
 ): RouterPortalUserCenterEnvironmentVariable[] {
-  return variables.map((variable) => ({
-    ...(variable.canonicalName ? { canonicalName: variable.canonicalName } : {}),
-    ...(variable.defaultValue ? { defaultValue: variable.defaultValue } : {}),
-    description: variable.description,
-    envName: createRouterPortalUserCenterEnvName(prefix, variable.canonicalName),
-    ...(variable.exampleValue ? { exampleValue: variable.exampleValue } : {}),
-    required: variable.required,
-    ...(variable.secret ? { secret: true } : {}),
-  }));
-}
-
-function mergeRouterPortalDeploymentVariables(
-  ...groups: readonly UserCenterDeploymentVariable[][]
-): UserCenterDeploymentVariable[] {
-  const seen = new Set<string>();
-  const merged: UserCenterDeploymentVariable[] = [];
-
-  for (const group of groups) {
-    for (const variable of group) {
-      if (seen.has(variable.canonicalName)) {
-        continue;
-      }
-
-      seen.add(variable.canonicalName);
-      merged.push(variable);
-    }
-  }
-
-  return merged;
+  return mapUserCenterDeploymentVariablesToEnvironmentVariables(
+    variables,
+    prefix,
+  ) as RouterPortalUserCenterEnvironmentVariable[];
 }
 
 function createRouterPortalDeploymentArtifactFileName(
@@ -235,8 +218,9 @@ function createRouterPortalUserCenterPortalDeploymentProfile(
     ROUTER_PORTAL_USER_CENTER_RUNTIME_ENV_PREFIX,
   ));
   const gatewayEnv = Object.freeze(mapRouterPortalUserCenterEnvironmentVariables(
-    mergeRouterPortalDeploymentVariables(
+    mergeUserCenterDeploymentVariables(
       selectUserCenterDeploymentVariables(profile, "upstream-bridge"),
+      selectUserCenterDeploymentVariables(profile, "external-authority-bridge"),
       selectUserCenterDeploymentVariables(profile, "local-authority"),
     ),
     ROUTER_PORTAL_USER_CENTER_GATEWAY_ENV_PREFIX,
@@ -284,6 +268,13 @@ function createRouterPortalUserCenterPortalDeploymentProfileSet(
     externalAppApi: createRouterPortalUserCenterPortalDeploymentProfile(
       plugin.deployment.externalAppApi,
     ),
+    ...(plugin.deployment.externalUserCenter
+      ? {
+          externalUserCenter: createRouterPortalUserCenterPortalDeploymentProfile(
+            plugin.deployment.externalUserCenter,
+          ),
+        }
+      : {}),
   });
 }
 
@@ -334,7 +325,7 @@ export function createRouterPortalUserCenterConfig(
 ): RouterPortalUserCenterRuntimeConfig {
   return createUserCenterBridgeConfig({
     auth: options.auth,
-    localApiBasePath: options.localApiBasePath ?? USER_CENTER_DEFAULT_LOCAL_API_BASE_PATH,
+    localApiBasePath: options.localApiBasePath ?? ROUTER_PORTAL_USER_CENTER_LOCAL_API_BASE_PATH,
     mode: options.mode,
     namespace: ROUTER_PORTAL_USER_CENTER_NAMESPACE,
     provider: options.provider,
@@ -376,6 +367,27 @@ export function createRouterPortalUserCenterPluginDefinition(
     storageTopology: bridgeConfig.storageTopology,
     storagePlan: bridgeConfig.storagePlan,
   };
+}
+
+export function createRouterPortalUserCenterServerPluginDefinition(
+  options: CreateRouterPortalUserCenterServerPluginDefinitionOptions = {},
+): RouterPortalUserCenterServerPluginDefinition {
+  return createUserCenterServerPluginDefinition({
+    auth: options.auth,
+    description: options.description,
+    localApiBasePath: options.localApiBasePath ?? ROUTER_PORTAL_USER_CENTER_LOCAL_API_BASE_PATH,
+    mode: options.mode,
+    namespace: ROUTER_PORTAL_USER_CENTER_NAMESPACE,
+    packageNames: options.packageNames ?? [...ROUTER_PORTAL_USER_CENTER_PLUGIN_PACKAGES],
+    provider: options.provider,
+    routes: {
+      authBasePath: options.routes?.authBasePath ?? ROUTER_PORTAL_USER_CENTER_ROUTES.authBasePath,
+      userRoutePath: options.routes?.userRoutePath ?? ROUTER_PORTAL_USER_CENTER_ROUTES.userRoutePath,
+      vipRoutePath: options.routes?.vipRoutePath ?? ROUTER_PORTAL_USER_CENTER_ROUTES.vipRoutePath,
+    },
+    storageTopology: options.storageTopology,
+    title: options.title ?? "SDKWORK Router Portal User Center Server",
+  });
 }
 
 export function createRouterPortalUserCenterPortalDeploymentProfiles(

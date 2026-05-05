@@ -30,9 +30,159 @@ const SDKWORK_PORTAL_PROXY_TARGET: &str = "SDKWORK_PORTAL_PROXY_TARGET";
 const SDKWORK_GATEWAY_PROXY_TARGET: &str = "SDKWORK_GATEWAY_PROXY_TARGET";
 const SDKWORK_ADMIN_SITE_DIR: &str = "SDKWORK_ADMIN_SITE_DIR";
 const SDKWORK_PORTAL_SITE_DIR: &str = "SDKWORK_PORTAL_SITE_DIR";
+const SDKWORK_USER_CENTER_MODE: &str = "SDKWORK_USER_CENTER_MODE";
+const SDKWORK_USER_CENTER_APP_API_BASE_URL: &str = "SDKWORK_USER_CENTER_APP_API_BASE_URL";
+const SDKWORK_USER_CENTER_EXTERNAL_BASE_URL: &str = "SDKWORK_USER_CENTER_EXTERNAL_BASE_URL";
+const SDKWORK_USER_CENTER_PROVIDER_KEY: &str = "SDKWORK_USER_CENTER_PROVIDER_KEY";
+const SDKWORK_USER_CENTER_APP_ID: &str = "SDKWORK_USER_CENTER_APP_ID";
+const SDKWORK_USER_CENTER_LOCAL_API_BASE_PATH: &str = "SDKWORK_USER_CENTER_LOCAL_API_BASE_PATH";
+const SDKWORK_USER_CENTER_SQLITE_PATH: &str = "SDKWORK_USER_CENTER_SQLITE_PATH";
+const SDKWORK_USER_CENTER_DATABASE_URL: &str = "SDKWORK_USER_CENTER_DATABASE_URL";
+const SDKWORK_USER_CENTER_SCHEMA_NAME: &str = "SDKWORK_USER_CENTER_SCHEMA_NAME";
+const SDKWORK_USER_CENTER_TABLE_PREFIX: &str = "SDKWORK_USER_CENTER_TABLE_PREFIX";
+const SDKWORK_USER_CENTER_SECRET_ID: &str = "SDKWORK_USER_CENTER_SECRET_ID";
+const SDKWORK_USER_CENTER_SHARED_SECRET: &str = "SDKWORK_USER_CENTER_SHARED_SECRET";
+const SDKWORK_USER_CENTER_HANDSHAKE_FRESHNESS_WINDOW_MS: &str =
+    "SDKWORK_USER_CENTER_HANDSHAKE_FRESHNESS_WINDOW_MS";
+const SDKWORK_USER_CENTER_AUTHORIZATION_HEADER_NAME: &str =
+    "SDKWORK_USER_CENTER_AUTHORIZATION_HEADER_NAME";
+const SDKWORK_USER_CENTER_ACCESS_TOKEN_HEADER_NAME: &str =
+    "SDKWORK_USER_CENTER_ACCESS_TOKEN_HEADER_NAME";
+const SDKWORK_USER_CENTER_REFRESH_TOKEN_HEADER_NAME: &str =
+    "SDKWORK_USER_CENTER_REFRESH_TOKEN_HEADER_NAME";
+const SDKWORK_USER_CENTER_SESSION_HEADER_NAME: &str = "SDKWORK_USER_CENTER_SESSION_HEADER_NAME";
+const SDKWORK_USER_CENTER_AUTHORIZATION_SCHEME: &str = "SDKWORK_USER_CENTER_AUTHORIZATION_SCHEME";
+const SDKWORK_USER_CENTER_ALLOW_AUTHORIZATION_FALLBACK_TO_ACCESS_TOKEN: &str =
+    "SDKWORK_USER_CENTER_ALLOW_AUTHORIZATION_FALLBACK_TO_ACCESS_TOKEN";
 const INSTALLED_RUNTIME_NAME: &str = "sdkwork-api-router";
 const INSTALLED_RUNTIME_LAYOUT_VERSION: u32 = 2;
 const ROUTER_PRODUCT_SERVICE_BINARY_STEM: &str = "router-product-service";
+const USER_CENTER_DEFAULT_LOCAL_API_BASE_PATH: &str = "/api/app/v1/user-center";
+const USER_CENTER_DEFAULT_SQLITE_PATH: &str = "./data/user-center.db";
+const USER_CENTER_DEFAULT_TABLE_PREFIX: &str = "rp_uc_";
+const USER_CENTER_DEFAULT_APP_ID: &str = "sdkwork-api-router";
+const USER_CENTER_DEFAULT_PROVIDER_KEY: &str = "sdkwork-api-router-local";
+const USER_CENTER_DEFAULT_AUTHORIZATION_HEADER_NAME: &str = "Authorization";
+const USER_CENTER_DEFAULT_ACCESS_TOKEN_HEADER_NAME: &str = "Access-Token";
+const USER_CENTER_DEFAULT_REFRESH_TOKEN_HEADER_NAME: &str = "Refresh-Token";
+const USER_CENTER_DEFAULT_SESSION_HEADER_NAME: &str = "x-sdkwork-user-center-session-id";
+const USER_CENTER_DEFAULT_AUTHORIZATION_SCHEME: &str = "Bearer";
+const USER_CENTER_DEFAULT_ALLOW_AUTHORIZATION_FALLBACK_TO_ACCESS_TOKEN: bool = true;
+const USER_CENTER_DEFAULT_HANDSHAKE_FRESHNESS_WINDOW_MS: u64 = 30_000;
+const USER_CENTER_HANDSHAKE_MODE_DISABLED: &str = "disabled";
+const USER_CENTER_HANDSHAKE_MODE_PROVIDER_SHARED_SECRET: &str = "provider-shared-secret";
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum UserCenterMode {
+    #[default]
+    BuiltinLocal,
+    SdkworkCloudAppApi,
+    ExternalUserCenter,
+}
+
+impl UserCenterMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::BuiltinLocal => "builtin-local",
+            Self::SdkworkCloudAppApi => "sdkwork-cloud-app-api",
+            Self::ExternalUserCenter => "external-user-center",
+        }
+    }
+
+    fn from_raw(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "" => None,
+            "builtin-local" => Some(Self::BuiltinLocal),
+            "sdkwork-cloud-app-api" => Some(Self::SdkworkCloudAppApi),
+            "external-user-center" => Some(Self::ExternalUserCenter),
+            _ => None,
+        }
+    }
+
+    fn handshake_mode(self) -> &'static str {
+        match self {
+            Self::BuiltinLocal => USER_CENTER_HANDSHAKE_MODE_DISABLED,
+            Self::SdkworkCloudAppApi | Self::ExternalUserCenter => {
+                USER_CENTER_HANDSHAKE_MODE_PROVIDER_SHARED_SECRET
+            }
+        }
+    }
+
+    fn handshake_required(self) -> bool {
+        !matches!(self, Self::BuiltinLocal)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct UserCenterServerContract {
+    mode: String,
+    active_integration_kind: String,
+    app_id: String,
+    provider_key: String,
+    authority_scope: String,
+    session_transport: String,
+    validation_strategy: String,
+    local_api_base_path: String,
+    sqlite_path: String,
+    database_url: Option<String>,
+    schema_name: Option<String>,
+    table_prefix: String,
+    app_api_base_url: Option<String>,
+    external_base_url: Option<String>,
+    secret_id: Option<String>,
+    shared_secret_configured: bool,
+    auth_token_header_name: String,
+    access_token_header_name: String,
+    refresh_token_header_name: String,
+    session_header_name: String,
+    authorization_scheme: String,
+    allow_authorization_fallback_to_access_token: bool,
+    handshake_mode: String,
+    handshake_required: bool,
+    handshake_freshness_window_ms: u64,
+    protected_tokens: Vec<String>,
+    #[serde(skip_serializing)]
+    shared_secret: Option<String>,
+}
+
+impl Default for UserCenterServerContract {
+    fn default() -> Self {
+        Self {
+            mode: UserCenterMode::BuiltinLocal.as_str().to_owned(),
+            active_integration_kind: UserCenterMode::BuiltinLocal.as_str().to_owned(),
+            app_id: USER_CENTER_DEFAULT_APP_ID.to_owned(),
+            provider_key: USER_CENTER_DEFAULT_PROVIDER_KEY.to_owned(),
+            authority_scope: "application".to_owned(),
+            session_transport: "header".to_owned(),
+            validation_strategy: "auth-access-token".to_owned(),
+            local_api_base_path: USER_CENTER_DEFAULT_LOCAL_API_BASE_PATH.to_owned(),
+            sqlite_path: USER_CENTER_DEFAULT_SQLITE_PATH.to_owned(),
+            database_url: None,
+            schema_name: None,
+            table_prefix: USER_CENTER_DEFAULT_TABLE_PREFIX.to_owned(),
+            app_api_base_url: None,
+            external_base_url: None,
+            secret_id: None,
+            shared_secret_configured: false,
+            auth_token_header_name: USER_CENTER_DEFAULT_AUTHORIZATION_HEADER_NAME.to_owned(),
+            access_token_header_name: USER_CENTER_DEFAULT_ACCESS_TOKEN_HEADER_NAME.to_owned(),
+            refresh_token_header_name: USER_CENTER_DEFAULT_REFRESH_TOKEN_HEADER_NAME.to_owned(),
+            session_header_name: USER_CENTER_DEFAULT_SESSION_HEADER_NAME.to_owned(),
+            authorization_scheme: USER_CENTER_DEFAULT_AUTHORIZATION_SCHEME.to_owned(),
+            allow_authorization_fallback_to_access_token:
+                USER_CENTER_DEFAULT_ALLOW_AUTHORIZATION_FALLBACK_TO_ACCESS_TOKEN,
+            handshake_mode: USER_CENTER_HANDSHAKE_MODE_DISABLED.to_owned(),
+            handshake_required: false,
+            handshake_freshness_window_ms: USER_CENTER_DEFAULT_HANDSHAKE_FRESHNESS_WINDOW_MS,
+            protected_tokens: vec![
+                "AuthToken".to_owned(),
+                "AccessToken".to_owned(),
+                "RefreshToken".to_owned(),
+            ],
+            shared_secret: None,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
 enum PlanFormat {
@@ -86,6 +236,47 @@ struct RouterProductServiceCli {
     admin_site_dir: Option<PathBuf>,
     #[arg(long = "portal-site-dir", value_name = "DIR")]
     portal_site_dir: Option<PathBuf>,
+    #[arg(long = "user-center-mode", value_name = "MODE")]
+    user_center_mode: Option<String>,
+    #[arg(long = "user-center-app-api-base-url", value_name = "URL")]
+    user_center_app_api_base_url: Option<String>,
+    #[arg(long = "user-center-external-base-url", value_name = "URL")]
+    user_center_external_base_url: Option<String>,
+    #[arg(long = "user-center-provider-key", value_name = "VALUE")]
+    user_center_provider_key: Option<String>,
+    #[arg(long = "user-center-app-id", value_name = "VALUE")]
+    user_center_app_id: Option<String>,
+    #[arg(long = "user-center-local-api-base-path", value_name = "PATH")]
+    user_center_local_api_base_path: Option<String>,
+    #[arg(long = "user-center-sqlite-path", value_name = "PATH")]
+    user_center_sqlite_path: Option<String>,
+    #[arg(long = "user-center-database-url", value_name = "URL")]
+    user_center_database_url: Option<String>,
+    #[arg(long = "user-center-schema-name", value_name = "VALUE")]
+    user_center_schema_name: Option<String>,
+    #[arg(long = "user-center-table-prefix", value_name = "VALUE")]
+    user_center_table_prefix: Option<String>,
+    #[arg(long = "user-center-secret-id", value_name = "VALUE")]
+    user_center_secret_id: Option<String>,
+    #[arg(long = "user-center-shared-secret", value_name = "VALUE")]
+    user_center_shared_secret: Option<String>,
+    #[arg(long = "user-center-handshake-freshness-window-ms", value_name = "MS")]
+    user_center_handshake_freshness_window_ms: Option<String>,
+    #[arg(long = "user-center-authorization-header-name", value_name = "VALUE")]
+    user_center_authorization_header_name: Option<String>,
+    #[arg(long = "user-center-access-token-header-name", value_name = "VALUE")]
+    user_center_access_token_header_name: Option<String>,
+    #[arg(long = "user-center-refresh-token-header-name", value_name = "VALUE")]
+    user_center_refresh_token_header_name: Option<String>,
+    #[arg(long = "user-center-session-header-name", value_name = "VALUE")]
+    user_center_session_header_name: Option<String>,
+    #[arg(long = "user-center-authorization-scheme", value_name = "VALUE")]
+    user_center_authorization_scheme: Option<String>,
+    #[arg(
+        long = "user-center-allow-authorization-fallback-to-access-token",
+        value_name = "BOOL"
+    )]
+    user_center_allow_authorization_fallback_to_access_token: Option<String>,
     #[arg(
         long = "backup-output",
         value_name = "DIR",
@@ -129,6 +320,7 @@ struct ProductServiceSettings {
     gateway_upstream: Option<String>,
     admin_site_dir: Option<PathBuf>,
     portal_site_dir: Option<PathBuf>,
+    user_center: UserCenterServerContract,
     backup_output: Option<PathBuf>,
     restore_source: Option<PathBuf>,
     support_bundle_output: Option<PathBuf>,
@@ -154,7 +346,9 @@ impl ProductServiceSettings {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = RouterProductServiceCli::parse();
-    let (settings, runtime_context) = resolve_runtime_contextual_service_settings(&cli, env::vars())?;
+    let (settings, runtime_context) =
+        resolve_runtime_contextual_service_settings(&cli, env::vars())?;
+    apply_user_center_env_overrides(&settings.user_center);
     let (loader, config) = load_runtime_config(&settings, &cli)?;
 
     if settings.dry_run {
@@ -189,7 +383,6 @@ fn resolve_service_settings_from_env_values(
     cli: &RouterProductServiceCli,
     env_values: &HashMap<String, String>,
 ) -> anyhow::Result<ProductServiceSettings> {
-
     if (cli.backup_output.is_some()
         || cli.restore_source.is_some()
         || cli.support_bundle_output.is_some())
@@ -268,6 +461,7 @@ fn resolve_service_settings_from_env_values(
             &env_values,
             SDKWORK_PORTAL_SITE_DIR,
         ),
+        user_center: resolve_user_center_contract(cli, env_values)?,
         backup_output: cli.backup_output.clone(),
         restore_source: cli.restore_source.clone(),
         support_bundle_output: cli.support_bundle_output.clone(),
@@ -275,6 +469,322 @@ fn resolve_service_settings_from_env_values(
         plan_format: cli.plan_format,
         dry_run: cli.dry_run,
     })
+}
+
+fn resolve_user_center_contract(
+    cli: &RouterProductServiceCli,
+    env_values: &HashMap<String, String>,
+) -> anyhow::Result<UserCenterServerContract> {
+    let requested_mode = resolve_string_option(
+        cli.user_center_mode.as_deref(),
+        env_values,
+        SDKWORK_USER_CENTER_MODE,
+    );
+    let app_api_base_url = resolve_string_option(
+        cli.user_center_app_api_base_url.as_deref(),
+        env_values,
+        SDKWORK_USER_CENTER_APP_API_BASE_URL,
+    );
+    let external_base_url = resolve_string_option(
+        cli.user_center_external_base_url.as_deref(),
+        env_values,
+        SDKWORK_USER_CENTER_EXTERNAL_BASE_URL,
+    );
+    let mode = resolve_user_center_mode(
+        requested_mode.as_deref(),
+        app_api_base_url.as_deref(),
+        external_base_url.as_deref(),
+    )?;
+    let provider_key = resolve_string_option(
+        cli.user_center_provider_key.as_deref(),
+        env_values,
+        SDKWORK_USER_CENTER_PROVIDER_KEY,
+    )
+    .or_else(|| match mode {
+        UserCenterMode::BuiltinLocal => Some(USER_CENTER_DEFAULT_PROVIDER_KEY.to_owned()),
+        UserCenterMode::SdkworkCloudAppApi | UserCenterMode::ExternalUserCenter => None,
+    })
+    .unwrap_or_default();
+    let secret_id = resolve_string_option(
+        cli.user_center_secret_id.as_deref(),
+        env_values,
+        SDKWORK_USER_CENTER_SECRET_ID,
+    );
+    let shared_secret = resolve_string_option(
+        cli.user_center_shared_secret.as_deref(),
+        env_values,
+        SDKWORK_USER_CENTER_SHARED_SECRET,
+    );
+    let contract = UserCenterServerContract {
+        mode: mode.as_str().to_owned(),
+        active_integration_kind: mode.as_str().to_owned(),
+        app_id: resolve_string_option(
+            cli.user_center_app_id.as_deref(),
+            env_values,
+            SDKWORK_USER_CENTER_APP_ID,
+        )
+        .unwrap_or_else(|| USER_CENTER_DEFAULT_APP_ID.to_owned()),
+        provider_key,
+        authority_scope: "application".to_owned(),
+        session_transport: "header".to_owned(),
+        validation_strategy: "auth-access-token".to_owned(),
+        local_api_base_path: resolve_string_option(
+            cli.user_center_local_api_base_path.as_deref(),
+            env_values,
+            SDKWORK_USER_CENTER_LOCAL_API_BASE_PATH,
+        )
+        .unwrap_or_else(|| USER_CENTER_DEFAULT_LOCAL_API_BASE_PATH.to_owned()),
+        sqlite_path: resolve_string_option(
+            cli.user_center_sqlite_path.as_deref(),
+            env_values,
+            SDKWORK_USER_CENTER_SQLITE_PATH,
+        )
+        .unwrap_or_else(|| USER_CENTER_DEFAULT_SQLITE_PATH.to_owned()),
+        database_url: resolve_string_option(
+            cli.user_center_database_url.as_deref(),
+            env_values,
+            SDKWORK_USER_CENTER_DATABASE_URL,
+        ),
+        schema_name: resolve_string_option(
+            cli.user_center_schema_name.as_deref(),
+            env_values,
+            SDKWORK_USER_CENTER_SCHEMA_NAME,
+        ),
+        table_prefix: resolve_string_option(
+            cli.user_center_table_prefix.as_deref(),
+            env_values,
+            SDKWORK_USER_CENTER_TABLE_PREFIX,
+        )
+        .unwrap_or_else(|| USER_CENTER_DEFAULT_TABLE_PREFIX.to_owned()),
+        app_api_base_url,
+        external_base_url,
+        secret_id,
+        shared_secret_configured: shared_secret.is_some(),
+        auth_token_header_name: resolve_string_option(
+            cli.user_center_authorization_header_name.as_deref(),
+            env_values,
+            SDKWORK_USER_CENTER_AUTHORIZATION_HEADER_NAME,
+        )
+        .unwrap_or_else(|| USER_CENTER_DEFAULT_AUTHORIZATION_HEADER_NAME.to_owned()),
+        access_token_header_name: resolve_string_option(
+            cli.user_center_access_token_header_name.as_deref(),
+            env_values,
+            SDKWORK_USER_CENTER_ACCESS_TOKEN_HEADER_NAME,
+        )
+        .unwrap_or_else(|| USER_CENTER_DEFAULT_ACCESS_TOKEN_HEADER_NAME.to_owned()),
+        refresh_token_header_name: resolve_string_option(
+            cli.user_center_refresh_token_header_name.as_deref(),
+            env_values,
+            SDKWORK_USER_CENTER_REFRESH_TOKEN_HEADER_NAME,
+        )
+        .unwrap_or_else(|| USER_CENTER_DEFAULT_REFRESH_TOKEN_HEADER_NAME.to_owned()),
+        session_header_name: resolve_string_option(
+            cli.user_center_session_header_name.as_deref(),
+            env_values,
+            SDKWORK_USER_CENTER_SESSION_HEADER_NAME,
+        )
+        .unwrap_or_else(|| USER_CENTER_DEFAULT_SESSION_HEADER_NAME.to_owned()),
+        authorization_scheme: resolve_string_option(
+            cli.user_center_authorization_scheme.as_deref(),
+            env_values,
+            SDKWORK_USER_CENTER_AUTHORIZATION_SCHEME,
+        )
+        .unwrap_or_else(|| USER_CENTER_DEFAULT_AUTHORIZATION_SCHEME.to_owned()),
+        allow_authorization_fallback_to_access_token: resolve_bool_option(
+            cli.user_center_allow_authorization_fallback_to_access_token
+                .as_deref(),
+            env_values,
+            SDKWORK_USER_CENTER_ALLOW_AUTHORIZATION_FALLBACK_TO_ACCESS_TOKEN,
+        )?
+        .unwrap_or(USER_CENTER_DEFAULT_ALLOW_AUTHORIZATION_FALLBACK_TO_ACCESS_TOKEN),
+        handshake_mode: mode.handshake_mode().to_owned(),
+        handshake_required: mode.handshake_required(),
+        handshake_freshness_window_ms: resolve_u64_option(
+            cli.user_center_handshake_freshness_window_ms.as_deref(),
+            env_values,
+            SDKWORK_USER_CENTER_HANDSHAKE_FRESHNESS_WINDOW_MS,
+        )?
+        .unwrap_or(USER_CENTER_DEFAULT_HANDSHAKE_FRESHNESS_WINDOW_MS),
+        protected_tokens: vec![
+            "AuthToken".to_owned(),
+            "AccessToken".to_owned(),
+            "RefreshToken".to_owned(),
+        ],
+        shared_secret,
+    };
+
+    validate_user_center_contract(&contract)?;
+    Ok(contract)
+}
+
+fn resolve_user_center_mode(
+    requested_mode: Option<&str>,
+    app_api_base_url: Option<&str>,
+    external_base_url: Option<&str>,
+) -> anyhow::Result<UserCenterMode> {
+    if let Some(requested_mode) = requested_mode {
+        if let Some(mode) = UserCenterMode::from_raw(requested_mode) {
+            return Ok(mode);
+        }
+
+        anyhow::bail!(
+            "{SDKWORK_USER_CENTER_MODE} must be one of: builtin-local, sdkwork-cloud-app-api, external-user-center"
+        );
+    }
+
+    match (
+        app_api_base_url
+            .map(str::trim)
+            .filter(|value| !value.is_empty()),
+        external_base_url
+            .map(str::trim)
+            .filter(|value| !value.is_empty()),
+    ) {
+        (Some(_), None) => Ok(UserCenterMode::SdkworkCloudAppApi),
+        (None, Some(_)) => Ok(UserCenterMode::ExternalUserCenter),
+        _ => Ok(UserCenterMode::BuiltinLocal),
+    }
+}
+
+fn validate_user_center_contract(contract: &UserCenterServerContract) -> anyhow::Result<()> {
+    let mode = UserCenterMode::from_raw(&contract.mode).unwrap_or_default();
+    match mode {
+        UserCenterMode::BuiltinLocal => Ok(()),
+        UserCenterMode::SdkworkCloudAppApi => {
+            require_user_center_value(
+                contract.app_api_base_url.as_deref(),
+                SDKWORK_USER_CENTER_APP_API_BASE_URL,
+            )?;
+            require_user_center_value(
+                Some(contract.provider_key.as_str()),
+                SDKWORK_USER_CENTER_PROVIDER_KEY,
+            )?;
+            require_user_center_value(
+                contract.secret_id.as_deref(),
+                SDKWORK_USER_CENTER_SECRET_ID,
+            )?;
+            require_user_center_value(
+                contract.shared_secret.as_deref(),
+                SDKWORK_USER_CENTER_SHARED_SECRET,
+            )?;
+            Ok(())
+        }
+        UserCenterMode::ExternalUserCenter => {
+            require_user_center_value(
+                contract.external_base_url.as_deref(),
+                SDKWORK_USER_CENTER_EXTERNAL_BASE_URL,
+            )?;
+            require_user_center_value(
+                Some(contract.provider_key.as_str()),
+                SDKWORK_USER_CENTER_PROVIDER_KEY,
+            )?;
+            require_user_center_value(
+                contract.secret_id.as_deref(),
+                SDKWORK_USER_CENTER_SECRET_ID,
+            )?;
+            require_user_center_value(
+                contract.shared_secret.as_deref(),
+                SDKWORK_USER_CENTER_SHARED_SECRET,
+            )?;
+            Ok(())
+        }
+    }
+}
+
+fn require_user_center_value(value: Option<&str>, env_name: &str) -> anyhow::Result<()> {
+    if value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some()
+    {
+        return Ok(());
+    }
+
+    anyhow::bail!("{env_name} is required for the selected user-center mode");
+}
+
+fn apply_user_center_env_overrides(user_center: &UserCenterServerContract) {
+    env::set_var(SDKWORK_USER_CENTER_MODE, user_center.mode.as_str());
+    env::set_var(
+        SDKWORK_USER_CENTER_PROVIDER_KEY,
+        user_center.provider_key.as_str(),
+    );
+    env::set_var(SDKWORK_USER_CENTER_APP_ID, user_center.app_id.as_str());
+    env::set_var(
+        SDKWORK_USER_CENTER_LOCAL_API_BASE_PATH,
+        user_center.local_api_base_path.as_str(),
+    );
+    env::set_var(
+        SDKWORK_USER_CENTER_SQLITE_PATH,
+        user_center.sqlite_path.as_str(),
+    );
+    env::set_var(
+        SDKWORK_USER_CENTER_TABLE_PREFIX,
+        user_center.table_prefix.as_str(),
+    );
+    env::set_var(
+        SDKWORK_USER_CENTER_HANDSHAKE_FRESHNESS_WINDOW_MS,
+        user_center.handshake_freshness_window_ms.to_string(),
+    );
+    env::set_var(
+        SDKWORK_USER_CENTER_AUTHORIZATION_HEADER_NAME,
+        user_center.auth_token_header_name.as_str(),
+    );
+    env::set_var(
+        SDKWORK_USER_CENTER_ACCESS_TOKEN_HEADER_NAME,
+        user_center.access_token_header_name.as_str(),
+    );
+    env::set_var(
+        SDKWORK_USER_CENTER_REFRESH_TOKEN_HEADER_NAME,
+        user_center.refresh_token_header_name.as_str(),
+    );
+    env::set_var(
+        SDKWORK_USER_CENTER_SESSION_HEADER_NAME,
+        user_center.session_header_name.as_str(),
+    );
+    env::set_var(
+        SDKWORK_USER_CENTER_AUTHORIZATION_SCHEME,
+        user_center.authorization_scheme.as_str(),
+    );
+    env::set_var(
+        SDKWORK_USER_CENTER_ALLOW_AUTHORIZATION_FALLBACK_TO_ACCESS_TOKEN,
+        if user_center.allow_authorization_fallback_to_access_token {
+            "true"
+        } else {
+            "false"
+        },
+    );
+
+    set_optional_env(
+        SDKWORK_USER_CENTER_APP_API_BASE_URL,
+        user_center.app_api_base_url.as_deref(),
+    );
+    set_optional_env(
+        SDKWORK_USER_CENTER_EXTERNAL_BASE_URL,
+        user_center.external_base_url.as_deref(),
+    );
+    set_optional_env(
+        SDKWORK_USER_CENTER_DATABASE_URL,
+        user_center.database_url.as_deref(),
+    );
+    set_optional_env(
+        SDKWORK_USER_CENTER_SCHEMA_NAME,
+        user_center.schema_name.as_deref(),
+    );
+    set_optional_env(
+        SDKWORK_USER_CENTER_SECRET_ID,
+        user_center.secret_id.as_deref(),
+    );
+    set_optional_env(
+        SDKWORK_USER_CENTER_SHARED_SECRET,
+        user_center.shared_secret.as_deref(),
+    );
+}
+
+fn set_optional_env(env_key: &str, value: Option<&str>) {
+    if let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) {
+        env::set_var(env_key, value);
+    }
 }
 
 fn resolve_runtime_contextual_service_settings<I, K, V>(
@@ -2423,6 +2933,38 @@ fn resolve_string_option(
         })
 }
 
+fn resolve_bool_option(
+    cli_value: Option<&str>,
+    env_values: &HashMap<String, String>,
+    env_key: &str,
+) -> anyhow::Result<Option<bool>> {
+    let value = resolve_string_option(cli_value, env_values, env_key);
+    match value.as_deref().map(|value| value.to_ascii_lowercase()) {
+        None => Ok(None),
+        Some(normalized) if matches!(normalized.as_str(), "1" | "true" | "yes" | "on") => {
+            Ok(Some(true))
+        }
+        Some(normalized) if matches!(normalized.as_str(), "0" | "false" | "no" | "off") => {
+            Ok(Some(false))
+        }
+        Some(_) => anyhow::bail!("{env_key} must be a boolean value"),
+    }
+}
+
+fn resolve_u64_option(
+    cli_value: Option<&str>,
+    env_values: &HashMap<String, String>,
+    env_key: &str,
+) -> anyhow::Result<Option<u64>> {
+    match resolve_string_option(cli_value, env_values, env_key) {
+        None => Ok(None),
+        Some(value) => value
+            .parse::<u64>()
+            .map(Some)
+            .with_context(|| format!("{env_key} must be an unsigned integer")),
+    }
+}
+
 fn resolve_path_option(
     cli_value: Option<&PathBuf>,
     env_values: &HashMap<String, String>,
@@ -2643,6 +3185,7 @@ fn render_service_plan_text(
     if let Some(portal_upstream) = settings.portal_upstream.as_deref() {
         lines.push(format!("portal_upstream={portal_upstream}"));
     }
+    lines.extend(render_user_center_plan_lines(&settings.user_center));
 
     lines.push(String::new());
     Ok(lines.join("\n"))
@@ -2743,9 +3286,87 @@ fn render_service_plan_json(
             "gateway": settings.gateway_upstream,
             "admin": settings.admin_upstream,
             "portal": settings.portal_upstream,
-        }
+        },
+        "user_center": &settings.user_center,
     }))
     .expect("service plan json serialization should not fail"))
+}
+
+fn render_user_center_plan_lines(user_center: &UserCenterServerContract) -> Vec<String> {
+    let mut lines = vec![
+        format!("user_center.mode={}", user_center.mode),
+        format!(
+            "user_center.active_integration_kind={}",
+            user_center.active_integration_kind
+        ),
+        format!("user_center.app_id={}", user_center.app_id),
+        format!("user_center.provider_key={}", user_center.provider_key),
+        format!(
+            "user_center.local_api_base_path={}",
+            user_center.local_api_base_path
+        ),
+        format!("user_center.sqlite_path={}", user_center.sqlite_path),
+        format!("user_center.table_prefix={}", user_center.table_prefix),
+        format!(
+            "user_center.auth_token_header_name={}",
+            user_center.auth_token_header_name
+        ),
+        format!(
+            "user_center.access_token_header_name={}",
+            user_center.access_token_header_name
+        ),
+        format!(
+            "user_center.refresh_token_header_name={}",
+            user_center.refresh_token_header_name
+        ),
+        format!(
+            "user_center.session_header_name={}",
+            user_center.session_header_name
+        ),
+        format!(
+            "user_center.authorization_scheme={}",
+            user_center.authorization_scheme
+        ),
+        format!(
+            "user_center.allow_authorization_fallback_to_access_token={}",
+            user_center.allow_authorization_fallback_to_access_token
+        ),
+        format!("user_center.handshake_mode={}", user_center.handshake_mode),
+        format!(
+            "user_center.handshake_required={}",
+            user_center.handshake_required
+        ),
+        format!(
+            "user_center.handshake_freshness_window_ms={}",
+            user_center.handshake_freshness_window_ms
+        ),
+        format!(
+            "user_center.protected_tokens={}",
+            user_center.protected_tokens.join(",")
+        ),
+        format!(
+            "user_center.shared_secret_configured={}",
+            user_center.shared_secret_configured
+        ),
+    ];
+
+    if let Some(app_api_base_url) = user_center.app_api_base_url.as_deref() {
+        lines.push(format!("user_center.app_api_base_url={app_api_base_url}"));
+    }
+    if let Some(external_base_url) = user_center.external_base_url.as_deref() {
+        lines.push(format!("user_center.external_base_url={external_base_url}"));
+    }
+    if let Some(database_url) = user_center.database_url.as_deref() {
+        lines.push(format!("user_center.database_url={database_url}"));
+    }
+    if let Some(schema_name) = user_center.schema_name.as_deref() {
+        lines.push(format!("user_center.schema_name={schema_name}"));
+    }
+    if let Some(secret_id) = user_center.secret_id.as_deref() {
+        lines.push(format!("user_center.secret_id={secret_id}"));
+    }
+
+    lines
 }
 
 fn print_runtime_summary(runtime: &RouterProductRuntime) {
@@ -2773,14 +3394,14 @@ mod tests {
     use serde_json::Value;
 
     use super::{
-        build_loader_cli_overrides, execute_backup_operation, execute_restore_operation,
-        execute_support_bundle_operation, render_service_plan, resolve_default_site_dirs_for_paths,
-        resolve_effective_public_web_bind, resolve_runtime_context,
-        resolve_service_settings_from_env_values,
-        resolve_runtime_contextual_service_settings, validate_runtime_config_for_install_mode,
-        collect_env_values, InstalledRuntimeContext, InstalledRuntimeManifest, PlanFormat,
-        ProductRuntimeRole, ProductServiceSettings, RouterProductServiceCli, StandaloneConfig,
-        StandaloneConfigLoader, INSTALLED_RUNTIME_LAYOUT_VERSION, INSTALLED_RUNTIME_NAME,
+        build_loader_cli_overrides, collect_env_values, execute_backup_operation,
+        execute_restore_operation, execute_support_bundle_operation, render_service_plan,
+        resolve_default_site_dirs_for_paths, resolve_effective_public_web_bind,
+        resolve_runtime_context, resolve_runtime_contextual_service_settings,
+        resolve_service_settings_from_env_values, validate_runtime_config_for_install_mode,
+        InstalledRuntimeContext, InstalledRuntimeManifest, PlanFormat, ProductRuntimeRole,
+        ProductServiceSettings, RouterProductServiceCli, StandaloneConfig, StandaloneConfigLoader,
+        UserCenterMode, INSTALLED_RUNTIME_LAYOUT_VERSION, INSTALLED_RUNTIME_NAME,
         ROUTER_PRODUCT_SERVICE_BINARY_STEM,
     };
 
@@ -2828,7 +3449,7 @@ mod tests {
             &cli,
             &collect_env_values(Vec::<(String, String)>::new()),
         )
-            .expect("settings should resolve");
+        .expect("settings should resolve");
 
         assert_eq!(settings.config_dir, Some("D:/router/config".to_owned()));
         assert_eq!(settings.config_file, Some("cluster/router.yaml".to_owned()));
@@ -2893,7 +3514,177 @@ mod tests {
     }
 
     #[test]
-    fn resolve_runtime_contextual_service_settings_merges_router_env_defaults_before_materializing_settings() {
+    fn user_center_mode_only_accepts_canonical_public_identifiers() {
+        assert_eq!(
+            UserCenterMode::from_raw("builtin-local"),
+            Some(UserCenterMode::BuiltinLocal)
+        );
+        assert_eq!(
+            UserCenterMode::from_raw("sdkwork-cloud-app-api"),
+            Some(UserCenterMode::SdkworkCloudAppApi)
+        );
+        assert_eq!(
+            UserCenterMode::from_raw("external-user-center"),
+            Some(UserCenterMode::ExternalUserCenter)
+        );
+        assert_eq!(UserCenterMode::from_raw("spring-ai-plus-app-api"), None);
+        assert_eq!(UserCenterMode::from_raw("sdkwork-app-api"), None);
+        assert_eq!(UserCenterMode::from_raw("local"), None);
+        assert_eq!(UserCenterMode::from_raw("local-native"), None);
+        assert_eq!(UserCenterMode::from_raw("app-api"), None);
+        assert_eq!(UserCenterMode::from_raw("app-api-hub"), None);
+        assert_eq!(UserCenterMode::from_raw("external"), None);
+        assert_eq!(UserCenterMode::from_raw("external-hub"), None);
+        assert_eq!(
+            UserCenterMode::SdkworkCloudAppApi.as_str(),
+            "sdkwork-cloud-app-api"
+        );
+    }
+
+    #[test]
+    fn resolve_service_settings_defaults_user_center_to_builtin_local() {
+        let cli = RouterProductServiceCli::try_parse_from(["router-product-service"])
+            .expect("cli should parse");
+
+        let settings = resolve_service_settings_from_env_values(
+            &cli,
+            &collect_env_values(Vec::<(String, String)>::new()),
+        )
+        .expect("settings should resolve");
+
+        assert_eq!(settings.user_center.mode, "builtin-local");
+        assert_eq!(
+            settings.user_center.active_integration_kind,
+            "builtin-local"
+        );
+        assert_eq!(
+            settings.user_center.provider_key,
+            "sdkwork-api-router-local"
+        );
+        assert_eq!(
+            settings.user_center.local_api_base_path,
+            "/api/app/v1/user-center"
+        );
+        assert_eq!(settings.user_center.sqlite_path, "./data/user-center.db");
+        assert_eq!(settings.user_center.handshake_required, false);
+        assert_eq!(settings.user_center.handshake_mode, "disabled");
+    }
+
+    #[test]
+    fn resolve_service_settings_fails_closed_when_cloud_user_center_is_under_configured() {
+        let cli = RouterProductServiceCli::try_parse_from(["router-product-service"])
+            .expect("cli should parse");
+
+        let error = resolve_service_settings_from_env_values(
+            &cli,
+            &collect_env_values([
+                ("SDKWORK_USER_CENTER_MODE", "sdkwork-cloud-app-api"),
+                (
+                    "SDKWORK_USER_CENTER_APP_API_BASE_URL",
+                    "https://cloud.example.test/app",
+                ),
+                ("SDKWORK_USER_CENTER_PROVIDER_KEY", "router-cloud"),
+                ("SDKWORK_USER_CENTER_SECRET_ID", "secret-01"),
+            ]),
+        )
+        .expect_err("cloud user-center without shared secret must fail closed");
+
+        assert!(error
+            .to_string()
+            .contains("SDKWORK_USER_CENTER_SHARED_SECRET"));
+    }
+
+    #[test]
+    fn resolve_service_settings_rejects_non_canonical_public_mode_aliases() {
+        let cli = RouterProductServiceCli::try_parse_from(["router-product-service"])
+            .expect("cli should parse");
+
+        let error = resolve_service_settings_from_env_values(
+            &cli,
+            &collect_env_values([("SDKWORK_USER_CENTER_MODE", "app-api-hub")]),
+        )
+        .expect_err("legacy public mode aliases must fail closed");
+
+        assert!(error
+            .to_string()
+            .contains("SDKWORK_USER_CENTER_MODE must be one of"));
+    }
+
+    #[test]
+    fn resolve_service_settings_infers_canonical_cloud_user_center_mode_from_single_upstream_base_url(
+    ) {
+        let cli = RouterProductServiceCli::try_parse_from(["router-product-service"])
+            .expect("cli should parse");
+
+        let settings = resolve_service_settings_from_env_values(
+            &cli,
+            &collect_env_values([
+                (
+                    "SDKWORK_USER_CENTER_APP_API_BASE_URL",
+                    "https://cloud.example.test/app",
+                ),
+                ("SDKWORK_USER_CENTER_PROVIDER_KEY", "router-cloud"),
+                ("SDKWORK_USER_CENTER_SECRET_ID", "secret-01"),
+                ("SDKWORK_USER_CENTER_SHARED_SECRET", "shared-01"),
+            ]),
+        )
+        .expect("single remote base url should infer the canonical cloud mode");
+
+        assert_eq!(settings.user_center.mode, "sdkwork-cloud-app-api");
+        assert_eq!(
+            settings.user_center.active_integration_kind,
+            "sdkwork-cloud-app-api"
+        );
+    }
+
+    #[test]
+    fn render_service_plan_json_embeds_normalized_user_center_contract() {
+        let cli = RouterProductServiceCli::try_parse_from([
+            "router-product-service",
+            "--dry-run",
+            "--plan-format",
+            "json",
+        ])
+        .expect("cli should parse");
+
+        let settings = resolve_service_settings_from_env_values(
+            &cli,
+            &collect_env_values([
+                (
+                    "SDKWORK_USER_CENTER_APP_API_BASE_URL",
+                    "https://cloud.example.test/app",
+                ),
+                ("SDKWORK_USER_CENTER_PROVIDER_KEY", "router-cloud"),
+                ("SDKWORK_USER_CENTER_SECRET_ID", "secret-01"),
+                ("SDKWORK_USER_CENTER_SHARED_SECRET", "shared-01"),
+            ]),
+        )
+        .expect("settings should resolve");
+        let plan = render_service_plan(&settings, &StandaloneConfig::default())
+            .expect("plan should render");
+        let parsed: Value = serde_json::from_str(&plan).expect("plan should parse");
+
+        assert_eq!(parsed["plan_format"], "json");
+        assert_eq!(parsed["user_center"]["mode"], "sdkwork-cloud-app-api");
+        assert_eq!(
+            parsed["user_center"]["active_integration_kind"],
+            "sdkwork-cloud-app-api"
+        );
+        assert_eq!(
+            parsed["user_center"]["app_api_base_url"],
+            "https://cloud.example.test/app"
+        );
+        assert_eq!(parsed["user_center"]["handshake_required"], true);
+        assert_eq!(
+            parsed["user_center"]["handshake_mode"],
+            "provider-shared-secret"
+        );
+        assert_eq!(parsed["user_center"]["shared_secret_configured"], true);
+    }
+
+    #[test]
+    fn resolve_runtime_contextual_service_settings_merges_router_env_defaults_before_materializing_settings(
+    ) {
         let config_root = unique_temp_dir("router-env-defaults");
         fs::create_dir_all(&config_root).expect("config root should exist");
         fs::write(
@@ -2962,7 +3753,10 @@ mod tests {
                 .expect("settings should resolve");
 
         assert_eq!(settings.node_id_prefix, Some("desktop".to_owned()));
-        assert_eq!(settings.config_dir, Some(config_root.to_string_lossy().into_owned()));
+        assert_eq!(
+            settings.config_dir,
+            Some(config_root.to_string_lossy().into_owned())
+        );
         assert_eq!(
             runtime_context
                 .expect("runtime context should resolve")
@@ -2993,7 +3787,7 @@ mod tests {
             &cli,
             &collect_env_values(Vec::<(String, String)>::new()),
         )
-            .expect("backup settings should resolve");
+        .expect("backup settings should resolve");
 
         assert_eq!(settings.config_dir, Some("D:/router/config".to_owned()));
         assert_eq!(

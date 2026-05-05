@@ -19,6 +19,7 @@ export const PRODUCT_GOVERNANCE_NODE_TEST_FILES = [
   'scripts/strict-contract-catalog.test.mjs',
   'scripts/run-router-product.test.mjs',
   'scripts/run-router-product-service.test.mjs',
+  'scripts/router-product-service-user-center-contract.test.mjs',
   'scripts/run-user-center-standard.test.mjs',
   'scripts/user-center-upstream-sync-payload.test.mjs',
   'scripts/user-center-upstream-sync-workflow.test.mjs',

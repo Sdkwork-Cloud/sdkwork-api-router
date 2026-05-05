@@ -974,6 +974,7 @@ export function renderRuntimeEnvTemplate({
   });
   const configDir = toPortablePath(layout.configRoot);
   const configFile = toPortablePath(layout.configFile);
+  const userCenterSqlitePath = toPortablePath(path.join(layout.dataRoot, 'user-center.db'));
 
   return [
     '# SDKWork Router production runtime defaults',
@@ -986,6 +987,26 @@ export function renderRuntimeEnvTemplate({
     `SDKWORK_GATEWAY_BIND=${quoteEnvValue(defaults.gatewayBind)}`,
     `SDKWORK_ADMIN_BIND=${quoteEnvValue(defaults.adminBind)}`,
     `SDKWORK_PORTAL_BIND=${quoteEnvValue(defaults.portalBind)}`,
+    '# Unified user-center server contract',
+    `SDKWORK_USER_CENTER_MODE=${quoteEnvValue('builtin-local')}`,
+    `SDKWORK_USER_CENTER_PROVIDER_KEY=${quoteEnvValue('sdkwork-api-router-local')}`,
+    `SDKWORK_USER_CENTER_APP_ID=${quoteEnvValue('sdkwork-api-router')}`,
+    `SDKWORK_USER_CENTER_LOCAL_API_BASE_PATH=${quoteEnvValue('/api/app/v1/user-center')}`,
+    `SDKWORK_USER_CENTER_SQLITE_PATH=${quoteEnvValue(userCenterSqlitePath)}`,
+    `SDKWORK_USER_CENTER_DATABASE_URL=${quoteEnvValue('')}`,
+    `SDKWORK_USER_CENTER_SCHEMA_NAME=${quoteEnvValue('')}`,
+    `SDKWORK_USER_CENTER_TABLE_PREFIX=${quoteEnvValue('rp_uc_')}`,
+    `SDKWORK_USER_CENTER_APP_API_BASE_URL=${quoteEnvValue('')}`,
+    `SDKWORK_USER_CENTER_EXTERNAL_BASE_URL=${quoteEnvValue('')}`,
+    `SDKWORK_USER_CENTER_SECRET_ID=${quoteEnvValue('')}`,
+    `SDKWORK_USER_CENTER_SHARED_SECRET=${quoteEnvValue('')}`,
+    `SDKWORK_USER_CENTER_AUTHORIZATION_HEADER_NAME=${quoteEnvValue('Authorization')}`,
+    `SDKWORK_USER_CENTER_ACCESS_TOKEN_HEADER_NAME=${quoteEnvValue('Access-Token')}`,
+    `SDKWORK_USER_CENTER_REFRESH_TOKEN_HEADER_NAME=${quoteEnvValue('Refresh-Token')}`,
+    `SDKWORK_USER_CENTER_SESSION_HEADER_NAME=${quoteEnvValue('x-sdkwork-user-center-session-id')}`,
+    `SDKWORK_USER_CENTER_AUTHORIZATION_SCHEME=${quoteEnvValue('Bearer')}`,
+    `SDKWORK_USER_CENTER_ALLOW_AUTHORIZATION_FALLBACK_TO_ACCESS_TOKEN=${quoteEnvValue('true')}`,
+    `SDKWORK_USER_CENTER_HANDSHAKE_FRESHNESS_WINDOW_MS=${quoteEnvValue('30000')}`,
     '',
   ].join('\n');
 }

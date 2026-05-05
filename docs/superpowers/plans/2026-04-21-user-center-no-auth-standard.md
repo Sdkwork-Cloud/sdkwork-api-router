@@ -40,7 +40,7 @@ node --test apps/sdkwork-router-portal/tests/portal-user-center-standard.test.mj
 - Modify: `D:\javasource\spring-ai-plus\spring-ai-plus-business\apps\sdkwork-appbase\packages\pc-react\identity\sdkwork-user-center-pc-react\src\domain\userCenterRuntimeClient.ts`
 
 - [ ] Step 1: Remove top-level auth input/output types from runtime, bridge, and plugin public interfaces.
-- [ ] Step 2: Simplify integration profile types and normalization logic to the standard `builtin-local` and `spring-ai-plus-app-api` shapes.
+- [ ] Step 2: Simplify integration profile types and normalization logic to the standard `builtin-local` and `sdkwork-cloud-app-api` shapes.
 - [ ] Step 3: Derive canonical runtime handshake headers from `mode`, `provider`, and `integration` instead of a normalized auth contract.
 - [ ] Step 4: Keep token storage and runtime header helpers working with the canonical token bundle store.
 

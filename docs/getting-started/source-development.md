@@ -331,7 +331,7 @@ pnpm --dir docs typecheck
 pnpm --dir docs build
 ```
 
-`pnpm test:user-center-standard` is the canonical identity-governance lane for the repository. It executes the shared `sdkwork-appbase` user-center and independent validation-plugin contracts before the router portal bridge test so local-private deployments and external `spring-ai-plus-app-api` handshakes stay aligned to the same AuthToken or AccessToken standard.
+`pnpm test:user-center-standard` is the canonical identity-governance lane for the repository. It executes the shared `sdkwork-appbase` user-center and independent validation-plugin contracts before the router portal bridge test so local-private deployments and external `sdkwork-cloud-app-api` handshakes stay aligned to the same AuthToken or AccessToken standard.
 
 ## Common Notes
 

@@ -4,11 +4,13 @@ import {
   createUserCenterValidationInteropContract,
   createUserCenterValidationPluginDefinition,
   createUserCenterValidationPreflightReport,
+  createUserCenterServerValidationPluginDefinition,
   createUserCenterValidationSnapshot,
   requireUserCenterProtectedToken,
   resolveUserCenterProtectedToken,
   type UserCenterProtectedTokenRequirementOptions,
   type UserCenterProtectedTokenResolutionOptions,
+  type UserCenterServerValidationPluginDefinition,
   type UserCenterValidationInteropContract,
   type UserCenterValidationPluginDefinition,
   type UserCenterValidationPreflightReport,
@@ -17,14 +19,18 @@ import {
 import {
   createRouterPortalUserCenterConfig,
   createRouterPortalUserCenterPluginDefinition,
+  createRouterPortalUserCenterServerPluginDefinition,
   type CreateRouterPortalUserCenterConfigOptions,
   type CreateRouterPortalUserCenterPluginDefinitionOptions,
+  type CreateRouterPortalUserCenterServerPluginDefinitionOptions,
 } from './userCenter';
 
 export type RouterPortalUserCenterValidationSnapshot = UserCenterValidationSnapshot;
 export type RouterPortalUserCenterValidationPluginDefinition = UserCenterValidationPluginDefinition;
 export type RouterPortalUserCenterValidationInteropContract = UserCenterValidationInteropContract;
 export type RouterPortalUserCenterValidationPreflightReport = UserCenterValidationPreflightReport;
+export type RouterPortalUserCenterServerValidationPluginDefinition =
+  UserCenterServerValidationPluginDefinition;
 export type RouterPortalProtectedTokenResolutionOptions = UserCenterProtectedTokenResolutionOptions;
 export type RouterPortalProtectedTokenRequirementOptions = UserCenterProtectedTokenRequirementOptions;
 
@@ -61,6 +67,16 @@ export function createRouterPortalUserCenterValidationPluginDefinition(
     packageNames: options.packageNames ?? [...ROUTER_PORTAL_USER_CENTER_VALIDATION_PLUGIN_PACKAGES],
     title: options.title ?? "SDKWORK Router Portal",
     userCenterPlugin: createRouterPortalUserCenterPluginDefinition(options),
+  });
+}
+
+export function createRouterPortalUserCenterServerValidationPluginDefinition(
+  options: CreateRouterPortalUserCenterServerPluginDefinitionOptions = {},
+): RouterPortalUserCenterServerValidationPluginDefinition {
+  return createUserCenterServerValidationPluginDefinition({
+    packageNames: options.packageNames ?? [...ROUTER_PORTAL_USER_CENTER_VALIDATION_PLUGIN_PACKAGES],
+    title: options.title ?? "SDKWORK Router Portal Server Validation",
+    userCenterServerPlugin: createRouterPortalUserCenterServerPluginDefinition(options),
   });
 }
 

@@ -74,6 +74,52 @@ spec:
               value: {{ .Values.binds.admin | quote }}
             - name: SDKWORK_PORTAL_BIND
               value: {{ .Values.binds.portal | quote }}
+            - name: SDKWORK_USER_CENTER_MODE
+              value: {{ .Values.userCenter.mode | quote }}
+            - name: SDKWORK_USER_CENTER_PROVIDER_KEY
+              value: {{ .Values.userCenter.providerKey | quote }}
+            - name: SDKWORK_USER_CENTER_APP_ID
+              value: {{ .Values.userCenter.appId | quote }}
+            - name: SDKWORK_USER_CENTER_LOCAL_API_BASE_PATH
+              value: {{ .Values.userCenter.localApiBasePath | quote }}
+            - name: SDKWORK_USER_CENTER_SQLITE_PATH
+              value: {{ .Values.userCenter.sqlitePath | quote }}
+            - name: SDKWORK_USER_CENTER_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sdkwork-api-router.secretName" . }}
+                  key: SDKWORK_USER_CENTER_DATABASE_URL
+                  optional: true
+            - name: SDKWORK_USER_CENTER_SCHEMA_NAME
+              value: {{ .Values.userCenter.schemaName | quote }}
+            - name: SDKWORK_USER_CENTER_TABLE_PREFIX
+              value: {{ .Values.userCenter.tablePrefix | quote }}
+            - name: SDKWORK_USER_CENTER_APP_API_BASE_URL
+              value: {{ .Values.userCenter.appApiBaseUrl | quote }}
+            - name: SDKWORK_USER_CENTER_EXTERNAL_BASE_URL
+              value: {{ .Values.userCenter.externalBaseUrl | quote }}
+            - name: SDKWORK_USER_CENTER_SECRET_ID
+              value: {{ .Values.userCenter.secretId | quote }}
+            - name: SDKWORK_USER_CENTER_SHARED_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sdkwork-api-router.secretName" . }}
+                  key: SDKWORK_USER_CENTER_SHARED_SECRET
+                  optional: true
+            - name: SDKWORK_USER_CENTER_AUTHORIZATION_HEADER_NAME
+              value: {{ .Values.userCenter.authorizationHeaderName | quote }}
+            - name: SDKWORK_USER_CENTER_ACCESS_TOKEN_HEADER_NAME
+              value: {{ .Values.userCenter.accessTokenHeaderName | quote }}
+            - name: SDKWORK_USER_CENTER_REFRESH_TOKEN_HEADER_NAME
+              value: {{ .Values.userCenter.refreshTokenHeaderName | quote }}
+            - name: SDKWORK_USER_CENTER_SESSION_HEADER_NAME
+              value: {{ .Values.userCenter.sessionHeaderName | quote }}
+            - name: SDKWORK_USER_CENTER_AUTHORIZATION_SCHEME
+              value: {{ .Values.userCenter.authorizationScheme | quote }}
+            - name: SDKWORK_USER_CENTER_ALLOW_AUTHORIZATION_FALLBACK_TO_ACCESS_TOKEN
+              value: {{ .Values.userCenter.allowAuthorizationFallbackToAccessToken | quote }}
+            - name: SDKWORK_USER_CENTER_HANDSHAKE_FRESHNESS_WINDOW_MS
+              value: {{ .Values.userCenter.handshakeFreshnessWindowMs | quote }}
             {{- if .Values.browserAllowedOrigins }}
             - name: SDKWORK_BROWSER_ALLOWED_ORIGINS
               value: {{ .Values.browserAllowedOrigins | quote }}

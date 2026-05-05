@@ -17,6 +17,8 @@ test('router user-center standard runner exposes the canonical governed node pla
   const module = await loadModule();
 
   assert.equal(typeof module.resolveUserCenterStandardTestFile, 'function');
+  assert.equal(typeof module.resolveServerUserCenterContractTestFile, 'function');
+  assert.equal(typeof module.resolveServerUserCenterEntrypointContractTestFile, 'function');
   assert.equal(typeof module.createUserCenterStandardTestPlan, 'function');
   assert.equal(typeof module.resolveSdkworkAppbaseContractsRunner, 'function');
   assert.equal(typeof module.createUserCenterStandardCommandPlan, 'function');
@@ -27,6 +29,21 @@ test('router user-center standard runner exposes the canonical governed node pla
   assert.equal(
     testFile,
     path.join('D:/workspace/router', 'apps', 'sdkwork-router-portal', 'tests', 'portal-user-center-standard.test.mjs'),
+  );
+  const serverContractTestFile = module.resolveServerUserCenterContractTestFile({
+    workspaceRoot: 'D:/workspace/router',
+  });
+  assert.equal(
+    serverContractTestFile,
+    path.join('D:/workspace/router', 'scripts', 'router-product-service-user-center-contract.test.mjs'),
+  );
+  const serverEntrypointContractTestFile =
+    module.resolveServerUserCenterEntrypointContractTestFile({
+      workspaceRoot: 'D:/workspace/router',
+    });
+  assert.equal(
+    serverEntrypointContractTestFile,
+    path.join('D:/workspace/router', 'scripts', 'server-user-center-entrypoint-contract.test.mjs'),
   );
 
   const appbaseRunner = module.resolveSdkworkAppbaseContractsRunner({
@@ -83,6 +100,24 @@ test('router user-center standard runner exposes the canonical governed node pla
       shell: false,
       windowsHide: process.platform === 'win32',
     },
+    {
+      label: 'router product service user-center contract',
+      command: 'node-custom',
+      args: [serverContractTestFile],
+      cwd: 'D:/workspace/router',
+      env: { SDKWORK_STRICT_FRONTEND_INSTALLS: '1' },
+      shell: false,
+      windowsHide: process.platform === 'win32',
+    },
+    {
+      label: 'router deployment user-center entrypoint contract',
+      command: 'node-custom',
+      args: [serverEntrypointContractTestFile],
+      cwd: 'D:/workspace/router',
+      env: { SDKWORK_STRICT_FRONTEND_INSTALLS: '1' },
+      shell: false,
+      windowsHide: process.platform === 'win32',
+    },
   ]);
 });
 
@@ -105,9 +140,11 @@ test('router user-center standard runner executes the shared appbase contracts b
     },
   });
 
-  assert.equal(results.length, 2);
+  assert.equal(results.length, 4);
   assert.equal(results[0].status, 0);
   assert.equal(results[1].status, 0);
+  assert.equal(results[2].status, 0);
+  assert.equal(results[3].status, 0);
   assert.deepEqual(calls, [
     {
       command: 'node-custom',
@@ -132,6 +169,32 @@ test('router user-center standard runner executes the shared appbase contracts b
       command: 'node-custom',
       args: [
         path.join('D:/workspace/router', 'apps', 'sdkwork-router-portal', 'tests', 'portal-user-center-standard.test.mjs'),
+      ],
+      options: {
+        cwd: 'D:/workspace/router',
+        env: { SDKWORK_ENV: '1' },
+        shell: false,
+        stdio: 'inherit',
+        windowsHide: process.platform === 'win32',
+      },
+    },
+    {
+      command: 'node-custom',
+      args: [
+        path.join('D:/workspace/router', 'scripts', 'router-product-service-user-center-contract.test.mjs'),
+      ],
+      options: {
+        cwd: 'D:/workspace/router',
+        env: { SDKWORK_ENV: '1' },
+        shell: false,
+        stdio: 'inherit',
+        windowsHide: process.platform === 'win32',
+      },
+    },
+    {
+      command: 'node-custom',
+      args: [
+        path.join('D:/workspace/router', 'scripts', 'server-user-center-entrypoint-contract.test.mjs'),
       ],
       options: {
         cwd: 'D:/workspace/router',

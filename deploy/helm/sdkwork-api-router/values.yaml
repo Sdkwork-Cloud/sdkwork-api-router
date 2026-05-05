@@ -51,6 +51,25 @@ binds:
   admin: 127.0.0.1:8081
   portal: 127.0.0.1:8082
 
+userCenter:
+  mode: builtin-local
+  providerKey: sdkwork-api-router-local
+  appId: sdkwork-api-router
+  localApiBasePath: /api/app/v1/user-center
+  sqlitePath: /opt/sdkwork/data/user-center.db
+  schemaName: ""
+  tablePrefix: rp_uc_
+  appApiBaseUrl: ""
+  externalBaseUrl: ""
+  secretId: ""
+  authorizationHeaderName: Authorization
+  accessTokenHeaderName: Access-Token
+  refreshTokenHeaderName: Refresh-Token
+  sessionHeaderName: x-sdkwork-user-center-session-id
+  authorizationScheme: Bearer
+  allowAuthorizationFallbackToAccessToken: true
+  handshakeFreshnessWindowMs: 30000
+
 secrets:
   existingSecret: ""
   databaseUrl: ""
@@ -58,3 +77,5 @@ secrets:
   portalJwtSigningSecret: ""
   credentialMasterKey: ""
   metricsBearerToken: ""
+  userCenterDatabaseUrl: ""
+  userCenterSharedSecret: ""
